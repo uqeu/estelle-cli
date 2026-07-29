@@ -33,6 +33,11 @@ jobs:
       - name: Use an npm that supports trusted publishing
         run: npm install -g npm@latest
 
+      # Trusted publishing (OIDC) needs a recent npm; the version bundled with the runner's Node predates
+      # it, which surfaces as a bare `404 Not Found - PUT` on a package that plainly exists.
+      - name: Use an npm that supports trusted publishing
+        run: npm install -g npm@latest
+
       - name: Install (lockfile-exact)
         run: npm ci
 
