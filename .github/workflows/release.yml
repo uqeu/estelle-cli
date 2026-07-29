@@ -10,10 +10,9 @@ name: release
 # PR, or a schedule. Fail closed: if npm auth (trusted publishing OIDC or NPM_TOKEN) is missing or
 # any guard step fails, the job fails; there is no fallback to an unsigned path.
 #
-# This repository IS the published artifact: @fatelabs/estelle. The Estelle SERVER is closed source and
-# lives in a separate private repository; nothing of it is here. This repo is public for exactly one
-# reason — npm provenance requires a public source repo, and a client customers run with `npx` should be
-# auditable by the people running it.
+# Honest scope: the one distributable artifact today is the npm CLI `@fatelabs/estelle` (this repo).
+# The Python package deploys to Railway from source and is NOT on PyPI; if that ever changes, add
+# a PyPI job here using trusted publishing (OIDC) — never `twine upload` from a machine.
 on:
   release:
     types: [published]
@@ -61,14 +60,14 @@ jobs:
         with:
           name: npm-release-artifacts
           path: |
-            cli/*.tgz
-            cli/sbom.cdx.json
+            *.tgz
+            sbom.cdx.json
 
       # SLSA build provenance: proves these bytes came from this workflow run at this commit.
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: cli/*.tgz
+          subject-path: *.tgz
 
       # `--provenance` publishes a sigstore attestation to the registry; installers can verify the
       # package traces to this reviewed commit. Auth comes from npm trusted publishing (OIDC) or
