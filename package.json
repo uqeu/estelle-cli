@@ -1,13 +1,14 @@
 {
   "name": "@fatelabs/estelle",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Connect Estelle \u2014 code-native memory + a 0%-hallucination grounding gate \u2014 to the AI coding agent you already use. One command.",
   "bin": {
     "estelle": "bin/estelle.js"
   },
   "type": "commonjs",
   "files": [
-    "bin"
+    "bin",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=18"
@@ -23,7 +24,7 @@
     "claude-code"
   ],
   "homepage": "https://fatelabs.ca/docs",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "UNLICENSED",
   "publishConfig": {
     "access": "public",
     "provenance": true
