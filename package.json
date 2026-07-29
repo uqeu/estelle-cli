@@ -1,0 +1,42 @@
+{
+  "name": "@fatelabs/estelle",
+  "version": "0.1.0",
+  "description": "Connect Estelle \u2014 code-native memory + a 0%-hallucination grounding gate \u2014 to the AI coding agent you already use. One command.",
+  "bin": {
+    "estelle": "bin/estelle.js"
+  },
+  "type": "commonjs",
+  "files": [
+    "bin"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "estelle",
+    "mcp",
+    "ai",
+    "coding-agent",
+    "codebase-memory",
+    "grounding",
+    "cursor",
+    "claude-code"
+  ],
+  "homepage": "https://fatelabs.ca/docs",
+  "license": "UNLICENSED",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/uqeu/estelle-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/uqeu/estelle-cli/issues",
+    "email": "khai@fatelabs.ca"
+  }
+}

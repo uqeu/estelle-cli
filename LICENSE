@@ -1,0 +1,10 @@
+Copyright (c) 2026 Honour Systems Inc. (dba Fate Labs). All rights reserved.
+
+This source is published so that anyone who runs `npx @fatelabs/estelle` can read exactly what
+executes on their machine, and so that npm provenance can attest each published tarball to the
+commit it was built from.
+
+Source-available, not open source. You may read, audit and verify this code. You may not copy,
+modify, redistribute or create derivative works without written permission.
+
+Contact: khai@fatelabs.ca
