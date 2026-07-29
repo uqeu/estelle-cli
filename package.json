@@ -23,7 +23,7 @@
     "claude-code"
   ],
   "homepage": "https://fatelabs.ca/docs",
-  "license": "UNLICENSED",
+  "license": "SEE LICENSE IN LICENSE",
   "publishConfig": {
     "access": "public",
     "provenance": true
