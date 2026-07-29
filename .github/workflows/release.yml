@@ -1,18 +1,11 @@
+# Publish @fatelabs/estelle to npm with provenance.
+#
+# Human-gated: fires only when a maintainer publishes a GitHub release — never on push or a schedule.
+# `--provenance` needs `id-token: write` (OIDC) and a PUBLIC repo; it emits a sigstore attestation linking
+# the published bytes to this commit, so anyone installing can verify that what runs on their machine is
+# what they can read here. Fail closed: no token, no publish — there is no unsigned fallback.
 name: release
 
-# Signed, provenance-backed publish pipeline. Before this workflow, any release was a manual,
-# unsigned `npm publish` from a developer laptop — no integrity chain from source to registry
-# (fable finding, critical/invariant). Now the ONLY sanctioned publish path builds in CI, emits
-# an SBOM, attaches a GitHub SLSA build-provenance attestation to the exact tarball, and publishes
-# with `npm publish --provenance` (sigstore link from the published bytes to this repo + commit).
-#
-# Human-gated by design: fires ONLY when a maintainer publishes a GitHub release — never on push,
-# PR, or a schedule. Fail closed: if npm auth (trusted publishing OIDC or NPM_TOKEN) is missing or
-# any guard step fails, the job fails; there is no fallback to an unsigned path.
-#
-# Honest scope: the one distributable artifact today is the npm CLI `@fatelabs/estelle` (this repo).
-# The Python package deploys to Railway from source and is NOT on PyPI; if that ever changes, add
-# a PyPI job here using trusted publishing (OIDC) — never `twine upload` from a machine.
 on:
   release:
     types: [published]
@@ -21,58 +14,27 @@ permissions:
   contents: read
 
 jobs:
-  publish-npm:
-    name: Build, attest + publish @fatelabs/estelle
+  publish:
+    name: Test, then publish with provenance
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # OIDC — npm trusted publishing + sigstore provenance
-      attestations: write # GitHub SLSA build-provenance attestation
-    defaults:
-      run:
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Node 20
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           registry-url: "https://registry.npmjs.org"
 
-      # Locked, script-free install — the CLI has no runtime deps, so this only pins the tree
-      # the SBOM describes.
-      - name: Install (locked, no scripts)
-        run: npm ci --ignore-scripts
+      - name: Install (lockfile-exact)
+        run: npm ci
 
-      - name: Smoke-test the CLI
+      - name: Test
         run: npm test
 
-      # SBOM for the artifact being published, kept alongside the tarball.
-      - name: Emit SBOM (CycloneDX)
-        run: npm sbom --sbom-format cyclonedx > sbom.cdx.json
-
-      # Build the EXACT tarball that gets attested and published.
-      - name: Pack the release tarball
-        run: npm pack
-
-      - name: Upload tarball + SBOM
-        uses: actions/upload-artifact@v4
-        with:
-          name: npm-release-artifacts
-          path: |
-            *.tgz
-            sbom.cdx.json
-
-      # SLSA build provenance: proves these bytes came from this workflow run at this commit.
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: "*.tgz"
-
-      # `--provenance` publishes a sigstore attestation to the registry; installers can verify the
-      # package traces to this reviewed commit. Auth comes from npm trusted publishing (OIDC) or
-      # the NPM_TOKEN secret — with neither configured, this step FAILS (no unsigned fallback).
-      - name: Publish to npm with provenance
+      - name: Publish
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
