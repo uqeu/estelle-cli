@@ -34,7 +34,9 @@ jobs:
       - name: Test
         run: npm test
 
+      # Auth is npm TRUSTED PUBLISHING (OIDC) — no token. npm now restricts tokens from bypassing 2FA for
+      # direct publishing, so a token in CI fails with EOTP no matter how it is scoped. OIDC has nothing to
+      # steal, nothing to expire, and nothing to prompt. Configure the trusted publisher on npmjs.com for
+      # @fatelabs/estelle: repository uqeu/estelle-cli, workflow release.yml.
       - name: Publish
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
