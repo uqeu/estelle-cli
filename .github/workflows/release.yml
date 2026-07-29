@@ -67,7 +67,7 @@ jobs:
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: *.tgz
+          subject-path: "*.tgz"
 
       # `--provenance` publishes a sigstore attestation to the registry; installers can verify the
       # package traces to this reviewed commit. Auth comes from npm trusted publishing (OIDC) or
