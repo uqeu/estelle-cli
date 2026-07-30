@@ -318,6 +318,93 @@ async function cmdSweep() {
   await ingestWithProgress(files, key, repo);
 }
 
+// INCREMENTAL update — the counterpart to `sweep`, and the one you want day to day.
+//
+// `sweep` hands /sync the whole tree, and /sync REBUILDS the grounding surface from exactly what it receives.
+// That is correct for a fresh start and wrong for keeping up: sync a handful of changed files and every other
+// file's symbols vanish, after which the gate flags real APIs as ungrounded. /reindex is the incremental path
+// (the one the GitHub push webhook uses) — changed files are replaced, untouched files survive.
+//
+//   estelle reindex                 # every file git reports as changed vs HEAD
+//   estelle reindex src/a.py src/b.py
+async function cmdReindex() {
+  banner();
+  const key = flag("--key", process.env.ESTELLE_API_KEY);
+  if (!key) { console.log("  " + amber("Need --key <ESTELLE_KEY> to reindex.")); return; }
+  const root = flag("--path", process.cwd());
+
+  // Explicit paths win; otherwise ask git what actually changed. Never fall back to "everything" — a silent
+  // whole-repo reindex would be a slow surprise, and `sweep` is the command that means that.
+  // Positional paths after the subcommand. Skip flag values too, so `--key K` never becomes a "file".
+  const rest = process.argv.slice(3);
+  const named = [];
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i].startsWith("-")) { i++; continue; }   // a flag and its value
+    named.push(rest[i]);
+  }
+  const changed = named.length ? named : changedFiles(root);
+  if (!changed.length) {
+    console.log("  " + green("Nothing changed.") + dim("  Your memory is already current."));
+    console.log("");
+    return;
+  }
+
+  const collected = [];
+  for (const rel of changed) pushFile(collected, root, path.resolve(root, rel));
+  const flagged = collected.filter((f) => SECRET_RE.test(f.content));
+  const files = collected.filter((f) => !SECRET_RE.test(f.content));
+  if (flagged.length) {
+    console.log("  " + amber(`Skipped ${flagged.length} file(s) that look like they contain a live secret:`));
+    for (const f of flagged.slice(0, 8)) console.log("    " + red("✗") + " " + f.path);
+  }
+  // A path git lists but that no longer exists on disk was DELETED — tell the server so its symbols go away
+  // rather than lingering as ground truth for code that is gone.
+  const removed = changed.filter((rel) => !fs.existsSync(path.resolve(root, rel)));
+  if (!files.length && !removed.length) {
+    console.log("  " + amber("Nothing ingestable in the changed set."));
+    return;
+  }
+
+  const repo = repoNameFor(root);
+  const parts = [];
+  if (files.length) parts.push(`${files.length} changed`);
+  if (removed.length) parts.push(`${removed.length} removed`);
+  console.log("  " + dim("Reindexing ") + bold(parts.join(" + ")) + dim(` ${dot} untouched files keep their symbols`));
+  if (repo) console.log("  " + dim("Filing under repo ") + bold(repo));
+
+  const body = syncBody(files, repo);
+  if (removed.length) body.removed = removed;
+  process.stdout.write("  " + dim("Updating your Estelle memory… "));
+  const r = await apiPost("/reindex", body, key);
+  if (!r.ok) return fail(r);
+  console.log(ok);
+  console.log("");
+  console.log("  " + green("Memory current.") + dim("  Only the changed files moved; the rest of the graph is intact."));
+  console.log("");
+}
+
+// What git says changed vs HEAD, plus anything untracked. Empty outside a git repo — there is no honest way
+// to know what "changed" means without one, and guessing would either miss edits or resend the world.
+function changedFiles(root) {
+  const out = new Set();
+  // Tracked-and-modified, then untracked-but-not-ignored. execFileSync with an argv array (never a shell
+  // string) so a path with a space or a quote in it cannot become a second command.
+  const runs = [
+    ["-C", root, "diff", "--name-only", "HEAD"],
+    ["-C", root, "ls-files", "--others", "--exclude-standard"],
+  ];
+  for (const argv of runs) {
+    try {
+      const stdout = execFileSync("git", argv, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+      for (const line of stdout.split("\n")) {
+        const rel = line.trim();
+        if (rel && EXT.has(path.extname(rel))) out.add(rel);
+      }
+    } catch (_) { /* not a git repo, or no HEAD yet — reindex then needs explicit paths */ }
+  }
+  return [...out];
+}
+
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", "__pycache__", ".venv", "venv",
   "vendor", ".next", "target", ".cache", "coverage", ".mypy_cache", ".pytest_cache"]);
 const EXT = new Set([".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".rb", ".php", ".c",
@@ -627,6 +714,7 @@ function help() {
   console.log("");
   row("init [--key K]", "auto-detect your editors and write the MCP config (then verify it answers)");
   row("sweep [--key K]", "ingest the current repo (git-visible files) into your Estelle memory");
+  row("reindex [files…]", "update only what changed (fast) — keeps the rest of the graph intact");
   row("connect <client>", "show the one-liner / config for one client");
   row("remove", "disconnect: delete Estelle from every editor config (alias: disconnect, off; offline)");
   row("ask <question>", "ask Estelle about your codebase (grounded, on your plan)");
@@ -768,6 +856,7 @@ function unwrap(r) {
   if (!cmd || cmd.startsWith("--") && !has("--help")) await cmdSession();
   else if (cmd === "init") await cmdInit();
   else if (cmd === "sweep") await cmdSweep();
+  else if (cmd === "reindex") await cmdReindex();
   else if (cmd === "connect") cmdConnect();
   else if (cmd === "remove" || cmd === "disconnect" || cmd === "off") cmdRemove();
   else if (cmd === "ask") await cmdAsk();
