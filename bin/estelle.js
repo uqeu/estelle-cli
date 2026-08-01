@@ -134,6 +134,18 @@ function writeClient(client, key, dry) {
   return { client, path: p, wrote: true, backup: existing !== null };
 }
 
+// EVERY call the CLI makes to the API is BOUNDED. It was not: `fetch` has no default timeout, so a server
+// that accepted a connection and never answered hung the customer's terminal with no way out but Ctrl-C —
+// and `sweep`/`gate` had no bound at all. The Python hook has bounded at 8s the whole time, so the two
+// halves of the same product disagreed about whether a wait may be infinite, and only the one a customer
+// runs in the foreground was unbounded. Defect class 7.
+//
+// The number is generous on purpose: a first `sweep` on a large repo legitimately takes minutes, so this is
+// a LIVENESS bound — "this connection is dead" — not a latency budget. AbortSignal.timeout rejects with an
+// AbortError, which the existing catch already turns into { ok: false, status: 0 }, so every caller's error
+// path is unchanged.
+const API_TIMEOUT_MS = Number(process.env.ESTELLE_HTTP_TIMEOUT_MS || 120000);
+
 // POST a real MCP `initialize` to the endpoint — the config only counts as CONNECTED when Estelle answers.
 async function verifyMcp(key) {
   try {
@@ -144,6 +156,9 @@ async function verifyMcp(key) {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize",
         params: { protocolVersion: "2025-03-26", capabilities: {},
           clientInfo: { name: "estelle-cli", version: "0.1.0" } } }),
+      // `init` blocks a human at a prompt on this one, so it gets a SHORTER bound than the data calls: a
+      // connectivity check that hangs is worse than one that says "could not reach Estelle" in 15 seconds.
+      signal: AbortSignal.timeout(15000),
     });
     const text = await res.text().catch(() => "");
     if (res.ok && text.includes('"result"')) return { ok: true };
@@ -856,12 +871,14 @@ function argText(from) {
   }
   return parts.join(" ").trim();
 }
+
 async function apiPost(pathname, body, key) {
   try {
     const res = await fetch(`${API}${pathname}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
     });
     const text = await res.text();
     let json = null; try { json = JSON.parse(text); } catch (_) { /* non-JSON body */ }
@@ -878,6 +895,7 @@ async function apiPut(pathname, body, key) {
       method: "PUT",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
     });
     const text = await res.text();
     let json = null; try { json = JSON.parse(text); } catch (_) { /* non-JSON body */ }
@@ -888,7 +906,8 @@ async function apiPut(pathname, body, key) {
 }
 async function apiGet(pathname, key) {
   try {
-    const res = await fetch(`${API}${pathname}`, { headers: { Authorization: `Bearer ${key}` } });
+    const res = await fetch(`${API}${pathname}`,
+      { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(API_TIMEOUT_MS) });
     const text = await res.text();
     let json = null; try { json = JSON.parse(text); } catch (_) { /* non-JSON body */ }
     return { ok: res.ok, status: res.status, json, text };

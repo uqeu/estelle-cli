@@ -98,12 +98,16 @@ test("a connection to an installation this identity cannot see is still reported
 test("the listener answers the browser and resolves the code", async () => {
   const waiting = gh.awaitCallback({ port: 8791, timeoutMs: 5000 });
   const body = await new Promise((resolve, reject) => {
-    const req = http.request({ host: "127.0.0.1", port: 8791, path: "/github/callback?code=c1&state=s1" },
+    const req = http.request({ host: "127.0.0.1", port: 8791, path: "/github/callback?code=c1&state=s1",
+                              timeout: 10000 },
                              (res) => {
                                let text = "";
                                res.on("data", (d) => { text += d; });
                                res.on("end", () => resolve(text));
                              });
+    // `timeout` only EMITS — without this handler the socket idles and the promise never settles, which is
+    // the same unbounded wait the option looks like it closes.
+    req.on("timeout", () => { req.destroy(new Error("callback request timed out")); });
     req.on("error", reject);
     req.end();
   });
@@ -130,8 +134,13 @@ test("a denied authorization rejects with GitHub's reason", async () => {
   const rejected = assert.rejects(waiting, /User said no/);
   await new Promise((resolve, reject) => {
     const req = http.request(
-      { host: "127.0.0.1", port: 8794, path: "/github/callback?error=access_denied&error_description=User+said+no" },
+      { host: "127.0.0.1", port: 8794, path: "/github/callback?error=access_denied&error_description=User+said+no",
+        timeout: 10000 },
       (res) => { res.resume(); res.on("end", resolve); });
+    // A raw http.request has NO default timeout: a server that ACCEPTS and never answers holds this promise
+    // open forever, and node --test had no per-test limit either -- so one such request could hold a CI job
+    // to GitHub's 6-hour ceiling. Same unbounded-wait defect as the product's own fetch calls, one layer up.
+    req.on("timeout", () => { req.destroy(new Error("callback request timed out")); });
     req.on("error", reject);
     req.end();
   });
