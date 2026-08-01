@@ -1,0 +1,23 @@
+name: diag
+on: workflow_dispatch
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci --ignore-scripts
+      - name: environment
+        run: |
+          node -v; echo "cores=$(nproc)"; echo "HOME=$HOME"; id
+          node -e 'const os=require("os");console.log("homedir",os.homedir(),"tmpdir",os.tmpdir(),"cpus",os.cpus().length)'
+      - name: import bin/distill.js alone, timed
+        run: node -e 'const t=Date.now();require("./bin/distill.js");console.log("IMPORT_MS",Date.now()-t)'
+      - name: distill.test.js ALONE  (this is the whole question)
+        run: node --test --test-timeout=90000 --test-reporter=spec test/distill.test.js
+      - name: full suite, spec reporter, per-file timings
+        if: always()
+        run: node --test --test-timeout=45000 --test-reporter=spec test/*.test.js
