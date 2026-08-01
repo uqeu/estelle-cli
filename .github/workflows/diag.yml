@@ -3,21 +3,45 @@ on: workflow_dispatch
 jobs:
   diag:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
       - run: npm ci --ignore-scripts
-      - name: environment
+      - name: NAME THE TEST — run each case by hand, announcing it BEFORE it runs
         run: |
-          node -v; echo "cores=$(nproc)"; echo "HOME=$HOME"; id
-          node -e 'const os=require("os");console.log("homedir",os.homedir(),"tmpdir",os.tmpdir(),"cpus",os.cpus().length)'
-      - name: import bin/distill.js alone, timed
-        run: node -e 'const t=Date.now();require("./bin/distill.js");console.log("IMPORT_MS",Date.now()-t)'
-      - name: distill.test.js ALONE  (this is the whole question)
-        run: node --test --test-timeout=90000 --test-reporter=spec test/distill.test.js
-      - name: full suite, spec reporter, per-file timings
+          cat > /tmp/probe.js <<'JS'
+          const Module = require("module");
+          const orig = Module._load;
+          const cases = [];
+          Module._load = function (req, ...rest) {
+            if (req === "node:test" || req === "test") {
+              const t = (name, fn) => { cases.push([name, fn]); };
+              t.test = t; t.describe = () => {}; t.it = t; t.before = () => {}; t.after = () => {};
+              return t;
+            }
+            return orig.call(this, req, ...rest);
+          };
+          require("/home/runner/work/estelle-cli/estelle-cli/test/distill.test.js");
+          Module._load = orig;
+          console.log("REGISTERED", cases.length, "cases");
+          for (const [name, fn] of cases) {
+            process.stdout.write("START  " + name + "\n");
+            const t0 = Date.now();
+            try { const r = fn(); if (r && typeof r.then === "function") { process.stdout.write("  (async — not awaited)\n"); } }
+            catch (e) { process.stdout.write("THREW  " + e.message.split("\n")[0] + "\n"); }
+            process.stdout.write("DONE   " + (Date.now() - t0) + "ms\n");
+          }
+          console.log("ALL CASES COMPLETED");
+          JS
+          timeout 120 node /tmp/probe.js || echo "### probe exit=$? (124 = it hung; the last START line names the culprit)"
+      - name: does the process EXIT, or does it hang with an open handle after tests pass?
         if: always()
-        run: node --test --test-timeout=45000 --test-reporter=spec test/*.test.js
+        run: |
+          timeout 60 node -e '
+            require("/home/runner/work/estelle-cli/estelle-cli/test/distill.test.js");
+            console.log("FILE EVALUATED; registering done");
+            setTimeout(()=>{ console.log("event loop alive 2s later — something is holding it"); }, 2000);
+          ' ; echo "### exit=$? (124 = the process never exits)"
