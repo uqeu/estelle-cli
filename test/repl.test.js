@@ -95,6 +95,23 @@ test("every input lands on an endpoint Estelle already serves", () => {
   assert.equal(r.routeInput({ kind: "command", name: "memory", arg: "" }).path, "/deep-search");
 });
 
+test("/gate and /scan carry the DIFF the caller computed, not an empty body", () => {
+  // The bug: both routed with `{}`, so the server answered "the merge gate needs a 'diff'" every single
+  // time while /help listed them as working commands. The session must supply the diff it computed.
+  const ctx = { diff: "--- a/x.py\n+++ b/x.py\n@@\n+new\n" };
+  assert.deepEqual(r.routeInput({ kind: "command", name: "gate", arg: "" }, ctx),
+    { path: "/gate", body: { diff: ctx.diff } });
+  assert.deepEqual(r.routeInput({ kind: "command", name: "scan", arg: "" }, ctx),
+    { path: "/scan", body: { diff: ctx.diff } });
+});
+
+test("the session's local commands are listed in /help — a hidden command is not a feature", () => {
+  for (const name of ["mode", "status", "shell"]) {
+    assert.ok(r.COMMANDS[name], `/help must document ${name}`);
+  }
+  assert.match(r.COMMANDS.shell, /!/, "the shell entry must show the ! form");
+});
+
 test("a rejected key is detected, and a cold start still opens", async () => {
   const rejected = await r.sessionStatus({ key: "bad", get: async () => ({ error: { code: 404 } }) });
   assert.equal(rejected.rejected, true);
@@ -308,4 +325,346 @@ test("runSkill: an INTERACTIVE skill drives the back-and-forth; the CLIENT sends
 test("an error is an error, never a blank success", () => {
   assert.match(r.renderAnswer({ error: { message: "rate limit exceeded" } }, C), /✗ rate limit exceeded/);
   assert.match(r.renderAnswer(null, C), /✗ no reply/);
+});
+
+// ── the local commands: answered in the terminal, with no request at all ────────
+
+/** handleLocal's ctx, with everything recorded so the assertions read as "what did the user see?". */
+function localCtx(over) {
+  const said = [];
+  return {
+    said,
+    ctx: {
+      out: (l) => said.push(l), c: C, key: "estelle_live_9f2b7c1d4e6a8b0c2d4e3f9",
+      state: { mode: "propose", serverMode: null },
+      serverMode: async () => "propose",
+      deps: { api: "https://api.fatelabs.ca", repo: "uqeu/estelle" },
+      ...over,
+    },
+  };
+}
+
+test("/help documents the shell escape in the form you actually type", () => {
+  const { said, ctx } = localCtx();
+  return r.handleLocal({ kind: "command", name: "help", arg: "" }, ctx).then((done) => {
+    assert.equal(done, "handled");
+    assert.match(said.join("\n"), /!<cmd>/);
+    assert.match(said.join("\n"), /\/mode/);
+    assert.match(said.join("\n"), /\/status/);
+    assert.ok(!said.join("\n").includes("/shell"), "there is no /shell command — the ! form is the real one");
+  });
+});
+
+test("/mode with no argument reports; a bad name changes nothing", async () => {
+  const { said, ctx } = localCtx();
+  await r.handleLocal({ kind: "command", name: "mode", arg: "" }, ctx);
+  assert.match(said.join("\n"), /effective\s+propose/);
+
+  await r.handleLocal({ kind: "command", name: "mode", arg: "yolo" }, ctx);
+  assert.match(said.join("\n"), /no mode called "yolo"/);
+  assert.equal(ctx.state.mode, "propose", "an unrecognised name must never move the ceiling");
+});
+
+test("/mode plan LOWERS the ceiling — the one direction the CLI is allowed to move it", async () => {
+  const { said, ctx } = localCtx();
+  await r.handleLocal({ kind: "command", name: "mode", arg: "plan" }, ctx);
+  assert.equal(ctx.state.mode, "read_only");
+  assert.match(said.join("\n"), /effective\s+read_only/);
+});
+
+test("/mode auto on a propose account is CLAMPED and says so — the CLI cannot grant autonomy", async () => {
+  const { said, ctx } = localCtx();
+  await r.handleLocal({ kind: "command", name: "mode", arg: "auto" }, ctx);
+  const out = said.join("\n");
+  assert.match(out, /local\s+execute/);
+  assert.match(out, /effective\s+propose/);
+  assert.match(out, /cannot raise/i);
+});
+
+test("/status answers what this session is pointed at, and masks the key", async () => {
+  const { said, ctx } = localCtx();
+  await r.handleLocal({ kind: "command", name: "status", arg: "" }, ctx);
+  const out = said.join("\n");
+  assert.match(out, /api\.fatelabs\.ca/);
+  assert.match(out, /uqeu\/estelle/);
+  assert.ok(!out.includes("9f2b7c1d4e6a8b0c"), "a credential is never echoed whole");
+});
+
+test("/sweep stops advertising a command that never worked — it names the one that does", async () => {
+  // It was listed in /help but had no route, so it fell through to an MCP tool that has never existed.
+  const { said, ctx } = localCtx();
+  assert.equal(await r.handleLocal({ kind: "command", name: "sweep", arg: "" }, ctx), "handled");
+  assert.match(said.join("\n"), /estelle sweep/);
+});
+
+test("every OTHER slash command still falls through to the router", async () => {
+  // If a local dispatcher swallowed unknown names, the CLI and the MCP door would drift apart the moment
+  // a skill or a nav tool was added.
+  const { ctx } = localCtx();
+  assert.equal(await r.handleLocal({ kind: "command", name: "find_definition", arg: "x" }, ctx), "");
+  assert.equal(await r.handleLocal({ kind: "command", name: "exit", arg: "" }, ctx), "exit");
+});
+
+// ── the session loop: the gate is run on a real diff, or not at all ─────────────
+
+/** A session driven by a scripted list of typed lines. Returns everything printed and every call made. */
+async function session(lines, over) {
+  const said = [], posts = [];
+  const queue = [...lines];
+  await r.runSession({
+    key: "estelle_live_9f2b7c1d4e6a8b0c2d4e3f9",
+    get: async () => ({}),
+    post: async (path, body) => { posts.push({ path, body }); return { answer: "ok" }; },
+    prompt: async () => (queue.length ? queue.shift() : null),
+    out: (l) => said.push(l), c: C, cwd: "estelle", now: () => Date.now(),
+    ...over,
+  });
+  return { said: said.join("\n"), posts };
+}
+
+test("/gate posts the DIFF — the bug was an empty body that errored every single time", async () => {
+  const diff = "--- a/x.py\n+++ b/x.py\n@@\n+new\n";
+  const { posts } = await session(["/gate"], { diff: () => diff });
+  const gate = posts.find((p) => p.path === "/gate");
+  assert.ok(gate, "/gate must actually be called");
+  assert.equal(gate.body.diff, diff);
+});
+
+test("/gate <ref> passes the base ref through to the diff, not to the server", async () => {
+  const seen = [];
+  await session(["/gate main"], { diff: (base) => { seen.push(base); return "d"; } });
+  assert.deepEqual(seen, ["main"]);
+});
+
+test("a git failure BLOCKS and sends nothing — 'git broke' is not a clean verdict", async () => {
+  const { said, posts } = await session(["/gate"], { diff: () => null });
+  assert.equal(posts.filter((p) => p.path === "/gate").length, 0);
+  assert.match(said, /BLOCKED \(fail-closed\)/);
+});
+
+test("nothing staged is said plainly, and still sends nothing", async () => {
+  const { said, posts } = await session(["/scan"], { diff: () => "" });
+  assert.equal(posts.filter((p) => p.path === "/scan").length, 0);
+  assert.match(said, /Nothing staged/);
+});
+
+test("!<command> runs in the shell and comes back to the prompt", async () => {
+  const { said, posts } = await session(["!echo estelle-shell-ok", "how does auth work?"]);
+  assert.match(said, /estelle-shell-ok/);
+  assert.deepEqual(posts.map((p) => p.path), ["/deep-search"], "a shell line is never sent to Estelle");
+});
+
+// ── the mode switch, and the apply path it exists to feed ───────────────────────
+// A mode indicator without a local write path is a switch wired to nothing: /work used to render a diff
+// and drop it. These pin both halves — what the eye sees, and what actually lands on disk.
+
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { execFileSync } = require("node:child_process");
+
+/** A throwaway git repo with one committed file, so an apply can be asserted against real bytes. */
+function tinyRepo(body) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "estelle-repl-"));
+  const git = (...a) => execFileSync("git", a, { cwd: root, encoding: "utf8",
+    env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" } });
+  fs.writeFileSync(path.join(root, "a.txt"), body);
+  git("init", "-q"); git("config", "user.email", "t@t.t"); git("config", "user.name", "t");
+  git("add", "-A"); git("commit", "-qm", "base");
+  return root;
+}
+
+const WORK_DIFF = ["--- a/a.txt", "+++ b/a.txt", "@@ -1,3 +1,3 @@", " one", "-two", "+TWO", " three", ""].join("\n");
+
+/** Like `session`, but records the PROMPT STRING each turn — that is where the mode is rendered. */
+async function promptSession(lines, over) {
+  const said = [], prompts = [];
+  const queue = [...lines];
+  await r.runSession({
+    key: "estelle_live_9f2b7c1d4e6a8b0c2d4e3f9",
+    get: async () => ({}),
+    post: async () => ({ answer: "ok" }),
+    prompt: async (q) => { prompts.push(String(q)); return queue.length ? queue.shift() : null; },
+    out: (l) => said.push(l), c: C, cwd: "estelle", now: () => Date.now(),
+    ...over,
+  });
+  return { said: said.join("\n"), prompts };
+}
+
+test("the prompt carries the mode on every line — the ceiling is no longer invisible", async () => {
+  const { prompts } = await promptSession(["hello"]);
+  assert.ok(prompts.length, "the session must have prompted at all");
+  assert.ok(prompts.every((p) => p.includes("propose")), `mode missing from prompt: ${prompts[0]}`);
+});
+
+test("the prompt shows the CLAMP once the account's dial is known and lower", async () => {
+  // /mode forces the lazy dial fetch; after it, a local mode above the dial must read as clamped.
+  const { prompts } = await promptSession(["/mode execute", "hi"],
+    { get: async (p) => (p === "/autonomy/scope" ? { global: "propose" } : {}) });
+  assert.ok(prompts.some((p) => p.includes("execute→propose")), prompts.join(" | "));
+});
+
+test("shift+tab is BOUND on entry and UNBOUND on the way out", async () => {
+  let bound = 0, unbound = 0, cycle = null;
+  await promptSession(["/exit"], {
+    bindKeys: (fn) => { bound += 1; cycle = fn; return () => { unbound += 1; }; },
+  });
+  assert.equal(bound, 1, "the key must be bound exactly once");
+  assert.equal(unbound, 1, "leaving without unbinding leaks a listener on stdin");
+  assert.equal(typeof cycle, "function");
+});
+
+test("the cycle moves the mode and hands back a banner and a fresh prompt", async () => {
+  let cycle = null;
+  await promptSession(["/exit"], { bindKeys: (fn) => { cycle = fn; return () => {}; },
+                                   get: async (p) => (p === "/autonomy/scope" ? { global: "branch" } : {}) });
+  const first = await cycle();
+  assert.match(first.banner, /shift\+tab/);
+  assert.match(first.prompt, /read_only|propose|branch/);
+  const second = await cycle();
+  assert.notEqual(first.prompt, second.prompt, "cycling twice must land on a different rung");
+});
+
+test("/work now APPLIES its diff instead of drawing it and dropping it", async () => {
+  const root = tinyRepo("one\ntwo\nthree\n");
+  const { said } = await promptSession(["/work fix it", "y"], {
+    root,
+    post: async (p) => (p === "/work" ? { answer: "done", diff: WORK_DIFF } : { answer: "ok" }),
+    get: async (p) => (p === "/autonomy/scope" ? { global: "propose" } : {}),
+  });
+  assert.equal(fs.readFileSync(path.join(root, "a.txt"), "utf8"), "one\nTWO\nthree\n",
+               `the diff never reached disk. session said:\n${said}`);
+});
+
+test("a /work diff is drawn ONCE — the apply flow owns the receipt", async () => {
+  const root = tinyRepo("one\ntwo\nthree\n");
+  const { said } = await promptSession(["/work fix it", "n"], {
+    root,
+    post: async (p) => (p === "/work" ? { answer: "done", diff: WORK_DIFF } : { answer: "ok" }),
+    get: async (p) => (p === "/autonomy/scope" ? { global: "propose" } : {}),
+  });
+  assert.equal(said.split("+TWO").length - 1, 1, `the diff was rendered twice:\n${said}`);
+  assert.equal(fs.readFileSync(path.join(root, "a.txt"), "utf8"), "one\ntwo\nthree\n", "'n' must write nothing");
+});
+
+test("/undo puts an applied /work change back", async () => {
+  const root = tinyRepo("one\ntwo\nthree\n");
+  const { said } = await promptSession(["/work fix it", "y", "/undo"], {
+    root,
+    post: async (p) => (p === "/work" ? { answer: "done", diff: WORK_DIFF } : { answer: "ok" }),
+    get: async (p) => (p === "/autonomy/scope" ? { global: "propose" } : {}),
+  });
+  assert.equal(fs.readFileSync(path.join(root, "a.txt"), "utf8"), "one\ntwo\nthree\n", said);
+});
+
+test("/apply with nothing to apply says so rather than pretending", async () => {
+  const { said } = await promptSession(["/apply"], { root: tinyRepo("one\ntwo\nthree\n") });
+  assert.match(said, /no diff yet/i);
+});
+
+test("/undo with nothing to undo says so rather than reporting success", async () => {
+  const { said } = await promptSession(["/undo"], { root: tinyRepo("one\ntwo\nthree\n") });
+  assert.match(said, /nothing to undo/i);
+});
+
+// ── the thinking indicator (spinnerPlan, finally wired) ────────────────────────
+
+test("without a terminal the spinner is inert — piped output must stay exactly what it was", async () => {
+  let wrote = 0;
+  const v = await r.withSpinner("thinking", async () => "answer", { write: null });
+  assert.equal(v, "answer");
+  assert.equal(wrote, 0);
+});
+
+test("a fast call never draws a frame; a slow one draws and then clears the line", async () => {
+  const frames = [];
+  const fast = await r.withSpinner("thinking", async () => "quick", { write: (s) => frames.push(s) });
+  assert.equal(fast, "quick");
+  assert.deepEqual(frames, [], "a 0ms call must not flash a spinner");
+
+  const slow = await r.withSpinner("thinking", () => new Promise((res) => setTimeout(() => res("slow"), 800)),
+                                   { write: (s) => frames.push(s) });
+  assert.equal(slow, "slow");
+  assert.ok(frames.length > 1, "a slow call must show it is alive");
+  assert.match(frames[frames.length - 1], /\x1b\[2K$/, "the spinner must erase itself, not leave a frame behind");
+});
+
+test("a call that throws still tears the spinner down", async () => {
+  const frames = [];
+  await assert.rejects(
+    () => r.withSpinner("thinking", () => new Promise((_, rej) => setTimeout(() => rej(new Error("boom")), 700)),
+                        { write: (s) => frames.push(s) }),
+    /boom/);
+  assert.match(frames[frames.length - 1], /\x1b\[2K$/, "an error must not leave the line wedged");
+});
+
+// ── the curated turn, driven through the real session loop ─────────────────────────────────────────────
+// The unit tests for the curation itself live in curate.test.js. What is asserted here is that the SESSION
+// actually uses it: that a second question carries the first, that a failed turn is carried as a lesson and
+// not as wreckage, and that the prompt Estelle assembles cannot grow without bound.
+
+test("a session carries its own history — the second question knows about the first", async () => {
+  const replies = [{ answer: "The sweep walks the tree serially." }, { answer: "Batch them." }];
+  const asked = [];
+  const queue = ["why is the sweep slow?", "so how do I fix it?"];
+  await r.runSession({
+    key: "estelle_live_9f2b7c1d4e6a8b0c2d4e3f9",
+    get: async () => ({}),
+    post: async (_p, body) => { asked.push(body.question || ""); return replies[asked.length - 1] || {}; },
+    prompt: async () => (queue.length ? queue.shift() : null),
+    out: () => {}, c: C, cwd: "estelle", now: () => Date.now(),
+  });
+  assert.equal(asked[0], "why is the sweep slow?", "turn one is just the question — no ceremony");
+  const second = asked[1];
+  assert.match(second, /SESSION SO FAR/);
+  assert.match(second, /why is the sweep slow\?/, "the earlier question travels");
+  assert.match(second, /walks the tree serially/, "and so does the earlier answer");
+  assert.match(second, /CURRENT QUESTION: so how do I fix it\?/);
+});
+
+test("a failed turn is carried as a LESSON, not as wreckage", async () => {
+  // A long, verbose failure, then five more turns so it falls out of the verbatim window.
+  const wreck = "Tried the batch upload.\nThe run failed: 413 Payload Too Large\n"
+    + Array.from({ length: 40 }, (_, i) => `  File "sweep.py", line ${i}, in _upload_batch`).join("\n");
+  const replies = [{ answer: wreck }, { answer: "a" }, { answer: "b" }, { answer: "c" },
+                   { answer: "d" }, { answer: "e" }, { answer: "f" }];
+  let n = 0;
+  const seen = [];
+  await r.runSession({
+    key: "estelle_live_9f2b7c1d4e6a8b0c2d4e3f9",
+    get: async () => ({}),
+    post: async (path, body) => { seen.push(body.question || ""); return replies[n++] || { answer: "" }; },
+    prompt: async () => (n < 7 ? `question ${n}` : null),
+    out: () => {}, c: C, cwd: "estelle", now: () => Date.now(),
+  });
+  const last = seen[seen.length - 1];
+  assert.ok(!last.includes("_upload_batch"), "the 40 stack frames must not still be travelling");
+  assert.match(last, /LESSONS/);
+  assert.match(last, /413 Payload Too Large/, "but what the failure TAUGHT must be");
+});
+
+test("an ERROR reply is recorded too — the wreckage a naive transcript would carry forever", async () => {
+  const seen = [];
+  let n = 0;
+  await r.runSession({
+    key: "estelle_live_9f2b7c1d4e6a8b0c2d4e3f9",
+    get: async () => ({}),
+    post: async (_p, body) => { seen.push(body.question || ""); n++; return n === 1 ? { error: { message: "402 no provider key" } } : { answer: "ok" }; },
+    prompt: async () => (n < 2 ? "ask" : null),
+    out: () => {}, c: C, cwd: "estelle", now: () => Date.now(),
+  });
+  assert.match(seen[1], /402 no provider key/, "the next turn knows the last one failed");
+});
+
+test("/context prints the receipt for what the next turn will carry", async () => {
+  const { said } = await session(["why is the sweep slow?", "/context"]);
+  assert.match(said, /turns.*verbatim of 2 recorded/);
+  assert.match(said, /cost.*~\d+ tokens carried/);
+});
+
+test("a slash command that hits the server is NOT wrapped in the session context", async () => {
+  // /work, /gate and the rest take structured bodies; only a typed question carries the working set.
+  const { posts } = await session(["why is the sweep slow?", "/improve"]);
+  const improve = posts.find((p) => p.path === "/improve");
+  assert.ok(improve && !JSON.stringify(improve.body).includes("SESSION SO FAR"));
 });

@@ -21,9 +21,16 @@ const path = require("path");
 const os = require("os");
 const readline = require("readline");
 const { execFileSync } = require("child_process");
+// The one module that knows where a stored key lives. Required at the TOP, not lazily through repl.js,
+// because "what key am I running as" is asked by almost every command and must not depend on loading the
+// interactive session's dependency tree. See resolveKey() below — that is the only door in this file.
+const auth = require("./auth.js");
 
 const MCP_URL = process.env.ESTELLE_MCP_URL || "https://api.fatelabs.ca/mcp";
 const API = MCP_URL.replace(/\/mcp$/, "");
+// Where an over-capacity sweep sends you. The marketing site, not the API host — an upgrade link that
+// points at api.* is a dead end at exactly the moment the customer wants to pay.
+const PRICING_URL = "https://fatelabs.ca/pricing";
 
 // ── pretty terminal ────────────────────────────────────────────────────────────
 const C = process.stdout.isTTY && !process.env.NO_COLOR;
@@ -35,7 +42,10 @@ const ok = green("✓"), arrow = teal("▸"), dot = grey("·");
 
 function banner() {
   console.log("");
-  console.log("  " + bold(teal("◆ estelle")) + dim("  code memory + a 0%-hallucination gate, on your plan"));
+  // No tagline. "code memory + a 0%-hallucination gate" named two features out of many and read as a
+  // product blurb in a place nobody wants one — a CLI banner should say WHOSE tool this is and get out
+  // of the way. The wordmark is the whole message; what Estelle does is what the next line does.
+  console.log("  " + bold(teal("estelle")) + dim("  by Fate Labs"));
   console.log("");
 }
 
@@ -155,10 +165,24 @@ function flag(name, def) {
 const has = (name) => process.argv.includes(name);
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
+/**
+ * THE one place a command asks "what key am I running as": `--key` > `$ESTELLE_API_KEY` > the key the
+ * session stored at ~/.estelle/auth.json.
+ *
+ * Every command used to inline `flag("--key", process.env.ESTELLE_API_KEY)` and stop there, which meant
+ * the REPL could save a key, print "Run `estelle sweep`", and have that exact command answer
+ * "Need --key" — the first thing a new customer does after signing in, failing. argv stays this file's
+ * business (only the entry point owns it); WHERE the stored key lives is auth.js's, and there is now one
+ * of each rather than a copy per call site.
+ */
+const resolveKey = () => flag("--key", auth.storedKey());
+
 // ── commands ─────────────────────────────────────────────────────────────────────
 async function cmdInit() {
   banner();
-  let key = flag("--key", process.env.ESTELLE_API_KEY);
+  // A customer who already pasted a key into the session should not be asked for it again to wire an
+  // editor up — resolveKey finds it, and the prompt below stays for the genuine first run.
+  let key = resolveKey();
   if (!key) {
     console.log("  " + bold("Connect your coding agent to Estelle."));
     console.log("  " + dim("Paste your Estelle API key (or get one free at ") + teal("fatelabs.ca") + dim(").") );
@@ -214,14 +238,101 @@ const SYNC_MAX_FILES = 200;
 const POLL_MS = Number(process.env.ESTELLE_POLL_MS || 2000);
 const MAX_POLLS = 7200; // ~4 h at the default cadence — the ingest keeps running server-side regardless
 // Key shapes the gate itself scans for — a file embedding a live-looking secret NEVER leaves the machine.
-const SECRET_RE = /sk-[A-Za-z0-9_-]{20,}|sk_live_[A-Za-z0-9]{10,}|ghp_[A-Za-z0-9]{36}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----/;
+// Defined once in secrets.js so the sweep, the always-on sync hook and the Python hook cannot drift apart:
+// until this was split out, the sweep had the rule and BOTH hooks had nothing.
+const { SECRET_RE } = require("./secrets.js");
+const gh = require("./github-connect.js");
+
+/** Best-effort browser launch for the GitHub authorize step. The URL is ALWAYS printed first, so a headless
+ *  box, an SSH session or a locked-down opener degrades to "copy this link" rather than to a dead end.
+ *  execFileSync with an argv array — never a shell — so the URL cannot be interpreted as a command. */
+function openUrl(url) {
+  const argv = process.platform === "darwin" ? ["open", [url]]
+    : process.platform === "win32" ? ["cmd", ["/c", "start", "", url]]
+    : ["xdg-open", [url]];
+  try {
+    execFileSync(argv[0], argv[1], { stdio: "ignore", timeout: 5000 });
+  } catch (_) { /* no opener here — the printed link is the path */ }
+}
 
 const filePayload = (files) => files.map((f) => ({ path: f.path, content: f.content }));
+
+/** Split a collected set into what may travel and what may NOT — a file embedding a live-looking secret
+ * stays on the machine. Pure, so the rule is testable without touching a disk or a network. */
+const partitionSecrets = (collected) => ({
+  files: collected.filter((f) => !SECRET_RE.test(f.content)),
+  flagged: collected.filter((f) => SECRET_RE.test(f.content)),
+});
 
 // The ingest body. `repo` FILES this sweep under a name so it lands in its own namespace instead of the
 // shared unfiled one; omitted only when we genuinely could not work out a name.
 const syncBody = (files, repo) =>
   (repo ? { files: filePayload(files), repo } : { files: filePayload(files) });
+
+// ── the size gate: does this repo even FIT before we upload it? ────────────────
+//
+// A sweep used to start blind. Point a Free account (10M memory-tokens) at a 70M-token repo and the upload
+// ran to completion while the server quietly declined file after file at the cap — the first experience of
+// Estelle was a half-indexed repo with no warning it was ever going to fit. So we ask first, and we ask
+// CHEAPLY: paths and byte sizes only, never content, so measuring a 70M repo costs one small request.
+const estimateBody = (files, repo) => ({
+  ...(repo ? { repo } : {}),
+  files: files.map((f) => ({ path: f.path, bytes: Buffer.byteLength(f.content, "utf8") })),
+});
+
+/** Memory-tokens as the label the pricing page uses ("42M", "1.2M", "12K"). */
+function mtok(n) {
+  const v = Number(n) || 0;
+  if (v >= 1e6) return (v / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
+  if (v >= 1e3) return (v / 1e3).toFixed(1).replace(/\.0$/, "") + "K";
+  return String(Math.round(v));
+}
+
+/** The refusal, rendered as plain lines: what the repo needs, what the account has, the cheapest plan that
+ * would fit, and the two ways out that are not "pay us" (a narrower path, or excluding the big directories).
+ * Pure — a block a user cannot act on is a dead end, and this fires at the moment they want the product. */
+function sweepFitLines(est) {
+  if (!est || typeof est !== "object") return [];
+  const lines = [`${est.repo || "This repo"} needs about ${mtok(est.estimated_tokens)} memory-tokens.`];
+  if (est.cap) {
+    lines.push(`Your plan holds ${mtok(est.cap)} (${mtok(est.remaining_tokens)} free) — `
+      + `${mtok(est.blocked_tokens)} would not fit.`);
+  }
+  const plan = est.suggested_plan;
+  if (plan) lines.push(`${plan.plan} (${mtok(plan.cap)}) fits — $${plan.monthly_usd}/mo: ${PRICING_URL}`);
+  const top = (Array.isArray(est.largest_paths) ? est.largest_paths : []).slice(0, 3);
+  if (top.length) lines.push("Biggest: " + top.map((t) => `${t.path} ${mtok(t.tokens)}`).join("  ·  "));
+  lines.push("Or sweep a narrower path:  npx @fatelabs/estelle sweep --path <dir>");
+  return lines;
+}
+
+function showTooBig(est) {
+  console.log("  " + amber("This sweep will not fit your capacity — nothing was uploaded."));
+  for (const line of sweepFitLines(est)) console.log("  " + dim(line));
+  process.exitCode = 1;
+}
+
+/** Ask the server what this repo would cost the account's capacity. Returns false when it will NOT fit
+ * (message already printed) — the caller must not upload.
+ *
+ * A failed estimate does NOT block: the SAME measurement is enforced server-side inside /sync and
+ * /ingest/start, so the repo is gated either way and an older Estelle (404 here) has no gate on either
+ * path — refusing locally would only break `sweep` against every server predating this release. This call
+ * buys an earlier, kinder failure; it is not the thing standing between a 70M repo and a 10M cap. */
+async function preflightSize(files, key, repo) {
+  const r = await apiPost("/sweep/estimate", estimateBody(files, repo), key);
+  if (!r.ok) {
+    if (r.status !== 404) console.log("  " + dim(`Could not size this repo first (${errText(r) || r.status}).`));
+    return true;
+  }
+  const est = r.json || {};
+  if (est.fits === false) { showTooBig(est); return false; }
+  if (est.cap) {
+    console.log("  " + dim(`Fits: about ${mtok(est.estimated_tokens)} of your ${mtok(est.cap)} capacity`
+      + `${est.billable_tokens ? ` (${mtok(est.billable_tokens)} bills as overflow)` : ""}.`));
+  }
+  return true;
+}
 
 // Honesty guard: the server discloses anything its caps dropped ("dropped": {reason: n}) — a green
 // "Repo swept." over a half-indexed repo is a false completeness claim, so warn LOUDLY instead.
@@ -232,13 +343,27 @@ function warnDropped(json) {
   if (!total) return false;
   const reasons = Object.entries(d).map(([k, v]) => `${k}: ${v}`).join(", ");
   console.log("  " + amber(`${total} file(s) were NOT indexed`) + dim(` (${reasons}) — recall cannot cite them.`));
-  console.log("  " + dim(oneLine(json.warning || "Batch the remainder across further sweeps.")));
+  // The FALLBACK text an older server leaves us to write. It used to say "batch the remainder across
+  // further sweeps", which is the destructive advice: /sync rebuilds the code graph from exactly what it
+  // receives, so a second sweep of the remainder leaves a graph holding only the remainder. Never tell a
+  // customer to do that — point at the two routes that keep the graph whole.
+  console.log("  " + dim(oneLine(json.warning ||
+    "Re-run the sweep over the whole repo, or narrow it with --path. Do NOT sweep the remainder separately: " +
+    "a sweep rebuilds the code graph from exactly what it sends.")));
   return true;
+}
+
+/** A refusal the SERVER made on size grounds carries the estimate — render it, not a bare HTTP code. The
+ * server is the enforcement point (the preflight above is only an earlier, kinder failure), so this is the
+ * path a stale CLI, a raced upgrade, or a repo that grew between the two calls actually takes. */
+function failedOnSize(r) {
+  return r.status === 402 && r.json && r.json.estimate && r.json.estimate.fits === false;
 }
 
 async function syncUpload(files, key, repo) {
   process.stdout.write("  " + dim("Uploading to your Estelle memory… "));
   const r = await apiPost("/sync", syncBody(files, repo), key);
+  if (failedOnSize(r)) { console.log(""); return showTooBig(r.json.estimate); }
   if (!r.ok) return fail(r);
   console.log(ok);
   console.log("");
@@ -256,6 +381,7 @@ const progressPath = (repo) =>
 
 async function ingestWithProgress(files, key, repo) {
   const r = await apiPost("/ingest/start", syncBody(files, repo), key);
+  if (failedOnSize(r)) return showTooBig(r.json.estimate);
   if (!r.ok) {
     const msg = errText(r);
     // A server that predates /ingest/start 404s the route (not the key) — fall back to the sync path.
@@ -290,6 +416,15 @@ async function ingestWithProgress(files, key, repo) {
       process.exitCode = 1;
       return;
     }
+    // TERMINAL, and the one this loop used to miss. A worker killed by a restart writes no done/error, so
+    // the snapshot stayed "ingesting" for ever and we told the user "the ingest continues server-side" —
+    // which was false. The server now derives it; stopping here is what makes it actionable.
+    if (v.state === "stalled") {
+      console.log("");
+      console.log("  " + amber("Ingest stopped: ") + dim(oneLine(v.message || v.error || "no progress") + `  (reached ${pct}%)`));
+      process.exitCode = 1;
+      return;
+    }
   }
   console.log("");
   console.log("  " + amber("Stopped polling — the ingest continues server-side; check the dashboard."));
@@ -298,13 +433,13 @@ async function ingestWithProgress(files, key, repo) {
 
 async function cmdSweep() {
   banner();
-  const key = flag("--key", process.env.ESTELLE_API_KEY);
-  if (!key) { console.log("  " + amber("Need --key <ESTELLE_KEY> to sweep.")); return; }
+  const key = resolveKey();
+  // Same rule as reindex: no key is a failure, not a no-op. A green CI step that ingested nothing is how a
+  // repo silently stops being swept while every dashboard still says it is connected.
+  if (!key) { console.log("  " + amber("Need an Estelle key to sweep — pass ") + bold("--key <KEY>") + amber(", set ") + bold("ESTELLE_API_KEY") + amber(", or run ") + bold("estelle") + amber(" once to save one.")); process.exitCode = 1; return; }
   const root = flag("--path", process.cwd());
   console.log("  " + dim("Scanning ") + bold(root) + dim(" for source files…"));
-  const collected = collectFiles(root);
-  const flagged = collected.filter((f) => SECRET_RE.test(f.content));
-  const files = collected.filter((f) => !SECRET_RE.test(f.content));
+  const { files, flagged } = partitionSecrets(collectFiles(root));
   if (flagged.length) {
     console.log("  " + amber(`Skipped ${flagged.length} file(s) that look like they contain a live secret — they stay on your machine:`));
     for (const f of flagged.slice(0, 8)) console.log("    " + red("✗") + " " + f.path);
@@ -314,6 +449,9 @@ async function cmdSweep() {
   console.log("  " + dim(`Found ${bold(String(files.length))}${dim(" files")} ${dot} ${(bytes / 1024).toFixed(0)} KB ${dot} these upload to ${API}`));
   const repo = repoNameFor(root);
   if (repo) console.log("  " + dim("Filing under repo ") + bold(repo) + dim(" — recall stays scoped to it."));
+  // Measure BEFORE uploading. Anything else means a repo that cannot fit still travels the wire in full and
+  // lands half-indexed, which is the bug this command had.
+  if (!(await preflightSize(files, key, repo))) return;
   if (files.length < SYNC_MAX_FILES) { await syncUpload(files, key, repo); return; }
   await ingestWithProgress(files, key, repo);
 }
@@ -327,39 +465,73 @@ async function cmdSweep() {
 //
 //   estelle reindex                 # every file git reports as changed vs HEAD
 //   estelle reindex src/a.py src/b.py
+
+/** Say out loud that some paths were left out, and why. Every skip is SPOKEN: a silent one is how a customer
+ * concludes a file is indexed when it never was. Capped at 8 because a wall of paths gets skimmed, and a
+ * warning nobody reads is the same as no warning. */
+function announceSkipped(headline, paths, note) {
+  if (!paths.length) return;
+  console.log("  " + amber(headline));
+  for (const p of paths.slice(0, 8)) console.log("    " + red("✗") + " " + p);
+  if (note) console.log("  " + dim(note));
+}
+
 async function cmdReindex() {
   banner();
-  const key = flag("--key", process.env.ESTELLE_API_KEY);
-  if (!key) { console.log("  " + amber("Need --key <ESTELLE_KEY> to reindex.")); return; }
+  const key = resolveKey();
+  // A missing key is a FAILURE, not a no-op: "Need --key" then exit 0 leaves CI green while the memory was
+  // never touched, and every later gate then grounds against a graph that quietly stopped moving.
+  if (!key) { console.log("  " + amber("Need an Estelle key to reindex — pass ") + bold("--key <KEY>") + amber(", set ") + bold("ESTELLE_API_KEY") + amber(", or run ") + bold("estelle") + amber(" once to save one.")); process.exitCode = 1; return; }
   const root = flag("--path", process.cwd());
 
   // Explicit paths win; otherwise ask git what actually changed. Never fall back to "everything" — a silent
   // whole-repo reindex would be a slow surprise, and `sweep` is the command that means that.
-  // Positional paths after the subcommand. Skip flag values too, so `--key K` never becomes a "file".
-  const rest = process.argv.slice(3);
-  const named = [];
-  for (let i = 0; i < rest.length; i++) {
-    if (rest[i].startsWith("-")) { i++; continue; }   // a flag and its value
-    named.push(rest[i]);
-  }
-  const changed = named.length ? named : changedFiles(root);
-  if (!changed.length) {
+  const named = positionalPaths(process.argv.slice(3));
+  // git reports changed paths relative to the REPO ROOT, so that is the base they must be resolved
+  // against — resolving them against the cwd is what made a subdirectory run delete live files.
+  // Explicitly named paths are the user's own and stay relative to where they typed them.
+  const gitRoot = named.length ? "" : (repoRoot(root) || root);
+  const base = named.length ? root : gitRoot;
+  const requested = named.length ? named : changedFiles(gitRoot);
+  if (!requested.length) {
     console.log("  " + green("Nothing changed.") + dim("  Your memory is already current."));
     console.log("");
     return;
   }
 
-  const collected = [];
-  for (const rel of changed) pushFile(collected, root, path.resolve(root, rel));
-  const flagged = collected.filter((f) => SECRET_RE.test(f.content));
-  const files = collected.filter((f) => !SECRET_RE.test(f.content));
-  if (flagged.length) {
-    console.log("  " + amber(`Skipped ${flagged.length} file(s) that look like they contain a live secret:`));
-    for (const f of flagged.slice(0, 8)) console.log("    " + red("✗") + " " + f.path);
+  // Everything the graph is keyed by is repo-relative, so normalise here and REFUSE anything that escapes
+  // the root — the same rule the PostToolUse sync hook enforces.
+  const changed = [];
+  const outside = [];
+  for (const p of requested) {
+    const rel = repoRelative(base, p);
+    if (rel) changed.push(rel); else outside.push(p);
   }
-  // A path git lists but that no longer exists on disk was DELETED — tell the server so its symbols go away
-  // rather than lingering as ground truth for code that is gone.
-  const removed = changed.filter((rel) => !fs.existsSync(path.resolve(root, rel)));
+  announceSkipped(`Skipped ${outside.length} path(s) outside this repo — reindex only files under ${base}:`, outside);
+
+  // The extension allowlist applies to NAMED paths too, not just to git's list. Refusing is the right call
+  // even though the user typed the path: an ingested binary or .env is invisible once stored and stays there.
+  const { kept, skipped } = partitionIngestable(changed);
+  announceSkipped(`Skipped ${skipped.length} path(s) a code graph can't hold — source and docs only:`, skipped);
+
+  const collected = [];
+  for (const rel of kept) pushFile(collected, base, path.resolve(base, rel));
+  const { files, flagged } = partitionSecrets(collected);
+  announceSkipped(`Skipped ${flagged.length} file(s) that look like they contain a live secret:`,
+                  flagged.map((f) => f.path));
+
+  // Only GIT may declare a deletion. A path that is merely absent from disk proves nothing — a typo is absent
+  // too — and `removed` is the field that makes nodes disappear, so it takes the stronger evidence.
+  const proven = new Set(deletedFiles(base));
+  const missing = kept.filter((rel) => !fs.existsSync(path.resolve(base, rel)));
+  const removed = missing.filter((rel) => proven.has(rel));
+  const unexplained = missing.filter((rel) => !proven.has(rel));
+  announceSkipped(`Skipped ${unexplained.length} path(s) that are not on disk and that git does not report as deleted:`,
+                  unexplained, "Check the spelling — a path you typed wrong is not a deletion, so nothing was dropped.");
+  // Non-zero only for a path the USER named, where the mistake is theirs to see: the file they meant is
+  // silently NOT reindexed, so a green exit hides it. Git's own list can go stale mid-run (a broken symlink,
+  // an untracked file removed between the two commands) and that is not the customer's error to fail on.
+  if (unexplained.length && named.length) process.exitCode = 1;
   if (!files.length && !removed.length) {
     console.log("  " + amber("Nothing ingestable in the changed set."));
     return;
@@ -372,37 +544,156 @@ async function cmdReindex() {
   console.log("  " + dim("Reindexing ") + bold(parts.join(" + ")) + dim(` ${dot} untouched files keep their symbols`));
   if (repo) console.log("  " + dim("Filing under repo ") + bold(repo));
 
-  const body = syncBody(files, repo);
-  if (removed.length) body.removed = removed;
+  // The plan is printed above; --dry-run stops here. Before the parser learned which flags take a value this
+  // was accidentally safe (the flag ate the path and nothing was collected) — now the path survives, so the
+  // stop has to be deliberate. Uploading against an explicit "don't" is not a smaller mistake than a typo.
+  if (has("--dry-run")) {
+    console.log("  " + dim("--dry-run · nothing was sent."));
+    console.log("");
+    return;
+  }
+
+  const body = reindexBody(files, repo, removed);
   process.stdout.write("  " + dim("Updating your Estelle memory… "));
   const r = await apiPost("/reindex", body, key);
   if (!r.ok) return fail(r);
   console.log(ok);
   console.log("");
-  console.log("  " + green("Memory current.") + dim("  Only the changed files moved; the rest of the graph is intact."));
+  // The green claim is only true of the paths that were actually handled. Saying "Memory current." over a run
+  // where a named path did nothing is the same false-completeness the sweep's warnDropped exists to prevent —
+  // the customer reads it, believes the file is indexed, and the graph stays stale for exactly that file.
+  if (unexplained.length) {
+    console.log("  " + amber("Memory updated — but not for every path you named.") + dim("  The skipped paths above were left alone."));
+  } else {
+    console.log("  " + green("Memory current.") + dim("  Only the changed files moved; the rest of the graph is intact."));
+  }
   console.log("");
+}
+
+// ── the reindex decisions, pure so they are testable without a repo, a disk or a server ──────────────
+
+// The flags that consume the argument AFTER them. Only these may swallow one: skipping unconditionally made
+// a valueless flag eat the path behind it (`reindex --dry-run a.py` reindexed nothing and reported "Nothing
+// changed"), and a run that quietly did no work looks exactly like a run that did.
+const VALUE_FLAGS = new Set(["--key", "--path", "--repo", "--url", "--base", "--client"]);
+
+/** The positional file paths in `estelle reindex [files…]`, with flags and THEIR VALUES dropped — so
+ * `--key K` never becomes a "file" the CLI then reads and uploads. */
+function positionalPaths(args) {
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = String(args[i]);
+    if (arg.startsWith("-")) { if (VALUE_FLAGS.has(arg)) i++; continue; }   // a flag, and its value if it takes one
+    out.push(args[i]);
+  }
+  return out;
+}
+
+/** Split repo-relative paths into what a code graph may hold and what it may not.
+ *
+ * `changedFromGitOutput` already filters git's own list, but a path the USER names reaches the uploader
+ * directly, and typing a path is not a licence to ingest it: a PNG read as UTF-8 poisons the graph and a
+ * .env puts the customer's config in memory, both silently and both durably. `SECRET_RE` is no backstop —
+ * it matches key SHAPES, so `STRIPE=whatever` is not a secret to it and would travel. */
+function partitionIngestable(paths) {
+  const list = paths || [];
+  return {
+    kept: list.filter((p) => EXT.has(path.extname(p))),
+    skipped: list.filter((p) => !EXT.has(path.extname(p))),
+  };
+}
+
+/** One path in the form the graph is keyed by — relative to the repo root — or "" when it escapes.
+ *
+ * Two things ride on this. An ABSOLUTE or `./`-prefixed path would not match the relative path the sweep
+ * stored, so a `removed` entry would silently drop nothing and a changed file would land beside its old
+ * copy instead of replacing it. And a path OUTSIDE the root must be refused outright: `reindex
+ * ../other-repo/x.py` would otherwise file someone else's code under this repo's namespace — the exact
+ * rule the PostToolUse sync hook already enforces (hook.js: `if (rel.startsWith("..")) return 0`). */
+function repoRelative(root, p) {
+  const base = path.resolve(String(root || ""));
+  const rel = path.relative(base, path.resolve(base, String(p || "")));
+  if (!rel || rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel)) return "";
+  return rel;
+}
+
+/** The ingestable paths in one `git … --name-only` blob. Extension-filtered here because git reports
+ * lockfiles, images and binaries as "changed" too, and none of those belong in a code graph. */
+function changedFromGitOutput(stdout) {
+  const out = [];
+  for (const line of String(stdout || "").split("\n")) {
+    const rel = line.trim();
+    if (rel && EXT.has(path.extname(rel))) out.push(rel);
+  }
+  return out;
+}
+
+/** The /reindex request body. `files` REPLACE their own nodes, `removed` DROPS paths that are gone, and
+ * every path NOT named survives untouched — that last part is the whole difference from /sync, which
+ * rebuilds the grounding surface from exactly what it receives. `removed` is omitted when empty rather
+ * than sent as [], so an ordinary update can never be read as "delete nothing" bookkeeping. */
+function reindexBody(files, repo, removed) {
+  const body = syncBody(files, repo);
+  if (removed && removed.length) body.removed = removed;
+  return body;
 }
 
 // What git says changed vs HEAD, plus anything untracked. Empty outside a git repo — there is no honest way
 // to know what "changed" means without one, and guessing would either miss edits or resend the world.
+/** The repo ROOT for `dir`, or "" when it is not inside a git work tree.
+ *
+ * Load-bearing: git reports changed paths relative to the repo root, so the root — not the cwd — is the
+ * only correct base to resolve them against. */
+function repoRoot(dir) {
+  try {
+    return execFileSync("git", ["-C", dir, "rev-parse", "--show-toplevel"],
+                        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch (_) { return ""; }
+}
+
 function changedFiles(root) {
   const out = new Set();
   // Tracked-and-modified, then untracked-but-not-ignored. execFileSync with an argv array (never a shell
   // string) so a path with a space or a quote in it cannot become a second command.
+  //
+  // `--full-name` on ls-files is NOT cosmetic. Without it these two commands report on DIFFERENT bases:
+  // `diff --name-only` is always repo-root-relative, while `ls-files` is relative to the CWD. Run
+  // `estelle reindex` from any subdirectory and a modified top-level file resolved against the cwd points
+  // at a path that does not exist — so it was classified as DELETED and sent in `removed`, telling the
+  // server to drop the nodes of a live file, while the CLI printed "the rest of the graph is intact."
+  // That is precisely the graph-gutting that reindex exists to avoid. Both are root-relative now, and
+  // the caller resolves them against the ROOT.
   const runs = [
     ["-C", root, "diff", "--name-only", "HEAD"],
-    ["-C", root, "ls-files", "--others", "--exclude-standard"],
+    ["-C", root, "ls-files", "--others", "--exclude-standard", "--full-name"],
   ];
   for (const argv of runs) {
     try {
       const stdout = execFileSync("git", argv, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-      for (const line of stdout.split("\n")) {
-        const rel = line.trim();
-        if (rel && EXT.has(path.extname(rel))) out.add(rel);
-      }
+      for (const rel of changedFromGitOutput(stdout)) out.add(rel);
     } catch (_) { /* not a git repo, or no HEAD yet — reindex then needs explicit paths */ }
   }
   return [...out];
+}
+
+/** The paths git reports as DELETED vs HEAD, relative to `base` — the ONLY evidence that may become a
+ * `removed` entry.
+ *
+ * "Not on disk" is a different fact and a much weaker one: a mistyped path is not on disk either, so reading
+ * absence as deletion turned `estelle reindex src/atuh.py` into an unconfirmed instruction to drop
+ * `src/atuh.py`'s nodes. Empty outside a git repo, which is the honest answer — with no git there is no
+ * record of a deletion, and inventing one drops symbols for code that is still there.
+ *
+ * `--relative` is what makes the answer COMPARABLE. Plain `diff --name-only` is always repo-root-relative,
+ * and the caller's paths are relative to wherever the user typed them; re-basing one onto the other by hand
+ * breaks the moment a path crosses a symlink (every macOS temp dir does), and a deletion that fails to match
+ * silently degrades into "you mistyped that". Let git answer in the caller's own base instead. */
+function deletedFiles(base) {
+  try {
+    const stdout = execFileSync("git", ["-C", base, "diff", "--relative", "--name-only", "--diff-filter=D", "HEAD"],
+                                { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    return changedFromGitOutput(stdout);
+  } catch (_) { return []; }   // not a git repo, or no HEAD yet — then nothing is provably deleted
 }
 
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", "__pycache__", ".venv", "venv",
@@ -477,6 +768,10 @@ function collectFiles(root) {
 function cmdConnect() {
   banner();
   const client = process.argv[3] || "cursor";
+  // Deliberately NOT resolveKey(). This command's whole output is a config snippet printed to the
+  // terminal, so resolving the stored key here would splash a saved bearer credential across the screen
+  // (and any transcript or screen-share) as a side effect of asking how to connect. A placeholder is the
+  // right answer; an explicit --key or $ESTELLE_API_KEY is the caller saying "yes, print it".
   const key = flag("--key", process.env.ESTELLE_API_KEY || "<YOUR_ESTELLE_KEY>");
   console.log("  " + bold(`Connect ${PRETTY[client] || client} to Estelle`));
   console.log("");
@@ -541,8 +836,15 @@ function cmdRemove() {
 
 // ── hosted-API verbs (ask / recall / verify / gate) — any terminal becomes a full Estelle client ─────
 function needKey() {
-  const key = flag("--key", process.env.ESTELLE_API_KEY);
-  if (!key) console.log("  " + amber("Need an Estelle key — pass ") + bold("--key <KEY>") + amber(" or set ") + bold("ESTELLE_API_KEY") + amber("."));
+  const key = resolveKey();
+  if (!key) {
+    console.log("  " + amber("Need an Estelle key — pass ") + bold("--key <KEY>") + amber(", set ") + bold("ESTELLE_API_KEY") + amber(", or run ") + bold("estelle") + amber(" once to save one."));
+    // A RED pipeline, never a silent green. This mattered most for `gate` and `verify`, the CI commands:
+    // exiting 0 with no key meant no key -> the gate never ran -> the build passed, which is a fail-OPEN
+    // and the exact opposite of the rule `failClosed` states a few lines below ("an error is NEVER a
+    // pass … all BLOCK"). A missing credential is the same class as a revoked one.
+    process.exitCode = 1;
+  }
   return key;
 }
 // Everything after the command, joined, up to the first --flag — so `estelle ask how does auth work` works unquoted.
@@ -558,6 +860,22 @@ async function apiPost(pathname, body, key) {
   try {
     const res = await fetch(`${API}${pathname}`, {
       method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    let json = null; try { json = JSON.parse(text); } catch (_) { /* non-JSON body */ }
+    return { ok: res.ok, status: res.status, json, text };
+  } catch (e) {
+    return { ok: false, status: 0, json: null, text: String((e && e.message) || e) };
+  }
+}
+// PUT is a real verb here, not a stylistic choice: the vendor watchlist is ONE object the caller replaces,
+// and the server routes GET and PUT on the same path to tell "read it" from "this is now the whole thing".
+async function apiPut(pathname, body, key) {
+  try {
+    const res = await fetch(`${API}${pathname}`, {
+      method: "PUT",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
@@ -649,6 +967,156 @@ async function cmdRecall() {
   console.log("");
 }
 
+// ── github: link an identity, bind an installation, sweep the repos you pick ────────────────────────
+// The terminal half of GitHub connect. It is NOT a weaker door than the dashboard: the server demands the
+// same two proofs from both — an OAuth code (control of the GitHub installation) AND an authenticated
+// caller (control of the Estelle account). The CLI already holds the second as its API key, and the first
+// arrives on a loopback listener, so a link forwarded to someone else delivers its code to THEIR machine.
+async function cmdGithub() {
+  banner();
+  const key = needKey(); if (!key) return;
+  const sub = (process.argv[3] || "").trim();
+  if (sub === "link") return cmdGithubLink(key);
+  if (sub === "connect") return cmdGithubConnect(key, process.argv[4]);
+  if (sub === "repos") return cmdGithubRepos(key);
+  if (sub === "sweep") return cmdGithubSweep(key);
+  const id = await apiGet("/github/identity", key);
+  if (!id.ok) return fail(id);
+  const linked = (id.json || {}).linked;
+  const installs = linked ? await apiGet("/github/identity/installations", key) : null;
+  // Whether anything is CONNECTED is the server's answer, not this identity's installation list: on a team
+  // the binding belongs to the team, so a teammate's Connect is what makes this account connected. Without
+  // this read the status always said "Run: estelle github connect", even right after a successful one.
+  const repos = linked ? await apiGet("/github/repos", key) : null;
+  console.log("");
+  for (const line of gh.statusLines(id.json, installs && installs.json && installs.json.installations,
+                                    repos && repos.ok ? repos.json : null)) {
+    console.log("  " + (line.startsWith("Run:") ? dim(line) : line));
+  }
+  console.log("");
+}
+
+async function cmdGithubLink(key) {
+  const start = await apiGet(
+    `/github/identity/authorize-url?redirect_uri=${encodeURIComponent(gh.redirectUri())}`, key);
+  if (!start.ok) return fail(start);
+  const url = (start.json || {}).authorize_url;
+  console.log("  " + bold("Authorize Estelle on GitHub") + dim("  (opens in your browser)"));
+  console.log("  " + teal(url));
+  console.log("  " + dim("Waiting for the redirect on ") + grey(gh.redirectUri()) + dim(" …"));
+  const waiting = gh.awaitCallback({});
+  openUrl(url);
+  let back;
+  try {
+    back = await waiting;
+  } catch (e) {
+    console.log("  " + red(String((e && e.message) || e)));
+    process.exitCode = 1;
+    return;
+  }
+  const linked = await apiPost("/github/identity/link", { code: back.code, state: back.state }, key);
+  if (!linked.ok) return fail(linked);
+  const login = (linked.json || {}).login;
+  console.log("  " + ok + " " + bold("GitHub identity linked") + (login ? dim(`  (${login})`) : ""));
+  console.log("  " + dim("Next: ") + teal("estelle github connect"));
+  console.log("");
+}
+
+async function cmdGithubConnect(key, want) {
+  const listed = await apiGet("/github/identity/installations", key);
+  if (!listed.ok) return fail(listed);
+  const choice = gh.pickInstallation((listed.json || {}).installations, want);
+  if (choice.none) {
+    console.log("  " + amber("That identity can't see any Estelle App installation."));
+    console.log("  " + dim("Install the Estelle GitHub App on the org or user that owns the repos, then retry."));
+    process.exitCode = 1;
+    return;
+  }
+  if (!choice.chosen) {
+    // Never pick the first: binding the wrong org sweeps the wrong private code into this namespace.
+    if (choice.unknown) console.log("  " + amber(`No installation matches "${choice.unknown}".`));
+    console.log("  " + bold("Which installation?") + dim("  estelle github connect <id|owner>"));
+    for (const row of choice.needs) console.log("  " + dot + " " + teal(String(row.id)) + dim("  " + (row.account || "")));
+    process.exitCode = 1;
+    return;
+  }
+  // sweep:false — connect FIRST, choose SECOND. Binding must never ingest an org's every repo before
+  // anyone asked whether that is wanted or whether it fits the plan.
+  const bound = await apiPost("/github/app/setup",
+                              { installation_id: choice.chosen.id, sweep: false }, key);
+  if (!bound.ok) return fail(bound);
+  console.log("  " + ok + " " + bold("Connected") + dim(`  installation ${choice.chosen.id} `
+    + (choice.chosen.account ? `(${choice.chosen.account})` : "")));
+  console.log("  " + dim("Nothing was ingested yet. Next: ") + teal("estelle github repos"));
+  console.log("");
+}
+
+async function cmdGithubRepos(key) {
+  const r = await apiGet("/github/repos", key);
+  if (!r.ok) return fail(r);
+  const v = r.json || {};
+  if (!v.connected) {
+    console.log("  " + amber("No GitHub App installation is connected to this account."));
+    console.log("  " + dim("Run: ") + teal("estelle github connect"));
+    return;
+  }
+  console.log("  " + bold("Granted repos") + dim("  (token cost is an ESTIMATE from GitHub's size, not a measurement)"));
+  for (const repo of v.repos || []) {
+    console.log("  " + dot + " " + teal(repo.full_name) + dim(`  ~${mtok(repo.estimated_tokens)}`)
+      + (repo.swept ? green("  swept") : ""));
+  }
+  console.log("");
+  console.log("  " + dim("Ingest what you pick: ") + teal("estelle github sweep owner/name [owner/other]"));
+  console.log("");
+}
+
+async function cmdGithubSweep(key) {
+  const repos = argText(4).split(/[\s,]+/).filter(Boolean);
+  if (!repos.length) {
+    console.log("  " + amber("Which repos?") + dim("  estelle github sweep owner/name [owner/other]"));
+    process.exitCode = 1;
+    return;
+  }
+  process.stdout.write("  " + dim("Queueing… "));
+  const r = await apiPost("/github/sweep", { repos }, key);
+  if (failedOnSize(r)) { console.log(""); return showTooBig(r.json.estimate); }
+  if (!r.ok) return fail(r);
+  console.log(ok);
+  for (const job of (r.json || {}).queued || []) console.log("  " + dot + " " + teal(job.repo) + dim("  " + job.job));
+  console.log("");
+}
+
+// ── monitor + research: the two suites that shipped with no first-party door at all ─────────────────
+// Estelle Monitor has fifteen working, entitlement-gated routes on production and no dashboard page (that
+// lives in the web worktree). The Vendor Drift Monitor has a durable watchlist, a measured injection guard
+// and a scheduler that ticks. Between them, the only door either had was a hand-written curl.
+//
+// The COMMANDS live in their own modules beside the renderers they use; this file stays a dispatcher. What
+// it owns is the CTX — the HTTP verbs, the colours, the argv accessors and the output sink — so a command
+// module never reaches for a global and can be exercised without one.
+const suiteCtx = () => ({
+  argv: process.argv,
+  banner, needKey, flag, has, argText, announceSkipped, errText, asArray, indent, oneLine,
+  get: apiGet, post: apiPost, put: apiPut,
+  out: (line) => console.log(line),
+  write: (text) => process.stdout.write(text),
+  // A command that could not do what it was asked exits RED. Named rather than assigning process.exitCode
+  // inside a module, so "this run failed" stays one decision in one place.
+  markFailed: () => { process.exitCode = 1; },
+  failWith: fail,
+  // `null` for a file that is not there — distinguishable from an empty file, which is what lets the repair
+  // command say "that call site is not on this machine" instead of sending an empty string as its contents.
+  readFile: (rel) => { try { return fs.readFileSync(path.resolve(process.cwd(), rel), "utf8"); } catch { return null; } },
+  now: () => Date.now(),
+  c: { teal, dim, bold, green, amber, grey, red, ok, arrow, dot },
+});
+
+const cmdMonitor = () => require("./monitor.js").run(suiteCtx());
+const cmdResearch = () => require("./research.js").run(suiteCtx());
+// Erasure and its PROOF. /purge and /forget have written an append-only receipt since the cascade landed
+// and nothing could read one back — a deletion nobody can verify is a deletion nobody will believe.
+const cmdMemory = () => require("./memory.js").run(suiteCtx());
+
 async function cmdVerify() {
   banner();
   const key = needKey(); if (!key) return;
@@ -700,7 +1168,17 @@ async function cmdGate() {
   if (!r.ok) return failClosed(r, "the merge gate");
   console.log(ok); console.log("");
   const v = r.json || {};
-  console.log("  " + bold("Verdict  ") + (v.merge ? green(v.verdict || "clean — safe to merge") : amber(v.verdict || "blocked")));
+  // THREE states, three colours. `verified === false` means the gate could not READ part of the change
+  // (an unparseable hunk, an unswept repo, a timeout) — it is not a certification, so it must never render
+  // in the same green as a verdict that actually checked the diff. Green used to cover both, because the
+  // CLI keyed on `merge` alone, exactly like the CI scripts this gate exists to answer.
+  const couldNotVerify = v.verified === false;
+  const verdictText = v.verdict || (v.merge ? "clean — safe to merge" : "blocked");
+  console.log("  " + bold("Verdict  ") +
+    (couldNotVerify ? amber(verdictText) : v.merge ? green(verdictText) : amber(verdictText)));
+  if (couldNotVerify && v.merge) {
+    console.log("  " + amber("!") + " " + dim("the gate could not check part of this change — it is UNVERIFIED there, not verified-clean."));
+  }
   for (const b of asArray(v.blockers)) console.log("  " + red("✗") + " " + (b.body || `${b.path}:${b.line}`));
   for (const w of asArray(v.warnings)) console.log("  " + amber("!") + " " + (w.body || `${w.path}:${w.line}`));
   console.log("");
@@ -709,7 +1187,10 @@ async function cmdGate() {
 
 function help() {
   banner();
-  const row = (c, d) => console.log("  " + teal(c.padEnd(26)) + dim(d));
+  // Padded to the WIDEST command, not to a number someone once eyeballed: `github [link|connect|repos|sweep]`
+  // already overflowed 26 and ran its description into the command, and every new subcommand group made it
+  // worse. A help screen that runs two columns together is a help screen people stop reading.
+  const row = (c, d) => console.log("  " + teal(c.padEnd(38)) + dim(d));
   console.log("  " + bold("Usage") + dim("  npx @fatelabs/estelle <command>"));
   console.log("");
   row("init [--key K]", "auto-detect your editors and write the MCP config (then verify it answers)");
@@ -717,14 +1198,32 @@ function help() {
   row("reindex [files…]", "update only what changed (fast) — keeps the rest of the graph intact");
   row("connect <client>", "show the one-liner / config for one client");
   row("remove", "disconnect: delete Estelle from every editor config (alias: disconnect, off; offline)");
+  // GitHub connect SHIPPED web-only: a terminal-only user had no way to give Estelle their code at all.
+  row("github [link|connect|repos|sweep]", "connect your GitHub repos from the terminal (browser once)");
+  // Monitor and Research shipped with FIFTEEN and FOUR working routes respectively and no first-party door
+  // between them — no dashboard page, no CLI, only curl. These two rows are that door.
+  row("monitor [issues|issue|alerts|uptime|logs]", "your production errors, alerts and uptime (Pro)");
+  row("research [watch|drift|repair|ask]", "watch your vendors' APIs for drift, and ground a fix on their live docs");
+  // The erasure PROOF path. /purge and /forget wrote receipts from the day they cascaded and nothing could
+  // read one back — a deletion nobody can verify is a deletion nobody will believe.
+  row("memory [receipts|retract|forget]", "erase what Estelle holds — and read the receipt that proves it");
   row("ask <question>", "ask Estelle about your codebase (grounded, on your plan)");
   row("recall <query> [--repo R]", "search your Estelle memory + code (--repo scopes a multi-repo account)");
   row("verify <file>", "check a file for hallucinated APIs against your repo");
   row("gate [--base ref]", "run the merge gate on your staged diff (or vs a base ref)");
+  // These SHIPPED undocumented. A real command nobody can discover is the same as a missing one — and
+  // these two are the always-on switch, which is the whole point of the hooks.
+  row("install-hooks", "fire Estelle on every edit + command in Claude Code (no opt-in needed)");
+  row("uninstall-hooks", "stop that — your own hooks and the MCP server are untouched");
   console.log("");
+  console.log("  " + dim("Bare ") + bold("estelle") + dim(" opens the session: ask anything, /help for commands, ")
+    + bold("!cmd") + dim(" for a shell command."));
   console.log("  " + dim("Flags: ") + grey("--key K  --client cursor  --dry-run  --url <mcp>  --path <dir>  --base <ref>"));
   console.log("  " + dim("Clients: ") + grey(Object.keys(PRETTY).join(", ")));
-  console.log("  " + dim("Egress: ") + grey(`init/remove/connect stay local (init pings ${API} once to verify); sweep sends repo files,`));
+  // The egress note is a promise, so it has to name the size pre-flight too: `sweep` now sends a
+  // paths-and-byte-sizes list before it sends anything else. It carries no content, but it is still egress.
+  console.log("  " + dim("Egress: ") + grey(`init/remove/connect stay local (init pings ${API} once to verify); sweep sends a`));
+  console.log("  " + dim("        ") + grey("paths+sizes list first (to check the repo fits your plan), then the repo files;"));
   console.log("  " + dim("        ") + grey(`gate your staged diff, verify one file, ask/recall your question — all to ${API}.`));
   console.log("");
 }
@@ -735,7 +1234,7 @@ async function cmdHook() {
   const hook = require("./hook.js");
   let payload = {};
   try { payload = JSON.parse(fs.readFileSync(0, "utf8")); } catch { /* a bad payload must never break the action */ }
-  const key = storedKeyOrEnv();
+  const key = resolveKey();
   await hook.runHook(mode, payload, {
     post: async (p, body) => unwrap(await apiPost(p, body, key)),
     out: (o) => console.log(JSON.stringify(o)),
@@ -746,10 +1245,44 @@ async function cmdHook() {
 function cmdInstallHooks() {
   const hook = require("./hook.js");
   const file = hook.claudeSettingsPath();
+  // A MISSING file and an UNPARSEABLE one are not the same thing, and treating them the same destroyed
+  // customers' settings: one trailing comma in ~/.claude/settings.json parsed as a throw, `existing`
+  // stayed {}, and the merge rewrote the file as Estelle-hooks-only — their permissions, model and env
+  // gone, with no backup. `init` twelve hundred lines up has always done this correctly (writeClient:
+  // copyFileSync to .bak before writing). Missing -> start empty. Present-but-unparseable -> ABORT and
+  // say why; the customer's file is the only copy of their configuration and we do not get to guess.
   let existing = {};
-  try { existing = JSON.parse(fs.readFileSync(file, "utf8")); } catch { /* first time, or no settings yet */ }
+  const present = fs.existsSync(file);
+  if (present) {
+    const raw = fs.readFileSync(file, "utf8");
+    try {
+      existing = JSON.parse(raw);
+    } catch (err) {
+      console.log("");
+      console.log("  " + red("✗") + " " + bold("Refusing to write — your Claude Code settings could not be read"));
+      console.log("    " + dim(file));
+      console.log("    " + dim(String(err && err.message ? err.message : err)));
+      console.log("");
+      console.log("    " + dim("Estelle will not overwrite a file it cannot parse — that would discard your"));
+      console.log("    " + dim("permissions, model and env. Fix the JSON (a trailing comma is the usual cause)"));
+      console.log("    " + dim("and run this again. Nothing has been changed."));
+      console.log("");
+      process.exitCode = 1;
+      return;
+    }
+    if (existing === null || typeof existing !== "object" || Array.isArray(existing)) {
+      console.log("");
+      console.log("  " + red("✗") + " " + bold("Refusing to write — settings is not a JSON object"));
+      console.log("    " + dim(file) + dim("  (found " + (Array.isArray(existing) ? "an array" : typeof existing) + ")"));
+      console.log("    " + dim("Nothing has been changed."));
+      console.log("");
+      process.exitCode = 1;
+      return;
+    }
+  }
   const merged = hook.mergeHooks(existing, "npx -y @fatelabs/estelle");
   fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (present) fs.copyFileSync(file, file + ".bak");  // back up regardless — same rule init already follows
   fs.writeFileSync(file, JSON.stringify(merged, null, 2) + "\n");
   console.log("");
   console.log("  " + green("✓") + " Estelle now fires on every edit and command in Claude Code");
@@ -826,8 +1359,21 @@ async function cmdSession() {
   };
   const code = await repl.runSession({
     version: require("../package.json").version,
-    key: flag("--key", storedKeyOrEnv()),
+    key: resolveKey(),
     cwd: path.basename(process.cwd()),
+    // `/status` answers "what am I actually pointed at?", so the endpoint and the repo NAME are measured
+    // here rather than re-derived in the session — `repoNameFor` is the same function the sweep files
+    // under, so what /status calls the repo is exactly what your memory calls it.
+    api: API,
+    repo: repoNameFor(process.cwd()),
+    // Where an applied diff may write, and where the containment check is measured from. The git TOP-LEVEL,
+    // not cwd: `git apply` resolves a patch's paths against the directory it runs in, so applying from a
+    // subdirectory without this writes to the wrong place.
+    cwdPath: process.cwd(),
+    root: require("./apply.js").repoRoot(process.cwd()),
+    // shift+tab cycles the ceiling. On a non-TTY (piped stdin, CI) this binds nothing at all — there is no
+    // human to press it, and raw-mode key handling there would corrupt the output stream.
+    bindKeys: require("./mode-ui.js").keyBinder(process.stdin, { rl }),
     // apiPost/apiGet return a transport envelope {ok,status,json,text}; the session's contract is the
     // PARSED body, so unwrap here. A non-JSON or failed response becomes a clean error object rather
     // than an empty render — "(no output)" would read as "Estelle had nothing to say", which is a lie
@@ -836,6 +1382,9 @@ async function cmdSession() {
     get: async (p, key) => unwrap(await apiGet(p, key)),
     readFile: (rel) => { try { return fs.readFileSync(path.resolve(process.cwd(), rel), "utf8"); } catch { return null; } },
     prompt, out: (l) => console.log(l),
+    // The thinking indicator writes ONLY to a terminal. Piped output (CI, a scripted run) must stay exactly
+    // what it was — animation frames spliced into it would corrupt whatever is reading.
+    write: process.stdout.isTTY ? (s) => process.stdout.write(s) : null,
     c: { teal, dim, bold, green, amber, grey, red },
     now: () => Date.now(),
   });
@@ -843,32 +1392,44 @@ async function cmdSession() {
   process.exitCode = code || 0;
 }
 
-const storedKeyOrEnv = () => require("./repl.js").storedKey();
-
 /** The parsed body of an api{Post,Get} envelope, or an honest error — never a silent empty. */
 function unwrap(r) {
   if (r && r.json) return r.json;
   return { error: { message: (r && (r.text || `HTTP ${r.status}`)) || "no response" } };
 }
 
-(async () => {
-  const cmd = process.argv[2];
-  if (!cmd || cmd.startsWith("--") && !has("--help")) await cmdSession();
-  else if (cmd === "init") await cmdInit();
-  else if (cmd === "sweep") await cmdSweep();
-  else if (cmd === "reindex") await cmdReindex();
-  else if (cmd === "connect") cmdConnect();
-  else if (cmd === "remove" || cmd === "disconnect" || cmd === "off") cmdRemove();
-  else if (cmd === "ask") await cmdAsk();
-  else if (cmd === "recall") await cmdRecall();
-  else if (cmd === "verify") await cmdVerify();
-  else if (cmd === "gate") await cmdGate();
-  else if (cmd === "hook") await cmdHook();
-  else if (cmd === "install-hooks") cmdInstallHooks();
-  else if (cmd === "uninstall-hooks") cmdUninstallHooks();
-  else help();
-})().catch((e) => {
-  // No server payload (or bug) may ever surface as a raw stack dump — styled error, non-zero exit.
-  console.log(red("estelle: unexpected error — " + String((e && e.message) || e)));
-  process.exitCode = 1;
-});
+// The pure decisions, exported for the unit tests. Requiring this file must NEVER run a command, hence the
+// main guard below — a test that imports the CLI would otherwise drop into the interactive session.
+module.exports = {
+  positionalPaths, repoRelative, changedFromGitOutput, reindexBody, partitionSecrets, partitionIngestable,
+  syncBody, filePayload, errText, EXT, SECRET_RE,
+  estimateBody, sweepFitLines, mtok, failedOnSize,
+};
+
+if (require.main === module) {
+  (async () => {
+    const cmd = process.argv[2];
+    if (!cmd || cmd.startsWith("--") && !has("--help")) await cmdSession();
+    else if (cmd === "init") await cmdInit();
+    else if (cmd === "sweep") await cmdSweep();
+    else if (cmd === "reindex") await cmdReindex();
+    else if (cmd === "connect") cmdConnect();
+    else if (cmd === "remove" || cmd === "disconnect" || cmd === "off") cmdRemove();
+    else if (cmd === "github") await cmdGithub();
+    else if (cmd === "monitor") await cmdMonitor();
+    else if (cmd === "research") await cmdResearch();
+    else if (cmd === "memory") await cmdMemory();
+    else if (cmd === "ask") await cmdAsk();
+    else if (cmd === "recall") await cmdRecall();
+    else if (cmd === "verify") await cmdVerify();
+    else if (cmd === "gate") await cmdGate();
+    else if (cmd === "hook") await cmdHook();
+    else if (cmd === "install-hooks") cmdInstallHooks();
+    else if (cmd === "uninstall-hooks") cmdUninstallHooks();
+    else help();
+  })().catch((e) => {
+    // No server payload (or bug) may ever surface as a raw stack dump — styled error, non-zero exit.
+    console.log(red("estelle: unexpected error — " + String((e && e.message) || e)));
+    process.exitCode = 1;
+  });
+}

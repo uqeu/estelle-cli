@@ -15,36 +15,25 @@
 // Deliberately NOT an agent harness: Estelle's engine (the gate, /work, Orchestra, the repro sandbox)
 // lives server-side and is reached over HTTP. This file is the conversation, not a second engine.
 
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
 const readline = require("readline");
-
-const AUTH_DIR = path.join(os.homedir(), ".estelle");
-const AUTH_FILE = path.join(AUTH_DIR, "auth.json");
+// The half of the session that never touches the network: the `!` shell escape, the autonomy ceiling, and
+// the git diff /gate and /scan grade. Kept out of here so this file stays a router.
+const local = require("./session-commands.js");
+// Writing a returned diff to the working tree, and the shift+tab switch that says under which ceiling.
+// Both are new primitives rather than new endpoints — the server has no say in what happens on your disk,
+// which is exactly why the guards for it live client-side and fail closed.
+const apply = require("./apply.js");
+const modeUi = require("./mode-ui.js");
+// THE CURATED TURN. Every other host makes Estelle a guest in someone else's prompt; here it OWNS the
+// transcript, so it decides what each turn carries and what never gets carried again. See curate.js.
+const curate = require("./curate.js");
 
 // ── credential (paste once, ever) ───────────────────────────────────────────────
-function readAuth() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(AUTH_FILE, "utf8"));
-    return typeof raw.key === "string" && raw.key.trim() ? raw.key.trim() : "";
-  } catch {
-    return "";
-  }
-}
-
-function writeAuth(key) {
-  // 0700/0600: the key is a bearer credential for the whole account — never world-readable, and never
-  // echoed back to the terminal once stored.
-  fs.mkdirSync(AUTH_DIR, { recursive: true, mode: 0o700 });
-  fs.writeFileSync(AUTH_FILE, JSON.stringify({ key }, null, 2) + "\n", { mode: 0o600 });
-}
-
-/** The key from (in order) an explicit flag, the environment, or the stored file — "" when unset. */
-function storedKey(env) {
-  const e = env || process.env;
-  return (e.ESTELLE_API_KEY || "").trim() || readAuth();
-}
+// The session WRITES the key here; ten other commands READ it. Both sides now go through one leaf module
+// so they cannot drift apart again — they already had, and the cost was the first-run flow: this file
+// saved the key, printed "Run `estelle sweep`", and sweep resolved its key from the environment only.
+const auth = require("./auth.js");
+const { readAuth, writeAuth, storedKey } = auth;
 
 // ── pure helpers (unit-tested; the I/O around them is thin) ─────────────────────
 
@@ -100,13 +89,23 @@ const COMMANDS = {
   resume: "pick a past session back up",
   work: "plan → implement → gate → repair a change",
   orchestra: "fan a task across a routed fleet",
-  gate: "run the merge gate on your staged diff",
+  context: "what this session is carrying into your next turn",
+  gate: "run the merge gate on your staged diff (or /gate <ref>)",
   scan: "security scan — secrets, SAST, dependency CVEs",
   improve: "ranked, grounded improvements for this repo",
   verify: "check a file for APIs that don't exist",
+  apply: "write the last /work diff to your working tree",
+  undo: "put the last apply back",
+  mode: "show / lower the autonomy ceiling (shift+tab cycles it)",
+  status: "endpoint, key, filed repo, ceiling",
+  shell: "run a shell command right here — e.g. !git status",
   clear: "clear the screen",
   exit: "leave (ctrl-d does it too)",
 };
+
+// `shell` is documented but never DISPATCHED as a slash command — the `!` form is the real one, and a
+// `/shell` that fell through to an MCP tools/call would be a confusing 'unknown tool'.
+const HELP_ONLY = new Set(["shell"]);
 
 /**
  * Expand `@path` references into the text Estelle should see, so "why is @auth.py slow?" carries the
@@ -124,85 +123,12 @@ function expandFileRefs(text, readFile) {
   return { attached, missing };
 }
 
-// ── input polish, learned from the mature agent CLIs ────────────────────────────
-// These are the interaction details that separate a REPL you tolerate from one you live in. Each is a
-// pure function so it can be tested without a terminal.
+// The input polish (paste collapsing, history, the spinner) lives in input-ui.js and is re-exported at
+// the bottom of this file, so repl.js stays a router and nothing that imports them has to change.
+const inputUi = require("./input-ui.js");
+const { collapsePaste, expandPastes, frecencyScore, parseHistory, historyLine,
+        interruptAction, spinnerPlan, withSpinner, HISTORY_MAX } = inputUi;
 
-const PASTE_MIN_LINES = 3, PASTE_MIN_CHARS = 150, HISTORY_MAX = 50;
-
-/**
- * Collapse a big paste to a token the user can see past. A stack trace pasted into a prompt otherwise
- * buries the question you were asking; `[Pasted ~47 lines]` keeps the line readable while the real text
- * still reaches Estelle on submit. Returns the visible text plus the side table that restores it.
- */
-function collapsePaste(text, store) {
-  const body = String(text || "");
-  const lines = body.split("\n").length;
-  if (lines < PASTE_MIN_LINES && body.length < PASTE_MIN_CHARS) return { visible: body, marks: store || [] };
-  const marks = (store || []).slice();
-  const token = `[Pasted ~${lines} line${lines === 1 ? "" : "s"} #${marks.length + 1}]`;
-  marks.push({ token, text: body });
-  return { visible: token, marks };
-}
-
-/** Put every collapsed paste back before the text is sent — what Estelle sees is what you pasted. */
-function expandPastes(visible, marks) {
-  let out = String(visible || "");
-  for (const m of marks || []) out = out.split(m.token).join(m.text);
-  return out;
-}
-
-/**
- * Frecency: recent AND frequent beats merely frequent. `score * (1 + hits / (1 + ageDays))`, so the file
- * you touched twice this morning outranks one you opened thirty times last year.
- */
-function frecencyScore(base, entry, now) {
-  if (!entry || !entry.hits) return base;
-  const ageDays = Math.max(0, ((now || Date.now()) - (entry.at || 0)) / 86400000);
-  return base * (1 + entry.hits / (1 + ageDays));
-}
-
-/**
- * Prompt history, JSONL, newest last. SELF-HEALING: a corrupt line is dropped rather than throwing, so a
- * half-written file (a kill -9 mid-append) never costs you the whole history. Consecutive duplicates are
- * collapsed — pressing up should walk distinct thoughts, not repeats.
- */
-function parseHistory(raw) {
-  const out = [];
-  for (const line of String(raw || "").split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const e = JSON.parse(line);
-      const text = typeof e === "string" ? e : e && e.text;
-      if (typeof text === "string" && text.trim() && out[out.length - 1] !== text) out.push(text);
-    } catch { /* a torn line is skipped, never fatal */ }
-  }
-  return out.slice(-HISTORY_MAX);
-}
-
-/** One history line to append, or "" when this entry adds nothing (blank, or the same as last time). */
-function historyLine(text, previous) {
-  const t = String(text || "").trim();
-  if (!t || t === previous) return "";
-  return JSON.stringify({ text: t, at: Date.now() }) + "\n";
-}
-
-/**
- * Ctrl+C is reflexive — people hit it to abandon a half-typed thought, not to quit. So it CLEARS a
- * non-empty line and only exits on an empty one. Returns what the session should do.
- */
-function interruptAction(currentText) {
-  return String(currentText || "").trim() ? "clear" : "exit";
-}
-
-/**
- * Show a spinner only if the work outlives `delayMs`, and once shown hold it for `minMs`. Without the
- * delay every 200ms call flashes a spinner; without the hold it vanishes before the eye resolves it.
- */
-function spinnerPlan(elapsedMs, shownAtMs, delayMs = 500, minMs = 3000) {
-  if (shownAtMs == null) return elapsedMs >= delayMs ? "show" : "wait";
-  return elapsedMs - shownAtMs >= minMs ? "may-hide" : "hold";
-}
 
 /** A unified diff, coloured. Nothing else in a terminal communicates a change this fast. */
 function renderDiff(diff, c) {
@@ -254,7 +180,8 @@ function welcomeBack(session, now) {
 /**
  * Run the interactive session. Every dependency is injected so the loop itself is testable and this
  * file never reaches for a socket on its own: ``post``/``get`` are the API calls, ``prompt`` reads a
- * line, ``out`` writes one, ``c`` is the colour palette.
+ * line, ``out`` writes one, ``c`` is the colour palette, ``diff`` computes the unified diff /gate and
+ * /scan grade (git, by default).
  */
 async function runSession(deps) {
   const { post, get, prompt, out, c, cwd, now } = deps;
@@ -301,26 +228,98 @@ async function runSession(deps) {
   if (greeting) { out(""); out(`  ${greeting.split("\n").join("\n  ")}`); }
 
   out("");
-  out(`  ${c.dim("ask anything · /help for commands · ctrl-d to leave")}`);
+  out(`  ${c.dim("ask anything · /help for commands · shift+tab cycles the mode · ctrl-d to leave")}`);
   out("");
 
+  // The autonomy ceiling, fetched LAZILY. Only /mode, /status and the write path read it, and a fourth
+  // blocking GET on every session start would cost every user latency for a value most turns never touch.
+  // `null` means "not asked yet"; `""` means "asked and could not get an answer" — a distinction the
+  // fail-closed rendering depends on.
+  // `transcript` is the session Estelle OWNS. It is not a log to replay: every turn is assembled from it, and
+  // a failed attempt that falls out of the verbatim window leaves its LESSON behind rather than its wreckage.
+  const state = { mode: "propose", serverMode: null, transcript: curate.emptyTranscript() };
+  const serverMode = async () => {
+    if (state.serverMode !== null) return state.serverMode;
+    const scope = await get("/autonomy/scope", key).catch(() => null);
+    const dial = scope && !scope.error ? scope.global : "";
+    state.serverMode = local.modeRank(dial) >= 0 ? dial : "";
+    // The local ceiling STARTS where the account's dial is, so /mode can only ever lower it. Starting it
+    // anywhere else would either overstate what Estelle may do, or understate it and refuse work the
+    // customer has actually paid for and consented to.
+    if (state.serverMode) state.mode = state.serverMode;
+    return state.serverMode;
+  };
+
+  // THE MODE, MADE VISIBLE. Codex renders its mode in a persistent footer under the composer; a readline
+  // session has no footer to render into, so the prompt itself carries it — it is the one thing on screen
+  // before every line you type.
+  //
+  // Before the dial has been ASKED (it is lazy, see above) the prompt shows the local mode plainly. A "?"
+  // there would claim "we checked and could not tell", which is a different and more alarming fact than
+  // "we have not needed to check yet".
+  const promptFor = () => {
+    const label = state.serverMode === null ? state.mode : modeUi.promptLabel(state.mode, state.serverMode);
+    return `${c.dim(label)} ${c.teal("›")} `;
+  };
+  // shift+tab. The KEY is Codex's (`KeyCode::BackTab` → `cycle_collaboration_mode`); the SEMANTICS are not
+  // — this only ever moves the local ceiling, which can lower what happens and never raise it.
+  const cycle = async () => {
+    const dial = await serverMode();
+    state.mode = modeUi.nextMode(state.mode, dial);
+    return { banner: modeUi.modeBanner(state.mode, dial, c), prompt: promptFor() };
+  };
+  const unbind = (deps.bindKeys || (() => () => {}))(cycle);
+  const leave = (code) => { unbind(); return code; };
+
   for (;;) {
-    const line = await prompt(`${c.teal("›")} `);
-    if (line === null) { out(""); return 0; }             // ctrl-d
+    const line = await prompt(promptFor());
+    if (line === null) { out(""); return leave(0); }      // ctrl-d
+
+    // `!cmd` runs on YOUR machine — no server, and deliberately no autonomy ceiling. The ceiling governs
+    // what ESTELLE may do unsupervised; a command the human just typed IS the trusted trigger the whole
+    // contract is defined against (autonomy.py invariant I1), so gating it there would be a category
+    // error. What does apply is the danger heuristic, imported from the hook rather than re-written.
+    const bang = local.parseBang(line);
+    if (bang) { await local.runShell(bang.command, { out, c, prompt }); out(""); continue; }
+
     const input = parseInput(line);
     if (!input.text && input.kind === "ask") continue;     // a bare Enter is not a question
 
     if (input.kind === "command") {
-      if (input.name === "exit" || input.name === "quit") return 0;
-      if (input.name === "clear") { out("\x1b[2J\x1b[H"); continue; }
-      if (input.name === "help") {
-        for (const [name, what] of Object.entries(COMMANDS)) out(`  ${c.teal("/" + name.padEnd(10))}${c.dim(what)}`);
+      const done = await handleLocal(input, { out, c, state, serverMode, key, deps });
+      if (done === "exit") return leave(0);
+      if (done === "handled") continue;
+    }
+
+    // The one command that can produce a change. A KNOWN read_only stops it HERE rather than spending a
+    // round-trip to be refused; an unknown dial does not, because the server is the enforcement point.
+    if (input.kind === "command" && input.name === "work") {
+      const why = local.workRefusal(state.mode, await serverMode());
+      if (why) { out(`  ${c.amber("!")} ${why}`); out(""); continue; }
+    }
+
+    const ctx = {};
+    if (input.kind === "command" && (input.name === "gate" || input.name === "scan")) {
+      // "git broke" and "nothing staged" are DIFFERENT answers and only one is safe to shrug at. Sending
+      // neither is the fix: an empty body is what made both of these error on every call.
+      const diff = (deps.diff || local.stagedDiff)(input.arg);
+      if (diff === null) {
+        out(`  ${c.red("✗ could not compute the diff")} `
+          + `${c.dim(input.arg ? `(is ${input.arg} a valid ref?)` : "(git failed)")} `
+          + `${c.red("— BLOCKED (fail-closed).")}`);
         out("");
         continue;
       }
+      if (!local.diffBody(diff)) {
+        out(`  ${c.amber(input.arg ? `No diff vs ${input.arg}.` : "Nothing staged.")} `
+          + c.dim("Stage some changes, or name a base ref: /gate main"));
+        out("");
+        continue;
+      }
+      ctx.diff = diff;
     }
 
-    const route = routeInput(input);
+    const route = routeInput(input, ctx);
     // A command that would fall through to MCP might be a SKILL — run it SERVER-SIDE first via /skill/run, so
     // the playbook is loaded + injected on the server and only the RESULT comes back. The playbook markdown
     // never reaches the client at all (the real IP lock). Not a skill → fall through to the tool call.
@@ -342,15 +341,136 @@ async function runSession(deps) {
       const { attached, missing } = expandFileRefs(input.text, deps.readFile || (() => null));
       if (missing.length) out(`  ${c.amber("!")} ${c.dim(`no such file: ${missing.join(", ")}`)}`);
       if (attached.length) route.body.files = attached;
+      // THE CURATED TURN. /deep-search takes a question, not a message array, so the working set is rendered
+      // into it: the recent turns verbatim, then the lessons distilled from the failed attempts that are no
+      // longer verbatim. What does NOT travel is the wreckage those lessons came from — this is the eviction
+      // half of the thesis, which only works because Estelle assembles this prompt itself.
+      route.body.question = curate.renderTurn(curate.workingSet(state.transcript), input.text);
     }
-    const raw = await (route.method === "GET"
-      ? get(route.query && route.query.id ? `${route.path}?id=${encodeURIComponent(route.query.id)}` : route.path, key)
-      : post(route.path, route.body, key)
-    ).catch((e) => ({ error: { message: String((e && e.message) || e) } }));
+    const raw = await withSpinner(
+      input.kind === "ask" ? "thinking" : `running /${input.name}`,
+      () => (route.method === "GET"
+        ? get(route.query && route.query.id ? `${route.path}?id=${encodeURIComponent(route.query.id)}` : route.path, key)
+        : post(route.path, route.body, key)
+      ).catch((e) => ({ error: { message: String((e && e.message) || e) } })),
+      { write: deps.write });
     const res = route.mcp && !(raw && raw.error && raw.error.message) ? mcpText(raw) : raw;
+    // Record what was ASKED and what came back — the raw line the user typed, never the assembled prompt, or
+    // the next turn would carry a copy of the turn before it and grow quadratically.
+    state.transcript = curate.record(
+      curate.record(state.transcript, { role: "user", content: line }),
+      { role: "assistant", content: curate.replyText(res) });
     out("");
-    out(renderAnswer(res, c));
+    // THE DIFF USED TO STOP HERE. /work planned, implemented, gated and repaired a change, drew the diff,
+    // and threw it away — the CLI had no path from a returned diff to a file on disk, so there was nothing
+    // a mode switch could ever have accepted. When there IS one, the apply flow renders it (as its own
+    // receipt) and decides under the ceiling, so renderAnswer must not draw it twice.
+    const offerApply = !!(res && res.diff && input.kind === "command" && input.name === "work");
+    out(renderAnswer(offerApply ? { ...res, diff: "" } : res, c));
+    if (offerApply) {
+      state.lastDiff = res.diff;
+      out("");
+      await apply.runApply(res.diff, {
+        out, c, prompt, cwd: deps.cwdPath, root: deps.root,
+        localMode: state.mode, serverMode: await serverMode(),
+      });
+    }
     out("");
+  }
+}
+
+/**
+ * The commands answered HERE, with no request at all — the screen, the help, the ceiling, and what this
+ * session is pointed at. Returns "exit" to leave the session, "handled" when it answered, and "" to fall
+ * through to the network router (which is what every OTHER slash command must still do, or the CLI and
+ * the MCP door drift apart the moment a tool is added).
+ */
+async function handleLocal(input, ctx) {
+  const { out, c, state, serverMode, key, deps } = ctx;
+  switch (input.name) {
+    case "exit": case "quit":
+      return "exit";
+
+    case "clear":
+      out("\x1b[2J\x1b[H");
+      return "handled";
+
+    case "help":
+      for (const [name, what] of Object.entries(COMMANDS)) {
+        out(`  ${c.teal((HELP_ONLY.has(name) ? "!<cmd>" : "/" + name).padEnd(11))}${c.dim(what)}`);
+      }
+      out("");
+      return "handled";
+
+    case "mode": {
+      const dial = await serverMode();
+      const wanted = input.arg ? local.parseMode(input.arg) : "";
+      if (input.arg && !wanted) {
+        out(`  ${c.amber("!")} ${c.dim(`no mode called "${input.arg}" — one of ${local.MODES.join(" · ")}`)}`);
+        out(`  ${c.dim(`  (plan = read_only, auto = execute)`)}`);
+        out("");
+        return "handled";
+      }
+      if (wanted) state.mode = wanted;
+      for (const line of local.modeReport(state.mode, dial, c)) out(line);
+      out("");
+      return "handled";
+    }
+
+    case "context": {
+      // The receipt for the curated turn. A context policy nobody can inspect is a context policy nobody can
+      // trust, so this prints exactly what the next question will carry and what it costs.
+      const report = curate.contextReport(state.transcript);
+      for (const [label, value] of report.lines) out(`  ${c.dim(label.padEnd(10))}${value}`);
+      for (const lesson of report.lessons) out(`  ${c.dim("·")} ${c.dim(lesson)}`);
+      out("");
+      return "handled";
+    }
+
+    case "status": {
+      for (const [label, value] of local.statusRows({
+        api: (deps && deps.api) || "", keyMasked: key ? maskKey(key) : "",
+        repo: (deps && deps.repo) || "", mode: state.mode, serverMode: await serverMode(),
+      })) out(`  ${c.dim(label.padEnd(10))}${value}`);
+      out("");
+      return "handled";
+    }
+
+    case "apply": {
+      // The diff /work just produced, applied on purpose rather than only when it was first offered —
+      // "let me read that again first" is the normal way a careful person reviews a change.
+      if (!state.lastDiff) {
+        out(`  ${c.amber("!")} ${c.dim("no diff yet — run /work <task> first.")}`);
+        out("");
+        return "handled";
+      }
+      await apply.runApply(state.lastDiff, {
+        out, c, prompt: deps.prompt, cwd: deps.cwdPath, root: deps.root,
+        localMode: state.mode, serverMode: await serverMode(),
+      });
+      out("");
+      return "handled";
+    }
+
+    case "undo": {
+      const r = apply.undoLast(deps.root || apply.repoRoot(deps.cwdPath) || deps.cwdPath || process.cwd());
+      if (!r.ok) out(`  ${c.amber("!")} ${c.dim(r.why)}`);
+      else out(`  ${c.green("✓ put back")} ${c.dim((r.restored || []).join(" · "))}`);
+      out("");
+      return "handled";
+    }
+
+    case "sweep":
+      // Advertised in /help since the session shipped, but never routed: it fell through to an MCP
+      // tools/call for a tool that has never existed, so it answered "unknown tool". The sweep reads your
+      // LOCAL tree and uploads it — there is no server call that can do it, so say where it lives.
+      out(`  ${c.amber("!")} ${c.dim("a sweep reads your local files — run it as a command: ")}${c.teal("estelle sweep")}`);
+      out(`  ${c.dim("  or ")}${c.teal("estelle reindex")}${c.dim(" for just what changed since HEAD.")}`);
+      out("");
+      return "handled";
+
+    default:
+      return "";
   }
 }
 
@@ -359,14 +479,19 @@ async function runSession(deps) {
  * has — a typed question is a Deep Search, `/orchestra` is the fleet, `/gate` is the merge verdict — so
  * the session adds a conversation, not a parallel API.
  */
-function routeInput(input) {
+function routeInput(input, ctx) {
   if (input.kind === "ask") return { path: "/deep-search", body: { question: input.text } };
   const arg = input.arg || "";
+  // /gate and /scan grade a unified DIFF, and only the client can compute one from git. They used to route
+  // with an empty `{}`, so the server answered "the merge gate needs a 'diff'" on EVERY call while /help
+  // advertised both as working commands — the two most load-bearing commands in the product, broken in the
+  // session for as long as the session has existed. The caller computes the diff and passes it here.
+  const diff = local.diffBody((ctx || {}).diff);
   switch (input.name) {
     case "orchestra": return { path: "/orchestra", body: { task: arg } };
     case "work":      return { path: "/work", body: { task: arg } };
-    case "gate":      return { path: "/gate", body: {} };
-    case "scan":      return { path: "/scan", body: {} };
+    case "gate":      return { path: "/gate", body: diff || {} };
+    case "scan":      return { path: "/scan", body: diff || {} };
     case "improve":   return { path: "/improve", body: arg ? { focus: arg } : {} };
     case "verify":    return { path: "/verify", body: { answer: arg } };
     case "init":      return { path: "/wiki", body: null, method: "GET" };
@@ -521,12 +646,15 @@ function renderAnswer(res, c) {
 }
 
 module.exports = {
-  AUTH_FILE, readAuth, writeAuth, storedKey,
+  // A GETTER, not a snapshot: the path depends on $HOME, and a value frozen at require-time would answer
+  // for whatever HOME was when this module first loaded rather than the one in force at the call.
+  get AUTH_FILE() { return auth.authFile(); },
+  readAuth, writeAuth, storedKey,
   looksLikeKey, maskKey, humanDuration, relativeTime, parseInput, COMMANDS,
-  statusLines, welcomeBack, renderAnswer, runSession, routeInput, sessionStatus,
+  statusLines, welcomeBack, renderAnswer, runSession, routeInput, sessionStatus, handleLocal, HELP_ONLY,
   expandFileRefs, renderDiff, renderGate, mcpCall, mcpText, unknownTool,
   isSkillExit, runSkill,
   collapsePaste, expandPastes, frecencyScore, parseHistory, historyLine, interruptAction, spinnerPlan,
-  HISTORY_MAX,
+  withSpinner, HISTORY_MAX,
   readline,
 };
