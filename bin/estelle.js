@@ -123,15 +123,33 @@ function writeClient(client, key, dry) {
   if (NOTE_CLIENTS[client]) return { client, note: NOTE_CLIENTS[client]() }; // never write a config the client ignores
   const p = configPath(client);
   if (!p) return { client, note: "run: " + claudeAdd() }; // Claude Code = a command, not a file
+  // SAME RULE AS `install-hooks`, SAME SPELLING. This function had the F0 defect too: a missing config and
+  // an UNPARSEABLE one both became `existing = null`, so a customer's editor config with one trailing comma
+  // was replaced by an Estelle-only file. The `.bak` saved the bytes, but the report below was
+  // `backup: existing !== null` — FALSE in exactly the unparseable case — so the "(backed up)" note was
+  // suppressed precisely when the customer most needed to be told where their config went.
+  //
+  // ONE PREDICATE DOING DOUBLE DUTY: `existing !== null` meant BOTH "a prior config parsed" AND was reported
+  // as "we made a backup". Those agree in every case except the one that matters. `backup` is now the
+  // literal fact — did we copy a file — and parse failure is its own outcome rather than a silent default.
+  const hadFile = fs.existsSync(p);
   let existing = null;
-  try { existing = JSON.parse(fs.readFileSync(p, "utf8")); } catch (_) { existing = null; }
+  if (hadFile) {
+    let raw;
+    try { raw = fs.readFileSync(p, "utf8"); } catch (e) { return { client, path: p, refused: `cannot read it (${e.code || e.message})` }; }
+    try { existing = JSON.parse(raw); } catch (e) { return { client, path: p, refused: String(e.message).split("\n")[0] }; }
+    // Valid JSON is not enough: `[]`, `"text"` and `null` all parse and would merge into nonsense.
+    if (existing === null || typeof existing !== "object" || Array.isArray(existing)) {
+      return { client, path: p, refused: "not a JSON object (found " + (Array.isArray(existing) ? "an array" : existing === null ? "null" : typeof existing) + ")" };
+    }
+  }
   const merged = client === "vscode" ? mergeVsCode(existing, key) : mergeConfig(existing, key);
   const total = Object.keys(client === "vscode" ? merged.servers : merged.mcpServers).length;
   if (dry) return { client, path: p, dry: true, total };
   fs.mkdirSync(path.dirname(p), { recursive: true });
-  if (fs.existsSync(p)) fs.copyFileSync(p, p + ".bak");
+  if (hadFile) fs.copyFileSync(p, p + ".bak");
   fs.writeFileSync(p, JSON.stringify(merged, null, 2) + "\n");
-  return { client, path: p, wrote: true, backup: existing !== null };
+  return { client, path: p, wrote: true, backup: hadFile };
 }
 
 // EVERY call the CLI makes to the API is BOUNDED. It was not: `fetch` has no default timeout, so a server
@@ -222,7 +240,16 @@ async function cmdInit() {
   for (const client of clients) {
     const r = writeClient(client, key, dry);
     wroteAny = wroteAny || Boolean(r.wrote);
-    if (r.note) console.log("  " + arrow + " " + bold(PRETTY[client] || client) + dim("  →  ") + r.note);
+    if (r.refused) {
+      // Refuse THIS client and keep going — one unreadable config must not block wiring up the others —
+      // but the run as a whole exits non-zero, because a partial install is not a success.
+      console.log("  " + red("✗") + " " + bold(PRETTY[client] || client)
+                  + dim("  →  refusing to overwrite a config it cannot read"));
+      console.log("    " + dim(r.path));
+      console.log("    " + dim(r.refused));
+      console.log("    " + dim("Fix or move that file and re-run — Estelle will not discard settings it cannot parse."));
+      process.exitCode = 1;
+    } else if (r.note) console.log("  " + arrow + " " + bold(PRETTY[client] || client) + dim("  →  ") + r.note);
     else if (r.dry) console.log("  " + arrow + " " + bold(PRETTY[client] || client) + dim("  would write ") + grey(r.path));
     else console.log("  " + ok + " " + bold(PRETTY[client] || client) + dim("  " + r.path) + (r.backup ? dim("  (backed up)") : ""));
   }

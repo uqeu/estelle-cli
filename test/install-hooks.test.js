@@ -11,8 +11,14 @@
 // common hand-edit mistake in a JSON settings file — meant `existing` stayed `{}`, the merge produced an
 // Estelle-hooks-only object, and the customer's permissions, model and env were overwritten. No backup.
 //
-// `init` twelve hundred lines up had always done it correctly (writeClient copies to .bak before writing),
-// so the repo contained a correct implementation of the same operation the whole time.
+// CORRECTED 2026-08-01 — the original version of this comment claimed `init` twelve hundred lines up "had
+// always done it correctly (writeClient copies to .bak before writing), so the repo contained a correct
+// implementation of the same operation the whole time." THAT WAS HALF TRUE, AND HALF TRUE IS WRONG.
+// `writeClient` backed up; it did NOT abort. It had the identical conflation at estelle.js:127, and its
+// report line `backup: existing !== null` was FALSE in exactly the unparseable case, so the "(backed up)"
+// note was suppressed precisely when the customer needed it. See test/init-config.test.js. The repo did
+// not contain a correct implementation — it contained a second copy of the same bug that happened to keep
+// the bytes. Found by reading openai/codex's config loader, which aborts on parse-fail via `?`.
 //
 // These tests drive the REAL command through a temp HOME rather than unit-testing a helper, because the
 // defect lived in the wiring — a helper test would have passed throughout.
