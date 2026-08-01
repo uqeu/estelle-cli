@@ -168,12 +168,21 @@ function receipt(result, spillPath) {
 // home directory. Best-effort by construction: a spill that fails degrades to "no path in the receipt", never
 // to a lost tool result -- the caller only ever replaces output it has already produced.
 
-const SPILL_DIR = path.join(os.homedir(), ".estelle", "tool-output");
+// Resolved on CALL, not at module load — the same rule auth.js:20-22 already states for the same reason.
+// This was the ONLY eager module-scope os.homedir() in cli/bin, and it is the one file that produced ZERO
+// TAP output in CI while every other file passed: `node --test` names a file that never emitted a single
+// test, which is an IMPORT-time stall, not a slow test. os.homedir() reads $HOME and falls back to a
+// passwd/NSS lookup when it is unset, which can block in a container in a way it never does on a laptop —
+// so an eager call runs that lookup before a single line of the module's own logic.
+//
+// Honest about the evidence: this was NOT reproduced locally (import is 7ms with HOME unset on macOS). It
+// is fixed because it breaks a rule this codebase wrote down for itself, and the next CI run is the probe.
+const spillDir = () => path.join(os.homedir(), ".estelle", "tool-output");
 const SPILL_KEEP = 200;
 
 /** Write `body` to the spill directory and return its path, or "" when it could not be written. */
 function spill(body, dir) {
-  const target = dir || SPILL_DIR;
+  const target = dir || spillDir();
   try {
     fs.mkdirSync(target, { recursive: true, mode: 0o700 });
     const name = `${Date.now()}-${crypto.createHash("sha256").update(body).digest("hex").slice(0, 12)}.log`;
@@ -209,5 +218,5 @@ function replacement(text) {
 
 module.exports = {
   noiseKind, filterNoise, repeatMarker, responseText, distil, receipt, replacement,
-  spill, pruneSpill, SPILL_DIR, SPILL_KEEP, MIN_CHARS, MIN_SAVING, REPEAT_RUN, NEVER_DISTIL,
+  spill, pruneSpill, spillDir, SPILL_KEEP, MIN_CHARS, MIN_SAVING, REPEAT_RUN, NEVER_DISTIL,
 };
