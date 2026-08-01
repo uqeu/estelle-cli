@@ -3,16 +3,18 @@ on: workflow_dispatch
 jobs:
   diag:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
       - run: npm ci --ignore-scripts
-      - name: NAME THE TEST — run each case by hand, announcing it BEFORE it runs
+      - name: NAME THE TEST — unbuffered writeSync, so a kill cannot eat the evidence
         run: |
           cat > /tmp/probe.js <<'JS'
+          const fs = require("fs");
+          const say = (s) => fs.writeSync(1, s + "\n");   // SYNC: survives SIGTERM, unlike stdout.write
           const Module = require("module");
           const orig = Module._load;
           const cases = [];
@@ -26,22 +28,20 @@ jobs:
           };
           require("/home/runner/work/estelle-cli/estelle-cli/test/distill.test.js");
           Module._load = orig;
-          console.log("REGISTERED", cases.length, "cases");
+          say("REGISTERED " + cases.length);
+          let i = 0;
           for (const [name, fn] of cases) {
-            process.stdout.write("START  " + name + "\n");
+            say("[" + (++i) + "/13] START  " + name);
             const t0 = Date.now();
-            try { const r = fn(); if (r && typeof r.then === "function") { process.stdout.write("  (async — not awaited)\n"); } }
-            catch (e) { process.stdout.write("THREW  " + e.message.split("\n")[0] + "\n"); }
-            process.stdout.write("DONE   " + (Date.now() - t0) + "ms\n");
+            try { fn(); } catch (e) { say("        THREW  " + String(e.message).split("\n")[0]); }
+            say("        DONE   " + (Date.now() - t0) + "ms");
           }
-          console.log("ALL CASES COMPLETED");
+          say("ALL 13 COMPLETED");
           JS
-          timeout 120 node /tmp/probe.js || echo "### probe exit=$? (124 = it hung; the last START line names the culprit)"
-      - name: does the process EXIT, or does it hang with an open handle after tests pass?
+          timeout 100 node /tmp/probe.js; echo "### probe exit=$? (124 = hung; the last START names it)"
+      - name: same probe, but with HOME pointed at a scratch dir
         if: always()
         run: |
-          timeout 60 node -e '
-            require("/home/runner/work/estelle-cli/estelle-cli/test/distill.test.js");
-            console.log("FILE EVALUATED; registering done");
-            setTimeout(()=>{ console.log("event loop alive 2s later — something is holding it"); }, 2000);
-          ' ; echo "### exit=$? (124 = the process never exits)"
+          mkdir -p /tmp/fakehome
+          HOME=/tmp/fakehome timeout 100 node /tmp/probe.js 2>&1 | tail -8
+          echo "### exit=$?"
