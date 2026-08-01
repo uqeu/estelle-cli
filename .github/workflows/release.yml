@@ -4,6 +4,15 @@
 # `--provenance` needs `id-token: write` (OIDC) and a PUBLIC repo; it emits a sigstore attestation linking
 # the published bytes to this commit, so anyone installing can verify that what runs on their machine is
 # what they can read here. Fail closed: no token, no publish — there is no unsigned fallback.
+#
+# Hardened 2026-07-31 (security review): this is the repository npm's trusted-publishing config actually
+# points at (repository uqeu/estelle-cli, workflow release.yml) — the reviewed, hardened workflow that lives
+# in the private fatelabs/estelle repo's .github/workflows/release.yml is a DIFFERENT file that never runs
+# for a real publish. Reconciled to match it: no floating `npm@latest` (a same-day-compromised npm release
+# would be pulled straight into the signing job — pinned to a specific, months-aged release instead),
+# `--ignore-scripts` on every install (the CLI has zero runtime dependencies, so this only removes npm's own
+# postinstall surface), a CycloneDX SBOM, and a GitHub SLSA build-provenance attestation on the exact tarball
+# in addition to npm's own `--provenance` attestation.
 name: release
 
 on:
@@ -15,11 +24,12 @@ permissions:
 
 jobs:
   publish:
-    name: Test, then publish with provenance
+    name: Build, attest + publish @fatelabs/estelle
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
+      id-token: write        # OIDC — npm trusted publishing + sigstore provenance
+      attestations: write     # GitHub SLSA build-provenance attestation
     steps:
       - uses: actions/checkout@v4
 
@@ -28,21 +38,44 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
 
-      # Trusted publishing (OIDC) needs a recent npm; the version bundled with the runner's Node predates
-      # it, which surfaces as a bare `404 Not Found - PUT` on a package that plainly exists.
-      - name: Use an npm that supports trusted publishing
-        run: npm install -g npm@latest
+      # npm trusted publishing (OIDC) needs npm >= 11.5.1; the version bundled with the runner's Node
+      # predates it, which otherwise surfaces as a bare `404 Not Found - PUT` on a package that plainly
+      # exists. Pinned to a specific, several-months-aged release — never `@latest` — so this job installs a
+      # release the community has had time to find problems with, and a same-day-compromised npm publish
+      # cannot reach the signing job just by npm cutting a new version.
+      - name: Use a pinned npm that supports trusted publishing
+        run: npm install -g npm@11.9.0 --ignore-scripts
 
-      # Trusted publishing (OIDC) needs a recent npm; the version bundled with the runner's Node predates
-      # it, which surfaces as a bare `404 Not Found - PUT` on a package that plainly exists.
-      - name: Use an npm that supports trusted publishing
-        run: npm install -g npm@latest
-
-      - name: Install (lockfile-exact)
-        run: npm ci
+      # Locked, script-free install — the CLI has no runtime deps, so this only pins the tree the SBOM
+      # describes and removes npm's dependency-postinstall surface from the signing job.
+      - name: Install (lockfile-exact, no scripts)
+        run: npm ci --ignore-scripts
 
       - name: Test
         run: npm test
+
+      # SBOM for the artifact being published, kept alongside the tarball.
+      - name: Emit SBOM (CycloneDX)
+        run: npm sbom --sbom-format cyclonedx > sbom.cdx.json
+
+      # Build the EXACT tarball that gets attested and published.
+      - name: Pack the release tarball
+        run: npm pack
+
+      - name: Upload tarball + SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-release-artifacts
+          path: |
+            *.tgz
+            sbom.cdx.json
+
+      # SLSA build provenance: proves these bytes came from this workflow run at this commit — independent
+      # of, and in addition to, npm's own `--provenance` sigstore attestation below.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "*.tgz"
 
       # Auth is npm TRUSTED PUBLISHING (OIDC) — no token. npm now restricts tokens from bypassing 2FA for
       # direct publishing, so a token in CI fails with EOTP no matter how it is scoped. OIDC has nothing to
