@@ -1299,7 +1299,11 @@ function cmdInstallHooks() {
       return;
     }
   }
-  const merged = hook.mergeHooks(existing, "npx -y @fatelabs/estelle");
+  // PINNED TO A MAJOR (ADR 0015). Two things at once: an unpinned `npx -y @fatelabs/estelle` re-resolves
+  // the package on EVERY edit — the dominant cost on the hooks path, far above Node startup — and it lets
+  // any future publish reach an existing customer's machine unreviewed (PLAN-06 supply-chain item #10).
+  // `@0` still takes patch and minor fixes automatically; it will not take a breaking major silently.
+  const merged = hook.mergeHooks(existing, "npx -y @fatelabs/estelle@0");
   fs.mkdirSync(path.dirname(file), { recursive: true });
   if (present) fs.copyFileSync(file, file + ".bak");  // back up regardless — same rule init already follows
   fs.writeFileSync(file, JSON.stringify(merged, null, 2) + "\n");

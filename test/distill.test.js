@@ -154,22 +154,16 @@ test("the spill writes the original and prunes itself", () => {
   }
 });
 
-// TODO(F0-distill-proc-hang): QUARANTINED 2026-08-01 — this test HANGS ON LINUX (>=100s), and it held the
-// F0 install-hooks fix off npm for THREE release attempts while customers stayed on the destructive 0.1.3.
-// Shipping the fix outranks running this assertion, so it is skipped, LOUDLY, until the block is explained.
+// UNWRITABLE PATH, PORTABLY. This test used `/proc/definitely/not/writable/estelle`, which HUNG ON LINUX
+// for >=100s and held the F0 install-hooks fix off npm for three release attempts. `/proc` does not exist
+// on macOS, so no local run ever took that path; CI took it every time.
 //
-// Named by instrument, not by theory (see docs/PLAN-ERRATA.md E-009): a harness that announced each case
-// with fs.writeSync BEFORE running it printed "[13/13] START" and never printed DONE. Cases 1-12 took <=3ms
-// each. It does NOT block at module scope — the file evaluates and all 13 register; `node --test` merely
-// discards a timed-out file's subtest output, which is what made it LOOK like an import hang.
-//
-// The suspect is the one OS-dependent line in this file: /proc does not exist on macOS and does exist on
-// Linux, so `mkdirSync("/proc/...", {recursive:true})` / `readdirSync("/proc/...")` take a path no local
-// run has ever taken. NOT yet narrowed to which of the two calls, and NOT yet explained — so this stays
-// skipped rather than "fixed" by a guess. Restore it with a portable unwritable path once it is.
-test("an unwritable spill degrades to no path, never to a lost result",
-     { skip: "HANGS ON LINUX CI - see TODO(F0-distill-proc-hang) above and PLAN-ERRATA E-009" }, () => {
-  assert.equal(d.spill("body", "/proc/definitely/not/writable/estelle"), "");
+// `/dev/null` is a CHARACTER DEVICE on both macOS and Linux, so mkdir beneath it is ENOTDIR immediately on
+// either — no `process.platform` branch, and therefore no second code path that only one of us ever runs.
+// A test that behaves differently per OS is how this defect stayed invisible; the fix is a path that
+// behaves the SAME everywhere, not a conditional that hides the difference.
+test("an unwritable spill degrades to no path, never to a lost result", () => {
+  assert.equal(d.spill("body", "/dev/null/estelle"), "");
   // and pruning an unreadable dir is silent
-  assert.doesNotThrow(() => d.pruneSpill("/proc/definitely/not/there"));
+  assert.doesNotThrow(() => d.pruneSpill("/dev/null/nope"));
 });
