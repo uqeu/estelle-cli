@@ -23,6 +23,10 @@ const slashMenu = require("./slash-menu.js");
 // ONE definition of "which repo am I in", shared with `estelle sweep` and BOTH always-on hooks. The
 // header used to derive its own from basename(cwd) and disagree with all three — see `resolveRepo`.
 const repoName = require("./repo-name.js");
+// 0.2.0 — the alternate screen. `screen.js` decides WHICH ROWS are visible (pure); `altscreen.js` owns
+// WHEN the escape codes are emitted. This file owns neither, and both are inert on a non-TTY.
+const altscreen = require("./altscreen.js");
+const screenModel = require("./screen.js");
 // Writing a returned diff to the working tree, and the shift+tab switch that says under which ceiling.
 // Both are new primitives rather than new endpoints — the server has no say in what happens on your disk,
 // which is exactly why the guards for it live client-side and fail closed.
@@ -383,7 +387,52 @@ function welcomeBack(session, now) {
  * /scan grade (git, by default).
  */
 async function runSession(deps) {
-  const { post, get, prompt, out, c, cwd, now } = deps;
+  const { post, get, prompt, c, cwd, now } = deps;
+
+  // ── 0.2.0: OWN THE SCREEN, OR LEAVE IT EXACTLY AS IT WAS ──────────────────────
+  //
+  // Brief §2.2: "the screen is borrowed, not owned." Inside the alternate screen the terminal keeps NO
+  // scrollback, so the application must keep its own — that is `screen.js`, and this is where the two meet.
+  //
+  // ⛔ THE INERT PATH IS BYTE-IDENTICAL TO WHAT SHIPPED BEFORE. On a non-TTY, with TERM=dumb, or with
+  // ESTELLE_ALT_SCREEN=0, `alt` is null and `out` is the caller's own function unchanged. A release that
+  // touches every render path must be able to be turned off without a downgrade, and piping the session
+  // must never get escape codes spliced into it.
+  const wantAlt = deps.altScreen !== undefined
+    ? Boolean(deps.altScreen)
+    : altscreen.shouldUse(process.env, process.stdout);
+  const alt = wantAlt ? (deps.altScreenImpl || altscreen.create(process.stdout)) : null;
+  let view = null, uninstallAlt = null;
+  // Two rows are reserved at the bottom: one blank, one for the prompt readline draws into. The transcript
+  // is painted above them, so readline never has to move the cursor over text it does not own — which is
+  // the mechanism §2.3 blamed for "scrolling corrupts the view".
+  const RESERVED_ROWS = 2;
+  const viewport = () => Math.max(1, alt.size().rows - RESERVED_ROWS);
+  const repaint = () => {
+    if (!alt || !view) return;
+    alt.paint(screenModel.visible(view, viewport()).lines);
+  };
+  if (alt && alt.enter()) {
+    view = screenModel.create({ width: alt.size().columns });
+    uninstallAlt = alt.install(process);
+    // A resize must RE-WRAP rather than leave clipped rows; screen.js owns that and this is the trigger.
+    if (process.stdout.on) {
+      process.stdout.on("resize", () => {
+        if (!view) return;
+        view = screenModel.reflow(view, alt.size().columns);
+        repaint();
+      });
+    }
+  }
+  // THE SEAM. Every line the session prints goes through here, so the scrollback cannot miss one — an
+  // `out` that bypassed the model would leave the transcript with holes only visible after scrolling.
+  const out = view
+    ? (line) => { view = screenModel.append(view, line === undefined ? "" : String(line), alt.size().columns); repaint(); }
+    : deps.out;
+  const releaseScreen = () => {
+    if (uninstallAlt) { uninstallAlt(); uninstallAlt = null; }
+    if (alt) alt.leave();
+  };
   let key = deps.key || storedKey();
 
   out("");
@@ -550,7 +599,24 @@ async function runSession(deps) {
     // and the keypress handler — was the one thing neither side's tests called.
     COMMANDS, new Set(Object.keys(COMMANDS).filter((n) => !HELP_ONLY.has(n))), skillRows);
   const unbindMenu = (deps.bindMenu || (() => () => {}))(menuFor);
-  const leave = (code) => { unbind(); unbindMenu(); return code; };
+  // SCROLLING, which only exists because we took the terminal's away (§2.2 -> §2.3). Inside the alternate
+  // screen there is no native scrollback, so PageUp/PageDown and shift+arrows move `screen.js`'s viewport
+  // and repaint. Bound ONLY when alt-screen is active: off-TTY there is nothing to scroll and nobody to
+  // press a key, and binding raw-mode handlers there would corrupt a piped stream.
+  const unbindScroll = view
+    ? (deps.bindScroll || altscreen.scrollBinder(process.stdin))((delta) => {
+        if (!view) return;
+        const page = Math.max(1, viewport() - 1);
+        view = delta === "top" ? screenModel.scroll(view, -1e9, viewport())
+             : delta === "bottom" ? screenModel.toBottom(view)
+             : screenModel.scroll(view, delta * (Math.abs(delta) === 1 ? 1 : page), viewport());
+        repaint();
+      })
+    : () => {};
+  // EVERY ORDINARY EXIT GOES THROUGH HERE — /exit, ctrl-d, a refused key. `alt.install()` covers the
+  // violent paths (crash, SIGINT, SIGTERM); this covers the polite ones. Both are needed: install alone
+  // would leave the screen borrowed on a clean `/exit`, which is the most common exit of all.
+  const leave = (code) => { unbind(); unbindMenu(); unbindScroll(); releaseScreen(); return code; };
 
   for (;;) {
     let line = await prompt(promptFor());
