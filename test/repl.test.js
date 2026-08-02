@@ -747,3 +747,44 @@ test("#94 an UNREADABLE repo list does not trigger the disclaimer either", () =>
 test("#94 a non-zero count is untouched", () => {
   assert.match(r.memoryStatusLine({ memories: 10, files: 880, filed: ["a/b"] }), /880 code files indexed/);
 });
+
+// ── #94's REAL ANSWER, once the server could give one ─────────────────────────
+// /overview now returns memory.by_repo — durable per-repo {repo, files, chunks}. Measured on the
+// founder's account: account-wide repo_files is 8,450 while the row for uqeu/estelle is 1,993 files /
+// 13,757 chunks. Neither is the other, and the one a customer wants when the line above says
+// "repo uqeu/estelle" is the second.
+
+const BY_REPO = [
+  { repo: "", files: 6457, chunks: 16991 },
+  { repo: "isoproof-bravo", files: 0, chunks: 0 },
+  { repo: "uqeu/estelle", files: 1993, chunks: 13757 },
+];
+
+test("#94 the header reports THIS repo's files, not the account total", () => {
+  const line = r.memoryStatusLine({ memories: 30748, files: 8450, repo: "uqeu/estelle",
+                                    filed: ["uqeu/estelle"], byRepo: BY_REPO });
+  assert.match(line, /1,993 code files in uqeu\/estelle/, "the repo's own count, not 8,450");
+  assert.ok(!/8,450/.test(line), "the account total must not sit under a repo name");
+  assert.match(line, /30,748 memories across this account/, "the account number is LABELLED as the account's");
+});
+
+test("#94 a bare repo name still matches an owner/name row — one matcher, not two", () => {
+  // /repos stores both forms; repoStatusLine already tail-matches. A second matcher with a different idea
+  // of "same repo" is exactly the defect class this header keeps producing.
+  assert.deepStrictEqual(r.repoRow(BY_REPO, "estelle"), { files: 1993, chunks: 13757 });
+  assert.deepStrictEqual(r.repoRow(BY_REPO, "uqeu/estelle"), { files: 1993, chunks: 13757 });
+});
+
+test("#94 a repo with a ZERO row falls back rather than claiming zero", () => {
+  // isoproof-bravo really has 0 files. Saying "0 code files in isoproof-bravo" would be defensible, but
+  // the account-wide fallback carries the cannot-answer wording that #94 earned — and a zero row beside
+  // a filed repo is precisely the state we could disprove.
+  const line = r.memoryStatusLine({ memories: 30748, files: 0, repo: "isoproof-bravo",
+                                    filed: ["isoproof-bravo"], byRepo: BY_REPO });
+  assert.match(line, /count unavailable/);
+});
+
+test("#94 an OLDER server with no by_repo still renders — the field is optional", () => {
+  const line = r.memoryStatusLine({ memories: 10, files: 880, repo: "a/b", filed: ["a/b"], byRepo: null });
+  assert.match(line, /880 code files indexed/);
+});

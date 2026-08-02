@@ -139,7 +139,16 @@ async function ask(spec, io) {
   if (s.kind === "secret") {
     // The masked read — symptom (h), the key prompt echoing the credential in plaintext. `secret-prompt`
     // already existed and already knew how; nothing had made it the ONE way to ask for a secret.
-    const reader = io.promptSecret || secretPrompt.promptSecret || io.prompt;
+    // 🔴 NO FALLBACK TO `io.prompt`, AND THIS IS THE BY-CONSTRUCTION HALF. That fallback was the hole: the
+    // session's `prompt` RECORDS EVERY LINE TO HISTORY, so a masked read that quietly degraded to it wrote
+    // the customer's API key into `~/.estelle/history.jsonl` — where ↑ recalled it onto the screen. A
+    // secret is read by a reader that masks AND does not record, or it is not read at all.
+    // A pipe has no terminal echo to suppress and no masked reader, so it needs a line read — but it must
+    // be one that CANNOT RECORD. `readLine` is exactly that: the session's reader with the history writer
+    // left out by construction. Falling back to the recording `prompt` is what put a live key in
+    // ~/.estelle/history.jsonl, where ↑ then recalled it onto the screen.
+    const reader = io.promptSecret || secretPrompt.promptSecret || io.readLine;
+    if (!reader) return cancelled();
     const value = await reader(`  ${c.teal(s.label || "value")} ${c.dim("›")} `);
     return value === null || value === undefined ? cancelled() : accepted(String(value).trim());
   }

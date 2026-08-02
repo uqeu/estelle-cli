@@ -154,7 +154,52 @@ function appendOnce(t, entry) {
   return repeats(t, entry) ? t : append(t, entry);
 }
 
+/**
+ * 🔴 THE ONE WRITE SITE — Module 1's surface for the COMMAND half of the CLI.
+ *
+ * The session has a transcript because it is a conversation. `estelle sweep` is not: it runs, prints, and
+ * exits. But the founder's rule has no exceptions —
+ *
+ *      NOTHING IN cli/bin WRITES TO STDOUT EXCEPT THROUGH MODULE 1 OR MODULE 2
+ *
+ * — and the audit found **214 `console.log` calls in `estelle.js` alone**, which is the entire top-level
+ * command surface: every `sweep`, every `monitor`, the usage block. None of it had ever gone through a
+ * renderer, and `monitor [issues|…]your production errors` (no space) is what that looks like from the
+ * outside. It is not a typo; it is 214 hand-formatted writes.
+ *
+ * ⛔ `line()` IS BYTE-IDENTICAL TO `console.log(x)` FOR A STRING, ON PURPOSE. A migration of this size has
+ * to be provably output-preserving or it cannot be verified — 214 call sites is far past what anyone can
+ * eyeball. Identical bytes means the migration is a REFACTOR, and the formatting improvements come after,
+ * one at a time, each visible in a diff. Changing both at once would make every difference ambiguous.
+ */
+function writer(stream) {
+  const out = stream || process.stdout;
+  // A closed or broken stdout is not a crash: a CLI whose output is piped to `head` gets EPIPE, and
+  // dying there would turn `estelle monitor | head` into a stack trace.
+  const put = (text) => { try { out.write(`${text}\n`); } catch (_) { /* EPIPE, closed pipe */ } };
+  return {
+    /** Exactly `console.log(x)` for a string. The migration target. */
+    line: (text) => put(text === undefined || text === null ? "" : String(text)),
+    blank: () => put(""),
+    /** A line the caller will FINISH later — `Uploading… ` then `done` on the same row. Nine of
+     * `estelle.js`'s writes are this idiom, and it is why they were `process.stdout.write` in the first
+     * place: `console.log` cannot leave a line open. It goes through here so the render pass is still the
+     * only writer. */
+    partial: (text) => { try { out.write(String(text === undefined ? "" : text)); } catch (_) { /* EPIPE */ } },
+    /** A row REPLACED in place — the ingest percentage. `\r` returns to column 0 and the row is cleared
+     * before it is rewritten, so a long value followed by a short one leaves no tail. This is the ONE
+     * write that is allowed to redraw, and it belongs here rather than at a call site for exactly the
+     * reason the spinner did: two writers, one screen. */
+    inplace: (text) => { try { out.write(`\r\x1b[2K${text === undefined ? "" : text}`); } catch (_) { /* EPIPE */ } },
+    /** The TYPED kinds, for call sites migrating past a bare line. Rendered by the ONE renderer. */
+    notice: (text, c) => renderEntry(notice(text), c).forEach(put),
+    error: (text, c) => renderEntry(error(text), c).forEach(put),
+    answer: (text, c) => renderEntry(answer(text), c).forEach(put),
+  };
+}
+
 module.exports = {
   KINDS, create, append, appendOnce, repeats, normalise, renderEntry, lines, lastOf,
   user, answer, tool, choice, notice, error,
+  writer,
 };

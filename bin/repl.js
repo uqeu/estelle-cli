@@ -379,11 +379,40 @@ function memoryStatusLine(status) {
   // says a number we cannot trust reads as CANNOT-ANSWER rather than as fact. Saying "unavailable" is
   // the honest line; saying "0" is the third instance of two views disagreeing on one header.
   const filedAnything = Array.isArray(s.filed) && s.filed.length > 0;
+  // 🔴 #94's REAL ANSWER, once the server could give one. `/overview` now returns `memory.by_repo` —
+  // a durable per-repo `{repo, files, chunks}` — so the header can finally say something about THE REPO
+  // YOU ARE IN instead of an account-wide total sitting under a repo name.
+  //
+  // Measured on the founder's account 2026-08-02: account-wide `repo_files` is 8,450, but the row for
+  // `uqeu/estelle` is **1,993 files / 13,757 chunks**. Neither number is the other, and the one a
+  // customer wants when the line above says `repo uqeu/estelle` is the SECOND. Reporting the account
+  // total beside a repo name is the same lie #23 fixed one field over — two true numbers under a false
+  // heading.
+  const here = repoRow(s.byRepo, s.repo);
+  if (here) {
+    return `${commas(here.files)} code files in ${s.repo}`
+      + (here.chunks ? ` · ${commas(here.chunks)} chunks` : "")
+      + (memories ? ` · ${commas(memories)} memories across this account` : "");
+  }
   const fileText = files ? `${commas(files)} code files indexed`
     : filedAnything ? "code file count unavailable"
     : "0 code files indexed";
   return [memories ? `${commas(memories)} memories` : "", fileText]
     .filter(Boolean).join(" · ") + " (this account, all repos)";
+}
+
+/** The `by_repo` row for the repo we are standing in, or null.
+ *
+ * Matched the same way `repoStatusLine` matches `filed`: `/repos` stores both `owner/name` and bare
+ * names, so a tail comparison is what stops a correctly-swept repo reading as absent. Two matchers with
+ * different ideas of "same repo" is exactly the defect class this header keeps producing. */
+function repoRow(byRepo, repo) {
+  const name = String(repo || "").trim();
+  if (!name || !Array.isArray(byRepo)) return null;
+  const tail = (n) => String(n).split("/").pop().toLowerCase();
+  const hit = byRepo.find((r) => r && typeof r.repo === "string" && r.repo
+    && (r.repo.toLowerCase() === name.toLowerCase() || tail(r.repo) === tail(name)));
+  return hit && Number(hit.files) > 0 ? { files: Number(hit.files) || 0, chunks: Number(hit.chunks) || 0 } : null;
 }
 const commas = (n) => String(Math.max(0, Math.floor(Number(n) || 0))).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 
@@ -454,10 +483,21 @@ async function runSession(deps) {
   // the mechanism §2.3 blamed for "scrolling corrupts the view".
   const RESERVED_ROWS = 2;
   const viewport = () => Math.max(1, alt.size().rows - RESERVED_ROWS);
+  // THE STATUS LINE — "transcript above (Module 1), composer below (Module 2), status line under that.
+  // Nothing else writes. Ever." The spinner sets this; the render pass draws it. It is the last row of
+  // the frame rather than an ad-hoc stdout write, which is what made it stack (symptom d, again).
+  let statusLine = null, pendingLine = null;
   const repaint = () => {
     if (!alt || !view) return;
-    alt.paint(screenModel.visible(view, viewport()).lines);
+    const rows = screenModel.visible(view, viewport()).lines.slice();
+    if (pendingLine) rows.push(pendingLine);
+    if (statusLine) rows.push(`  ${c.dim(statusLine)}`);
+    alt.paint(rows);
   };
+  const setStatus = (text) => { statusLine = text || null; repaint(); };
+  // THE QUEUE PREVIEW is another row the ONE render pass owns — under the status line, per the layout.
+  // `estelle.js` hands us the setter rather than writing it itself, which is the whole rule.
+  if (deps.onPendingRenderer) deps.onPendingRenderer((text) => { pendingLine = text || null; repaint(); });
   if (alt && alt.enter()) {
     view = screenModel.create({ width: alt.size().columns });
     uninstallAlt = alt.install(process);
@@ -523,8 +563,9 @@ async function runSession(deps) {
     // `deps.promptSecret` and silently fell back to the ECHOING reader whenever it was absent — so the
     // masking depended on a caller remembering to pass it, which is exactly the "every prompt hand-rolls
     // its own printing" shape §A2 exists to end.
+    // NOTE `readLine`, not `prompt`: the secret path must never reach a reader that writes history.
     const keyAsk = await ask.ask({ kind: "secret", label: "key" },
-                                 { out, c, prompt, promptSecret: deps.promptSecret });
+                                 { out, c, promptSecret: deps.promptSecret, readLine: deps.readLine || prompt });
     const pasted = keyAsk.ok ? keyAsk.value : null;
     if (!looksLikeKey(pasted)) {
       out(`  ${c.red("That doesn't look like an Estelle key.")} ${c.dim("Run estelle again when you have one.")}`);
@@ -898,7 +939,8 @@ async function runSession(deps) {
         ? get(route.query && route.query.id ? `${route.path}?id=${encodeURIComponent(route.query.id)}` : route.path, key)
         : post(route.path, body, key)
       ).catch((e) => ({ error: { message: String((e && e.message) || e) } })),
-      { write: deps.write });
+      // On alt-screen the spinner goes through the render pass; off it, the in-place write is correct.
+      view ? { status: setStatus } : { write: deps.write });
     const raw = await send(route.body);
     let res = route.mcp && !(raw && raw.error && raw.error.message) ? mcpText(raw) : raw;
 
@@ -1232,6 +1274,12 @@ async function sessionStatus(deps) {
     // Reporting memories under the label "files" told a customer with 880 indexed files that it had 44,374
     // of them. Brief §1.1 asks for both, separately labelled.
     files: mem.repo_files || (account && (account.files || account.memory_files)) || 0,
+    // #94: the durable per-repo rows, so the header can answer about THIS repo rather than the account.
+    // Absent on an older server, which is why every consumer treats it as optional rather than required.
+    byRepo: Array.isArray(mem.by_repo) ? mem.by_repo : null,
+    // `entities_unknown` is the server saying "I could not count", which is a DIFFERENT fact from zero —
+    // and rendering a could-not-count as `0 entities` is the same defect #94 was, one field over.
+    entitiesUnknown: mem.entities_unknown === true,
     // `null` when /repos could not be read — a failure to ASK is not evidence that nothing is filed.
     filed: repos && Array.isArray(repos.repos) ? repos.repos : null,
     // The account's autonomy ceiling, so the first footer is drawn from the truth. Absent on failure.
@@ -1399,7 +1447,7 @@ module.exports = {
   looksLikeKey, maskKey, humanDuration, relativeTime, parseInput, COMMANDS, COMMAND_ALIASES,
   known, replies,
   statusLines, welcomeBack, renderAnswer, runSession, routeInput, sessionStatus, handleLocal, HELP_ONLY,
-  resolveRepo, repoStatusLine, memoryStatusLine, commandHint, verifyLines,
+  resolveRepo, repoStatusLine, memoryStatusLine, repoRow, commandHint, verifyLines,
   expandFileRefs, renderDiff, renderGate, mcpCall, mcpText, unknownTool,
   isSkillExit, runSkill,
   collapsePaste, expandPastes, frecencyScore, parseHistory, historyLine, interruptAction, spinnerPlan,

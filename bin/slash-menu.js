@@ -162,8 +162,17 @@ function attachMenu(stdin, deps) {
       drawn = 0;
     };
     const close = () => { erase(); open = false; selected = 0; };
+    // 🔴 THE BUFFER MOVED, AND THIS READ DID NOT FOLLOW IT. The menu asks "what has been typed so far?"
+    // to filter its rows. It asked `rl.line` — readline's buffer — and readline is no longer on the
+    // interactive path: the composer holds the text now, so `rl` is null and this returned "" forever,
+    // which `typed()` maps to null, which closes the menu on the very keypress that should open it.
+    //
+    // Measured under a pty: pressing `/` produced ZERO menu rows. That is the founder's "/ does not open
+    // the menu in a real terminal", and it is a consequence of owning the composer rather than a separate
+    // defect — the same shape as every other symptom in §A2, which is why it was worth naming.
+    const readLine = d.line || (() => (rl && rl.line) || "");
     const typed = () => {
-      const line = (rl && rl.line) || "";
+      const line = readLine() || "";
       return line.startsWith("/") ? line.slice(1) : null;
     };
     const paint = () => {
@@ -181,16 +190,31 @@ function attachMenu(stdin, deps) {
       buf += upTo(lines.length);
       write(buf);
       drawn = lines.length;
+      // Redraw the input line. With readline gone this is the composer's render pass, handed in by the
+      // caller — the menu never draws the prompt itself, which is what kept it BELOW the input (symptom g).
       if (rl) rl.prompt(true);
+      else if (d.repaint) d.repaint();
       return undefined;
     };
 
-    const onKey = (_ch, key) => {
+    const onKey = (ch, key) => {
       const k = key || {};
-      const line = (rl && rl.line) || "";
+      // 🔴 TWO CORRECTIONS HERE, AND BOTH WERE NEEDED FOR `/` TO OPEN ANYTHING.
+      //
+      // (1) It read `rl.line` — readline's buffer — and readline is off the interactive path, so `rl` is
+      //     null and this was "" forever.
+      // (2) The composer dispatches to overlays BEFORE applying the key, which is what lets an open menu
+      //     claim ↑/↓/enter. So on the `/` keypress the buffer does not contain the `/` YET. Asking "does
+      //     the line start with /" of a buffer one keystroke behind is a question that can never be true
+      //     on the keystroke that matters.
+      //
+      // The line AS IT WILL BE is what decides. Measured under a pty before this: pressing `/` produced
+      // ZERO menu rows — the founder's "/ does not open the menu in a real terminal", reproduced at last.
+      const line = readLine() || "";
       if (!open) {
         // opens on the `/` that starts a line — never mid-sentence, where a path like src/x is just text
-        if (k.name === "escape" || !line.startsWith("/")) return;
+        const next = line + (typeof ch === "string" && ch >= " " ? ch : "");
+        if (k.name === "escape" || !next.startsWith("/")) return;
         rows = rowsFor() || [];
         open = true;
         selected = 0;
@@ -204,11 +228,12 @@ function attachMenu(stdin, deps) {
         const hits = filterRows(rows, typed() || "");
         const pick = hits[selected];
         close();
-        if (pick && rl && k.name === "tab") {
+        if (pick && k.name === "tab" && (rl || d.setLine)) {
           // tab COMPLETES and leaves the line to be submitted; enter lets readline submit what is there
-          rl.line = `/${pick.name} `;
-          rl.cursor = rl.line.length;
-          rl.prompt(true);
+          // TAB COMPLETES. It writes into whichever buffer is real — readline's on a pipe, the
+          // composer's on a TTY. Two buffers and one completion is how a menu row silently stops working.
+          if (d.setLine) d.setLine(`/${pick.name} `);
+          else { rl.line = `/${pick.name} `; rl.cursor = rl.line.length; rl.prompt(true); }
         }
         return undefined;
       }

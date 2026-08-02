@@ -319,3 +319,41 @@ test("SYMPTOM d: N shift+tabs leave N mode notices, never N stacked footers", as
   // is bounded by the number of DISTINCT rungs, never by the number of keypresses.
   assert.ok(footers <= 4, `seven presses left ${footers} footers — it must never stack per keypress`);
 });
+
+test("SYMPTOM d (spinner): frames go to the STATUS LINE, never to stdout, when a screen is owned", async () => {
+  // "The spinner prints a new line per frame — dozens of stacked 'thinking' lines. A stdout write racing
+  // the repaint, in THE MOST-EXECUTED PATH IN THE CLI. Module 1's rule has no exceptions."
+  //
+  // The arithmetic was always right (`\r\x1b[2K` replaces in place). It stacked because screen.js
+  // repaints the whole viewport while the spinner wrote straight to stdout — the `\r` returned to
+  // whatever row the repaint had left the cursor on.
+  const inputUi = require(path.join(__dirname, "..", "bin", "input-ui.js"));
+  const writes = [], statuses = [];
+  // The spinner only draws after 500ms of WORK, on a 90ms interval — so the body must actually last
+  // long enough for a tick, and the injected clock must be past the delay when it fires.
+  // withSpinner takes `started = clock()` FIRST, so an incrementing clock makes every later reading
+  // relative to a moving origin and elapsed never passes the 500ms delay. Origin at 0, everything after
+  // it past the delay.
+  let calls = 0;
+  const clock = () => (calls++ === 0 ? 0 : 900);
+  await inputUi.withSpinner("thinking",
+    () => new Promise((r) => setTimeout(r, 260)),
+    { status: (t) => statuses.push(t), write: (s) => writes.push(s), now: clock });
+  assert.deepStrictEqual(writes, [], "NOTHING may reach stdout when a render pass exists");
+  assert.ok(statuses.length >= 1, "the label must reach the status line");
+  assert.strictEqual(statuses[statuses.length - 1], null, "and be cleared when the work finishes");
+});
+
+test("SYMPTOM d (spinner): with NO render pass the in-place write is still correct", async () => {
+  // THE PAIRED NEGATIVE. A plain TTY with alt-screen off owns no viewport, so writing in place is right
+  // there — the fix must not silence the spinner on the path where it always worked.
+  const inputUi = require(path.join(__dirname, "..", "bin", "input-ui.js"));
+  const writes = [];
+  let calls = 0;
+  const clock = () => (calls++ === 0 ? 0 : 900);
+  await inputUi.withSpinner("thinking",
+    () => new Promise((r) => setTimeout(r, 260)),
+    { write: (s) => writes.push(s), now: clock });
+  assert.ok(writes.length >= 1, "the spinner must still draw where nothing else owns the screen");
+  assert.ok(writes.every((w) => w.startsWith("\r")), "…and still replace in place, never append");
+});

@@ -257,7 +257,12 @@ function recordSession(cwd, files, now) {
                   files: (files || []).slice(0, MAX_TRACKED_FILES) };
   try {
     fs.mkdirSync(path.dirname(statePath()), { recursive: true });
-    fs.writeFileSync(statePath(), JSON.stringify({ ...readState(), [dir]: entry }), "utf8");
+    // 0600, NOT THE DEFAULT. A session file is the single most likely place for a repo path, a task
+    // string or a token to end up next, and "zero key-shaped tokens today" is exactly the reasoning
+    // E-030 exists to defeat — the third instance always lands where nobody hardened. Every mode under
+    // ~/.estelle is now a decision someone made rather than a default nobody looked at.
+    fs.writeFileSync(statePath(), JSON.stringify({ ...readState(), [dir]: entry }),
+                     { encoding: "utf8", mode: 0o600 });
     return true;
   } catch { return false; }
 }

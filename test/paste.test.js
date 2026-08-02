@@ -85,3 +85,64 @@ test("SEAM: a pasted block reaches the composer as one insert, and is never subm
   handlers.data(`${S}alpha\nbeta${E}`);
   assert.deepStrictEqual(inserted, ["alpha beta"], "one insert, no submit");
 });
+
+// ── E-036 — THE HALF `attach` COULD NOT DO ────────────────────────────────────
+// Bracketed paste was ANNOUNCED and not EFFECTIVE: `attach` adds a `data` listener, readline adds its
+// own, and adding a second listener does not take input away from the first. The terminal wrapped the
+// paste, we parsed it, and readline submitted on every embedded newline anyway. Measured under a real
+// writable pty: 18 turns submitted before, 2 after, and the transcript now shows ONE entry.
+
+const { Readable } = require("node:stream");
+
+/** A fake TTY stdin that can be fed bytes — what readline would be reading from. */
+function fakeStdin() {
+  const s = new Readable({ read() {} });
+  s.isTTY = true;
+  s.setRawMode = () => s;
+  return s;
+}
+
+test("E-036 a pasted block is SWALLOWED and reported — nothing downstream sees the body", async () => {
+  // The contract CHANGED when the composer landed, and the change is the point. Forwarding the body at
+  // all — even flattened — meant every embedded newline still reached the key reader as a `return`.
+  // Now it never flows: it goes to onPaste, and the composer inserts it verbatim as ONE edit.
+  const stdin = fakeStdin();
+  const seen = [];
+  const pastes = [];
+  const filtered = paste.pasteInput(stdin, { onPaste: (original) => pastes.push(original) });
+  filtered.on("data", (d) => seen.push(d.toString("utf8")));
+  stdin.push(`${S}alpha\nbeta\ngamma${E}`);
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(seen.join(""), "", "NOTHING of the body may flow downstream");
+  assert.deepStrictEqual(pastes, ["alpha\nbeta\ngamma"], "…and it arrives whole, newlines intact");
+});
+
+test("E-036 ordinary typing passes through untouched — the filter must not eat input", () => {
+  const stdin = fakeStdin();
+  const filtered = paste.pasteInput(stdin);
+  const seen = [];
+  filtered.on("data", (d) => seen.push(d.toString("utf8")));
+  stdin.push("hello");
+  stdin.push("\r");
+  return new Promise((r) => setImmediate(() => {
+    assert.strictEqual(seen.join(""), "hello\r", "every ordinary byte must survive, Enter included");
+    r();
+  }));
+});
+
+test("E-036 the TTY surface is PROXIED — losing it would silently kill the composer", () => {
+  // readline with terminal:true reads `isTTY` and calls `setRawMode` ON THE INPUT STREAM. A bare
+  // Transform has neither, so it would fall back to non-terminal mode: no history, no keypress, no menu.
+  let rawSet = null;
+  const stdin = fakeStdin();
+  stdin.setRawMode = (m) => { rawSet = m; return stdin; };
+  const filtered = paste.pasteInput(stdin);
+  assert.strictEqual(filtered.isTTY, true, "readline must still see a TTY");
+  filtered.setRawMode(true);
+  assert.strictEqual(rawSet, true, "setRawMode must reach the REAL stdin, or keys stop working");
+});
+
+test("E-036 a NON-TTY is returned unchanged — a pipe must be byte-identical", () => {
+  const plain = new Readable({ read() {} });
+  assert.strictEqual(paste.pasteInput(plain), plain, "a piped run must not be filtered at all");
+});

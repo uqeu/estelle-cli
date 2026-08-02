@@ -63,10 +63,38 @@ function parseHistory(raw) {
 }
 
 /** One history line to append, or "" when this entry adds nothing (blank, or the same as last time). */
+//: A credential, in any shape this CLI can hand out or accept. Deliberately broad — an `sk-`/`ghp_`
+//: token pasted at the prompt is exactly as unwelcome at rest as ours is.
+const SECRET_SHAPED = /(estelle_live_[A-Za-z0-9]{12,}|sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/;
+
+/** True when a string looks like a credential and must never come to rest. */
+function looksSecret(text) {
+  return SECRET_SHAPED.test(String(text || ""));
+}
+
 function historyLine(text, previous) {
   const t = String(text || "").trim();
   if (!t || t === previous) return "";
+  // 🔴 A CREDENTIAL NEVER COMES TO REST HERE. A live key was found in `~/.estelle/history.jsonl` on the
+  // founder's machine and ↑ recalled it onto the screen — in front of anyone watching, or any screen
+  // share. Mode 0600 keeps it from other users; it does not keep it off the display.
+  //
+  // ⛔ THIS IS THE SECOND LAYER, NOT THE MECHANISM. The secret PROMPT is excluded from this writer by
+  // construction (see `ask.js`: a masked read can never fall back to a reader that records). This guard
+  // exists for the OTHER path — a customer pasting a key at the ordinary composer, which no amount of
+  // careful prompt wiring can prevent. Both are needed and they cover different mistakes.
+  if (looksSecret(t)) return "";
   return JSON.stringify({ text: t, at: Date.now() }) + "\n";
+}
+
+/** Strip every credential-shaped line from a history file's contents. Returns `{text, removed}`.
+ *
+ * Pure, so the scrub can be tested without a filesystem — and so the count it reports is the count that
+ * was actually removed rather than an estimate. */
+function scrubHistory(raw) {
+  const lines = String(raw || "").split("\n");
+  const kept = lines.filter((l) => !l.trim() || !looksSecret(l));
+  return { text: kept.join("\n"), removed: lines.filter((l) => l.trim() && looksSecret(l)).length };
 }
 
 /**
@@ -100,8 +128,21 @@ const SPINNER_HOLD_MS = 250;
  * spliced into its output, and there is nobody watching one anyway.
  */
 async function withSpinner(label, work, deps) {
+  // 🔴 THE STATUS LINE IS OWNED BY THE RENDER PASS, NOT BY THIS FUNCTION — and that is symptom (d) again,
+  // in the most-executed path in the CLI.
+  //
+  // The arithmetic below was always correct: `\r\x1b[2K` returns to column 0 and clears, so a frame
+  // replaces the last one. It stacked anyway, because inside the alternate screen `screen.js` repaints
+  // the whole viewport from the transcript while this wrote straight to stdout — two writers, one screen,
+  // and the `\r` returned to the start of whatever row the repaint had just left the cursor on. Dozens
+  // of stacked "thinking" lines, exactly like the footer printing seven times.
+  //
+  // `deps.status(text | null)` is the fix: the caller hands the label to the ONE render pass and the
+  // frame is drawn where the composer's status line lives. `deps.write` remains for the paths that do
+  // NOT own a screen (a plain TTY with alt-screen off), where writing in place is correct.
+  const status = deps && deps.status;
   const write = deps && deps.write;
-  if (!write) return work();
+  if (!status && !write) return work();
   const clock = (deps && deps.now) || Date.now;
   const started = clock();
   let shownAt = null, frame = 0;
@@ -109,7 +150,9 @@ async function withSpinner(label, work, deps) {
     const elapsed = clock() - started;
     if (spinnerPlan(elapsed, shownAt, 500, SPINNER_HOLD_MS) === "show") shownAt = elapsed;
     if (shownAt == null) return;
-    write(`\r\x1b[2K  ${SPINNER_FRAMES[frame++ % SPINNER_FRAMES.length]} ${label}`);
+    const text = `${SPINNER_FRAMES[frame++ % SPINNER_FRAMES.length]} ${label}`;
+    if (status) status(text);
+    else write(`\r\x1b[2K  ${text}`);
   };
   const timer = setInterval(draw, 90);
   if (timer.unref) timer.unref();                     // never hold the process open on the animation
@@ -123,7 +166,8 @@ async function withSpinner(label, work, deps) {
       if (spinnerPlan(elapsed, shownAt, 500, SPINNER_HOLD_MS) === "hold") {
         await new Promise((r) => setTimeout(r, SPINNER_HOLD_MS - (elapsed - shownAt)));
       }
-      write("\r\x1b[2K");
+      if (status) status(null);      // the render pass drops the line; nothing to erase by hand
+      else write("\r\x1b[2K");
     }
   }
 }
@@ -131,5 +175,6 @@ async function withSpinner(label, work, deps) {
 module.exports = {
   PASTE_MIN_LINES, PASTE_MIN_CHARS, HISTORY_MAX, SPINNER_FRAMES, SPINNER_HOLD_MS,
   collapsePaste, expandPastes, frecencyScore, parseHistory, historyLine, interruptAction,
+  looksSecret, scrubHistory, SECRET_SHAPED,
   spinnerPlan, withSpinner,
 };

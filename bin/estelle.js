@@ -20,6 +20,28 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const readline = require("readline");
+// 🔴 MODULE 1'S WRITE SURFACE. The founder's rule has no exceptions: NOTHING IN cli/bin WRITES TO STDOUT
+// EXCEPT THROUGH MODULE 1 OR MODULE 2. The audit found 214 `console.log` calls in this file alone — the
+// whole top-level command surface, none of which had ever gone through a renderer.
+//
+// `out.line(x)` is BYTE-IDENTICAL to `out.line(x)` for a string, deliberately: a 214-site migration
+// has to be provably output-preserving or it cannot be verified. This commit is a REFACTOR; the
+// formatting fixes it unlocks (the usage block's missing space) come after, each visible in its own diff.
+const out = require("./transcript.js").writer(process.stdout);
+// Module 2's input half — our own composer, and the SINGLE keypress reader for the session.
+const editor = require("./editor.js");
+// The palette the queue preview renders with. Built LAZILY: the painters are declared further down this
+// file, so a const here reads them before initialisation and the whole binary fails to load — which it
+// did, taking 30 tests with it. One object, not a per-call literal: a second copy is how two surfaces end
+// up disagreeing about what dim means.
+let coloursCache = null;
+const colours = () => (coloursCache = coloursCache || { dim, bold, teal, green, amber, red, grey });
+// Set by the session once it owns a screen: the queue preview is drawn by the ONE render pass.
+let showPending = null;
+// The overlays call `emitKeypressEvents(stdin)` on whatever they are given. The composer's dispatcher
+// is not a stream and already emits keypress itself, so they are handed a no-op instead of the real
+// readline — calling it on a plain object is the kind of thing that throws at the worst moment.
+const NO_KEYPRESS = { emitKeypressEvents() {} };
 const { execFileSync } = require("child_process");
 // The one module that knows where a stored key lives. Required at the TOP, not lazily through repl.js,
 // because "what key am I running as" is asked by almost every command and must not depend on loading the
@@ -45,12 +67,12 @@ const ok = palette.ok(palette.GLYPH.ok), arrow = brand(palette.GLYPH.arrow),
       dot = grey(palette.GLYPH.bullet);
 
 function banner() {
-  console.log("");
+  out.line("");
   // No tagline. "code memory + a 0%-hallucination gate" named two features out of many and read as a
   // product blurb in a place nobody wants one — a CLI banner should say WHOSE tool this is and get out
   // of the way. The wordmark is the whole message; what Estelle does is what the next line does.
-  console.log("  " + bold(teal("estelle")) + dim("  by Fate Labs"));
-  console.log("");
+  out.line("  " + bold(teal("estelle")) + dim("  by Fate Labs"));
+  out.line("");
 }
 
 // ── MCP client config (kept in lockstep with estelle.serve.install) ────────────
@@ -226,7 +248,7 @@ const resolveKey = () => flag("--key", auth.storedKey());
 function persistKey(key) {
   if (process.env.ESTELLE_API_KEY || key === auth.readAuth()) return;
   auth.writeAuth(key);                                       // 0700/0600, the same as the REPL's
-  console.log("  " + ok + " " + dim(`key saved to ${auth.authFile()} — no more --key`));
+  out.line("  " + ok + " " + dim(`key saved to ${auth.authFile()} — no more --key`));
 }
 
 async function cmdInit() {
@@ -235,27 +257,27 @@ async function cmdInit() {
   // editor up — resolveKey finds it, and the prompt below stays for the genuine first run.
   let key = resolveKey();
   if (!key) {
-    console.log("  " + bold("Connect your coding agent to Estelle."));
-    console.log("  " + dim("Paste your Estelle API key (or get one free at ") + teal("fatelabs.ca") + dim(").") );
-    console.log("");
+    out.line("  " + bold("Connect your coding agent to Estelle."));
+    out.line("  " + dim("Paste your Estelle API key (or get one free at ") + teal("fatelabs.ca") + dim(").") );
+    out.line("");
     // MASKED, always. `ask()` attaches stdout in terminal mode, which echoes — so this prompt printed the
     // customer's live key into their scrollback on the first command they ever run. See secret-prompt.js.
     key = await askSecret("  " + arrow + " Estelle key: ");
-    if (!key) { console.log("\n  " + amber("No key — nothing written.") + dim("  Get one at fatelabs.ca, then re-run.")); return; }
+    if (!key) { out.line("\n  " + amber("No key — nothing written.") + dim("  Get one at fatelabs.ca, then re-run.")); return; }
   }
   const dry = has("--dry-run");
   const only = flag("--client");
   const clients = only ? [only] : detectClients();
-  console.log("");
+  out.line("");
   if (!clients.length) {
-    console.log("  " + amber("No editor detected.") + " Use the one-liner for yours:");
-    for (const c of ["cursor", "claude", "windsurf", "vscode"]) console.log("    " + dim(installMcp(c)));
-    console.log("    " + dim(exportHint));
-    console.log("    " + dim(claudeAdd()) + dim("   # Claude Code"));
+    out.line("  " + amber("No editor detected.") + " Use the one-liner for yours:");
+    for (const c of ["cursor", "claude", "windsurf", "vscode"]) out.line("    " + dim(installMcp(c)));
+    out.line("    " + dim(exportHint));
+    out.line("    " + dim(claudeAdd()) + dim("   # Claude Code"));
     return;
   }
-  console.log("  " + dim("Detected ") + clients.map((c) => bold(PRETTY[c] || c)).join(dim(", ")));
-  console.log("");
+  out.line("  " + dim("Detected ") + clients.map((c) => bold(PRETTY[c] || c)).join(dim(", ")));
+  out.line("");
   let wroteAny = false;
   for (const client of clients) {
     const r = writeClient(client, key, dry);
@@ -263,38 +285,38 @@ async function cmdInit() {
     if (r.refused) {
       // Refuse THIS client and keep going — one unreadable config must not block wiring up the others —
       // but the run as a whole exits non-zero, because a partial install is not a success.
-      console.log("  " + red("✗") + " " + bold(PRETTY[client] || client)
+      out.line("  " + red("✗") + " " + bold(PRETTY[client] || client)
                   + dim("  →  refusing to overwrite a config it cannot read"));
-      console.log("    " + dim(r.path));
-      console.log("    " + dim(r.refused));
-      console.log("    " + dim("Fix or move that file and re-run — Estelle will not discard settings it cannot parse."));
+      out.line("    " + dim(r.path));
+      out.line("    " + dim(r.refused));
+      out.line("    " + dim("Fix or move that file and re-run — Estelle will not discard settings it cannot parse."));
       process.exitCode = 1;
-    } else if (r.note) console.log("  " + arrow + " " + bold(PRETTY[client] || client) + dim("  →  ") + r.note);
-    else if (r.dry) console.log("  " + arrow + " " + bold(PRETTY[client] || client) + dim("  would write ") + grey(r.path));
-    else console.log("  " + ok + " " + bold(PRETTY[client] || client) + dim("  " + r.path) + (r.backup ? dim("  (backed up)") : ""));
+    } else if (r.note) out.line("  " + arrow + " " + bold(PRETTY[client] || client) + dim("  →  ") + r.note);
+    else if (r.dry) out.line("  " + arrow + " " + bold(PRETTY[client] || client) + dim("  would write ") + grey(r.path));
+    else out.line("  " + ok + " " + bold(PRETTY[client] || client) + dim("  " + r.path) + (r.backup ? dim("  (backed up)") : ""));
   }
-  console.log("");
+  out.line("");
   // A REFUSAL MUST NOT BE FOLLOWED BY A SUCCESS NARRATIVE. This block used to print unconditionally, so a
   // customer whose config was refused was still told "Restart your editor — your agent now has
   // find_definition · …" for tools it had just declined to wire up. Nothing was written; saying otherwise
   // is the same defect class as the bug this whole path exists to fix — a confident claim about something
   // that did not happen. Caught by reading the ACTUAL stdout of the shipped 0.1.8, not the source.
   if (!wroteAny && !dry) {
-    console.log("  " + bold("Nothing was written.") + dim("  Fix the config above and re-run — your editor is unchanged."));
-    console.log("");
+    out.line("  " + bold("Nothing was written.") + dim("  Fix the config above and re-run — your editor is unchanged."));
+    out.line("");
     return;
   }
-  console.log("  " + bold("Next"));
-  console.log("  " + dot + " Restart your editor — your agent now has " + teal("find_definition · find_references · blast_radius · verify"));
-  console.log("  " + dot + " Ingest this repo so the tools know your code:  " + bold("npx @fatelabs/estelle sweep --key <KEY>"));
-  console.log("  " + dot + " Turn Estelle off any time: " + bold("npx @fatelabs/estelle remove") + dim("  (works offline)"));
-  console.log("");
+  out.line("  " + bold("Next"));
+  out.line("  " + dot + " Restart your editor — your agent now has " + teal("find_definition · find_references · blast_radius · verify"));
+  out.line("  " + dot + " Ingest this repo so the tools know your code:  " + bold("npx @fatelabs/estelle sweep --key <KEY>"));
+  out.line("  " + dot + " Turn Estelle off any time: " + bold("npx @fatelabs/estelle remove") + dim("  (works offline)"));
+  out.line("");
   if (dry || !wroteAny) return;
   // A ✓ is only honest if Estelle actually answers — verify before claiming the connection works.
-  process.stdout.write("  " + dim(`Verifying Estelle answers at ${MCP_URL}… `));
+  out.partial("  " + dim(`Verifying Estelle answers at ${MCP_URL}… `));
   const v = await verifyMcp(key);
   if (v.ok) {
-    console.log(ok);
+    out.line(ok);
     // PERSIST THE KEY WE JUST VALIDATED — this is the half that was missing, and it broke the README's
     // own flow end to end: `init` prompted, used the key to write the MCP configs, and DISCARDED it, so
     // the literal next command the tool prints ("npx @fatelabs/estelle sweep") answered "Need --key".
@@ -304,19 +326,19 @@ async function cmdInit() {
     // Skipped when $ESTELLE_API_KEY supplied the key: that is the CI shape, a deliberate per-process
     // override, and writing a credential to the disk of a shared runner is not what that caller asked for.
     persistKey(key);
-    console.log("  " + green("You're connected.") + dim("  Ask your agent anything about your codebase — it won't invent an API."));
+    out.line("  " + green("You're connected.") + dim("  Ask your agent anything about your codebase — it won't invent an API."));
   } else {
-    console.log(amber("failed"));
+    out.line(amber("failed"));
     // KEEP THE KEY unless the server EXPLICITLY REJECTED it. Gating persistence on a network round-trip
     // means a firewall, a blip or a brief outage discards a VALID key — and the next command then asks for
     // it again, which is the exact defect `init` was fixed for. A failure to ASK is not evidence about the
     // key. Only a 401/403 is.
     if (!v.rejected) persistKey(key);
-    console.log("  " + amber(`Configs are written, but Estelle did NOT answer (${v.why}) — connection unverified.`));
-    console.log("  " + dim(`Check your key and that ${MCP_URL} is reachable, then re-run init.`));
+    out.line("  " + amber(`Configs are written, but Estelle did NOT answer (${v.why}) — connection unverified.`));
+    out.line("  " + dim(`Check your key and that ${MCP_URL} is reachable, then re-run init.`));
     process.exitCode = 1;
   }
-  console.log("");
+  out.line("");
 }
 
 // Small repos upload in one synchronous /sync; bigger ones use the background ingest + live progress.
@@ -393,8 +415,8 @@ function sweepFitLines(est) {
 }
 
 function showTooBig(est) {
-  console.log("  " + amber("This sweep will not fit your capacity — nothing was uploaded."));
-  for (const line of sweepFitLines(est)) console.log("  " + dim(line));
+  out.line("  " + amber("This sweep will not fit your capacity — nothing was uploaded."));
+  for (const line of sweepFitLines(est)) out.line("  " + dim(line));
   process.exitCode = 1;
 }
 
@@ -408,13 +430,13 @@ function showTooBig(est) {
 async function preflightSize(files, key, repo) {
   const r = await apiPost("/sweep/estimate", estimateBody(files, repo), key);
   if (!r.ok) {
-    if (r.status !== 404) console.log("  " + dim(`Could not size this repo first (${errText(r) || r.status}).`));
+    if (r.status !== 404) out.line("  " + dim(`Could not size this repo first (${errText(r) || r.status}).`));
     return true;
   }
   const est = r.json || {};
   if (est.fits === false) { showTooBig(est); return false; }
   if (est.cap) {
-    console.log("  " + dim(`Fits: about ${mtok(est.estimated_tokens)} of your ${mtok(est.cap)} capacity`
+    out.line("  " + dim(`Fits: about ${mtok(est.estimated_tokens)} of your ${mtok(est.cap)} capacity`
       + `${est.billable_tokens ? ` (${mtok(est.billable_tokens)} bills as overflow)` : ""}.`));
   }
   return true;
@@ -428,12 +450,12 @@ function warnDropped(json) {
   const total = Object.values(d).reduce((a, b) => a + (Number(b) || 0), 0);
   if (!total) return false;
   const reasons = Object.entries(d).map(([k, v]) => `${k}: ${v}`).join(", ");
-  console.log("  " + amber(`${total} file(s) were NOT indexed`) + dim(` (${reasons}) — recall cannot cite them.`));
+  out.line("  " + amber(`${total} file(s) were NOT indexed`) + dim(` (${reasons}) — recall cannot cite them.`));
   // The FALLBACK text an older server leaves us to write. It used to say "batch the remainder across
   // further sweeps", which is the destructive advice: /sync rebuilds the code graph from exactly what it
   // receives, so a second sweep of the remainder leaves a graph holding only the remainder. Never tell a
   // customer to do that — point at the two routes that keep the graph whole.
-  console.log("  " + dim(oneLine(json.warning ||
+  out.line("  " + dim(oneLine(json.warning ||
     "Re-run the sweep over the whole repo, or narrow it with --path. Do NOT sweep the remainder separately: " +
     "a sweep rebuilds the code graph from exactly what it sends.")));
   return true;
@@ -447,18 +469,18 @@ function failedOnSize(r) {
 }
 
 async function syncUpload(files, key, repo) {
-  process.stdout.write("  " + dim("Uploading to your Estelle memory… "));
+  out.partial("  " + dim("Uploading to your Estelle memory… "));
   const r = await apiPost("/sync", syncBody(files, repo), key);
-  if (failedOnSize(r)) { console.log(""); return showTooBig(r.json.estimate); }
+  if (failedOnSize(r)) { out.line(""); return showTooBig(r.json.estimate); }
   if (!r.ok) return fail(r);
-  console.log(ok);
-  console.log("");
+  out.line(ok);
+  out.line("");
   if (warnDropped(r.json)) {
-    console.log("  " + green("Repo partially swept.") + dim("  Indexed files are recallable; the dropped ones are not."));
+    out.line("  " + green("Repo partially swept.") + dim("  Indexed files are recallable; the dropped ones are not."));
   } else {
-    console.log("  " + green("Repo swept.") + dim("  Your agent can now recall and verify against your real code."));
+    out.line("  " + green("Repo swept.") + dim("  Your agent can now recall and verify against your real code."));
   }
-  console.log("");
+  out.line("");
 }
 
 // The progress endpoint is scoped per repo, exactly like the sweep that writes it.
@@ -475,7 +497,7 @@ async function ingestWithProgress(files, key, repo) {
     return fail(r);
   }
   warnDropped(r.json); // the start envelope discloses cap-dropped files — surface it before the progress bar
-  console.log("  " + dim("Ingestion started — a one-time setup. Live progress (safe to Ctrl-C; it continues server-side):"));
+  out.line("  " + dim("Ingestion started — a one-time setup. Live progress (safe to Ctrl-C; it continues server-side):"));
   let stale = 0;
   for (let polls = 0; polls < MAX_POLLS; polls++) {
     await sleep(POLL_MS);
@@ -483,22 +505,22 @@ async function ingestWithProgress(files, key, repo) {
     // reported "idle 0%" forever while the ingest ran to completion server-side — the progress bar said
     // nothing was happening through an entire 1500-file sweep.
     const p = await apiGet(progressPath(repo), key);
-    if (!p.ok) { if (++stale > 5) { console.log(""); return fail(p); } continue; }
+    if (!p.ok) { if (++stale > 5) { out.line(""); return fail(p); } continue; }
     stale = 0;
     const v = p.json || {};
     const pct = v.percent != null ? v.percent : 0;
     const eta = v.state === "ingesting" && v.eta_label ? ` ${dot} ~${v.eta_label} left` : "";
-    process.stdout.write("\r  " + dim(`${v.state || "ingesting"} ${dot} ${pct}%${eta}          `));
+    out.inplace("  " + dim(`${v.state || "ingesting"} ${dot} ${pct}%${eta}          `));
     if (v.state === "done") {
-      console.log("");
-      console.log("");
-      console.log("  " + green("Repo swept.") + dim("  " + oneLine(v.message || "Your agent can now recall and verify against your real code.")));
-      console.log("");
+      out.line("");
+      out.line("");
+      out.line("  " + green("Repo swept.") + dim("  " + oneLine(v.message || "Your agent can now recall and verify against your real code.")));
+      out.line("");
       return;
     }
     if (v.state === "error") {
-      console.log("");
-      console.log("  " + amber("Ingest failed: ") + dim(oneLine(v.message || v.error || "unknown error") + "  — safe to retry: re-run the sweep."));
+      out.line("");
+      out.line("  " + amber("Ingest failed: ") + dim(oneLine(v.message || v.error || "unknown error") + "  — safe to retry: re-run the sweep."));
       process.exitCode = 1;
       return;
     }
@@ -506,14 +528,14 @@ async function ingestWithProgress(files, key, repo) {
     // the snapshot stayed "ingesting" for ever and we told the user "the ingest continues server-side" —
     // which was false. The server now derives it; stopping here is what makes it actionable.
     if (v.state === "stalled") {
-      console.log("");
-      console.log("  " + amber("Ingest stopped: ") + dim(oneLine(v.message || v.error || "no progress") + `  (reached ${pct}%)`));
+      out.line("");
+      out.line("  " + amber("Ingest stopped: ") + dim(oneLine(v.message || v.error || "no progress") + `  (reached ${pct}%)`));
       process.exitCode = 1;
       return;
     }
   }
-  console.log("");
-  console.log("  " + amber("Stopped polling — the ingest continues server-side; check the dashboard."));
+  out.line("");
+  out.line("  " + amber("Stopped polling — the ingest continues server-side; check the dashboard."));
   process.exitCode = 1;
 }
 
@@ -522,19 +544,19 @@ async function cmdSweep() {
   const key = resolveKey();
   // Same rule as reindex: no key is a failure, not a no-op. A green CI step that ingested nothing is how a
   // repo silently stops being swept while every dashboard still says it is connected.
-  if (!key) { console.log("  " + amber("Need an Estelle key to sweep — pass ") + bold("--key <KEY>") + amber(", set ") + bold("ESTELLE_API_KEY") + amber(", or run ") + bold("estelle") + amber(" once to save one.")); process.exitCode = 1; return; }
+  if (!key) { out.line("  " + amber("Need an Estelle key to sweep — pass ") + bold("--key <KEY>") + amber(", set ") + bold("ESTELLE_API_KEY") + amber(", or run ") + bold("estelle") + amber(" once to save one.")); process.exitCode = 1; return; }
   const root = flag("--path", process.cwd());
-  console.log("  " + dim("Scanning ") + bold(root) + dim(" for source files…"));
+  out.line("  " + dim("Scanning ") + bold(root) + dim(" for source files…"));
   const { files, flagged } = partitionSecrets(collectFiles(root));
   if (flagged.length) {
-    console.log("  " + amber(`Skipped ${flagged.length} file(s) that look like they contain a live secret — they stay on your machine:`));
-    for (const f of flagged.slice(0, 8)) console.log("    " + red("✗") + " " + f.path);
+    out.line("  " + amber(`Skipped ${flagged.length} file(s) that look like they contain a live secret — they stay on your machine:`));
+    for (const f of flagged.slice(0, 8)) out.line("    " + red("✗") + " " + f.path);
   }
-  if (!files.length) { console.log("  " + amber("No ingestable source files found here.")); return; }
+  if (!files.length) { out.line("  " + amber("No ingestable source files found here.")); return; }
   const bytes = files.reduce((n, f) => n + f.content.length, 0);
-  console.log("  " + dim(`Found ${bold(String(files.length))}${dim(" files")} ${dot} ${(bytes / 1024).toFixed(0)} KB ${dot} these upload to ${API}`));
+  out.line("  " + dim(`Found ${bold(String(files.length))}${dim(" files")} ${dot} ${(bytes / 1024).toFixed(0)} KB ${dot} these upload to ${API}`));
   const repo = repoNameFor(root);
-  if (repo) console.log("  " + dim("Filing under repo ") + bold(repo) + dim(" — recall stays scoped to it."));
+  if (repo) out.line("  " + dim("Filing under repo ") + bold(repo) + dim(" — recall stays scoped to it."));
   // 🔴 --dry-run, WHICH THIS COMMAND SILENTLY IGNORED (register #86). `init` honours it (:246) and
   // `reindex` honours it (:636) — so the flag read as a safety net on the ONE command that uploads an
   // ENTIRE REPOSITORY, and did nothing. `reindex`'s own comment already argued the case: "uploading
@@ -547,8 +569,8 @@ async function cmdSweep() {
   // only measures — but "nothing was sent" is a claim a customer should be able to take literally, and a
   // dry run that quietly ships file sizes to a server is not that claim.
   if (has("--dry-run")) {
-    console.log("  " + dim("--dry-run · nothing was sent."));
-    console.log("");
+    out.line("  " + dim("--dry-run · nothing was sent."));
+    out.line("");
     return;
   }
   // Measure BEFORE uploading. Anything else means a repo that cannot fit still travels the wire in full and
@@ -573,9 +595,9 @@ async function cmdSweep() {
  * warning nobody reads is the same as no warning. */
 function announceSkipped(headline, paths, note) {
   if (!paths.length) return;
-  console.log("  " + amber(headline));
-  for (const p of paths.slice(0, 8)) console.log("    " + red("✗") + " " + p);
-  if (note) console.log("  " + dim(note));
+  out.line("  " + amber(headline));
+  for (const p of paths.slice(0, 8)) out.line("    " + red("✗") + " " + p);
+  if (note) out.line("  " + dim(note));
 }
 
 async function cmdReindex() {
@@ -583,7 +605,7 @@ async function cmdReindex() {
   const key = resolveKey();
   // A missing key is a FAILURE, not a no-op: "Need --key" then exit 0 leaves CI green while the memory was
   // never touched, and every later gate then grounds against a graph that quietly stopped moving.
-  if (!key) { console.log("  " + amber("Need an Estelle key to reindex — pass ") + bold("--key <KEY>") + amber(", set ") + bold("ESTELLE_API_KEY") + amber(", or run ") + bold("estelle") + amber(" once to save one.")); process.exitCode = 1; return; }
+  if (!key) { out.line("  " + amber("Need an Estelle key to reindex — pass ") + bold("--key <KEY>") + amber(", set ") + bold("ESTELLE_API_KEY") + amber(", or run ") + bold("estelle") + amber(" once to save one.")); process.exitCode = 1; return; }
   const root = flag("--path", process.cwd());
 
   // Explicit paths win; otherwise ask git what actually changed. Never fall back to "everything" — a silent
@@ -596,8 +618,8 @@ async function cmdReindex() {
   const base = named.length ? root : gitRoot;
   const requested = named.length ? named : changedFiles(gitRoot);
   if (!requested.length) {
-    console.log("  " + green("Nothing changed.") + dim("  Your memory is already current."));
-    console.log("");
+    out.line("  " + green("Nothing changed.") + dim("  Your memory is already current."));
+    out.line("");
     return;
   }
 
@@ -635,7 +657,7 @@ async function cmdReindex() {
   // an untracked file removed between the two commands) and that is not the customer's error to fail on.
   if (unexplained.length && named.length) process.exitCode = 1;
   if (!files.length && !removed.length) {
-    console.log("  " + amber("Nothing ingestable in the changed set."));
+    out.line("  " + amber("Nothing ingestable in the changed set."));
     return;
   }
 
@@ -643,33 +665,33 @@ async function cmdReindex() {
   const parts = [];
   if (files.length) parts.push(`${files.length} changed`);
   if (removed.length) parts.push(`${removed.length} removed`);
-  console.log("  " + dim("Reindexing ") + bold(parts.join(" + ")) + dim(` ${dot} untouched files keep their symbols`));
-  if (repo) console.log("  " + dim("Filing under repo ") + bold(repo));
+  out.line("  " + dim("Reindexing ") + bold(parts.join(" + ")) + dim(` ${dot} untouched files keep their symbols`));
+  if (repo) out.line("  " + dim("Filing under repo ") + bold(repo));
 
   // The plan is printed above; --dry-run stops here. Before the parser learned which flags take a value this
   // was accidentally safe (the flag ate the path and nothing was collected) — now the path survives, so the
   // stop has to be deliberate. Uploading against an explicit "don't" is not a smaller mistake than a typo.
   if (has("--dry-run")) {
-    console.log("  " + dim("--dry-run · nothing was sent."));
-    console.log("");
+    out.line("  " + dim("--dry-run · nothing was sent."));
+    out.line("");
     return;
   }
 
   const body = reindexBody(files, repo, removed);
-  process.stdout.write("  " + dim("Updating your Estelle memory… "));
+  out.partial("  " + dim("Updating your Estelle memory… "));
   const r = await apiPost("/reindex", body, key);
   if (!r.ok) return fail(r);
-  console.log(ok);
-  console.log("");
+  out.line(ok);
+  out.line("");
   // The green claim is only true of the paths that were actually handled. Saying "Memory current." over a run
   // where a named path did nothing is the same false-completeness the sweep's warnDropped exists to prevent —
   // the customer reads it, believes the file is indexed, and the graph stays stale for exactly that file.
   if (unexplained.length) {
-    console.log("  " + amber("Memory updated — but not for every path you named.") + dim("  The skipped paths above were left alone."));
+    out.line("  " + amber("Memory updated — but not for every path you named.") + dim("  The skipped paths above were left alone."));
   } else {
-    console.log("  " + green("Memory current.") + dim("  Only the changed files moved; the rest of the graph is intact."));
+    out.line("  " + green("Memory current.") + dim("  Only the changed files moved; the rest of the graph is intact."));
   }
-  console.log("");
+  out.line("");
 }
 
 // ── the reindex decisions, pure so they are testable without a repo, a disk or a server ──────────────
@@ -869,24 +891,24 @@ function cmdConnect() {
   // (and any transcript or screen-share) as a side effect of asking how to connect. A placeholder is the
   // right answer; an explicit --key or $ESTELLE_API_KEY is the caller saying "yes, print it".
   const key = flag("--key", process.env.ESTELLE_API_KEY || "<YOUR_ESTELLE_KEY>");
-  console.log("  " + bold(`Connect ${PRETTY[client] || client} to Estelle`));
-  console.log("");
-  if (NOTE_CLIENTS[client]) { console.log("  " + arrow + " " + NOTE_CLIENTS[client]()); console.log(""); return; }
-  console.log("  " + dim("One line (writes the config for you, with a backup):"));
-  console.log("    " + teal(`npx @fatelabs/estelle init --client ${client} --key <YOUR_ESTELLE_KEY>`));
-  console.log("");
-  console.log("  " + dim("Community installer (version-pinned on purpose):"));
-  console.log("    " + dim(installMcp(client)));
-  console.log("");
-  console.log("  " + dim("Claude Code:"));
-  console.log("    " + dim(exportHint));
-  console.log("    " + teal(claudeAdd()));
-  console.log("");
+  out.line("  " + bold(`Connect ${PRETTY[client] || client} to Estelle`));
+  out.line("");
+  if (NOTE_CLIENTS[client]) { out.line("  " + arrow + " " + NOTE_CLIENTS[client]()); out.line(""); return; }
+  out.line("  " + dim("One line (writes the config for you, with a backup):"));
+  out.line("    " + teal(`npx @fatelabs/estelle init --client ${client} --key <YOUR_ESTELLE_KEY>`));
+  out.line("");
+  out.line("  " + dim("Community installer (version-pinned on purpose):"));
+  out.line("    " + dim(installMcp(client)));
+  out.line("");
+  out.line("  " + dim("Claude Code:"));
+  out.line("    " + dim(exportHint));
+  out.line("    " + teal(claudeAdd()));
+  out.line("");
   if (configPath(client)) {
-    console.log("  " + dim(`Or paste into ${configPath(client)} :`));
+    out.line("  " + dim(`Or paste into ${configPath(client)} :`));
     const blob = client === "vscode" ? mergeVsCode(null, key) : mergeConfig(null, key);
-    console.log(JSON.stringify(blob, null, 2).split("\n").map((l) => "    " + grey(l)).join("\n"));
-    console.log("");
+    out.line(JSON.stringify(blob, null, 2).split("\n").map((l) => "    " + grey(l)).join("\n"));
+    out.line("");
   }
 }
 
@@ -907,34 +929,34 @@ function removeEntry(p, topKey) {
 // The off switch init promises: walk every config init can write and delete the estelle entry. Offline.
 function cmdRemove() {
   banner();
-  console.log("  " + bold("Disconnect Estelle from your editors") + dim("  (local config edits only — nothing leaves this machine)"));
-  console.log("");
+  out.line("  " + bold("Disconnect Estelle from your editors") + dim("  (local config edits only — nothing leaves this machine)"));
+  out.line("");
   let removed = 0;
   for (const client of Object.keys(CLIENT_FILES)) {
     const p = configPath(client);
     if (p && fs.existsSync(p) && removeEntry(p, "mcpServers")) {
       removed += 1;
-      console.log("  " + ok + " " + bold(PRETTY[client] || client) + dim("  estelle removed from " + p + "  (.bak saved)"));
+      out.line("  " + ok + " " + bold(PRETTY[client] || client) + dim("  estelle removed from " + p + "  (.bak saved)"));
     }
   }
   const vs = configPath("vscode");
   if (fs.existsSync(vs) && removeEntry(vs, "servers")) {
     removed += 1;
-    console.log("  " + ok + " " + bold(PRETTY.vscode) + dim("  estelle removed from " + vs + "  (.bak saved)"));
+    out.line("  " + ok + " " + bold(PRETTY.vscode) + dim("  estelle removed from " + vs + "  (.bak saved)"));
   }
-  if (!removed) console.log("  " + dim("No Estelle MCP entry found in any known editor config — nothing to remove."));
-  console.log("");
-  console.log("  " + dim("Claude Code: ") + teal("claude mcp remove estelle"));
-  console.log("  " + dim("Claude Desktop (if added via Connectors): Settings → Connectors → remove Estelle."));
-  console.log("  " + dim("Restart your editors to drop the live connection."));
-  console.log("");
+  if (!removed) out.line("  " + dim("No Estelle MCP entry found in any known editor config — nothing to remove."));
+  out.line("");
+  out.line("  " + dim("Claude Code: ") + teal("claude mcp remove estelle"));
+  out.line("  " + dim("Claude Desktop (if added via Connectors): Settings → Connectors → remove Estelle."));
+  out.line("  " + dim("Restart your editors to drop the live connection."));
+  out.line("");
 }
 
 // ── hosted-API verbs (ask / recall / verify / gate) — any terminal becomes a full Estelle client ─────
 function needKey() {
   const key = resolveKey();
   if (!key) {
-    console.log("  " + amber("Need an Estelle key — pass ") + bold("--key <KEY>") + amber(", set ") + bold("ESTELLE_API_KEY") + amber(", or run ") + bold("estelle") + amber(" once to save one."));
+    out.line("  " + amber("Need an Estelle key — pass ") + bold("--key <KEY>") + amber(", set ") + bold("ESTELLE_API_KEY") + amber(", or run ") + bold("estelle") + amber(" once to save one."));
     // A RED pipeline, never a silent green. This mattered most for `gate` and `verify`, the CI commands:
     // exiting 0 with no key meant no key -> the gate never ran -> the build passed, which is a fail-OPEN
     // and the exact opposite of the rule `failClosed` states a few lines below ("an error is NEVER a
@@ -1011,16 +1033,16 @@ function errText(r) {
 }
 
 function fail(r) {
-  console.log(r.status ? amber(`HTTP ${r.status}`) : amber("connection failed"));
+  out.line(r.status ? amber(`HTTP ${r.status}`) : amber("connection failed"));
   const msg = errText(r);
-  if (msg) console.log("  " + dim(msg.slice(0, 500)));
+  if (msg) out.line("  " + dim(msg.slice(0, 500)));
   process.exitCode = 1;
 }
 // The gate/verify contract mirrors the server's: an error is NEVER a pass. A revoked key, an unpaid
 // plan, a 5xx, or an unreachable server all BLOCK — same as api_dev's error→merge=False discipline.
 function failClosed(r, what) {
   fail(r);
-  console.log("  " + red(`✗ ${what} could not verify this change — BLOCKED (fail-closed).`));
+  out.line("  " + red(`✗ ${what} could not verify this change — BLOCKED (fail-closed).`));
 }
 const asArray = (x) => (Array.isArray(x) ? x : []);
 const indent = (t) => String(t).split("\n").map((l) => "  " + l).join("\n");
@@ -1030,8 +1052,8 @@ async function cmdAsk() {
   banner();
   const key = needKey(); if (!key) return;
   const q = argText(3);
-  if (!q) { console.log("  " + amber('Ask what?') + dim('  e.g. estelle ask "explain the retry logic"')); return; }
-  process.stdout.write("  " + dim("Asking Estelle… "));
+  if (!q) { out.line("  " + amber('Ask what?') + dim('  e.g. estelle ask "explain the retry logic"')); return; }
+  out.partial("  " + dim("Asking Estelle… "));
   // #87 — SCOPE THE ASK. This posted with no repo at all, so the server answered from the whole account and
   // returned other projects' unfiled junk (the omega_* / LEAKCANARY content the founder hit every time).
   // The scope travels as a HEADER because /v1/chat/completions is the OpenAI-compatible door: a body field
@@ -1041,44 +1063,44 @@ async function cmdAsk() {
   // cannot determine a repo the header is omitted and the customer is TOLD, rather than being silently
   // asked account-wide, which is the failure this fixes.
   const askRepo = repoNameFor(process.cwd());
-  if (!askRepo) console.log("  " + dim("no repo detected here — answering from your whole account"));
+  if (!askRepo) out.line("  " + dim("no repo detected here — answering from your whole account"));
   const r = await apiPost("/v1/chat/completions", { model: "estelle", messages: [{ role: "user", content: q }] },
                           key, askRepo ? { "X-Estelle-Repo": askRepo } : undefined);
   if (!r.ok) return fail(r);
-  console.log(ok); console.log("");
+  out.line(ok); out.line("");
   const content = r.json && r.json.choices && r.json.choices[0] && r.json.choices[0].message && r.json.choices[0].message.content;
-  console.log(content ? indent(content) : "  " + dim("(no answer)"));
-  console.log("");
+  out.line(content ? indent(content) : "  " + dim("(no answer)"));
+  out.line("");
 }
 
 async function cmdRecall() {
   banner();
   const key = needKey(); if (!key) return;
   const q = argText(3);
-  if (!q) { console.log("  " + amber('Recall what?') + dim('  e.g. estelle recall "how is billing metered?"')); return; }
-  process.stdout.write("  " + dim("Searching your brain… "));
+  if (!q) { out.line("  " + amber('Recall what?') + dim('  e.g. estelle recall "how is billing metered?"')); return; }
+  out.partial("  " + dim("Searching your brain… "));
   // --repo scopes the search to one of your swept repos (INV-15). Omitted, Estelle works out which repo
   // the question is about — and asks when it genuinely can't tell, rather than answering across them.
   const repo = flag("--repo", "");
   const r = await apiPost("/search", repo ? { query: q, repo } : { query: q }, key);
   if (!r.ok) return fail(r);
-  console.log(ok); console.log("");
+  out.line(ok); out.line("");
   const v = r.json || {};
   if (v.scope_ask) {
     // Multi-repo account, nothing settled WHICH repo (INV-15). Estelle asks rather than blending two
     // codebases — rendering this as "(no memory recall)" would be a lie: the answer exists.
-    console.log(indent(String(v.question || "Which repo should I answer about?")));
-    console.log(""); console.log("  " + dim('Re-run with the repo, e.g. estelle recall "…" --repo owner/name'));
-    console.log("");
+    out.line(indent(String(v.question || "Which repo should I answer about?")));
+    out.line(""); out.line("  " + dim('Re-run with the repo, e.g. estelle recall "…" --repo owner/name'));
+    out.line("");
     return;
   }
-  console.log(v.recall ? indent(v.recall) : "  " + dim("(no memory recall)"));
+  out.line(v.recall ? indent(v.recall) : "  " + dim("(no memory recall)"));
   const code = asArray(v.code);
   if (code.length) {
-    console.log(""); console.log("  " + bold("Code"));
-    for (const m of code.slice(0, 8)) console.log("  " + dot + " " + teal(`${m.source_file}:${m.line}`) + dim("  " + oneLine(m.text)));
+    out.line(""); out.line("  " + bold("Code"));
+    for (const m of code.slice(0, 8)) out.line("  " + dot + " " + teal(`${m.source_file}:${m.line}`) + dim("  " + oneLine(m.text)));
   }
-  console.log("");
+  out.line("");
 }
 
 // ── github: link an identity, bind an installation, sweep the repos you pick ────────────────────────
@@ -1102,12 +1124,12 @@ async function cmdGithub() {
   // the binding belongs to the team, so a teammate's Connect is what makes this account connected. Without
   // this read the status always said "Run: estelle github connect", even right after a successful one.
   const repos = linked ? await apiGet("/github/repos", key) : null;
-  console.log("");
+  out.line("");
   for (const line of gh.statusLines(id.json, installs && installs.json && installs.json.installations,
                                     repos && repos.ok ? repos.json : null)) {
-    console.log("  " + (line.startsWith("Run:") ? dim(line) : line));
+    out.line("  " + (line.startsWith("Run:") ? dim(line) : line));
   }
-  console.log("");
+  out.line("");
 }
 
 async function cmdGithubLink(key) {
@@ -1115,25 +1137,25 @@ async function cmdGithubLink(key) {
     `/github/identity/authorize-url?redirect_uri=${encodeURIComponent(gh.redirectUri())}`, key);
   if (!start.ok) return fail(start);
   const url = (start.json || {}).authorize_url;
-  console.log("  " + bold("Authorize Estelle on GitHub") + dim("  (opens in your browser)"));
-  console.log("  " + teal(url));
-  console.log("  " + dim("Waiting for the redirect on ") + grey(gh.redirectUri()) + dim(" …"));
+  out.line("  " + bold("Authorize Estelle on GitHub") + dim("  (opens in your browser)"));
+  out.line("  " + teal(url));
+  out.line("  " + dim("Waiting for the redirect on ") + grey(gh.redirectUri()) + dim(" …"));
   const waiting = gh.awaitCallback({});
   openUrl(url);
   let back;
   try {
     back = await waiting;
   } catch (e) {
-    console.log("  " + red(String((e && e.message) || e)));
+    out.line("  " + red(String((e && e.message) || e)));
     process.exitCode = 1;
     return;
   }
   const linked = await apiPost("/github/identity/link", { code: back.code, state: back.state }, key);
   if (!linked.ok) return fail(linked);
   const login = (linked.json || {}).login;
-  console.log("  " + ok + " " + bold("GitHub identity linked") + (login ? dim(`  (${login})`) : ""));
-  console.log("  " + dim("Next: ") + teal("estelle github connect"));
-  console.log("");
+  out.line("  " + ok + " " + bold("GitHub identity linked") + (login ? dim(`  (${login})`) : ""));
+  out.line("  " + dim("Next: ") + teal("estelle github connect"));
+  out.line("");
 }
 
 async function cmdGithubConnect(key, want) {
@@ -1141,16 +1163,16 @@ async function cmdGithubConnect(key, want) {
   if (!listed.ok) return fail(listed);
   const choice = gh.pickInstallation((listed.json || {}).installations, want);
   if (choice.none) {
-    console.log("  " + amber("That identity can't see any Estelle App installation."));
-    console.log("  " + dim("Install the Estelle GitHub App on the org or user that owns the repos, then retry."));
+    out.line("  " + amber("That identity can't see any Estelle App installation."));
+    out.line("  " + dim("Install the Estelle GitHub App on the org or user that owns the repos, then retry."));
     process.exitCode = 1;
     return;
   }
   if (!choice.chosen) {
     // Never pick the first: binding the wrong org sweeps the wrong private code into this namespace.
-    if (choice.unknown) console.log("  " + amber(`No installation matches "${choice.unknown}".`));
-    console.log("  " + bold("Which installation?") + dim("  estelle github connect <id|owner>"));
-    for (const row of choice.needs) console.log("  " + dot + " " + teal(String(row.id)) + dim("  " + (row.account || "")));
+    if (choice.unknown) out.line("  " + amber(`No installation matches "${choice.unknown}".`));
+    out.line("  " + bold("Which installation?") + dim("  estelle github connect <id|owner>"));
+    for (const row of choice.needs) out.line("  " + dot + " " + teal(String(row.id)) + dim("  " + (row.account || "")));
     process.exitCode = 1;
     return;
   }
@@ -1159,10 +1181,10 @@ async function cmdGithubConnect(key, want) {
   const bound = await apiPost("/github/app/setup",
                               { installation_id: choice.chosen.id, sweep: false }, key);
   if (!bound.ok) return fail(bound);
-  console.log("  " + ok + " " + bold("Connected") + dim(`  installation ${choice.chosen.id} `
+  out.line("  " + ok + " " + bold("Connected") + dim(`  installation ${choice.chosen.id} `
     + (choice.chosen.account ? `(${choice.chosen.account})` : "")));
-  console.log("  " + dim("Nothing was ingested yet. Next: ") + teal("estelle github repos"));
-  console.log("");
+  out.line("  " + dim("Nothing was ingested yet. Next: ") + teal("estelle github repos"));
+  out.line("");
 }
 
 async function cmdGithubRepos(key) {
@@ -1170,34 +1192,34 @@ async function cmdGithubRepos(key) {
   if (!r.ok) return fail(r);
   const v = r.json || {};
   if (!v.connected) {
-    console.log("  " + amber("No GitHub App installation is connected to this account."));
-    console.log("  " + dim("Run: ") + teal("estelle github connect"));
+    out.line("  " + amber("No GitHub App installation is connected to this account."));
+    out.line("  " + dim("Run: ") + teal("estelle github connect"));
     return;
   }
-  console.log("  " + bold("Granted repos") + dim("  (token cost is an ESTIMATE from GitHub's size, not a measurement)"));
+  out.line("  " + bold("Granted repos") + dim("  (token cost is an ESTIMATE from GitHub's size, not a measurement)"));
   for (const repo of v.repos || []) {
-    console.log("  " + dot + " " + teal(repo.full_name) + dim(`  ~${mtok(repo.estimated_tokens)}`)
+    out.line("  " + dot + " " + teal(repo.full_name) + dim(`  ~${mtok(repo.estimated_tokens)}`)
       + (repo.swept ? green("  swept") : ""));
   }
-  console.log("");
-  console.log("  " + dim("Ingest what you pick: ") + teal("estelle github sweep owner/name [owner/other]"));
-  console.log("");
+  out.line("");
+  out.line("  " + dim("Ingest what you pick: ") + teal("estelle github sweep owner/name [owner/other]"));
+  out.line("");
 }
 
 async function cmdGithubSweep(key) {
   const repos = argText(4).split(/[\s,]+/).filter(Boolean);
   if (!repos.length) {
-    console.log("  " + amber("Which repos?") + dim("  estelle github sweep owner/name [owner/other]"));
+    out.line("  " + amber("Which repos?") + dim("  estelle github sweep owner/name [owner/other]"));
     process.exitCode = 1;
     return;
   }
-  process.stdout.write("  " + dim("Queueing… "));
+  out.partial("  " + dim("Queueing… "));
   const r = await apiPost("/github/sweep", { repos }, key);
-  if (failedOnSize(r)) { console.log(""); return showTooBig(r.json.estimate); }
+  if (failedOnSize(r)) { out.line(""); return showTooBig(r.json.estimate); }
   if (!r.ok) return fail(r);
-  console.log(ok);
-  for (const job of (r.json || {}).queued || []) console.log("  " + dot + " " + teal(job.repo) + dim("  " + job.job));
-  console.log("");
+  out.line(ok);
+  for (const job of (r.json || {}).queued || []) out.line("  " + dot + " " + teal(job.repo) + dim("  " + job.job));
+  out.line("");
 }
 
 // ── monitor + research: the two suites that shipped with no first-party door at all ─────────────────
@@ -1212,8 +1234,8 @@ const suiteCtx = () => ({
   argv: process.argv,
   banner, needKey, flag, has, argText, announceSkipped, errText, asArray, indent, oneLine,
   get: apiGet, post: apiPost, put: apiPut,
-  out: (line) => console.log(line),
-  write: (text) => process.stdout.write(text),
+  out: (line) => out.line(line),
+  write: (text) => out.partial(text),
   // A command that could not do what it was asked exits RED. Named rather than assigning process.exitCode
   // inside a module, so "this run failed" stays one decision in one place.
   markFailed: () => { process.exitCode = 1; },
@@ -1235,25 +1257,25 @@ async function cmdVerify() {
   banner();
   const key = needKey(); if (!key) return;
   const target = process.argv[3];
-  if (!target || target.startsWith("--")) { console.log("  " + amber("Verify what?") + dim("  pass a file: estelle verify path/to/file.py")); return; }
+  if (!target || target.startsWith("--")) { out.line("  " + amber("Verify what?") + dim("  pass a file: estelle verify path/to/file.py")); return; }
   let code;
-  try { code = fs.readFileSync(target, "utf8"); } catch (e) { console.log("  " + amber(`Can't read ${target}: ${String((e && e.message) || e)}`)); return; }
-  process.stdout.write("  " + dim(`Grounding ${target} against your repo… `));
+  try { code = fs.readFileSync(target, "utf8"); } catch (e) { out.line("  " + amber(`Can't read ${target}: ${String((e && e.message) || e)}`)); return; }
+  out.partial("  " + dim(`Grounding ${target} against your repo… `));
   // `--repo` makes the server's own question ANSWERABLE. Without it a multi-repo account could read the
   // scope_ask and have no way to act on it, which is a question asked into a void.
   const scopeRepo = flag("--repo", "");
   const r = await apiPost("/verify", scopeRepo ? { answer: code, repo: scopeRepo } : { answer: code }, key);
   if (!r.ok) return failClosed(r, "verify");
-  console.log(ok); console.log("");
+  out.line(ok); out.line("");
   const v = r.json || {};
   // THREE STATES, not two — see `verifyLines` in repl.js for the defect this fixes (#88). The rendering is
   // shared with the session so the two surfaces cannot describe the same envelope differently.
-  for (const line of require("./repl.js").verifyLines(v, { green, amber, red, dim, bold })) console.log(line);
+  for (const line of require("./repl.js").verifyLines(v, { green, amber, red, dim, bold })) out.line(line);
   // A NON-ZERO EXIT ONLY WHEN SOMETHING IS ACTUALLY WRONG WITH THE FILE. A scope question and a
   // could-not-verify are both "nothing was checked" — real, worth saying, and not a verdict on their code.
   // Exiting 1 on them told CI the file had failed verification when it had never been verified.
   if (!v.grounded) process.exitCode = 1;
-  console.log("");
+  out.line("");
 }
 
 // The unified diff to gate: staged changes by default, or `--base <ref>` to diff the branch against a ref.
@@ -1271,18 +1293,18 @@ async function cmdGate() {
   const base = flag("--base");
   const diff = gitDiff(base);
   if (diff === null) {
-    console.log("  " + red("✗ could not compute the diff (git failed" + (base ? `; is ${base} a valid ref?` : "") + ") — BLOCKED (fail-closed)."));
+    out.line("  " + red("✗ could not compute the diff (git failed" + (base ? `; is ${base} a valid ref?` : "") + ") — BLOCKED (fail-closed)."));
     process.exitCode = 1;
     return;
   }
   if (!diff.trim()) {
-    console.log("  " + amber(base ? `No diff vs ${base}.` : "No staged changes to gate.") + dim("  Stage some changes, or pass --base <ref>."));
+    out.line("  " + amber(base ? `No diff vs ${base}.` : "No staged changes to gate.") + dim("  Stage some changes, or pass --base <ref>."));
     return;
   }
-  process.stdout.write("  " + dim("Running the merge gate… "));
+  out.partial("  " + dim("Running the merge gate… "));
   const r = await apiPost("/gate", { diff }, key);
   if (!r.ok) return failClosed(r, "the merge gate");
-  console.log(ok); console.log("");
+  out.line(ok); out.line("");
   const v = r.json || {};
   // THREE states, three colours. `verified === false` means the gate could not READ part of the change
   // (an unparseable hunk, an unswept repo, a timeout) — it is not a certification, so it must never render
@@ -1290,14 +1312,14 @@ async function cmdGate() {
   // CLI keyed on `merge` alone, exactly like the CI scripts this gate exists to answer.
   const couldNotVerify = v.verified === false;
   const verdictText = v.verdict || (v.merge ? "clean — safe to merge" : "blocked");
-  console.log("  " + bold("Verdict  ") +
+  out.line("  " + bold("Verdict  ") +
     (couldNotVerify ? amber(verdictText) : v.merge ? green(verdictText) : amber(verdictText)));
   if (couldNotVerify && v.merge) {
-    console.log("  " + amber("!") + " " + dim("the gate could not check part of this change — it is UNVERIFIED there, not verified-clean."));
+    out.line("  " + amber("!") + " " + dim("the gate could not check part of this change — it is UNVERIFIED there, not verified-clean."));
   }
-  for (const b of asArray(v.blockers)) console.log("  " + red("✗") + " " + (b.body || `${b.path}:${b.line}`));
-  for (const w of asArray(v.warnings)) console.log("  " + amber("!") + " " + (w.body || `${w.path}:${w.line}`));
-  console.log("");
+  for (const b of asArray(v.blockers)) out.line("  " + red("✗") + " " + (b.body || `${b.path}:${b.line}`));
+  for (const w of asArray(v.warnings)) out.line("  " + amber("!") + " " + (w.body || `${w.path}:${w.line}`));
+  out.line("");
   if (!v.merge) process.exitCode = 1;
 }
 
@@ -1306,9 +1328,9 @@ function help() {
   // Padded to the WIDEST command, not to a number someone once eyeballed: `github [link|connect|repos|sweep]`
   // already overflowed 26 and ran its description into the command, and every new subcommand group made it
   // worse. A help screen that runs two columns together is a help screen people stop reading.
-  const row = (c, d) => console.log("  " + teal(c.padEnd(38)) + dim(d));
-  console.log("  " + bold("Usage") + dim("  npx @fatelabs/estelle <command>"));
-  console.log("");
+  const row = (c, d) => out.line("  " + teal(c.padEnd(38)) + dim(d));
+  out.line("  " + bold("Usage") + dim("  npx @fatelabs/estelle <command>"));
+  out.line("");
   row("init [--key K]", "auto-detect your editors and write the MCP config (then verify it answers)");
   row("sweep [--key K]", "ingest the current repo (git-visible files) into your Estelle memory");
   row("reindex [files…]", "update only what changed (fast) — keeps the rest of the graph intact");
@@ -1331,17 +1353,17 @@ function help() {
   // these two are the always-on switch, which is the whole point of the hooks.
   row("install-hooks", "fire Estelle on every edit + command in Claude Code (no opt-in needed)");
   row("uninstall-hooks", "stop that — your own hooks and the MCP server are untouched");
-  console.log("");
-  console.log("  " + dim("Bare ") + bold("estelle") + dim(" opens the session: ask anything, /help for commands, ")
+  out.line("");
+  out.line("  " + dim("Bare ") + bold("estelle") + dim(" opens the session: ask anything, /help for commands, ")
     + bold("!cmd") + dim(" for a shell command."));
-  console.log("  " + dim("Flags: ") + grey("--key K  --client cursor  --dry-run  --url <mcp>  --path <dir>  --base <ref>"));
-  console.log("  " + dim("Clients: ") + grey(Object.keys(PRETTY).join(", ")));
+  out.line("  " + dim("Flags: ") + grey("--key K  --client cursor  --dry-run  --url <mcp>  --path <dir>  --base <ref>"));
+  out.line("  " + dim("Clients: ") + grey(Object.keys(PRETTY).join(", ")));
   // The egress note is a promise, so it has to name the size pre-flight too: `sweep` now sends a
   // paths-and-byte-sizes list before it sends anything else. It carries no content, but it is still egress.
-  console.log("  " + dim("Egress: ") + grey(`init/remove/connect stay local (init pings ${API} once to verify); sweep sends a`));
-  console.log("  " + dim("        ") + grey("paths+sizes list first (to check the repo fits your plan), then the repo files;"));
-  console.log("  " + dim("        ") + grey(`gate your staged diff, verify one file, ask/recall your question — all to ${API}.`));
-  console.log("");
+  out.line("  " + dim("Egress: ") + grey(`init/remove/connect stay local (init pings ${API} once to verify); sweep sends a`));
+  out.line("  " + dim("        ") + grey("paths+sizes list first (to check the repo fits your plan), then the repo files;"));
+  out.line("  " + dim("        ") + grey(`gate your staged diff, verify one file, ask/recall your question — all to ${API}.`));
+  out.line("");
 }
 
 /** `estelle hook <mode>` — the runtime a customer's Claude Code calls on every edit/command (via init). */
@@ -1353,7 +1375,7 @@ async function cmdHook() {
   const key = resolveKey();
   await hook.runHook(mode, payload, {
     post: async (p, body) => unwrap(await apiPost(p, body, key)),
-    out: (o) => console.log(JSON.stringify(o)),
+    out: (o) => out.line(JSON.stringify(o)),
   });
 }
 
@@ -1374,24 +1396,24 @@ function cmdInstallHooks() {
     try {
       existing = JSON.parse(raw);
     } catch (err) {
-      console.log("");
-      console.log("  " + red("✗") + " " + bold("Refusing to write — your Claude Code settings could not be read"));
-      console.log("    " + dim(file));
-      console.log("    " + dim(String(err && err.message ? err.message : err)));
-      console.log("");
-      console.log("    " + dim("Estelle will not overwrite a file it cannot parse — that would discard your"));
-      console.log("    " + dim("permissions, model and env. Fix the JSON (a trailing comma is the usual cause)"));
-      console.log("    " + dim("and run this again. Nothing has been changed."));
-      console.log("");
+      out.line("");
+      out.line("  " + red("✗") + " " + bold("Refusing to write — your Claude Code settings could not be read"));
+      out.line("    " + dim(file));
+      out.line("    " + dim(String(err && err.message ? err.message : err)));
+      out.line("");
+      out.line("    " + dim("Estelle will not overwrite a file it cannot parse — that would discard your"));
+      out.line("    " + dim("permissions, model and env. Fix the JSON (a trailing comma is the usual cause)"));
+      out.line("    " + dim("and run this again. Nothing has been changed."));
+      out.line("");
       process.exitCode = 1;
       return;
     }
     if (existing === null || typeof existing !== "object" || Array.isArray(existing)) {
-      console.log("");
-      console.log("  " + red("✗") + " " + bold("Refusing to write — settings is not a JSON object"));
-      console.log("    " + dim(file) + dim("  (found " + (Array.isArray(existing) ? "an array" : typeof existing) + ")"));
-      console.log("    " + dim("Nothing has been changed."));
-      console.log("");
+      out.line("");
+      out.line("  " + red("✗") + " " + bold("Refusing to write — settings is not a JSON object"));
+      out.line("    " + dim(file) + dim("  (found " + (Array.isArray(existing) ? "an array" : typeof existing) + ")"));
+      out.line("    " + dim("Nothing has been changed."));
+      out.line("");
       process.exitCode = 1;
       return;
     }
@@ -1404,12 +1426,12 @@ function cmdInstallHooks() {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   if (present) fs.copyFileSync(file, file + ".bak");  // back up regardless — same rule init already follows
   fs.writeFileSync(file, JSON.stringify(merged, null, 2) + "\n");
-  console.log("");
-  console.log("  " + green("✓") + " Estelle now fires on every edit and command in Claude Code");
-  console.log("    " + dim("ground code before it lands · guard risky bash · keep memory current"));
-  console.log("    " + dim("written to ") + grey(file));
-  console.log("    " + dim("open /hooks in Claude Code (or restart) to activate."));
-  console.log("");
+  out.line("");
+  out.line("  " + green("✓") + " Estelle now fires on every edit and command in Claude Code");
+  out.line("    " + dim("ground code before it lands · guard risky bash · keep memory current"));
+  out.line("    " + dim("written to ") + grey(file));
+  out.line("    " + dim("open /hooks in Claude Code (or restart) to activate."));
+  out.line("");
 }
 
 /** `estelle uninstall-hooks` — remove ONLY Estelle's hooks; the user's own hooks and the MCP server stay. */
@@ -1418,45 +1440,111 @@ function cmdUninstallHooks() {
   const file = hook.claudeSettingsPath();
   let existing;
   try { existing = JSON.parse(fs.readFileSync(file, "utf8")); } catch { existing = null; }
-  if (!existing) { console.log("\n  " + dim("No Claude Code settings found — nothing to remove.") + "\n"); return; }
+  if (!existing) { out.line("\n  " + dim("No Claude Code settings found — nothing to remove.") + "\n"); return; }
   fs.writeFileSync(file, JSON.stringify(hook.removeHooks(existing), null, 2) + "\n");
-  console.log("");
-  console.log("  " + green("✓") + " Estelle's hooks removed — it no longer fires automatically");
-  console.log("    " + dim("your own hooks are untouched · the MCP server (tools) is a separate switch"));
-  console.log("    " + dim("re-enable any time with ") + teal("npx @fatelabs/estelle install-hooks"));
-  console.log("");
+  out.line("");
+  out.line("  " + green("✓") + " Estelle's hooks removed — it no longer fires automatically");
+  out.line("    " + dim("your own hooks are untouched · the MCP server (tools) is a separate switch"));
+  out.line("    " + dim("re-enable any time with ") + teal("npx @fatelabs/estelle install-hooks"));
+  out.line("");
 }
 
 /** Bare `estelle` opens the SESSION: type the name once, then talk. Commands still work for CI/scripts. */
 async function cmdSession() {
   const repl = require("./repl.js");
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout,
-                                        historySize: 200, terminal: process.stdin.isTTY });
+  // 🔴 THE PASTE FILTER GOES BETWEEN STDIN AND READLINE, never beside it (E-036). A `data` listener
+  // cannot stop readline submitting on an embedded newline, because readline is reading the same bytes.
+  // This makes the bracketed body arrive as ONE line's worth of text with no newline in it.
+  // The composer reads THIS. A bracketed body is swallowed here and handed to `composer.paste()` as ONE
+  // edit with its newlines intact — reading raw stdin instead made every embedded newline arrive as a
+  // `return` keypress, measured under a pty as three entries and 21 submits for a three-line paste.
+  let composerRef = null;
+  const sessionInput = require("./paste.js").pasteInput(process.stdin, {
+    onPaste: (original) => { if (composerRef) composerRef.paste(original); },
+  });
+  // 🔴 READLINE LEAVES THE INTERACTIVE PATH ENTIRELY — "not used carefully; removed."
+  // It exists ONLY for a pipe, where there are no keypress events and its line-splitting is exactly
+  // right. On a TTY there is none: the composer owns the keys, the buffer and the cursor. Creating it
+  // "just in case" was not harmless — two consumers on one stream is what the acceptance run caught.
+  const rl = process.stdin.isTTY ? null : readline.createInterface({
+    input: sessionInput, output: process.stdout, historySize: 200, terminal: false });
   // Lines are QUEUED rather than pulled one-at-a-time with rl.question(). Two reasons: piped stdin
   // (`printf '…' | estelle`, and every scripted test) delivers every line and then closes immediately —
   // question() would race the close and drop the input — and a multi-line PASTE arrives as several
   // lines at once, which a queue handles and a single question() does not. Close only ends the session
   // once the queue has drained, so nothing typed is ever thrown away.
-  const queue = [], waiting = [];
+  // 🔴 THE VISIBLE QUEUE (`pending.js`). "Built and still wired to nothing is defect class 4 — capability
+  // with no door — and it just landed in the middle of the campaign against defect class 4."
+  //
+  // A queue is three things and we had one: it HOLDS, it SHOWS, and it lets you CHANGE YOUR MIND. `queue`
+  // held; nothing showed it; nothing could clear it. A turn takes 9-20s (#101), so three impatient
+  // keystrokes was a minute of answers to things the customer stopped caring about after the first.
+  const pending = require("./pending.js");
+  const queue = [], queuedAt = [];
+  const waiting = [];
   let closed = false;
-  rl.on("line", (line) => (waiting.length ? waiting.shift()(line) : queue.push(line)));
-  rl.on("close", () => { closed = true; while (waiting.length) waiting.shift()(null); });
+  const deliver = (line) => {
+    if (waiting.length) return waiting.shift()(line);
+    queue.push(line);
+    queuedAt.push(Date.now());
+    if (showPending) showPending(pending.preview(queue, colours()));
+    return undefined;
+  };
+  const finish = () => { closed = true; while (waiting.length) waiting.shift()(null); };
 
-  // Ctrl+C is reflexive — people press it to abandon a half-typed thought, not to quit. Clear the line
-  // when there is one; only leave on an empty prompt.
-  rl.on("SIGINT", () => {
-    if (repl.interruptAction(rl.line) === "exit") { rl.close(); return; }
-    rl.write(null, { ctrl: true, name: "u" });                 // wipe the line, keep the session
-    process.stdout.write("\n");
-    rl.prompt();
-  });
+  // THE COMPOSER IS THE SESSION'S ONLY KEYPRESS READER on a TTY. `mode-ui`, `slash-menu` and the scroll
+  // binder now attach to `composer.keys` rather than to `process.stdin`, so overlays get first claim on a
+  // key and the buffer sees only what they did not take.
+  const composer = process.stdin.isTTY
+    ? editor.attach(sessionInput, {
+        onSubmit: deliver, onCancel: finish, onEof: finish,
+        // ESC clears what is WAITING, and only when something is. Idle ESC belongs to the slash menu, and
+        // stealing a key that already means something is its own defect.
+        onEscape: () => {
+          if (pending.escapeAction(queue, queue.length > 0) !== "clear") return;
+          const n = queue.length;
+          queue.length = 0; queuedAt.length = 0;
+          out.line(pending.clearedLine(n, colours()));
+          if (showPending) showPending("");
+        },
+      })
+    : null;
+  composerRef = composer;
+  // What every overlay binds to: the dispatcher on a TTY, raw stdin on a pipe (where it is inert anyway).
+  const keySource = composer ? composer.keys : process.stdin;
+  if (!composer) {
+    rl.on("line", deliver);
+    rl.on("close", finish);
+    // Ctrl+C is reflexive — people press it to abandon a half-typed thought, not to quit. (On the TTY
+    // path the composer does this itself: clear a full line, quit only on an empty one.)
+    rl.on("SIGINT", () => {
+      if (repl.interruptAction(rl.line) === "exit") { rl.close(); return; }
+      rl.write(null, { ctrl: true, name: "u" });
+      out.blank();
+      rl.prompt();
+    });
+  }
 
   // Prompt history persists across sessions (JSONL, self-healing on a torn file) and seeds readline's
   // own ↑/↓ buffer, so a restart doesn't cost you what you already asked.
   const histFile = path.join(os.homedir(), ".estelle", "history.jsonl");
   let history = [];
-  try { history = repl.parseHistory(fs.readFileSync(histFile, "utf8")); } catch { /* first run */ }
-  if (rl.history) rl.history = history.slice().reverse();       // readline wants newest-first
+  try {
+    const rawHistory = fs.readFileSync(histFile, "utf8");
+    // 🔴 SCRUB ON LAUNCH, ONCE. A live API key was found at rest in this file, and ↑ recalled it onto the
+    // screen. Writing one can no longer happen (input-ui refuses a credential-shaped line, and a masked
+    // read can no longer degrade to the recording reader) — but that does nothing for the ones already
+    // written. A one-line notice, said plainly and without drama: the customer's key is not in danger from
+    // anyone else at 0600, and the honest thing is to tell them it was removed rather than do it silently.
+    const scrubbed = repl.scrubHistory(rawHistory);
+    if (scrubbed.removed) {
+      fs.writeFileSync(histFile, scrubbed.text, { mode: 0o600 });
+      out.line(`  ${dim(`removed ${scrubbed.removed} credential${scrubbed.removed === 1 ? "" : "s"} from your command history`)}`);
+    }
+    history = repl.parseHistory(scrubbed.removed ? scrubbed.text : rawHistory);
+  } catch { /* first run */ }
+  if (rl && rl.history) rl.history = history.slice().reverse(); // readline wants newest-first (pipe)
+  if (composer) composer.setHistory(history);                   // ↑/↓ walk the SAME persisted history
   const remember = (text) => {
     const line = repl.historyLine(text, history[history.length - 1]);
     if (!line) return;
@@ -1466,12 +1554,20 @@ async function cmdSession() {
       fs.appendFileSync(histFile, line, { mode: 0o600 });
     } catch { /* history is a convenience — never fail a turn over it */ }
   };
+  // THE SAME READ, WITHOUT THE HISTORY WRITER. Handed to Module 2 for secrets so a masked read on a pipe
+  // has somewhere safe to land — the recording `prompt` below is never an option for a credential.
+  const readLine = async (q) => {
+    if (queue.length) return queue.shift();
+    if (closed) return null;
+    if (process.stdin.isTTY) out.partial(q);
+    return new Promise((res) => waiting.push(res));
+  };
   const prompt = async (q) => {
     let line;
     if (queue.length) line = queue.shift();
     else if (closed) return null;
     else {
-      if (process.stdin.isTTY) process.stdout.write(q);
+      if (process.stdin.isTTY) out.partial(q);
       line = await new Promise((res) => waiting.push(res));
     }
     if (line !== null && String(line).trim()) remember(line);
@@ -1485,12 +1581,14 @@ async function cmdSession() {
   // readers on one stdin race, and the loser silently eats the line. Only bound on a TTY — a pipe echoes
   // nothing by construction and the queued reader below already handles multi-line pastes correctly.
   const promptSecret = process.stdin.isTTY
-    ? async (q) => { rl.pause(); try { return await askSecret(q); } finally { rl.resume(); } }
+    ? async (q) => askSecret(q)   // no readline to pause on a TTY — the composer is the only reader
     : null;
   const code = await repl.runSession({
     version: require("../package.json").version,
     key: resolveKey(),
     promptSecret,
+    readLine,          // the non-recording reader Module 2 uses for a secret
+    onPendingRenderer: (fn) => { showPending = fn; },   // the render pass claims the queue line
     cwd: path.basename(process.cwd()),
     // `/status` answers "what am I actually pointed at?", so the endpoint and the repo NAME are measured
     // here rather than re-derived in the session — `repoNameFor` is the same function the sweep files
@@ -1504,11 +1602,17 @@ async function cmdSession() {
     root: require("./apply.js").repoRoot(process.cwd()),
     // shift+tab cycles the ceiling. On a non-TTY (piped stdin, CI) this binds nothing at all — there is no
     // human to press it, and raw-mode key handling there would corrupt the output stream.
-    bindKeys: require("./mode-ui.js").keyBinder(process.stdin, { rl }),
+    bindKeys: require("./mode-ui.js").keyBinder(keySource, { rl: rl || undefined, readline: NO_KEYPRESS }),
     // THE SLASH MENU (brief §2.1). Bound here because this file owns the readline; slash-menu.js owns the
     // keyboard and the ordering, the same split mode-ui.js uses. Inert on a non-TTY — a piped session gets
     // no keypress events and drawing a menu there would corrupt the stream.
-    bindMenu: require("./slash-menu.js").attachMenu(process.stdin, { rl }),
+    bindMenu: require("./slash-menu.js").attachMenu(keySource, {
+      rl: rl || undefined, readline: NO_KEYPRESS,
+      // The menu reads and writes the COMPOSER's buffer now — readline is off this path entirely.
+      line: composer ? () => composer.state.text : undefined,
+      setLine: composer ? (t) => composer.setLine(t) : undefined,
+      repaint: () => { if (showPending) showPending(pending.preview(queue, colours())); },
+    }),
     // One registry call a day, 2s timeout, silent when offline (update-check.js). Bound here so the REPL
     // stays a router and the test suite can inject a fake without touching the network.
     updateNotice: () => require("./update-check.js")
@@ -1521,14 +1625,15 @@ async function cmdSession() {
     post: async (p, body, key) => unwrap(await apiPost(p, body, key)),
     get: async (p, key) => unwrap(await apiGet(p, key)),
     readFile: (rel) => { try { return fs.readFileSync(path.resolve(process.cwd(), rel), "utf8"); } catch { return null; } },
-    prompt, out: (l) => console.log(l),
+    prompt, out: (l) => out.line(l),
     // The thinking indicator writes ONLY to a terminal. Piped output (CI, a scripted run) must stay exactly
     // what it was — animation frames spliced into it would corrupt whatever is reading.
-    write: process.stdout.isTTY ? (s) => process.stdout.write(s) : null,
+    write: process.stdout.isTTY ? (s) => out.partial(s) : null,
     c: { teal, dim, bold, green, amber, grey, red },
     now: () => Date.now(),
   });
-  rl.close();
+  if (composer) composer.close();   // …and RESTORES raw mode
+  if (rl) rl.close();
   process.exitCode = code || 0;
 }
 
@@ -1555,7 +1660,7 @@ if (require.main === module) {
     // every test drove a subcommand, so nothing exercised the one invocation a script or a bug report uses
     // first. Register #75.
     if (cmd === "--version" || cmd === "-v") {
-      console.log(require("../package.json").version);
+      out.line(require("../package.json").version);
       return;
     }
     if (!cmd || cmd.startsWith("--") && !has("--help")) await cmdSession();
@@ -1578,7 +1683,7 @@ if (require.main === module) {
     else help();
   })().catch((e) => {
     // No server payload (or bug) may ever surface as a raw stack dump — styled error, non-zero exit.
-    console.log(red("estelle: unexpected error — " + String((e && e.message) || e)));
+    out.line(red("estelle: unexpected error — " + String((e && e.message) || e)));
     process.exitCode = 1;
   });
 }

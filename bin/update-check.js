@@ -118,7 +118,11 @@ function writeCache(latest, now, file) {
   try {
     const target = file || cacheFile();
     fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(target, JSON.stringify({ checkedAt: Number(now) || Date.now(), latest }) + "\n");
+    // 0644 DELIBERATELY, and argued rather than defaulted. This file holds a version string and a
+    // timestamp — nothing else can ever reach it, because nothing else is written here. Every other
+    // file under ~/.estelle is 0600; this one is the exception and the exception has a reason.
+    fs.writeFileSync(target, JSON.stringify({ checkedAt: Number(now) || Date.now(), latest }) + "\n",
+                     { mode: 0o644 });
   } catch { /* a version cache is never worth an error */ }
 }
 

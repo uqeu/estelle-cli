@@ -171,11 +171,13 @@ function snapshot(root, targets, base, now) {
     let body = null;
     try { body = fs.readFileSync(abs); } catch { body = null; }
     const backup = body === null ? "" : `files/${i}`;
-    if (backup) fs.writeFileSync(path.join(dir, backup), body);
+    if (backup) fs.writeFileSync(path.join(dir, backup), body, { mode: 0o600 });
     return { path: t.path, existed: body !== null, backup };
   });
   const record = { at: new Date(now || Date.now()).toISOString(), root, dir, entries };
-  fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify(record, null, 2) + "\n");
+  // 0600: an undo backup is a verbatim copy of the customer's source file.
+  fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify(record, null, 2) + "\n",
+                   { mode: 0o600 });
   return record;
 }
 

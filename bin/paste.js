@@ -135,4 +135,51 @@ function attach(stdin, deps) {
   };
 }
 
-module.exports = { CODES, parse, composerText, isLarge, attach };
+/**
+ * 🔴 THE INPUT READLINE ACTUALLY READS — the half `attach` could not do, and the reason a 20-line paste
+ * still fired 20 turns after bracketed paste was "enabled" (E-036).
+ *
+ * `attach` adds a `data` listener. **So does readline.** Adding a second listener does not take input away
+ * from the first: the terminal dutifully wrapped the paste in markers, we dutifully parsed them, and
+ * readline — reading the very same bytes — submitted on every embedded newline anyway. Enabling a terminal
+ * mode is a REQUEST TO THE TERMINAL, not a behaviour change in your program.
+ *
+ * The fix is a stream, not a listener. This sits BETWEEN `process.stdin` and `createInterface`, so the
+ * bracketed body never reaches readline as newlines at all — it arrives as one line's worth of text, and a
+ * line readline never sees a `\n` in is a line it cannot submit.
+ *
+ * ⛔ THE TTY SURFACE IS PROXIED, and it is not optional. With `terminal: true` readline calls
+ * `input.setRawMode` and reads `input.isTTY`; a bare Transform has neither, so it would silently fall back
+ * to non-terminal mode — no history, no keypress handling, no menu. Losing the composer to fix a paste
+ * would be a far worse trade than the defect.
+ */
+function pasteInput(source, deps) {
+  const d = deps || {};
+  const { Transform } = require("stream");
+  if (!source || !source.isTTY) return source;      // a pipe cannot paste; leave it exactly as it was
+  let held = "";
+  const stream = new Transform({
+    transform(chunk, _enc, done) {
+      const { events, rest } = parse(held + chunk.toString("utf8"));
+      held = rest;
+      for (const e of events) {
+        if (e.kind === "keys") { this.push(e.text); continue; }
+        // 🔴 SWALLOWED, NOT FORWARDED — the correction the PTY acceptance run forced. The first version
+        // pushed the body downstream with newlines flattened to spaces: right for readline (it had no
+        // other way to avoid submitting) and WRONG for our own composer, which HOLDS newlines. Flattening
+        // destroys the paste's shape, and forwarding the bytes at all meant every embedded newline still
+        // arrived as a `return` KEYPRESS. Nothing downstream may see the body.
+        if (d.onPaste) d.onPaste(e.text, composerText(e.text));
+      }
+      done();
+    },
+  });
+  // readline's terminal mode probes these on the INPUT stream, so they must answer for the real one.
+  stream.isTTY = true;
+  stream.setRawMode = (mode) => { if (source.setRawMode) source.setRawMode(mode); return stream; };
+  Object.defineProperty(stream, "isRaw", { get: () => Boolean(source.isRaw) });
+  source.pipe(stream);
+  return stream;
+}
+
+module.exports = { CODES, parse, composerText, isLarge, attach, pasteInput };
