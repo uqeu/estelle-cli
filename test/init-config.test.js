@@ -167,3 +167,28 @@ test("init does NOT write a credential to disk when the key came from the enviro
   assert.ok(!fs.existsSync(path.join(home, ".estelle", "auth.json")),
             "an env-supplied key was written to disk");
 }));
+
+test("an UNREACHABLE Estelle keeps the key; only an explicit REJECTION discards it", () => {
+  // FOUND BY VERIFYING THE PUBLISHED 0.1.9, not by reading the source. `writeAuth` sat inside the
+  // `if (v.ok)` branch, so persistence was gated on a NETWORK ROUND-TRIP: a firewall, a blip or a brief
+  // outage discarded a VALID key, and the next command asked for it again — the exact defect `init` was
+  // fixed for, half-fixed. A failure to ASK is not evidence about the key; only a 401/403 is. Register #76.
+  return new Promise((resolve, reject) => {
+    const dead = http.createServer((req, res) => { res.destroy(); });   // accepts, never answers
+    dead.listen(0, "127.0.0.1", () => {
+      const url = `http://127.0.0.1:${dead.address().port}/mcp`;
+      const { home } = withHome(null);
+      execFile(process.execPath, [CLI, "init", "--client", "cursor", "--key", "ek-unreachable-1"],
+               { env: { ...process.env, HOME: home, NO_COLOR: "1", ESTELLE_API_KEY: "",
+                        ESTELLE_MCP_URL: url }, encoding: "utf8" },
+               () => {
+                 dead.close();
+                 try {
+                   assert.ok(fs.existsSync(path.join(home, ".estelle", "auth.json")),
+                     "an unreachable server discarded a valid key");
+                   resolve();
+                 } catch (e) { reject(e); }
+               });
+    });
+  });
+});

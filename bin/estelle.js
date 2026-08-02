@@ -184,6 +184,10 @@ async function verifyMcp(key) {
     });
     const text = await res.text().catch(() => "");
     if (res.ok && text.includes('"result"')) return { ok: true };
+    // REJECTED vs UNREACHABLE — the same distinction the grounding gate makes between a refusal and an
+    // abstention, and it matters here for the same reason: only one of them is evidence about the KEY.
+    // A 401/403 is the server saying "this key is wrong"; anything else is "I could not ask".
+    if (res.status === 401 || res.status === 403) return { ok: false, rejected: true, why: `HTTP ${res.status}` };
     return { ok: false, why: `HTTP ${res.status}` };
   } catch (e) {
     return { ok: false, why: String((e && e.message) || e) };
@@ -215,6 +219,16 @@ const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 const resolveKey = () => flag("--key", auth.storedKey());
 
 // ── commands ─────────────────────────────────────────────────────────────────────
+/** Persist the key `init` was given — ONE definition, used by both the verified and the unreachable path.
+ *
+ * Skipped when $ESTELLE_API_KEY supplied it: that is the CI shape, a deliberate per-process override, and
+ * writing a credential to a shared runner's disk is not what that caller asked for. */
+function persistKey(key) {
+  if (process.env.ESTELLE_API_KEY || key === auth.readAuth()) return;
+  auth.writeAuth(key);                                       // 0700/0600, the same as the REPL's
+  console.log("  " + ok + " " + dim(`key saved to ${auth.authFile()} — no more --key`));
+}
+
 async function cmdInit() {
   banner();
   // A customer who already pasted a key into the session should not be asked for it again to wire an
@@ -289,13 +303,15 @@ async function cmdInit() {
     // whose completion criterion was "the path I was looking at" rather than "both paths, asserted".
     // Skipped when $ESTELLE_API_KEY supplied the key: that is the CI shape, a deliberate per-process
     // override, and writing a credential to the disk of a shared runner is not what that caller asked for.
-    if (!process.env.ESTELLE_API_KEY && key !== auth.readAuth()) {
-      auth.writeAuth(key);                                     // 0700/0600, the same as the REPL's
-      console.log("  " + ok + " " + dim(`key saved to ${auth.authFile()} — no more --key`));
-    }
+    persistKey(key);
     console.log("  " + green("You're connected.") + dim("  Ask your agent anything about your codebase — it won't invent an API."));
   } else {
     console.log(amber("failed"));
+    // KEEP THE KEY unless the server EXPLICITLY REJECTED it. Gating persistence on a network round-trip
+    // means a firewall, a blip or a brief outage discards a VALID key — and the next command then asks for
+    // it again, which is the exact defect `init` was fixed for. A failure to ASK is not evidence about the
+    // key. Only a 401/403 is.
+    if (!v.rejected) persistKey(key);
     console.log("  " + amber(`Configs are written, but Estelle did NOT answer (${v.why}) — connection unverified.`));
     console.log("  " + dim(`Check your key and that ${MCP_URL} is reachable, then re-run init.`));
     process.exitCode = 1;
@@ -1501,6 +1517,15 @@ module.exports = {
 if (require.main === module) {
   (async () => {
     const cmd = process.argv[2];
+    // `--version` / `-v` BEFORE the session fallthrough. Without this the most standard flag in any CLI
+    // matched `cmd.startsWith("--")` and opened the interactive session — which then prompted for a key and
+    // exited 1 on a non-TTY. Found by running the PUBLISHED 0.1.9 through npx, not by reading the source:
+    // every test drove a subcommand, so nothing exercised the one invocation a script or a bug report uses
+    // first. Register #75.
+    if (cmd === "--version" || cmd === "-v") {
+      console.log(require("../package.json").version);
+      return;
+    }
     if (!cmd || cmd.startsWith("--") && !has("--help")) await cmdSession();
     else if (cmd === "init") await cmdInit();
     else if (cmd === "sweep") await cmdSweep();

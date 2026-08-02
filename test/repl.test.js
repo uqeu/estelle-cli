@@ -677,3 +677,20 @@ test("a slash command that hits the server is NOT wrapped in the session context
   const improve = posts.find((p) => p.path === "/improve");
   assert.ok(improve && !JSON.stringify(improve.body).includes("SESSION SO FAR"));
 });
+
+test("`--version` prints the version and exits 0, instead of opening a session", async () => {
+  // FOUND BY RUNNING THE PUBLISHED 0.1.9 THROUGH npx, not by reading the source. `cmd.startsWith("--")`
+  // fell through to the interactive session, so the most standard flag in any CLI prompted for a key and
+  // exited 1 on a non-TTY — which is what a script, a CI job, or the first line of a bug report does.
+  // Every existing test drove a SUBCOMMAND, so nothing exercised the bare-flag path. Register #75.
+  const { execFile } = require("node:child_process");
+  const cliPath = require("node:path").join(__dirname, "..", "bin", "estelle.js");
+  for (const flag of ["--version", "-v"]) {
+    const r = await new Promise((res) => {
+      execFile(process.execPath, [cliPath, flag], { encoding: "utf8" },
+               (err, stdout) => res({ code: err ? (err.code === undefined ? 1 : err.code) : 0, stdout }));
+    });
+    assert.strictEqual(r.code, 0, `${flag} exited ${r.code}`);
+    assert.match(r.stdout.trim(), /^\d+\.\d+\.\d+$/, `${flag} printed ${JSON.stringify(r.stdout)}`);
+  }
+});
