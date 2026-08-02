@@ -21,8 +21,17 @@ const os = require("os");
 const path = require("path");
 
 const REGISTRY = "https://registry.npmjs.org/@fatelabs/estelle/latest";
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000;      // one check a day
+// ONE HOUR, NOT ONE DAY — register #92. We shipped FIVE releases in THIRTEEN HOURS, and a 24h cache
+// cannot describe that cadence: a customer who checked at 09:00 was told nothing until 09:00 the next
+// day, four releases later. The interval is a guess about how fast we ship, so it lives beside the reason
+// and is overridable (`ESTELLE_UPDATE_TTL_MS`) rather than being a constant nobody can revisit.
+// It is the SECOND half of the fix — `shouldCheck`'s staleness condition is the half that matters.
+const CACHE_TTL_MS = Number(process.env.ESTELLE_UPDATE_TTL_MS) || 60 * 60 * 1000;
 const TIMEOUT_MS = 2000;                        // a slow registry must never be felt
+// The release notes for whatever we are recommending. We have GitHub releases and pointed at NOTHING —
+// Kimi's upgrade UX links its changelog, and "what changed?" is the first question anyone asks before
+// running a command that modifies their machine.
+const CHANGELOG = "https://github.com/uqeu/estelle-cli/releases";
 
 const cacheFile = () => path.join(os.homedir(), ".estelle", "update-check.json");
 
@@ -49,8 +58,28 @@ function isNewer(current, latest) {
   return z > c;
 }
 
-/** Whether enough time has passed to ask the registry again. Missing/corrupt cache → yes, check. */
-function shouldCheck(cachedAt, now, ttl) {
+/**
+ * Whether to ask the registry again. Missing/corrupt cache → yes, check.
+ *
+ * 🔴 #92 — THE CACHE STORED A NEGATIVE AND HAD NO WAY TO KNOW IT WAS STALE. `~/.estelle/update-check.json`
+ * held `{"latest":"0.1.8"}`, written when 0.1.8 really was newest. We then shipped FIVE releases in
+ * THIRTEEN HOURS. A machine running 0.1.10 read that cache, compared 0.1.10 against a "latest" of 0.1.8,
+ * concluded it was AHEAD, and said nothing — for a full day, working exactly as designed. **The design was
+ * wrong for our cadence.**
+ *
+ * THE STALENESS CONDITION IS THE FIX, AND IT COSTS NOTHING: if the version we are RUNNING is newer than
+ * the version the cache calls "latest", the cache is **provably** wrong — no clock, no TTL, no guess about
+ * how fast we ship. You cannot be running a release the registry has never heard of unless the cached
+ * answer predates it. Re-check immediately.
+ *
+ * ⛔ THE GENERAL SHAPE, worth more than this instance (defect class 3, inside a cache): **a cache that
+ * stores "there is nothing" needs a STALENESS CONDITION, not just a TTL.** A TTL bounds how long a
+ * positive is trusted; nothing bounds how long an ABSENCE is trusted, and an absence is what silences a
+ * mechanism. The register names two more to audit for this shape — the Firecrawl vendor cache and the
+ * research caches — and both also cache absences.
+ */
+function shouldCheck(cachedAt, now, ttl, current, cachedLatest) {
+  if (isNewer(cachedLatest, current)) return true;     // running AHEAD of "latest" → the cache is stale
   const at = Number(cachedAt);
   if (!Number.isFinite(at) || at <= 0) return true;
   return (Number(now) - at) >= (Number(ttl) || CACHE_TTL_MS);
@@ -65,7 +94,12 @@ function shouldCheck(cachedAt, now, ttl) {
  */
 function updateNotice(current, latest) {
   if (!isNewer(current, latest)) return "";
-  return `update available — ${current} → ${latest}   npm i -g @fatelabs/estelle`;
+  // THE EXACT COMMAND, and WHAT IT COSTS YOU. Kimi's upgrade UX is better than ours and the REASONS matter
+  // more than the layout: it shows the command before running it (we are asking to modify their machine),
+  // and it says config and sessions carry over — the sentence that actually makes someone press enter.
+  // The changelog link closes the other half: we have GitHub releases and pointed at nothing.
+  return `update available — ${current} → ${latest}   npm i -g @fatelabs/estelle`
+    + `\n  your key, config and sessions carry over · what changed: ${CHANGELOG}`;
 }
 
 /** Read the cached `{checkedAt, latest}`; `{}` on anything unreadable, corrupt, or absent. Never throws:
@@ -99,7 +133,9 @@ async function checkForUpdate(current, opts) {
   const now = o.now || Date.now();
   const file = o.file || cacheFile();
   const cache = readCache(file);
-  if (!shouldCheck(cache.checkedAt, now, o.ttl)) return updateNotice(current, cache.latest);
+  if (!shouldCheck(cache.checkedAt, now, o.ttl, current, cache.latest)) {
+    return updateNotice(current, cache.latest);
+  }
   let latest = "";
   try {
     const fetchFn = o.fetch || fetch;
@@ -114,4 +150,4 @@ async function checkForUpdate(current, opts) {
 }
 
 module.exports = { isNewer, shouldCheck, updateNotice, checkForUpdate, readCache, writeCache,
-                   cacheFile, CACHE_TTL_MS, TIMEOUT_MS, REGISTRY };
+                   cacheFile, CACHE_TTL_MS, TIMEOUT_MS, REGISTRY, CHANGELOG };

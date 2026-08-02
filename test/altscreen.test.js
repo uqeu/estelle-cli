@@ -96,15 +96,25 @@ test("🔴 leave WITHOUT enter writes nothing — it must not emit a stray reset
   assert.equal(tty.all(), "", "a leave with no matching enter must be silent");
 });
 
-test("the cursor is hidden on enter and SHOWN AGAIN on leave", () => {
-  // A hidden cursor left behind is the same class of damage as a borrowed screen: the user's shell still
-  // works, but they cannot see where they are typing.
+test("SYMPTOM f: the cursor is VISIBLE while the session runs — hidden only for a frame", () => {
+  // This test used to assert `hideCursor` on ENTER, and therefore pinned the defect: the cursor was
+  // hidden for the WHOLE session, so the founder typed into a composer with nothing marking where. The
+  // only moment a cursor needs hiding is while a frame is written, or it skitters across every row.
   const tty = fakeTty();
   const s = alt.create(tty);
   s.enter();
-  assert.ok(tty.all().includes(alt.CODES.hideCursor));
+  assert.ok(!tty.all().includes(alt.CODES.hideCursor),
+    "entering the alternate screen must NOT leave the cursor hidden for the session");
+
+  const before = tty.all().length;
+  s.paint(["one", "two"]);
+  const frame = tty.all().slice(before);
+  assert.ok(frame.indexOf(alt.CODES.hideCursor) < frame.indexOf(alt.CODES.showCursor),
+    "a frame hides the cursor, writes, and shows it again — in that order");
+  assert.ok(frame.endsWith(alt.CODES.showCursor), "and the frame must END with it visible");
+
   s.leave();
-  assert.ok(tty.all().includes(alt.CODES.showCursor), "the cursor must be restored");
+  assert.ok(tty.all().includes(alt.CODES.showCursor), "the cursor must be restored on the way out");
 });
 
 test("leave emits the codes in the order that leaves a working terminal", () => {

@@ -106,7 +106,7 @@ function modeBanner(localMode, server, c) {
  * terminal, and a second owner is how a session exits with a wedged tty. */
 function keyBinder(stdin, deps) {
   const d = deps || {};
-  return function bind(cycle) {
+  return function bind(cycle, screenWrite) {
     if (!stdin || !stdin.isTTY) return () => {};
     const rl = require("readline");
     ((d.readline || rl).emitKeypressEvents)(stdin);            // idempotent — node guards on a symbol
@@ -131,6 +131,15 @@ function keyBinder(stdin, deps) {
         .then(cycle)
         .then((r) => {
           if (!r) return;
+          // 🔴 WHEN THE SCREEN IS OWNED BY SOMEONE ELSE, HAND THEM THE LINE. Inside the alternate screen
+          // `screen.js` repaints every row from the transcript, so a cursor-relative erase here is two
+          // writers racing over one screen — which is how a correct one-line redraw ended up printing
+          // SEVEN footers. The caller supplies `screenWrite` exactly when that is the case.
+          if (screenWrite) {
+            screenWrite(String(r.banner || ""));
+            if (d.rl) d.rl.setPrompt(String(r.prompt || ""));
+            return;
+          }
           write("\r\x1b[2K");                                  // wipe the half-drawn prompt line
           if (drawn) write("\x1b[1A\r\x1b[2K");                 // …and the footer we drew last time
           write(String(r.banner || "") + "\n");

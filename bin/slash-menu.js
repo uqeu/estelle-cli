@@ -50,9 +50,23 @@ function menuRows(commands, dispatchable, skills) {
     if (dispatchable && !dispatchable.has(name)) continue;      // RULE 1 — never offer a dead door
     rows.push({ name, short: String(short || ""), group: GROUP_OF[name] || "code" });
   }
-  for (const s of skills || []) {
-    if (!s || !s.name) continue;
-    rows.push({ name: `skill_${s.name}`, short: String(s.short || ""), group: "skills" });
+  // ⛔ THE 246 `skill_*` ROWS ARE NOT IN THE MENU — founder ruling, DECISION G, 2026-08-02.
+  //
+  // "A slash command is for something the USER does. A tool is for something ESTELLE does." Skills are
+  // selected by RELEVANCE, by the model — jcode injects on embedding hit with no tool call, which is our
+  // own always-on law ("an agent that CHOOSES to use the trust layer is broken"). Offering 246 rows made
+  // the customer do the selection, and made the menu unreadable to do it: they buried the ten commands
+  // anyone actually types.
+  //
+  // ⛔ NOTHING BECOMES UNREACHABLE, and that is the ONLY reason this half could land before the agent
+  // loop. `/skill_<name>` still DISPATCHES (repl.js routeInput → /skill/run) and the unknown-command
+  // guard still knows every skill name, so a customer who types one gets it. This removes a ROW, never a
+  // door — the opposite of the 165-unwired mistake, which DECISION G explicitly forbids repeating.
+  //
+  // ONE row replaces them: `/skills`, a browser for someone who wants to look.
+  if ((skills || []).length) {
+    rows.push({ name: "skills", short: `browse the ${skills.length} playbooks Estelle picks from`,
+                group: "skills" });
   }
   const rank = (r) => {
     const i = RANK.indexOf(r.name);
@@ -128,10 +142,23 @@ function attachMenu(stdin, deps) {
     let selected = 0;
     let rows = [];
 
+    // 🔴 SYMPTOM (g) — THE MENU RENDERED ABOVE THE PROMPT. The old pair wrote the menu with a leading
+    // newline (so the cursor ended up BELOW it) and then called `rl.prompt(true)`, which redrew the
+    // prompt wherever the cursor now was — pushing the prompt DOWN and leaving the menu above it. The eye
+    // goes to what you are typing; Codex and Kimi both draw the list below the input for that reason.
+    //
+    // The fix is that the CURSOR NEVER LEAVES THE PROMPT ROW. Paint moves down, draws, and comes back;
+    // erase moves down, clears, and comes back. Both are written as matched pairs so the two can never
+    // disagree about where the cursor is — which is the bug they had.
+    const DOWN = "\x1b[1B", CLEAR = "\r\x1b[2K";
+    const upTo = (n) => (n > 0 ? `\x1b[${n}A\r` : "\r");
+
     const erase = () => {
       if (!drawn) return;
-      write("\r\x1b[2K");
-      for (let i = 0; i < drawn; i += 1) write("\x1b[1A\r\x1b[2K");
+      let buf = "";
+      for (let i = 0; i < drawn; i += 1) buf += DOWN + CLEAR;
+      buf += upTo(drawn);
+      write(buf);
       drawn = 0;
     };
     const close = () => { erase(); open = false; selected = 0; };
@@ -147,7 +174,12 @@ function attachMenu(stdin, deps) {
       const lines = hits.length ? renderMenu(hits, selected, d.max || 8)
                                 : ["  no command matches — esc to dismiss"];
       erase();
-      write("\n" + lines.join("\n"));
+      // BELOW the prompt, then back up to it. `rl.prompt(true)` redraws the input line in place once the
+      // cursor is home, so the prompt stays exactly where it was and the list appears under it.
+      let buf = "";
+      for (const line of lines) buf += DOWN + CLEAR + line;
+      buf += upTo(lines.length);
+      write(buf);
       drawn = lines.length;
       if (rl) rl.prompt(true);
       return undefined;

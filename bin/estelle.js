@@ -953,11 +953,14 @@ function argText(from) {
   return parts.join(" ").trim();
 }
 
-async function apiPost(pathname, body, key) {
+async function apiPost(pathname, body, key, extraHeaders) {
   try {
     const res = await fetch(`${API}${pathname}`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      // `extraHeaders` carries Estelle-specific context that must NOT go in the body — today just
+      // `X-Estelle-Repo` (#87), because /v1/chat/completions is the OpenAI-compatible door and a custom
+      // body field would make our requests non-standard for every other client that speaks OpenAI.
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...(extraHeaders || {}) },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(API_TIMEOUT_MS),
     });
@@ -1029,7 +1032,18 @@ async function cmdAsk() {
   const q = argText(3);
   if (!q) { console.log("  " + amber('Ask what?') + dim('  e.g. estelle ask "explain the retry logic"')); return; }
   process.stdout.write("  " + dim("Asking Estelle… "));
-  const r = await apiPost("/v1/chat/completions", { model: "estelle", messages: [{ role: "user", content: q }] }, key);
+  // #87 — SCOPE THE ASK. This posted with no repo at all, so the server answered from the whole account and
+  // returned other projects' unfiled junk (the omega_* / LEAKCANARY content the founder hit every time).
+  // The scope travels as a HEADER because /v1/chat/completions is the OpenAI-compatible door: a body field
+  // would make our requests non-standard for every other client that speaks OpenAI.
+  //
+  // `repoNameFor` is the ONE definition — the same value `sweep` and both hooks write under (#23). When it
+  // cannot determine a repo the header is omitted and the customer is TOLD, rather than being silently
+  // asked account-wide, which is the failure this fixes.
+  const askRepo = repoNameFor(process.cwd());
+  if (!askRepo) console.log("  " + dim("no repo detected here — answering from your whole account"));
+  const r = await apiPost("/v1/chat/completions", { model: "estelle", messages: [{ role: "user", content: q }] },
+                          key, askRepo ? { "X-Estelle-Repo": askRepo } : undefined);
   if (!r.ok) return fail(r);
   console.log(ok); console.log("");
   const content = r.json && r.json.choices && r.json.choices[0] && r.json.choices[0].message && r.json.choices[0].message.content;

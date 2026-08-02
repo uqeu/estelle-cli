@@ -213,3 +213,30 @@ test("🔴 #88 grounded:false with an EMPTY list and no scope_ask says COULD NOT
   assert.match(out, /could not verify/i);
   assert.match(out, /repo not swept/, "the server's reason must reach the customer");
 });
+
+// ── #89, the display half: /routing reported the DEFAULT, not what your message got ────
+
+test("🔴 #89 /routing with no argument routes YOUR LAST MESSAGE, not a generic default", () => {
+  // The founder typed "hi", asked /routing, and read `chat: default → balanced`. The PRODUCT defect was
+  // real (fixed in routing.py — a greeting now takes the cheap tier), but the DISPLAY was lying alongside
+  // it: with no argument the command sent `{task_kind:"chat"}`, which asks "what does a generic chat turn
+  // route to" — a different question from "what did MY message route to", answered in the same words.
+  const route = repl.routeInput({ kind: "command", name: "routing", arg: "" }, {},
+                                { repo: "", lastAsk: "hi" });
+  assert.equal(route.path, "/route");
+  assert.equal(route.body.prompt, "hi", "it must route the message the customer actually sent");
+  assert.ok(!("task_kind" in route.body), "task_kind asks the generic question, not theirs");
+});
+
+test("#89 an explicit argument still wins over the last message", () => {
+  const route = repl.routeInput({ kind: "command", name: "routing", arg: "refactor the auth module" }, {},
+                                { repo: "", lastAsk: "hi" });
+  assert.equal(route.body.prompt, "refactor the auth module");
+});
+
+test("🔴 #89 with NOTHING to route it says so, rather than showing a default that reads as an answer", () => {
+  const route = repl.routeInput({ kind: "command", name: "routing", arg: "" }, {}, { repo: "", lastAsk: "" });
+  assert.equal(route.defaultOnly, true,
+    "the caller must be able to tell this is the generic default and say so to the customer");
+  assert.equal(route.body.task_kind, "chat");
+});

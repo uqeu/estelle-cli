@@ -78,7 +78,11 @@ function create(stream) {
     enter() {
       if (active) return false;
       active = true;
-      write(CODES.enter + CODES.hideCursor + CODES.home + CODES.clearBelow);
+      // 🔴 SYMPTOM (f) — NO VISIBLE CURSOR IN THE COMPOSER. This used to write `hideCursor` here and
+      // never show it again until `leave()`, so the cursor was invisible for the WHOLE session and the
+      // customer typed into a box with nothing marking where. The hide belongs around a PAINT — which is
+      // the only moment it would flicker across the screen — not around the session. See `paint`.
+      write(CODES.enter + CODES.home + CODES.clearBelow);
       return true;
     },
 
@@ -110,9 +114,12 @@ function create(stream) {
     paint(rows) {
       if (!active) return false;
       const list = Array.isArray(rows) ? rows : [];
-      let buf = CODES.home;
+      // HIDDEN FOR THE DURATION OF THE FRAME AND SHOWN AGAIN — the whole reason a cursor is ever hidden
+      // in a TUI is that it would otherwise skitter across every row as the frame is written. Bracketing
+      // the PAINT gets that, and costs nothing; bracketing the SESSION got symptom (f).
+      let buf = CODES.hideCursor + CODES.home;
       for (const row of list) buf += CODES.clearLine + row + "\r\n";
-      buf += CODES.clearBelow;
+      buf += CODES.clearBelow + CODES.showCursor;
       write(buf);
       return true;
     },

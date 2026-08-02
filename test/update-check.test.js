@@ -61,21 +61,64 @@ test("a non-200 or a junk payload is also silent", async () => {
     { fetch: async () => ({ ok: true, json: async () => "not an object" }), file }), "");
 });
 
-test("the registry is asked ONCE a day, not once per invocation", async () => {
-  // the hooks path runs this binary on every edit; a call per run is a real recurring cost
+test("the registry is asked ONCE PER INTERVAL, not once per invocation", async () => {
+  // the hooks path runs this binary on every edit; a call per run is a real recurring cost.
+  // Written against u.CACHE_TTL_MS rather than a hard-coded day: #92 shortened the interval to an hour,
+  // and a test that hard-codes the constant it is guarding goes red on the fix instead of on a defect.
   const file = tmpFile();
   let calls = 0;
   const counting = async (...a) => { calls += 1; return ok("0.1.9")(...a); };
   const now = 1_700_000_000_000;
   assert.match(await u.checkForUpdate("0.1.8", { fetch: counting, file, now }), /0\.1\.9/);
   assert.strictEqual(calls, 1);
-  // ...an hour later, still cached, and STILL reports the pending update from cache
-  const later = await u.checkForUpdate("0.1.8", { fetch: counting, file, now: now + 3600_000 });
+  // ...inside the interval, still cached, and STILL reports the pending update from cache
+  const later = await u.checkForUpdate("0.1.8",
+    { fetch: counting, file, now: now + Math.floor(u.CACHE_TTL_MS / 2) });
   assert.strictEqual(calls, 1, "it asked the registry again inside the TTL");
   assert.match(later, /0\.1\.9/, "a cached answer must still notify — the cache is for the CALL, not the news");
-  // ...a day later it asks again
+  // ...past the interval it asks again
   await u.checkForUpdate("0.1.8", { fetch: counting, file, now: now + u.CACHE_TTL_MS + 1 });
   assert.strictEqual(calls, 2);
+});
+
+// ── #92 — THE CACHE STORED A NEGATIVE WITH NO WAY TO KNOW IT WAS STALE ─────────
+// ~/.estelle/update-check.json held {"latest":"0.1.8"}, written when that was true. Five releases in
+// thirteen hours later, a machine running 0.1.10 read it, concluded it was AHEAD of "latest", and went
+// silent for a full day — working exactly as designed, on a design that was wrong for our cadence.
+
+test("#92 running AHEAD of the cached 'latest' re-checks IMMEDIATELY — the cache is provably stale", async () => {
+  const file = tmpFile();
+  // The exact cache from the founder's machine, and a fresh timestamp so the TTL alone would say "wait".
+  const now = 1_700_000_000_000;
+  u.writeCache("0.1.8", now, file);
+  let calls = 0;
+  const counting = async (...a) => { calls += 1; return ok("0.1.12")(...a); };
+  const notice = await u.checkForUpdate("0.1.10", { fetch: counting, file, now: now + 1000 });
+  assert.strictEqual(calls, 1, "a version newer than the cached latest MUST force a re-check");
+  assert.match(notice, /0\.1\.12/, "and the customer must finally be told");
+});
+
+test("#92 the staleness condition needs no clock at all", () => {
+  // It is not a shorter TTL wearing a disguise: you cannot be RUNNING a release the registry has never
+  // heard of unless the cached answer predates it. No time arithmetic is involved.
+  assert.strictEqual(u.shouldCheck(Date.now(), Date.now(), 1e12, "0.1.10", "0.1.8"), true);
+  assert.strictEqual(u.shouldCheck(Date.now(), Date.now(), 1e12, "0.1.8", "0.1.10"), false,
+    "…and a normally-behind machine inside the TTL still uses the cache");
+});
+
+test("#92 THE PAIRED NEGATIVE — an equal version does NOT force a re-check", () => {
+  // Without this the guard could pass by re-checking on every invocation, which is the cost the cache
+  // exists to avoid — a fix that turns the cache off is not a fix.
+  assert.strictEqual(u.shouldCheck(Date.now(), Date.now(), 1e12, "0.1.9", "0.1.9"), false);
+});
+
+test("#92 the notice links the changelog and says what survives an upgrade", () => {
+  // "Show the command" was already right. What was missing is the two things that make someone RUN it:
+  // what changed, and whether it costs them their setup.
+  const n = u.updateNotice("0.1.9", "0.2.0");
+  assert.match(n, /npm i -g @fatelabs\/estelle/, "the exact command");
+  assert.match(n, /carry over/, "and that their key, config and sessions survive");
+  assert.match(n, new RegExp(u.CHANGELOG.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "and what changed");
 });
 
 test("a corrupt cache file degrades to 'check again', never to a crash", async () => {

@@ -110,8 +110,15 @@ test("every input lands on an endpoint Estelle already serves", () => {
   // the session must not mint a parallel /cli/* API — each branch reuses a real route
   assert.deepEqual(r.routeInput({ kind: "ask", text: "how does auth work?" }),
     { path: "/deep-search", body: { question: "how does auth work?" } });
+  // `tasks`, PLURAL — this test pinned `{task}` and therefore pinned the BUG. Measured on prod
+  // 2026-08-02: `POST /orchestra {"task": "…"}` answers `400 swarm needs a non-empty 'tasks' list of
+  // strings` (api_orchestra.py:73-75), so /orchestra has never once worked from the session.
   assert.deepEqual(r.routeInput({ kind: "command", name: "orchestra", arg: "fix the flaky tests" }),
-    { path: "/orchestra", body: { task: "fix the flaky tests" } });
+    { path: "/orchestra", body: { tasks: ["fix the flaky tests"] } });
+  // …and the scope travels with it, exactly as it does for a question: at PROPOSE or above the server
+  // requires an `owner/name` repo because each task opens a worktree (api_orchestra.py:87-88).
+  assert.deepEqual(r.routeInput({ kind: "command", name: "orchestra", arg: "t" }, {}, { repo: "o/n" }),
+    { path: "/orchestra", body: { tasks: ["t"], repo: "o/n" } });
   assert.deepEqual(r.routeInput({ kind: "command", name: "gate", arg: "" }), { path: "/gate", body: {} });
   assert.equal(r.routeInput({ kind: "command", name: "memory", arg: "" }).path, "/deep-search");
 });
@@ -710,4 +717,33 @@ test("`--version` prints the version and exits 0, instead of opening a session",
     assert.strictEqual(r.code, 0, `${flag} exited ${r.code}`);
     assert.match(r.stdout.trim(), /^\d+\.\d+\.\d+$/, `${flag} printed ${JSON.stringify(r.stdout)}`);
   }
+});
+
+// ── #94 — "0 code files indexed" beside "repo · indexed", four lines apart ─────
+// Measured on prod against the founder's own account: /overview says repo_files=0, /repos lists two
+// repos, and a scoped /deep-search returns three REAL FILE PATHS with a correct answer. The index works;
+// the COUNT is broken. The CLI's job is not to print a zero it holds the evidence against.
+
+test("#94 a filed repo makes '0 code files' unprintable — we can prove it false", () => {
+  const line = r.memoryStatusLine({ memories: 16991, files: 0, filed: ["isoproof-bravo", "uqeu/estelle"] });
+  assert.ok(!/0 code files/.test(line), "a zero we can disprove must never be stated as fact");
+  assert.match(line, /count unavailable/, "cannot-answer is the honest reading");
+  assert.match(line, /16,991 memories/, "and the number we DO trust is still shown");
+});
+
+test("#94 a REAL zero — nothing filed — still says zero", () => {
+  // THE PAIRED NEGATIVE. Without it the fix could pass by never printing a zero at all, which would hide
+  // a genuinely empty account behind a word that means "we could not tell".
+  const line = r.memoryStatusLine({ memories: 5, files: 0, filed: [] });
+  assert.match(line, /0 code files indexed/, "an account with nothing filed really does have zero");
+});
+
+test("#94 an UNREADABLE repo list does not trigger the disclaimer either", () => {
+  // `filed: null` means /repos could not be read — that is not evidence the count is wrong, so the
+  // server's number stands. A failure to ask is not evidence, in either direction.
+  assert.match(r.memoryStatusLine({ memories: 5, files: 0, filed: null }), /0 code files indexed/);
+});
+
+test("#94 a non-zero count is untouched", () => {
+  assert.match(r.memoryStatusLine({ memories: 10, files: 880, filed: ["a/b"] }), /880 code files indexed/);
 });

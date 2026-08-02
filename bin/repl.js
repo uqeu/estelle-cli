@@ -35,6 +35,21 @@ const modeUi = require("./mode-ui.js");
 // THE CURATED TURN. Every other host makes Estelle a guest in someone else's prompt; here it OWNS the
 // transcript, so it decides what each turn carries and what never gets carried again. See curate.js.
 const curate = require("./curate.js");
+// #93 — the two halves of "a slash command must never fall through to a model call": what counts as a
+// KNOWN command (three-valued, so an unreadable registry never refuses), and what every routed reply
+// actually LOOKS like, so no command can render a blank screen again.
+const known = require("./known-commands.js");
+const replies = require("./replies.js");
+// MODULE 1 (CLI-MASTER-BRIEF §A2) — the append-only typed-entry log that owns everything drawn above
+// the composer. NOTHING prints to stdout directly any more; this is what makes a scrolled-back session
+// readable as a conversation. NOT the same object as `curate`'s transcript — see the note at the echo.
+const transcript = require("./transcript.js");
+// MODULE 2's first caller — the scope question every grounded surface returns and nothing could ask.
+const scopeAsk = require("./scope-ask.js");
+// BRACKETED PASTE — measured absent 2026-08-02 (`grep -rn 2004 cli/bin/` returned nothing), so a
+// 20-line paste fired 20 turns. A Module 2 concern: it decides what a keystroke MEANS.
+const pasteMode = require("./paste.js");
+const ask = require("./ask.js");
 
 // ── credential (paste once, ever) ───────────────────────────────────────────────
 // The session WRITES the key here; ten other commands READ it. Both sides now go through one leaf module
@@ -144,14 +159,22 @@ const COMMANDS = {
   mode: "show / lower the autonomy ceiling (shift+tab cycles it)",
   routing: "which model Estelle would pick for a task, and why",
   status: "endpoint, key, filed repo, ceiling",
+  skills: "browse the playbooks Estelle picks from (it picks; you never have to)",
+  tools: "every tool Estelle exposes over MCP",
   shell: "run a shell command right here — e.g. !git status",
   clear: "clear the screen",
   exit: "leave (ctrl-d does it too)",
 };
 
 // `shell` is documented but never DISPATCHED as a slash command — the `!` form is the real one, and a
-// `/shell` that fell through to an MCP tools/call would be a confusing 'unknown tool'.
+// `/shell` that fell through to an MCP tools/call would be a confusing 'unknown tool'. It is answered
+// LOCALLY in `handleLocal` with the `!` form, so typing it costs nothing and explains itself.
 const HELP_ONLY = new Set(["shell"]);
+
+// Spellings that resolve onto a command already in COMMANDS. Deliberately NOT menu rows: an alias is the
+// same door under a second name, and listing both would imply two capabilities where there is one. They
+// are declared here so the unknown-command guard cannot refuse a spelling the CLI's own copy uses.
+const COMMAND_ALIASES = { route: "routing", quit: "exit" };
 
 /**
  * Expand `@path` references into the text Estelle should see, so "why is @auth.py slow?" carries the
@@ -336,7 +359,30 @@ function memoryStatusLine(status) {
   const s = status || {};
   const files = Number(s.files || 0), memories = Number(s.memories || 0);
   if (!files && !memories) return "empty — nothing indexed yet";
-  return [memories ? `${commas(memories)} memories` : "", `${commas(files)} code files indexed`]
+  // 🔴 #94 — "0 code files indexed" BESIDE "repo uqeu/estelle · indexed", FOUR LINES APART.
+  //
+  // MEASURED ON PROD 2026-08-02 against the founder's own account (`acct_1m3ad3xf2w`,
+  // phlotu@gmail.com, identity asserted before any count):
+  //
+  //   GET /overview -> memory.repo_files = 0, memories = 16991, entities = 0
+  //   GET /repos    -> ["isoproof-bravo", "uqeu/estelle"]
+  //   POST /deep-search {repo:"uqeu/estelle"} -> THREE REAL FILE PATHS and a correct answer
+  //       (src/estelle/serve/grounding_scope.py, tests/test_grounding_scope.py,
+  //        src/estelle/serve/orchestra_scope.py)
+  //
+  // So the CLI was reporting both numbers FAITHFULLY, and the ANSWER PATH WORKS. `repo_files` is a
+  // BROKEN COUNT, not a broken index — the code is there and is retrievable. The server-side count is
+  // the World-1 lane's to fix; what is wrong HERE is printing a zero we can prove is false.
+  //
+  // ⛔ "0" IS A CLAIM, AND WE HOLD THE EVIDENCE AGAINST IT. `filed` comes from GET /repos in the same
+  // breath: if the account has a filed repo, "0 code files" cannot be true, and the campaign's own rule
+  // says a number we cannot trust reads as CANNOT-ANSWER rather than as fact. Saying "unavailable" is
+  // the honest line; saying "0" is the third instance of two views disagreeing on one header.
+  const filedAnything = Array.isArray(s.filed) && s.filed.length > 0;
+  const fileText = files ? `${commas(files)} code files indexed`
+    : filedAnything ? "code file count unavailable"
+    : "0 code files indexed";
+  return [memories ? `${commas(memories)} memories` : "", fileText]
     .filter(Boolean).join(" · ") + " (this account, all repos)";
 }
 const commas = (n) => String(Math.max(0, Math.floor(Number(n) || 0))).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
@@ -472,7 +518,14 @@ async function runSession(deps) {
     // it — the session's readline attaches stdout in terminal mode, which echoes. `promptSecret` is
     // supplied only on a TTY; on a pipe (CI, every scripted test) there is no terminal echo to suppress
     // and the queued reader is the correct path. See cli/bin/secret-prompt.js.
-    const pasted = await (deps.promptSecret || prompt)(`  ${c.teal("key")} ${c.dim("›")} `);
+    // 🔴 SYMPTOM (h) — THE KEY PROMPT ECHOED THE CREDENTIAL IN PLAINTEXT. Now it goes through Module 2,
+    // which is the ONE place that knows a secret must be read masked. The old line reached for
+    // `deps.promptSecret` and silently fell back to the ECHOING reader whenever it was absent — so the
+    // masking depended on a caller remembering to pass it, which is exactly the "every prompt hand-rolls
+    // its own printing" shape §A2 exists to end.
+    const keyAsk = await ask.ask({ kind: "secret", label: "key" },
+                                 { out, c, prompt, promptSecret: deps.promptSecret });
+    const pasted = keyAsk.ok ? keyAsk.value : null;
     if (!looksLikeKey(pasted)) {
       out(`  ${c.red("That doesn't look like an Estelle key.")} ${c.dim("Run estelle again when you have one.")}`);
       return 1;
@@ -543,7 +596,11 @@ async function runSession(deps) {
   // fails, `serverMode` stays null and the label carries a `?` — "we have not been able to check" is a
   // different and more honest statement than a rung we are guessing at.
   const state = { mode: dialAtStart || "read_only", serverMode: dialAtStart,
-                  transcript: curate.emptyTranscript() };
+                  // TWO transcripts, deliberately. `transcript` is curate's — it feeds the MODEL and it
+                  // EVICTS. `record` is the CUSTOMER's — append-only, never evicted, and it is what a
+                  // scroll-back reads. Merging them would let the human record lose a turn because the
+                  // model's window needed the space.
+                  transcript: curate.emptyTranscript(), record: transcript.create() };
   const serverMode = async () => {
     if (state.serverMode !== null) return state.serverMode;
     const scope = await get("/autonomy/scope", key).catch(() => null);
@@ -580,17 +637,65 @@ async function runSession(deps) {
     state.mode = modeUi.nextMode(state.mode, dial);
     return { banner: modeUi.modeBanner(state.mode, dial, c), prompt: promptFor() };
   };
-  const unbind = (deps.bindKeys || (() => () => {}))(cycle);
+  // 🔴 SYMPTOM (d) — THE FOOTER PRINTED SEVEN TIMES on shift+tab. It shipped as fixed in 0.1.9 and the
+  // in-place redraw in `mode-ui.js` is correct ARITHMETIC — one line erased, one written. The arithmetic
+  // was never the problem.
+  //
+  // 0.2.0 made it an ad-hoc write RACING A REDRAW, which is the founder's own diagnosis of all eight
+  // symptoms. Inside the alternate screen `screen.js` owns every row and `repaint()` redraws the whole
+  // viewport from the transcript; `mode-ui` wrote its banner straight to stdout with cursor-relative
+  // erases. Two things drawing on one screen with no agreement about who owns a row — so the banner
+  // survived in whatever position the next repaint left it, seven presses deep.
+  //
+  // THE FIX IS MODULE 1'S RULE, NOT BETTER ARITHMETIC: nothing prints to stdout directly. On alt-screen
+  // the mode change becomes a transcript NOTICE, so it is painted by the same pass as everything else —
+  // and it lands in the scroll-back, which is where "what I chose" belongs anyway. `appendOnce` drops a
+  // byte-identical repeat, so holding the key down cannot stack duplicates.
+  const modeWrite = view
+    ? (banner) => {
+        const line = String(banner || "").replace(/\s+$/, "");
+        if (!line.trim()) return;
+        const before = state.record;
+        state.record = transcript.appendOnce(state.record, transcript.notice(line.trim()));
+        if (state.record !== before) for (const l of transcript.renderEntry(transcript.notice(line.trim()), c)) out(l);
+      }
+    : null;
+  const unbind = (deps.bindKeys || (() => () => {}))(cycle, modeWrite);
   // THE SLASH MENU. The skill list is fetched ONCE here and cached for the session: the menu must be LOCAL
   // and instant, and a keystroke that blocks on a network call would be worse than no menu at all. A failed
   // fetch degrades to the built-in commands only — never to a hang, and never to an empty menu that looks
   // like the commands vanished.
+  //
+  // ⛔ AND IT IS ALSO THE UNKNOWN-COMMAND GUARD (#93). The same two fetches answer both questions — what
+  // may the menu offer, and what may a `/` be refused for — because a menu built from one list and a guard
+  // built from another is exactly the two-views-disagreeing defect this campaign keeps finding. `null` is
+  // load-bearing in both: a registry we could not READ must never be read as a registry that is EMPTY.
   let skillRows = [];
-  (async () => {
-    const listed = await get("/skills", key).catch(() => null);
-    const all = (listed && listed.skills) || [];
-    skillRows = all.map((s) => ({ name: s.name, short: s.short || s.summary || "" }));
-  })();
+  let skillNames = null;                       // Set once /skills answers; stays null if it could not be read
+  const skillsReady = get("/skills", key).catch(() => null).then((listed) => {
+    if (!listed || listed.error || !Array.isArray(listed.skills)) return;
+    skillRows = listed.skills.map((s) => ({ name: s.name, short: s.short || s.summary || "" }));
+    skillNames = new Set(listed.skills.map((s) => String(s.name || "")));
+  }).catch(() => {});
+  // The MCP tool list — LAZY AND MEMOISED, deliberately not fetched at startup.
+  //
+  // `routeInput`'s `default:` hands any unrecognised name to `tools/call`, so telling a real tool from a
+  // typo needs the tool names. Fetching them eagerly would put a new round-trip on EVERY session start to
+  // serve a question most sessions never ask — and #101 is an open latency item, so paying startup cost
+  // for a rare path is the wrong trade. Fetched on the first slash command that is neither a built-in nor
+  // a known skill, then held for the session: at most ONE registry read, ever, and zero from then on.
+  // It is a registry read, never a model call, which is the property #93 actually requires.
+  let toolNames = null;
+  let toolsFetch = null;
+  const toolsReady = () => {
+    if (toolNames || toolsFetch) return toolsFetch || Promise.resolve();
+    toolsFetch = post("/mcp", { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }, key)
+      .catch(() => null).then((r) => {
+        const tools = r && r.result && r.result.tools;
+        if (Array.isArray(tools)) toolNames = new Set(tools.map((t) => String((t && t.name) || "")));
+      }).catch(() => {});
+    return toolsFetch;
+  };
   const menuFor = () => slashMenu.menuRows(
     // `HELP_ONLY`, NOT `local.HELP_ONLY`. It is a constant in THIS file (:112), used correctly as a bare
     // identifier fifty lines below — the `local.` prefix was copied from neighbouring code that legitimately
@@ -613,14 +718,38 @@ async function runSession(deps) {
         repaint();
       })
     : () => {};
+  // BRACKETED PASTE. Attached only on a TTY, and RELEASED with everything else — leaving `?2004h` set
+  // would keep wrapping every paste in markers in the customer's shell after we exit, which is the 0.1.3
+  // class: writing to something we do not own and not putting it back.
+  const releasePaste = (deps.bindPaste || pasteMode.attach)(process.stdin, {
+    write: (sequence) => { if (process.stdout.write) process.stdout.write(sequence); },
+    insert: (text) => { if (deps.insert) deps.insert(text); },
+  });
   // EVERY ORDINARY EXIT GOES THROUGH HERE — /exit, ctrl-d, a refused key. `alt.install()` covers the
   // violent paths (crash, SIGINT, SIGTERM); this covers the polite ones. Both are needed: install alone
   // would leave the screen borrowed on a clean `/exit`, which is the most common exit of all.
-  const leave = (code) => { unbind(); unbindMenu(); unbindScroll(); releaseScreen(); return code; };
+  const leave = (code) => { unbind(); unbindMenu(); unbindScroll(); releasePaste(); releaseScreen(); return code; };
 
   for (;;) {
     let line = await prompt(promptFor());
     if (line === null) { out(""); return leave(0); }      // ctrl-d
+
+    // 🔴 SYMPTOM (a) — THE CUSTOMER'S OWN INPUT WAS NEVER IN THE TRANSCRIPT. Founder, 2026-08-02:
+    // *"Scrolling back I see Estelle's answers and NOT MY QUESTIONS. I cannot tell what I asked. This is
+    // the one that makes the whole CLI unreadable."*
+    //
+    // The cause is specific and was invisible from the code: readline echoes what you type onto the
+    // PROMPT ROW, which alt-screen reserves at the bottom and `screen.js` never captures. So the line
+    // appeared while typing and was gone the instant the view repainted — the record and the echo were
+    // two different things, and only one of them survived.
+    //
+    // Echoed HERE, through `transcript.renderEntry`, which is the ONE renderer (Module 1). Note this is a
+    // DIFFERENT transcript from `state.transcript`: that one is `curate`'s, it feeds the MODEL, and it
+    // EVICTS. The customer's record must never lose a turn because the model's window needed the space.
+    if (String(line).trim()) {
+      state.record = transcript.append(state.record, transcript.user(String(line)));
+      for (const l of transcript.renderEntry(transcript.user(String(line)), c)) out(l);
+    }
 
     // `!cmd` runs on YOUR machine — no server, and deliberately no autonomy ceiling. The ceiling governs
     // what ESTELLE may do unsupervised; a command the human just typed IS the trusted trigger the whole
@@ -649,9 +778,47 @@ async function runSession(deps) {
     }
 
     if (input.kind === "command") {
-      const done = await handleLocal(input, { out, c, state, serverMode, key, deps });
+      // An alias is resolved BEFORE anything else looks at the name, so exactly one spelling reaches the
+      // dispatcher, the guard and the router. Resolving it in three places is how two of them drift.
+      if (Object.prototype.hasOwnProperty.call(COMMAND_ALIASES, input.name)) {
+        input.name = COMMAND_ALIASES[input.name];
+      }
+      const done = await handleLocal(input, { out, c, state, serverMode, key, deps, skillRows });
       if (done === "exit") return leave(0);
       if (done === "handled") continue;
+
+      // 🔴 #93 — A LEADING SLASH THAT MATCHES NOTHING COSTS ZERO. Everything below this line sends a
+      // request; an unknown command used to cost TWO (POST /skill/run, then POST /mcp) before the customer
+      // was told the name means nothing. A `/` is an unambiguous statement of intent, so the answer is
+      // local and instant.
+      //
+      // `/skills` was already in flight from session entry, so this waits on existing work rather than
+      // adding any. The tool list is fetched ONLY if the skills list did not already claim the name —
+      // one registry read on the first unrecognised command of a session, and none after that.
+      await skillsReady;
+      const commands = new Set([...Object.keys(COMMANDS), ...Object.keys(COMMAND_ALIASES)]);
+      const reg = () => known.registry({ commands, skills: skillNames, tools: toolNames });
+      let verdict = known.classify(input.name, reg());
+      if (verdict.verdict === "unknown" || (verdict.verdict === "unverified" && !toolNames)) {
+        await toolsReady();
+        verdict = known.classify(input.name, reg());
+      }
+      if (verdict.verdict === "unknown") {
+        for (const l of known.refusalLines(input.name, reg(), c)) out(l);
+        out("");
+        continue;
+      }
+      // "unverified" — we could not read a registry, so we have NO BASIS to refuse and we fall through,
+      // saying so. Refusing here would tell a customer their working command does not exist because OUR
+      // fetch failed, which is the #76 defect (a failure to ask rendered as an answer) on a new surface.
+      if (verdict.verdict === "unverified") {
+        out(`  ${c.dim(`(${verdict.why} — trying ${"/" + input.name} anyway)`)}`);
+      }
+      // A NAME WE KNOW IS A TOOL SKIPS THE SKILL PROBE ENTIRELY. The fall-through below tries every
+      // unmatched command as a skill first (`POST /skill/run`, 404, then the tool call) because it had no
+      // way to tell them apart. It does now, so a known tool costs ONE call instead of two — the same
+      // round-trip #93 was about, on the path that actually works.
+      state.knownTool = verdict.verdict === "tool";
     }
 
     // The one command that can produce a change. A KNOWN read_only stops it HERE rather than spending a
@@ -659,6 +826,17 @@ async function runSession(deps) {
     if (input.kind === "command" && input.name === "work") {
       const why = local.workRefusal(state.mode, await serverMode());
       if (why) { out(`  ${c.amber("!")} ${why}`); out(""); continue; }
+    }
+
+    // COMMANDS THAT CANNOT MEAN ANYTHING WITHOUT AN ARGUMENT. `/orchestra` and `/work` used to post an
+    // empty task and render the server's complaint as if it were an answer — the same shape as `/gate`
+    // posting an empty `{}`. Refused here, locally, with the form that works.
+    if (input.kind === "command" && !String(input.arg || "").trim()
+        && (input.name === "orchestra" || input.name === "work")) {
+      out(`  ${c.amber("!")} ${c.dim(`${"/" + input.name} needs a task — e.g. `)}`
+        + `${c.teal(`/${input.name} add a --json flag to the sweep command`)}`);
+      out("");
+      continue;
     }
 
     const ctx = {};
@@ -682,12 +860,13 @@ async function runSession(deps) {
       ctx.diff = diff;
     }
 
-    const route = routeInput(input, ctx, { repo });
+    const route = routeInput(input, ctx, { repo, lastAsk: state.lastAsk });
     // A command that would fall through to MCP might be a SKILL — run it SERVER-SIDE first via /skill/run, so
     // the playbook is loaded + injected on the server and only the RESULT comes back. The playbook markdown
     // never reaches the client at all (the real IP lock). Not a skill → fall through to the tool call.
-    if (route.mcp && input.kind === "command") {
-      const status = await runSkill(input.name.replace(/^skill[-_]/, ""), input.arg, { post, prompt, out, c, key });
+    if (route.mcp && input.kind === "command" && !state.knownTool) {
+      const status = await runSkill(input.name.replace(/^skill[-_]/, ""), input.arg,
+        { post, prompt, out, c, key, keys: deps.askKeys, state });
       if (status !== "not-skill") { out(""); continue; }
       // A `skill_`-prefixed command IS a skill by name. If /skill/run didn't claim it, it is unknown HERE —
       // never fall through to a raw MCP `skill_<name>` tool, which would hand back the playbook markdown.
@@ -700,6 +879,9 @@ async function runSession(deps) {
       }
     }
     if (input.kind === "ask") {
+      // The subject `/routing` reports on. Recorded from the RAW line the customer typed, never the
+      // assembled prompt — they asked what THEIR message costs, not what our curated turn costs.
+      state.lastAsk = input.text;
       // @file references travel WITH the question, so an answer about a file was actually read from it.
       const { attached, missing } = expandFileRefs(input.text, deps.readFile || (() => null));
       if (missing.length) out(`  ${c.amber("!")} ${c.dim(`no such file: ${missing.join(", ")}`)}`);
@@ -710,14 +892,51 @@ async function runSession(deps) {
       // half of the thesis, which only works because Estelle assembles this prompt itself.
       route.body.question = curate.renderTurn(curate.workingSet(state.transcript), input.text);
     }
-    const raw = await withSpinner(
+    const send = (body) => withSpinner(
       input.kind === "ask" ? "thinking" : `running /${input.name}`,
       () => (route.method === "GET"
         ? get(route.query && route.query.id ? `${route.path}?id=${encodeURIComponent(route.query.id)}` : route.path, key)
-        : post(route.path, route.body, key)
+        : post(route.path, body, key)
       ).catch((e) => ({ error: { message: String((e && e.message) || e) } })),
       { write: deps.write });
-    const res = route.mcp && !(raw && raw.error && raw.error.message) ? mcpText(raw) : raw;
+    const raw = await send(route.body);
+    let res = route.mcp && !(raw && raw.error && raw.error.message) ? mcpText(raw) : raw;
+
+    // 🔴 SYMPTOM (b) — A QUESTION WITH NO INPUT MECHANISM. `/deep-search`, `/verify` and the gate all
+    // return the same fail-closed envelope when several swept repos could answer: `{scope_ask, candidates,
+    // question, reason}` — a complete question WITH its answer set. The session printed it as prose,
+    // because nothing in the CLI could ask anything but free text. Now it is a real, selectable choice
+    // (Module 2), the answer is RECORDED (Module 1), and the SAME request is retried with the scope.
+    //
+    // Fail-closed is preserved and is the whole point: cancelling leaves the refusal standing. It never
+    // defaults to a repo, never takes the first candidate, and never retries unscoped — grounding against
+    // the wrong codebase is precisely what this question exists to prevent.
+    if (res && res.scope_ask && route.method !== "GET") {
+      if (!scopeAsk.isResolvable(res)) {
+        for (const l of scopeAsk.unresolvedLines(res, c)) out(l);
+      } else {
+        const asked = await scopeAsk.resolve(res, { out, c, prompt, keys: deps.askKeys }, state.record);
+        state.record = asked.transcript;
+        for (const l of transcript.renderEntry(transcript.lastOf(asked.transcript, "choice"), c)) out(l);
+        if (asked.repo) {
+          res = await send({ ...route.body, repo: asked.repo });
+          if (res && res.scope_ask) {
+            // The server still cannot resolve it. Say so once and STOP — re-asking the same question is
+            // symptom (c), and a loop that keeps asking is worse than the prose it replaced.
+            for (const l of scopeAsk.unresolvedLines(res, c)) out(l);
+          }
+        } else {
+          state.record = transcript.append(state.record, scopeAsk.unresolvedEntry(res));
+          for (const l of scopeAsk.unresolvedLines(res, c)) out(l);
+        }
+      }
+    }
+    // #89: an unlabelled default reads exactly like a verdict on the customer's last turn. Say which
+    // question was answered whenever there was no message to route.
+    if (route.defaultOnly) {
+      out(`  ${c.dim("(no message yet — this is the default for a chat turn. Ask something, then /routing"
+                     + " shows what YOUR message routed to.)")}`);
+    }
     // Record what was ASKED and what came back — the raw line the user typed, never the assembled prompt, or
     // the next turn would carry a copy of the turn before it and grow quadratically.
     state.transcript = curate.record(
@@ -729,7 +948,10 @@ async function runSession(deps) {
     // a mode switch could ever have accepted. When there IS one, the apply flow renders it (as its own
     // receipt) and decides under the ceiling, so renderAnswer must not draw it twice.
     const offerApply = !!(res && res.diff && input.kind === "command" && input.name === "work");
-    out(renderAnswer(offerApply ? { ...res, diff: "" } : res, c));
+    // The command NAME travels with the reply. Without it `renderAnswer` cannot reach the per-shape
+    // renderers, and six commands render a blank screen — see the note on that function.
+    out(renderAnswer(offerApply ? { ...res, diff: "" } : res, c,
+                     { command: input.kind === "command" ? input.name : "", now: now && now() }));
     if (offerApply) {
       state.lastDiff = res.diff;
       out("");
@@ -749,7 +971,7 @@ async function runSession(deps) {
  * the MCP door drift apart the moment a tool is added).
  */
 async function handleLocal(input, ctx) {
-  const { out, c, state, serverMode, key, deps } = ctx;
+  const { out, c, state, serverMode, key, deps } = ctx;   // ctx.skillRows: the session's cached /skills list
   switch (input.name) {
     case "exit": case "quit":
       return "exit";
@@ -823,6 +1045,36 @@ async function handleLocal(input, ctx) {
       return "handled";
     }
 
+    case "skills": {
+      // DECISION G's replacement for 246 menu rows: ONE browser, for someone who wants to look. The
+      // point is that looking is OPTIONAL — Estelle picks the playbook by relevance, so this exists to
+      // answer "what can it draw on?", never to make the customer choose.
+      const rows = (ctx.skillRows || []).slice();
+      if (!rows.length) {
+        out(`  ${c.dim("the skill list has not loaded yet — try again in a moment.")}`);
+        out("");
+        return "handled";
+      }
+      const q = String(input.arg || "").trim().toLowerCase();
+      const hits = q ? rows.filter((s) => `${s.name} ${s.short}`.toLowerCase().includes(q)) : rows;
+      out(`  ${c.bold(`${hits.length} of ${rows.length} playbooks`)}`
+        + c.dim(q ? ` matching "${q}"` : " — Estelle picks one by relevance; /skills <word> to filter"));
+      const width = hits.reduce((w, s) => Math.max(w, s.name.length), 0);
+      for (const s of hits.slice(0, 30)) out(`  ${c.teal(s.name.padEnd(width))}  ${c.dim(s.short)}`);
+      if (hits.length > 30) out(`  ${c.dim(`… ${hits.length - 30} more — /skills <word> to narrow`)}`);
+      out("");
+      return "handled";
+    }
+
+    case "shell":
+      // In /help as `!<cmd>`, never as `/shell` — but a customer who types the word they READ is not
+      // wrong, and until now it fell through to an MCP tools/call for a tool that has never existed:
+      // two round-trips to be told "unknown tool". Answered here, locally, for nothing.
+      out(`  ${c.dim("a shell command runs with a leading ")}${c.teal("!")}${c.dim(" — e.g. ")}${c.teal("!git status")}`);
+      out(`  ${c.dim("  it runs on YOUR machine; no server is involved.")}`);
+      out("");
+      return "handled";
+
     case "sweep":
       // Advertised in /help since the session shipped, but never routed: it fell through to an MCP
       // tools/call for a tool that has never existed, so it answered "unknown tool". The sweep reads your
@@ -865,7 +1117,13 @@ function routeInput(input, ctx, opts) {
   // session for as long as the session has existed. The caller computes the diff and passes it here.
   const diff = local.diffBody((ctx || {}).diff);
   switch (input.name) {
-    case "orchestra": return { path: "/orchestra", body: { task: arg } };
+    // 🔴 `tasks`, PLURAL, AND THE REPO — measured on prod 2026-08-02. This sent `{task: arg}` and the
+    // server answered `400 swarm needs a non-empty 'tasks' list of strings` on EVERY call, so `/orchestra`
+    // — a headline capability, ranked 7th in the slash menu — has never once worked from the session.
+    // `api_orchestra.py:73-75` reads `body["tasks"]`; at PROPOSE or above it also requires a real
+    // `owner/name` repo (`:87-88`) because each task opens a worktree. Both are sent; the repo is omitted
+    // when we could not tell, never guessed, for the same reason `scoped()` omits it.
+    case "orchestra": return { path: "/orchestra", body: scoped({ tasks: arg ? [arg] : [] }) };
     case "work":      return { path: "/work", body: { task: arg } };
     case "gate":      return { path: "/gate", body: diff || {} };
     case "scan":      return { path: "/scan", body: diff || {} };
@@ -878,7 +1136,18 @@ function routeInput(input, ctx, opts) {
     // effort Estelle would route a task to"), so the capability existed and only the door was missing.
     // `/route` is accepted too, because our own copy uses both spellings.
     case "routing":
-    case "route":     return { path: "/route", body: arg ? { prompt: arg } : { task_kind: "chat" } };
+    case "route": {
+      // #89 (the display half). This used to send `{task_kind:"chat"}` whenever no argument was given —
+      // which asks "what does a GENERIC chat turn route to", a different question from "what did MY
+      // message route to", answered in the same words. The founder read `chat: default → balanced` after
+      // typing "hi" and reasonably took it as a fact about his greeting. The product defect was real and
+      // is fixed in routing.py; THIS was the display lying alongside it.
+      const subject = arg || String((opts && opts.lastAsk) || "").trim();
+      if (subject) return { path: "/route", body: { prompt: subject } };
+      // Nothing to route yet. Answer the generic question, but FLAG it so the caller can say which
+      // question it answered — an unlabelled default reads exactly like a verdict on your last turn.
+      return { path: "/route", body: { task_kind: "chat" }, defaultOnly: true };
+    }
     case "verify":    return { path: "/verify", body: { answer: arg } };
     case "init":      return { path: "/wiki", body: null, method: "GET" };
     case "sessions":  return { path: "/sessions", body: null, method: "GET" };
@@ -997,8 +1266,35 @@ function printSkillReply(name, r, interactive, out, c) {
  */
 async function runSkill(name, arg, deps) {
   const { post, prompt, out, c, key } = deps;
-  const first = await post("/skill/run", { skill: name, task: String(arg || "") }, key)
+  const body = { skill: name, task: String(arg || "") };
+  let first = await post("/skill/run", body, key)
     .catch((e) => ({ error: { message: String((e && e.message) || e) } }));
+  // 🔴 THE SCREENSHOT'S PATH. `/skill/run` answers a multi-repo account with `scope_ask_response`
+  // (`skill_run.py:275`) — the question, the candidates, and no model call. `printSkillReply` rendered
+  // `reply` as prose, the customer had no way to answer, the next turn re-sent without a repo, and the
+  // identical block came back. That is symptoms (b) AND (c), from one missing input layer.
+  //
+  // ⛔ AND THE COST IS ASYMMETRIC HERE, which is why it is answered before the loop starts rather than
+  // inside it: `scope_ask` means no playbook ran and no model was called, so re-asking is cheap and
+  // guessing is catastrophic — an interactive skill grounded on the wrong repo would spend a whole
+  // conversation being confidently wrong.
+  if (first && first.scope_ask && scopeAsk.isResolvable(first) && deps.state) {
+    const asked = await scopeAsk.resolve(first, { out, c, prompt, keys: deps.keys }, deps.state.record);
+    deps.state.record = asked.transcript;
+    for (const l of transcript.renderEntry(transcript.lastOf(asked.transcript, "choice"), c)) out(l);
+    if (!asked.repo) {
+      deps.state.record = transcript.append(deps.state.record, scopeAsk.unresolvedEntry(first));
+      for (const l of scopeAsk.unresolvedLines(first, c)) out(l);
+      return "ran";                       // fail-closed: the refusal stands, no playbook runs unscoped
+    }
+    body.repo = asked.repo;
+    first = await post("/skill/run", body, key)
+      .catch((e) => ({ error: { message: String((e && e.message) || e) } }));
+  }
+  if (first && first.scope_ask) {         // still unresolved — say it ONCE, never re-ask (symptom c)
+    for (const l of scopeAsk.unresolvedLines(first, c)) out(l);
+    return "ran";
+  }
   if (first && first.error) {
     const code = first.error.code;
     if (code === 404) return "not-skill";                    // not a skill → caller uses normal routing
@@ -1018,7 +1314,7 @@ async function runSkill(name, arg, deps) {
     if (line === null || isSkillExit(line)) { out(`  ${c.dim(`↩ left ${name}`)}`); return "ran"; }
     if (!String(line).trim()) continue;
     messages = [...messages, { role: "user", content: line }];
-    const r = await post("/skill/run", { skill: name, messages }, key)
+    const r = await post("/skill/run", { skill: name, messages, ...(body.repo ? { repo: body.repo } : {}) }, key)
       .catch((e) => ({ error: { message: String((e && e.message) || e) } }));
     if (r && r.error) { out(`\n  ${c.red("✗")} ${r.error.message}\n`); continue; }
     printSkillReply(name, r, false, out, c);
@@ -1026,17 +1322,33 @@ async function runSkill(name, arg, deps) {
   }
 }
 
-/** Render one reply: the prose first, then the receipt. The certificate is the point, so it always shows. */
-function renderAnswer(res, c) {
+/**
+ * Render one reply: the prose first, then the receipt. The certificate is the point, so it always shows.
+ *
+ * `opts.command` is the slash command that produced this reply, and it is what makes the per-shape
+ * renderers in `replies.js` reachable. 🔴 IT IS ALSO WHAT CLOSES #93's SECOND HALF: six routed commands
+ * (`/sessions`, `/resume`, `/init`, `/scan`, `/improve`, `/verify`) return no `answer` field, so this
+ * function used to return the EMPTY STRING for them — a real round-trip, a spinner, and a blank screen.
+ * Nothing below may return "" for a non-error reply; `replies.describe` is the floor.
+ */
+function renderAnswer(res, c, opts) {
   if (!res || res.error) {
     const msg = (res && res.error && (res.error.message || res.error)) || "no reply";
     return `  ${c.red("✗")} ${msg}`;
   }
+  const command = String((opts && opts.command) || "");
   const lines = [];
   const answer = String(res.answer || "").trim();
   if (answer) lines.push(answer.split("\n").map((l) => `  ${l}`).join("\n"));
 
-  if (res.scope_ask) return lines.join("\n");             // "which repo?" is the whole reply
+  // `/verify` IS E-030'S DEFECT IN A FOURTH CONSUMER. `verifyLines` already renders all three states and
+  // all eight finding buckets for `estelle verify`; the session drew its own single-field version, so a
+  // `scope_ask` came back as a blank screen and a `third_party` fabrication — the case verify exists for —
+  // rendered as nothing at all. One renderer, both surfaces, so they cannot describe one envelope
+  // differently. Measured on prod: `{grounded:false, scope_ask:true, ungrounded:[]}` printed zero lines.
+  if (command === "verify") return [...lines, ...verifyLines(res, c)].join("\n");
+
+  if (res.scope_ask) return lines.join("\n") || `  ${c.amber("!")} ${c.dim(String(res.question || res.unverified_reason || "Which repo should I check this against?"))}`;
   // THE ROUTING RECEIPT (#84). `POST /route` answers with a shape nothing here knew how to draw, so the
   // freshly-wired `/routing` opened onto BLANK LINES — the command was reachable and the customer saw
   // nothing, which is the same defect one layer over from the one being fixed. Caught by running it
@@ -1064,6 +1376,18 @@ function renderAnswer(res, c) {
   } else if (res.degraded) {
     lines.push(`  ${c.amber("· degraded")} ${c.dim("— answered from memory without a model")}`);
   }
+  // THE SHAPES THIS FUNCTION NEVER KNEW HOW TO DRAW. Keyed by COMMAND, not sniffed from a field: two
+  // endpoints returning `{count}` mean entirely different things, and guessing would render a session
+  // list as a scan.
+  if (!lines.length) {
+    const own = replies.linesFor(command, res, c, (opts && opts.now) || Date.now());
+    if (own && own.length) return own.join("\n");
+  }
+  // ⛔ THE FLOOR. A non-error reply may never render to nothing: that is indistinguishable on screen from
+  // a request that never happened, and it is exactly how six commands shipped blank past a green suite.
+  // Naming the fields the server sent turns the next unrendered shape into a bug report instead of a
+  // silence — defect class 3, closed at the one place every reply passes through.
+  if (!lines.length) return replies.describe(res, c).join("\n");
   return lines.join("\n");
 }
 
@@ -1072,7 +1396,8 @@ module.exports = {
   // for whatever HOME was when this module first loaded rather than the one in force at the call.
   get AUTH_FILE() { return auth.authFile(); },
   readAuth, writeAuth, storedKey,
-  looksLikeKey, maskKey, humanDuration, relativeTime, parseInput, COMMANDS,
+  looksLikeKey, maskKey, humanDuration, relativeTime, parseInput, COMMANDS, COMMAND_ALIASES,
+  known, replies,
   statusLines, welcomeBack, renderAnswer, runSession, routeInput, sessionStatus, handleLocal, HELP_ONLY,
   resolveRepo, repoStatusLine, memoryStatusLine, commandHint, verifyLines,
   expandFileRefs, renderDiff, renderGate, mcpCall, mcpText, unknownTool,
