@@ -98,3 +98,72 @@ test("a first-run install with no config at all still works", () => withStub(asy
   assert.ok(JSON.parse(fs.readFileSync(file, "utf8")).mcpServers.estelle, "estelle was not added");
   assert.ok(!fs.existsSync(file + ".bak"), "there was nothing to back up");
 }));
+
+// ── THE THIRD DOGFOODING FINDING, and the journey test that would have caught it ───────────────────────
+//
+// `estelle init` PROMPTED FOR THE CUSTOMER'S KEY AND NEVER SAVED IT. `writeAuth` was called at exactly one
+// site — repl.js:203, the REPL first-run — so the documented flow broke end to end:
+//
+//     npx @fatelabs/estelle init     -> paste key -> discarded
+//     npx @fatelabs/estelle sweep    -> "Need an Estelle key"
+//
+// which is the literal next command the tool itself prints. The READ side had already been unified
+// (auth.js:4-8 documents that exact fix, and resolveKey/needKey both read storedKey()); the WRITE was
+// added to one of the two front doors, and the README documents the other one.
+//
+// The first test below asserts the function. The SECOND asserts the JOURNEY — run init, then run a
+// KEYLESS command and require it to work — and only the second one would have caught this, because the
+// function under test was never wrong; the wiring was.
+function runInit(home, url, extraArgs, extraEnv) {
+  return new Promise((resolve) => {
+    execFile(process.execPath, [CLI, "init", "--client", "cursor", ...(extraArgs || ["--key", "ek-test-123"])],
+             { env: { ...process.env, HOME: home, NO_COLOR: "1", ESTELLE_API_KEY: "",
+                      ESTELLE_MCP_URL: url, ...(extraEnv || {}) }, encoding: "utf8" },
+             (err, stdout, stderr) => resolve({ code: err ? (err.code === undefined ? 1 : err.code) : 0,
+                                                stdout: (stdout || "") + (stderr || "") }));
+  });
+}
+
+test("init PERSISTS the key it just validated, 0600, like the REPL does", () => withStub(async (url) => {
+  const { home } = withHome(null);
+  const r = await runInit(home, url);
+  assert.strictEqual(r.code, 0, `init did not succeed: ${r.stdout}`);
+  const authFile = path.join(home, ".estelle", "auth.json");
+  assert.ok(fs.existsSync(authFile), "init validated the key and then discarded it");
+  assert.strictEqual(JSON.parse(fs.readFileSync(authFile, "utf8")).key, "ek-test-123");
+  assert.strictEqual(fs.statSync(authFile).mode & 0o777, 0o600, "a bearer credential must not be readable by others");
+  assert.strictEqual(fs.statSync(path.dirname(authFile)).mode & 0o777, 0o700);
+}));
+
+test("THE JOURNEY: init, then a KEYLESS command, and it works", () => withStub(async (url) => {
+  const { home } = withHome(null);
+  assert.strictEqual((await runInit(home, url)).code, 0);
+  // no --key, no ESTELLE_API_KEY — exactly what a customer's next command looks like
+  const next = await new Promise((resolve) => {
+    execFile(process.execPath, [CLI, "sweep", "--dry-run"],
+             { env: { ...process.env, HOME: home, NO_COLOR: "1", ESTELLE_API_KEY: "", ESTELLE_MCP_URL: url,
+                      ESTELLE_API: url }, encoding: "utf8", cwd: home },
+             (err, stdout, stderr) => resolve((stdout || "") + (stderr || "")));
+  });
+  assert.ok(!/Need an Estelle key/.test(next),
+            `the command right after init still demanded a key:\n${next}`);
+}));
+
+test("init never prints the key it was given", () => withStub(async (url) => {
+  // `estelle init` builds its prompt with an attached stdout, which ECHOES — the full live key went into
+  // the terminal, scrollback and a screenshot on the first command a customer ever runs. The prompt is
+  // masked now; this pins the OTHER half, that no later line prints the value back either.
+  const { home } = withHome(null);
+  const secret = "estelle_live_do_not_print_me_0001";
+  const r = await runInit(home, url, ["--key", secret]);
+  assert.ok(!r.stdout.includes(secret), `the key appeared in stdout:\n${r.stdout}`);
+}));
+
+test("init does NOT write a credential to disk when the key came from the environment", () => withStub(async (url) => {
+  // the CI shape: $ESTELLE_API_KEY is a deliberate per-process override, and persisting it would leave a
+  // bearer token on a shared runner that nobody asked to store.
+  const { home } = withHome(null);
+  await runInit(home, url, ["--client", "cursor"], { ESTELLE_API_KEY: "estelle_from_env_0000000000" });
+  assert.ok(!fs.existsSync(path.join(home, ".estelle", "auth.json")),
+            "an env-supplied key was written to disk");
+}));

@@ -57,8 +57,9 @@ function nextMode(current, server) {
  *   `propose?`          the dial has not been verified, so this is a hope, not a grant. */
 function promptLabel(localMode, server) {
   const effective = local.effectiveMode(localMode, server);
-  if (local.modeRank(server) < 0) return `${localMode}?`;
-  return localMode === effective ? localMode : `${localMode}→${effective}`;
+  const name = local.modeName;                      // display only — the value underneath is the rung
+  if (local.modeRank(server) < 0) return `${name(localMode)}?`;
+  return localMode === effective ? name(localMode) : `${name(localMode)}→${name(effective)}`;
 }
 
 /** The one line printed when the mode changes: what you are in, what it permits, and how to move again.
@@ -69,11 +70,14 @@ function modeBanner(localMode, server, c) {
   const known = local.modeRank(server) >= 0;
   const effective = local.effectiveMode(localMode, server);
   const what = local.MODE_WHAT[effective] || "";
-  const head = `  ${c.bold(effective)} ${c.dim("· " + what)}`;
+  // The NAME a human reads, not the ladder's enum. The founder designed these modes and could not tell
+  // what `read_only` meant while looking at it; the canonical value is unchanged underneath.
+  const head = `  ${c.bold(local.modeName(effective))} ${c.dim("· " + what)}`;
   const tail = c.dim("  (shift+tab to cycle)");
   if (!known) return `${head}  ${c.amber("· dial unverified — assuming read_only")}${tail}`;
   if (localMode !== effective) {
-    return `${head}  ${c.amber(`· ${localMode} clamped by your account's dial (${server})`)}${tail}`;
+    return `${head}  ${c.amber(`· ${local.modeName(localMode)} clamped by your account's dial `
+      + `(${local.modeName(server)})`)}${tail}`;
   }
   return head + tail;
 }
@@ -93,6 +97,18 @@ function keyBinder(stdin, deps) {
     const rl = require("readline");
     ((d.readline || rl).emitKeypressEvents)(stdin);            // idempotent — node guards on a symbol
     const write = d.write || ((s) => process.stdout.write(s));
+    // ONE FOOTER, REDRAWN IN PLACE. Observed on the shipped CLI: four shift+tabs left FOUR identical
+    // footers stacked up the screen, because each press wiped only the half-drawn PROMPT line and then
+    // appended a fresh banner. The interaction was ported from Codex; the RENDERING was not — Codex owns
+    // a bottom pane and repaints it, we print and move on.
+    //
+    // `drawn` is what makes "replace" safe: the previous banner is only the line directly above when
+    // nothing has been emitted since we drew it. Submitting a line is the event that ends that, so the
+    // flag clears on `line` and the next press appends rather than eating a line of the customer's
+    // transcript. Erasing the wrong line is a worse bug than the one being fixed.
+    let drawn = false;
+    const onLine = () => { drawn = false; };
+    if (d.rl && typeof d.rl.on === "function") d.rl.on("line", onLine);
     const onKey = (_ch, key) => {
       if (!isCycleKey(key)) return;
       // Fire-and-forget with a catch: the cycle fetches the account's dial, and a network failure there
@@ -102,13 +118,18 @@ function keyBinder(stdin, deps) {
         .then((r) => {
           if (!r) return;
           write("\r\x1b[2K");                                  // wipe the half-drawn prompt line
+          if (drawn) write("\x1b[1A\r\x1b[2K");                 // …and the footer we drew last time
           write(String(r.banner || "") + "\n");
+          drawn = true;
           if (d.rl) { d.rl.setPrompt(String(r.prompt || "")); d.rl.prompt(true); }
         })
         .catch(() => { write("\r\x1b[2K"); });
     };
     stdin.on("keypress", onKey);
-    return () => stdin.removeListener("keypress", onKey);
+    return () => {
+      stdin.removeListener("keypress", onKey);
+      if (d.rl && typeof d.rl.removeListener === "function") d.rl.removeListener("line", onLine);
+    };
   };
 }
 

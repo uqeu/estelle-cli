@@ -19,6 +19,7 @@ const readline = require("readline");
 // The half of the session that never touches the network: the `!` shell escape, the autonomy ceiling, and
 // the git diff /gate and /scan grade. Kept out of here so this file stays a router.
 const local = require("./session-commands.js");
+const slashMenu = require("./slash-menu.js");
 // Writing a returned diff to the working tree, and the shift+tab switch that says under which ceiling.
 // Both are new primitives rather than new endpoints — the server has no say in what happens on your disk,
 // which is exactly why the guards for it live client-side and fail closed.
@@ -161,9 +162,29 @@ function renderGate(gate, c) {
 function statusLines(status) {
   const s = status || {};
   const out = [];
-  if (s.email) out.push(["account", s.plan ? `${s.email} · ${s.plan}` : s.email]);
-  out.push(["memory", s.files ? `${s.files} files` : "empty — nothing indexed yet"]);
-  if (s.repo) out.push(["repo", s.repo]);
+  // ACCOUNT — the id is here because it is the handle a support conversation needs, and `account_id` is
+  // designed to be safe to share (api_account.py:506). The email alone cannot identify a workspace.
+  if (s.email) {
+    out.push(["account", [s.email, s.plan, s.account_id].filter(Boolean).join(" · ")]);
+  }
+  // REPO — the name AND what Estelle actually holds for it, on one line. Two numbers that answer "does it
+  // know my code yet?" without a second command.
+  if (s.repo) {
+    const held = [s.files ? `${s.files} files` : "", s.memories ? `${s.memories} memories` : ""]
+      .filter(Boolean).join(" · ");
+    out.push(["repo", held ? `${s.repo} · ${held}` : s.repo]);
+  } else {
+    out.push(["memory", s.files ? `${s.files} files` : "empty — nothing indexed yet"]);
+  }
+  if (s.session_id) out.push(["session", String(s.session_id)]);
+  // ROUTING, never `model`. Estelle's whole ORCHESTRA thesis is that the customer does NOT pick a model —
+  // every BYOK key is one pool and the router chooses per task (INV-64/68). A `model:` line in this header
+  // would advertise the one thing we say we do not do. See brief §1.1a.
+  const providers = Number(s.providers || 0);
+  out.push(["routing", providers
+    ? `auto · ${providers} provider${providers === 1 ? "" : "s"} · /routing to see picks`
+    : "auto · /routing to see picks"]);
+  if (s.directory) out.push(["directory", String(s.directory)]);
   return out;
 }
 
@@ -188,13 +209,43 @@ async function runSession(deps) {
   let key = deps.key || storedKey();
 
   out("");
-  out(`  ${c.bold(c.teal("estelle"))}  ${c.dim(deps.version || "")}`);
+  // BOXED (§1.1b). Codex and Kimi both box their headers; the brief's "No rectangle" bullet was an invented
+  // constraint from a garbled voice note, never a founder decision, and it has been deleted — see
+  // PLAN-ERRATA and composer.js's `headerBox`.
+  {
+    const box = require("./composer.js").headerBox(
+      "estelle", deps.version ? `v${String(deps.version).replace(/^v/, "")}` : "",
+      (process.stdout && process.stdout.columns) || 80);
+    // Padding is computed from the PLAIN text lengths, never from the coloured string — an escape code is
+    // zero columns wide on screen and eight characters long in memory, and measuring the painted string is
+    // how a box comes out ragged the moment colour is on.
+    const left = "estelle  by Fate Labs";
+    const right = deps.version ? `v${String(deps.version).replace(/^v/, "")}` : "";
+    const inner = box.head.length - 2;
+    const gap = Math.max(1, inner - left.length - right.length - 2);
+    out(`  ${c.dim(box.head)}`);
+    out(`  ${c.dim("│")} ${c.bold(c.teal("estelle"))}${c.dim("  by Fate Labs")}`
+        + `${" ".repeat(gap)}${c.dim(right)} ${c.dim("│")}`);
+    out(`  ${c.dim(box.foot)}`);
+  }
+  // THE UPDATE PROMPT (brief §2.6). Fire-and-forget: the session has already printed its banner and will
+  // start regardless, so a slow or unreachable registry costs nothing. Customers sat on the destructive
+  // 0.1.3 across three release attempts because nothing ever told them a fix existed — see update-check.js.
+  (deps.updateNotice || (async () => ""))()
+    .then((notice) => { if (notice) out(`  ${c.amber(notice)}`); })
+    .catch(() => {});                    // offline is SILENT, never a warning about our own connectivity
   out("");
 
   if (!key) {
     // First run: one paste, ever. Never re-prompted, never echoed back.
-    out(`  ${c.dim("Paste your Estelle key — get one at fatelabs.ca/keys")}`);
-    const pasted = await prompt(`  ${c.teal("key")} ${c.dim("›")} `);
+    // `/keys` 404s — measured 2026-08-01, both URLs fetched. The dashboard route is `/dashboard/keys`.
+    // The very first instruction a new customer follows was wrong.
+    out(`  ${c.dim("Paste your Estelle key — get one at fatelabs.ca/dashboard/keys")}`);
+    // MASKED. The comment above has claimed "never echoed back" since this shipped, and nothing enforced
+    // it — the session's readline attaches stdout in terminal mode, which echoes. `promptSecret` is
+    // supplied only on a TTY; on a pipe (CI, every scripted test) there is no terminal echo to suppress
+    // and the queued reader is the correct path. See cli/bin/secret-prompt.js.
+    const pasted = await (deps.promptSecret || prompt)(`  ${c.teal("key")} ${c.dim("›")} `);
     if (!looksLikeKey(pasted)) {
       out(`  ${c.red("That doesn't look like an Estelle key.")} ${c.dim("Run estelle again when you have one.")}`);
       return 1;
@@ -213,11 +264,17 @@ async function runSession(deps) {
     out(`  ${c.red("That key was rejected.")} ${c.dim("Delete ~/.estelle/auth.json and run estelle again.")}`);
     return 1;
   }
-  for (const [label, value] of statusLines({ ...(status || {}), repo: (status && status.repo) || cwd })) {
-    out(`  ${c.dim(label.padEnd(8))}${value}`);
-  }
+  const header = statusLines({ ...(status || {}), repo: (status && status.repo) || cwd,
+                               directory: deps.cwdPath || "" });
+  const labelWidth = header.reduce((w, [label]) => Math.max(w, label.length), 0) + 2;
+  for (const [label, value] of header) out(`  ${c.dim(label.padEnd(labelWidth))}${value}`);
 
-  if (status && !status.files) {
+  // DISPLAY and DECISION are separate on purpose. The header now shows `repo_files` and `memories` as the
+  // two different numbers they are (§1.1) — but "is this repo indexed?" must still be answered by EITHER,
+  // or an account holding 16,991 memories with a 0 file count gets told to run a sweep it already ran.
+  // That exact regression is what the old `repo_files || memories` fallback existed to prevent; splitting
+  // the display without splitting the decision would have quietly reintroduced it.
+  if (status && !status.files && !status.memories) {
     // Estelle knows nothing about this repo — say so and point at the sweep rather than answering from
     // nothing. (`estelle sweep` already walks the tree and uploads; the session doesn't reimplement it.)
     out("");
@@ -269,7 +326,20 @@ async function runSession(deps) {
     return { banner: modeUi.modeBanner(state.mode, dial, c), prompt: promptFor() };
   };
   const unbind = (deps.bindKeys || (() => () => {}))(cycle);
-  const leave = (code) => { unbind(); return code; };
+  // THE SLASH MENU. The skill list is fetched ONCE here and cached for the session: the menu must be LOCAL
+  // and instant, and a keystroke that blocks on a network call would be worse than no menu at all. A failed
+  // fetch degrades to the built-in commands only — never to a hang, and never to an empty menu that looks
+  // like the commands vanished.
+  let skillRows = [];
+  (async () => {
+    const listed = await get("/skills", key).catch(() => null);
+    const all = (listed && listed.skills) || [];
+    skillRows = all.map((s) => ({ name: s.name, short: s.short || s.summary || "" }));
+  })();
+  const menuFor = () => slashMenu.menuRows(
+    COMMANDS, new Set(Object.keys(COMMANDS).filter((n) => !local.HELP_ONLY.has(n))), skillRows);
+  const unbindMenu = (deps.bindMenu || (() => () => {}))(menuFor);
+  const leave = (code) => { unbind(); unbindMenu(); return code; };
 
   for (;;) {
     const line = await prompt(promptFor());
@@ -564,8 +634,16 @@ async function sessionStatus(deps) {
     // `files`/`memory_files` names — which the API has never returned — always yielded 0, so a fully swept
     // account was greeted with "memory empty — nothing indexed yet" and told to run `estelle sweep` it had
     // already run. First impression, and it was wrong. The flat names stay as fallbacks for older servers.
-    files: mem.repo_files || mem.memories
-           || (account && (account.files || account.memory_files)) || 0,
+    // TWO DIFFERENT NUMBERS, and conflating them was a small lie in the header: `repo_files` is how much
+    // of YOUR CODE is indexed, `memories` is everything Estelle holds (code + conversations + decisions).
+    // Reporting memories under the label "files" told a customer with 880 indexed files that it had 44,374
+    // of them. Brief §1.1 asks for both, separately labelled.
+    files: mem.repo_files || (account && (account.files || account.memory_files)) || 0,
+    memories: mem.memories || 0,
+    // The handle a support conversation needs. `account_id` is designed to be safe to share.
+    account_id: account && account.account_id,
+    // How many provider keys are in the routed pool. Never a MODEL name — see brief §1.1a.
+    providers: (overview && overview.provider && overview.provider.configured) ? 1 : 0,
     last_session: recent && {
       at: recent.at || recent.started_at || recent.ended_at,
       seconds: recent.seconds || recent.duration_seconds,

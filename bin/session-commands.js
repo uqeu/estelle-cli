@@ -93,11 +93,37 @@ async function runShell(command, deps) {
 const MODES = ["read_only", "propose", "branch", "execute"];
 
 const MODE_ALIASES = {
-  plan: "read_only", read_only: "read_only", "read-only": "read_only", readonly: "read_only",
+  // `read` and `plan` are the founder's words for the same RUNG: neither writes anything, so they
+  // differ in ROUTING (cheap+fast vs reasoning-heavy), never in privilege. A routing distinction that
+  // cannot move a privilege is safe by construction; two ladders would not be.
+  read: "read_only", plan: "read_only", read_only: "read_only", "read-only": "read_only",
+  readonly: "read_only",
   propose: "propose", pr: "propose",
   branch: "branch",
   execute: "execute", auto: "execute",
 };
+
+/** The rung's name AS A HUMAN READS IT. The canonical VALUE stays the server's (`read_only`, `execute`);
+ * this is only what gets printed.
+ *
+ * THE DEFECT: the founder DESIGNED these modes and could not tell what `read_only` meant while looking at
+ * it. Codex prints "Plan mode" and says in plain words what it permits; we printed a snake_case enum
+ * borrowed from a permissions ladder. A mode you cannot read is a switch you will not touch.
+ *
+ * `execute` displays as `auto` because that is the founder's word for it and the one the brief uses.
+ * `read_only` displays as `read`. Both are DISPLAY ONLY — `parseMode` still resolves every alias to the
+ * server rung, and `TestTheCliIsAViewOfThisLadderAndNotASecondOne` fails if the two lists ever diverge. */
+const MODE_NAME = {
+  read_only: "read",
+  propose: "propose",
+  branch: "branch",
+  execute: "auto",
+};
+
+/** The human name for a rung, falling back to the rung itself so an unknown value is never hidden. */
+function modeName(level) {
+  return MODE_NAME[String(level || "")] || String(level || "");
+}
 
 /** What each rung actually permits, in the product's own terms — /mode is useless if it prints a word. */
 const MODE_WHAT = {
@@ -231,6 +257,7 @@ function diffBody(diff) {
 }
 
 module.exports = {
+  MODE_NAME, modeName,
   parseBang, runShell, dangerousCommand,
   MODES, MODE_WHAT, parseMode, modeRank, effectiveMode, modeReport, workRefusal,
   statusRows,

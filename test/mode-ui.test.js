@@ -5,6 +5,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const { EventEmitter } = require("node:events");
 const ui = require("../bin/mode-ui.js");
+const local = require("../bin/session-commands.js");
 
 const C = new Proxy({}, { get: () => (t) => String(t) });   // colours off, so assertions read plainly
 
@@ -57,9 +58,22 @@ test("a local mode ABOVE the ceiling is pulled back into the set, not carried ar
 // ── what the eye sees ───────────────────────────────────────────────────────────
 
 test("the prompt carries the EFFECTIVE mode — the only thing true of the next command", () => {
+  // The names here are the DISPLAY names: `execute` prints as `auto`, `read_only` as `read`. The founder
+  // designed these modes and could not tell what `read_only` meant while looking at it.
   assert.equal(ui.promptLabel("propose", "execute"), "propose");
-  assert.equal(ui.promptLabel("execute", "propose"), "execute→propose");   // clamped, and it shows
+  assert.equal(ui.promptLabel("execute", "propose"), "auto→propose");      // clamped, and it shows
   assert.equal(ui.promptLabel("propose", ""), "propose?");                 // dial unverified
+});
+
+test("the display name is DISPLAY ONLY — the value underneath is still the server's rung", () => {
+  // The whole risk of renaming a privilege ladder for humans is that the rename becomes the value. It
+  // must not: parseMode still resolves every word to the rung, and the ladder test would fail otherwise.
+  assert.equal(local.modeName("read_only"), "read");
+  assert.equal(local.modeName("execute"), "auto");
+  assert.equal(local.parseMode("read"), "read_only");
+  assert.equal(local.parseMode("auto"), "execute");
+  assert.equal(local.parseMode("read_only"), "read_only");   // the rung's own name still works
+  assert.equal(local.modeName("nonsense"), "nonsense");      // unknown is shown, never hidden
 });
 
 test("the banner names the mode, what it permits, and the cycle key", () => {
@@ -134,4 +148,56 @@ test("a cycle that throws never takes the session down with it", async () => {
   await new Promise((r) => setImmediate(r));
   assert.ok(written.join("").length >= 0);            // reaching here at all is the assertion
   unbind();
+});
+
+// ── THE FOOTER THAT PRINTED FOUR TIMES ────────────────────────────────────────────────────────────────
+// Observed literally on the shipped CLI: four shift+tabs left four identical footers stacked up the
+// screen. Each press wiped only the half-drawn PROMPT line and then APPENDED a fresh banner. The
+// interaction was ported from Codex (mode-ui.js:6-14 says so); the rendering was not — Codex owns a
+// bottom pane and repaints it, we printed and moved on. One footer, redrawn in place.
+//
+// This asserts the ESCAPE BYTES, because that is the whole defect. A test that only checked "the banner
+// text is present" passes on the broken version — it was present four times.
+function cycleHarness() {
+  const stdin = new EventEmitter();
+  stdin.isTTY = true;
+  const written = [];
+  const lineHandlers = [];
+  const rl = { setPrompt: () => {}, prompt: () => {},
+               on: (ev, fn) => { if (ev === "line") lineHandlers.push(fn); },
+               removeListener: () => {} };
+  const bind = ui.keyBinder(stdin, { write: (s) => written.push(s), rl,
+                                     readline: { emitKeypressEvents: () => {} } });
+  const unbind = bind(async () => ({ banner: "  read · nothing is written", prompt: "read › " }));
+  const press = async () => {
+    stdin.emit("keypress", "", { name: "tab", shift: true });
+    await new Promise((r) => setImmediate(r));
+  };
+  const submitLine = () => lineHandlers.forEach((fn) => fn("hello"));
+  return { press, submitLine, unbind, screen: () => written.join(""),
+           banners: () => written.filter((w) => w.includes("nothing is written")).length,
+           erases: () => written.filter((w) => w.includes("\x1b[1A")).length };
+}
+
+test("cycling four times leaves ONE footer on screen, not four", async () => {
+  const h = cycleHarness();
+  await h.press();
+  assert.equal(h.erases(), 0, "the FIRST footer has nothing above it to erase");
+  await h.press(); await h.press(); await h.press();
+  assert.equal(h.banners(), 4, "each press must still draw a footer");
+  assert.equal(h.erases(), 3, "presses 2-4 must each erase the footer they replace");
+  h.unbind();
+});
+
+test("after a submitted line the footer is APPENDED, never erased over the transcript", async () => {
+  // The safety half, and it matters more than the fix: the previous banner is only the line directly
+  // above while nothing has been emitted since. Erasing the wrong line is a worse bug than the one being
+  // fixed, so a submitted line resets the claim.
+  const h = cycleHarness();
+  await h.press();
+  h.submitLine();
+  await h.press();
+  assert.equal(h.erases(), 0, "it erased a line of the customer's transcript");
+  assert.equal(h.banners(), 2);
+  h.unbind();
 });

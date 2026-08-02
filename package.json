@@ -1,6 +1,6 @@
 {
   "name": "@fatelabs/estelle",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Connect Estelle \u2014 code-native memory + a 0%-hallucination grounding gate \u2014 to the AI coding agent you already use. One command.",
   "bin": {
     "estelle": "bin/estelle.js"

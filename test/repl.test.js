@@ -50,9 +50,17 @@ test("swarm is not a command — orchestra is", () => {
 });
 
 test("status says what Estelle knows, and admits when it knows nothing", () => {
-  const known = r.statusLines({ email: "khai@fatelabs.ca", plan: "Team", files: 857, repo: "acme/payments" });
-  assert.deepEqual(known[0], ["account", "khai@fatelabs.ca · Team"]);
-  assert.deepEqual(known[1], ["memory", "857 files"]);
+  const known = r.statusLines({ email: "khai@fatelabs.ca", plan: "Team", files: 857, memories: 16991,
+                                repo: "acme/payments", account_id: "acct_1", providers: 4 });
+  // the account id is the handle a support conversation needs, and it is designed to be safe to share
+  assert.deepEqual(known[0], ["account", "khai@fatelabs.ca · Team · acct_1"]);
+  // TWO DIFFERENT NUMBERS. Reporting `memories` under the label "files" told a customer with 857 indexed
+  // files that it had 16,991 of them.
+  assert.deepEqual(known[1], ["repo", "acme/payments · 857 files · 16991 memories"]);
+  // ROUTING, never `model` — a model line would advertise the one thing the product says it does not do
+  const routing = known.find(([label]) => label === "routing");
+  assert.ok(routing && /4 providers/.test(routing[1]) && /\/routing/.test(routing[1]));
+  assert.ok(!known.some(([label]) => label === "model"), "a `model` line is off-thesis (brief §1.1a)");
   const empty = r.statusLines({ email: "k@x.io" });
   assert.match(empty[1][1], /nothing indexed/);
 });
@@ -501,7 +509,8 @@ test("the prompt shows the CLAMP once the account's dial is known and lower", as
   // /mode forces the lazy dial fetch; after it, a local mode above the dial must read as clamped.
   const { prompts } = await promptSession(["/mode execute", "hi"],
     { get: async (p) => (p === "/autonomy/scope" ? { global: "propose" } : {}) });
-  assert.ok(prompts.some((p) => p.includes("execute→propose")), prompts.join(" | "));
+  // `execute` prints as `auto` now — display only; parseMode still resolves it to the rung.
+  assert.ok(prompts.some((p) => p.includes("auto→propose")), prompts.join(" | "));
 });
 
 test("shift+tab is BOUND on entry and UNBOUND on the way out", async () => {
@@ -520,7 +529,7 @@ test("the cycle moves the mode and hands back a banner and a fresh prompt", asyn
                                    get: async (p) => (p === "/autonomy/scope" ? { global: "branch" } : {}) });
   const first = await cycle();
   assert.match(first.banner, /shift\+tab/);
-  assert.match(first.prompt, /read_only|propose|branch/);
+  assert.match(first.prompt, /read|propose|branch|auto/);   // the DISPLAY names
   const second = await cycle();
   assert.notEqual(first.prompt, second.prompt, "cycling twice must land on a different rung");
 });

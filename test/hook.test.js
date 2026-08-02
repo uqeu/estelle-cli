@@ -328,7 +328,26 @@ test("groundVerdict resolves every outcome in ONE fail-closed order", () => {
   // an abstention that ALSO carries findings: the abstention wins, or a partial answer reads as a verdict
   assert.equal(h.groundVerdict({ unverified_reason: "thin", ungrounded: ["x"] }).kind, "unverified");
   assert.equal(h.groundVerdict({ ungrounded: ["x"] }).kind, "flagged");
-  assert.equal(h.groundVerdict({ ungrounded: [] }).kind, "clean");
+  // `grounded: true` is what CLEAN means. This fixture used to omit it and still pass — which is exactly
+  // how a REFUSAL envelope (grounded false, every finding list empty by construction) read as a pass.
+  assert.equal(h.groundVerdict({ grounded: true, ungrounded: [] }).kind, "clean");
+});
+
+test("groundVerdict: an envelope that never says it certified is an abstention, not a pass", () => {
+  // MEASURED ON PROD dc74bd0c through the real hook path (`/verify` with no `repo`). A multi-repo account
+  // got `{grounded:false, reason:"…ask which repo", ungrounded:[], …}` and this hook answered CLEAN — the
+  // gate REFUSED to certify and the always-on path reported the edit as verified. Same for the unswept-repo
+  // guard, which exists specifically to fail closed.
+  const ask = { grounded: false, reason: "multi-repo account, no scope signal - ask which repo",
+                ungrounded: [], arity_errors: [], type_errors: [], third_party: [] };
+  assert.equal(h.groundVerdict(ask).kind, "unverified");
+  assert.match(h.groundVerdict(ask).detail, /ask which repo/);
+  assert.equal(h.groundVerdict({ grounded: false, ungrounded: [] }).kind, "unverified");
+  assert.equal(h.groundVerdict({}).kind, "unverified");
+  // real findings still outrank the abstention — `flagged` is strictly more informative
+  assert.equal(h.groundVerdict({ grounded: false, ungrounded: ["x"] }).kind, "flagged");
+  // THE PAIRED POSITIVE: without it the rule is satisfied by abstaining on everything.
+  assert.equal(h.groundVerdict({ grounded: true, ungrounded: [], arity_errors: [] }).kind, "clean");
 });
 
 test("runHook: sync REFUSES a file embedding a live-looking credential, and says so", async () => {

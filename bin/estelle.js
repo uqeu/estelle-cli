@@ -25,6 +25,8 @@ const { execFileSync } = require("child_process");
 // because "what key am I running as" is asked by almost every command and must not depend on loading the
 // interactive session's dependency tree. See resolveKey() below — that is the only door in this file.
 const auth = require("./auth.js");
+const repoName = require("./repo-name.js");
+const { askSecret } = require("./secret-prompt.js");
 
 const MCP_URL = process.env.ESTELLE_MCP_URL || "https://api.fatelabs.ca/mcp";
 const API = MCP_URL.replace(/\/mcp$/, "");
@@ -33,12 +35,14 @@ const API = MCP_URL.replace(/\/mcp$/, "");
 const PRICING_URL = "https://fatelabs.ca/pricing";
 
 // ── pretty terminal ────────────────────────────────────────────────────────────
-const C = process.stdout.isTTY && !process.env.NO_COLOR;
-const s = (code, t) => (C ? `\x1b[${code}m${t}\x1b[0m` : t);
-const teal = (t) => s("38;5;36", t), dim = (t) => s("2", t), bold = (t) => s("1", t);
-const green = (t) => s("38;5;35", t), amber = (t) => s("38;5;179", t), grey = (t) => s("38;5;244", t);
-const red = (t) => s("38;5;196", t);
-const ok = green("✓"), arrow = teal("▸"), dot = grey("·");
+// ONE palette (brief §1.2). These were seven hand-picked `38;5;NN` strings, which is how a brand colour and
+// an error colour drift into each other one file at a time — and how the CLI ended up TEAL, a colour nobody
+// chose. Estelle is a LIGHT RED; `teal` is now an alias onto the brand, so adopting the module is what
+// actually recolours the product. See palette.js for the two-way separation from the failure colour.
+const palette = require("./palette.js");
+const { brand, dim, bold, green, amber, grey, red, teal } = palette;
+const ok = palette.ok(palette.GLYPH.ok), arrow = brand(palette.GLYPH.arrow),
+      dot = grey(palette.GLYPH.bullet);
 
 function banner() {
   console.log("");
@@ -220,7 +224,9 @@ async function cmdInit() {
     console.log("  " + bold("Connect your coding agent to Estelle."));
     console.log("  " + dim("Paste your Estelle API key (or get one free at ") + teal("fatelabs.ca") + dim(").") );
     console.log("");
-    key = await ask("  " + arrow + " Estelle key: ");
+    // MASKED, always. `ask()` attaches stdout in terminal mode, which echoes — so this prompt printed the
+    // customer's live key into their scrollback on the first command they ever run. See secret-prompt.js.
+    key = await askSecret("  " + arrow + " Estelle key: ");
     if (!key) { console.log("\n  " + amber("No key — nothing written.") + dim("  Get one at fatelabs.ca, then re-run.")); return; }
   }
   const dry = has("--dry-run");
@@ -254,6 +260,16 @@ async function cmdInit() {
     else console.log("  " + ok + " " + bold(PRETTY[client] || client) + dim("  " + r.path) + (r.backup ? dim("  (backed up)") : ""));
   }
   console.log("");
+  // A REFUSAL MUST NOT BE FOLLOWED BY A SUCCESS NARRATIVE. This block used to print unconditionally, so a
+  // customer whose config was refused was still told "Restart your editor — your agent now has
+  // find_definition · …" for tools it had just declined to wire up. Nothing was written; saying otherwise
+  // is the same defect class as the bug this whole path exists to fix — a confident claim about something
+  // that did not happen. Caught by reading the ACTUAL stdout of the shipped 0.1.8, not the source.
+  if (!wroteAny && !dry) {
+    console.log("  " + bold("Nothing was written.") + dim("  Fix the config above and re-run — your editor is unchanged."));
+    console.log("");
+    return;
+  }
   console.log("  " + bold("Next"));
   console.log("  " + dot + " Restart your editor — your agent now has " + teal("find_definition · find_references · blast_radius · verify"));
   console.log("  " + dot + " Ingest this repo so the tools know your code:  " + bold("npx @fatelabs/estelle sweep --key <KEY>"));
@@ -265,6 +281,18 @@ async function cmdInit() {
   const v = await verifyMcp(key);
   if (v.ok) {
     console.log(ok);
+    // PERSIST THE KEY WE JUST VALIDATED — this is the half that was missing, and it broke the README's
+    // own flow end to end: `init` prompted, used the key to write the MCP configs, and DISCARDED it, so
+    // the literal next command the tool prints ("npx @fatelabs/estelle sweep") answered "Need --key".
+    // The READ side was already unified (auth.js:4-8 documents that fix); the WRITE was added to the REPL
+    // (repl.js:203) and never to `init` — and `init` is the path the README documents. A two-path defect
+    // whose completion criterion was "the path I was looking at" rather than "both paths, asserted".
+    // Skipped when $ESTELLE_API_KEY supplied the key: that is the CI shape, a deliberate per-process
+    // override, and writing a credential to the disk of a shared runner is not what that caller asked for.
+    if (!process.env.ESTELLE_API_KEY && key !== auth.readAuth()) {
+      auth.writeAuth(key);                                     // 0700/0600, the same as the REPL's
+      console.log("  " + ok + " " + dim(`key saved to ${auth.authFile()} — no more --key`));
+    }
     console.log("  " + green("You're connected.") + dim("  Ask your agent anything about your codebase — it won't invent an API."));
   } else {
     console.log(amber("failed"));
@@ -766,17 +794,11 @@ function gitFileList(root) {
 // every codebase you ever swept into one answer — the exact contamination per-repo scoping exists to stop.
 // The name is right there in git, so take it from the origin remote (owner/name, the form the GitHub-App
 // sweep and the dashboard already use) and fall back to the directory name outside git or with no remote.
+// The derivation itself now lives in `repo-name.js` so the always-on HOOK writes to the same namespace this
+// sweep does — it did not, and the gate read a surface the hook had never updated (see that file's header).
+// `--repo` stays here: argv is the entry point's business, exactly as with `auth.js`/`resolveKey`.
 function repoNameFor(root) {
-  const explicit = flag("--repo", "");
-  if (explicit) return explicit;
-  try {
-    const url = execFileSync("git", ["-C", root, "remote", "get-url", "origin"],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    // git@host:owner/name.git · https://host/owner/name.git · ssh://git@host/owner/name
-    const m = url.replace(/\.git$/, "").match(/[:/]([^/:]+)\/([^/]+)$/);
-    if (m) return `${m[1]}/${m[2]}`;
-  } catch (_) { /* not a git repo, no origin, or no git binary — fall through */ }
-  return path.basename(path.resolve(root)) || "";
+  return flag("--repo", "") || repoName.repoNameFor(root);
 }
 
 function walkFiles(root, base, out) {
@@ -1407,9 +1429,20 @@ async function cmdSession() {
     if (line !== null && String(line).trim()) remember(line);
     return line;
   };
+  // The tab says what is running in it, and hands itself back on exit — an app that leaves the customer's
+  // terminal renamed after it quits has kept something that was not its. See terminal-title.js.
+  require("./terminal-title.js").claimTitle();
+  // The first-run key prompt reads through a MASKED reader, so a pasted credential never reaches the
+  // terminal, scrollback or a screenshot. The session's own readline is paused for the duration: two
+  // readers on one stdin race, and the loser silently eats the line. Only bound on a TTY — a pipe echoes
+  // nothing by construction and the queued reader below already handles multi-line pastes correctly.
+  const promptSecret = process.stdin.isTTY
+    ? async (q) => { rl.pause(); try { return await askSecret(q); } finally { rl.resume(); } }
+    : null;
   const code = await repl.runSession({
     version: require("../package.json").version,
     key: resolveKey(),
+    promptSecret,
     cwd: path.basename(process.cwd()),
     // `/status` answers "what am I actually pointed at?", so the endpoint and the repo NAME are measured
     // here rather than re-derived in the session — `repoNameFor` is the same function the sweep files
@@ -1424,6 +1457,15 @@ async function cmdSession() {
     // shift+tab cycles the ceiling. On a non-TTY (piped stdin, CI) this binds nothing at all — there is no
     // human to press it, and raw-mode key handling there would corrupt the output stream.
     bindKeys: require("./mode-ui.js").keyBinder(process.stdin, { rl }),
+    // THE SLASH MENU (brief §2.1). Bound here because this file owns the readline; slash-menu.js owns the
+    // keyboard and the ordering, the same split mode-ui.js uses. Inert on a non-TTY — a piped session gets
+    // no keypress events and drawing a menu there would corrupt the stream.
+    bindMenu: require("./slash-menu.js").attachMenu(process.stdin, { rl }),
+    // One registry call a day, 2s timeout, silent when offline (update-check.js). Bound here so the REPL
+    // stays a router and the test suite can inject a fake without touching the network.
+    updateNotice: () => require("./update-check.js")
+      .checkForUpdate(require("../package.json").version)
+      .catch(() => ""),
     // apiPost/apiGet return a transport envelope {ok,status,json,text}; the session's contract is the
     // PARSED body, so unwrap here. A non-JSON or failed response becomes a clean error object rather
     // than an empty render — "(no output)" would read as "Estelle had nothing to say", which is a lie

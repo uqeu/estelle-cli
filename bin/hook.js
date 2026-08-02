@@ -34,6 +34,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { hasSecret } = require("./secrets.js");
+const { repoNameFor } = require("./repo-name.js");
 const distill = require("./distill.js");
 const sessionGap = require("./session-gap.js");
 
@@ -157,7 +158,29 @@ function groundVerdict(report) {
   if (unverified) return { kind: "unverified", detail: unverified };
   const findings = groundFindings(report);
   if (findings) return { kind: "flagged", detail: findings };
+  if (!report || report.grounded !== true) return { kind: "unverified", detail: refusalDetail(report) };
   return { kind: "clean", detail: "" };
+}
+
+/** Why a report that did not certify and flagged nothing could not answer. Kept identical to `_refusal_detail`.
+ *
+ * THE REFUSAL RULE. `/verify` sets `grounded: true` only when everything passed, so `grounded` that is not
+ * exactly `true` with an EMPTY finding list cannot mean clean — it means no verdict was produced. Two shipped
+ * refusals land here and BOTH used to read as a pass on the always-on path, measured on prod `dc74bd0c`:
+ * `grounding_ask()` (a multi-repo account with no scope signal) and the unswept-repo guard in `api_intel.py`
+ * that exists specifically to fail CLOSED. Each sets `reason`, not `unverified_reason`, so the abstention
+ * branch above never fired.
+ *
+ * Deliberately a SCHEMA question rather than a list of known `reason` strings (PLAN-ERRATA E-007: an
+ * objective predicate survived three rewrites, a prose-matching heuristic was wrong every time) — so a
+ * refusal shape nobody has written yet is covered the day it ships. A missing `grounded` key fails closed:
+ * an envelope that never says it certified did not certify. */
+function refusalDetail(report) {
+  const reason = report && report.reason;
+  if (reason !== null && reason !== undefined && reason !== "" && reason !== false && reason !== 0) {
+    return `the gate did not certify — ${findingText(reason)}`;
+  }
+  return "the gate did not certify and gave no reason";
 }
 
 // What may be reindexed. The extension allowlist keeps binaries and lockfiles out of a code graph; the secret
@@ -456,7 +479,12 @@ async function runHook(mode, payload, deps) {
     }
     const rel = path.relative(process.cwd(), path.resolve(file));
     if (rel.startsWith("..")) return 0;                        // never feed a file outside the repo into memory
-    await post("/reindex", { files: [{ path: rel, content: text }] }).catch(() => {});   // best-effort
+    // `repo` IS REQUIRED, and its absence is what made this whole path a no-op. `estelle sweep` files the
+    // surface under `owner/name`, so the gate reads `base::owner/name` — a reindex with no `repo` writes
+    // BASE and the gate never sees it. Measured on prod `dc74bd0c` with a synthetic symbol: unscoped write
+    // -> still `ungrounded`; the same write scoped -> `grounded`. See repo-name.js's header.
+    await post("/reindex", { files: [{ path: rel, content: text }], repo: repoNameFor(process.cwd()) })
+      .catch(() => {});                                        // best-effort: never block the edit
     return 0;
   }
   return 0;
