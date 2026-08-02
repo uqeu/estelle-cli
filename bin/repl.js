@@ -138,6 +138,7 @@ const COMMANDS = {
   apply: "write the last /work diff to your working tree",
   undo: "put the last apply back",
   mode: "show / lower the autonomy ceiling (shift+tab cycles it)",
+  routing: "which model Estelle would pick for a task, and why",
   status: "endpoint, key, filed repo, ceiling",
   shell: "run a shell command right here — e.g. !git status",
   clear: "clear the screen",
@@ -170,6 +171,72 @@ const inputUi = require("./input-ui.js");
 const { collapsePaste, expandPastes, frecencyScore, parseHistory, historyLine,
         interruptAction, spinnerPlan, withSpinner, HISTORY_MAX } = inputUi;
 
+
+/**
+ * The `verify` verdict, as THREE states rather than two (#88).
+ *
+ * 🔴 E-015'S DEFECT IN A THIRD CONSUMER. `/verify` answers `grounded: false` for BOTH "I found invented
+ * APIs" and "I could not check at all". E-015 found that join and fixed it in the Python hook AND the Node
+ * hook — `cmdVerify` was never touched, so two of three consumers were fixed and the defect survived its
+ * own errata entry.
+ *
+ * Measured on prod for a file with nothing invented in it: `{grounded: false, scope_ask: true,
+ * ungrounded: [], question: "Which repo should I check this against? …", candidates: [...]}`. The CLI
+ * printed **"Ungrounded references (not defined in your repo):" and then nothing** — a heading for an
+ * empty list — and discarded a complete, well-written question the server had already composed. The
+ * customer is told their file references undefined APIs when the truth is "I need to know which repo".
+ *
+ * Pure, and separated from the command, so the three states can be asserted without a network.
+ */
+function verifyLines(v, c) {
+  const res = v || {};
+  const ungrounded = Array.isArray(res.ungrounded) ? res.ungrounded : [];
+  if (res.grounded) {
+    return [`  ${c.green("Grounded.")}${c.dim("  Every API this file references exists in your swept repo.")}`];
+  }
+  // A QUESTION IS NOT A FINDING. The server already wrote it, with candidates and a reason — rendering it
+  // as a defect in the customer's file is a claim we have no basis for.
+  if (res.scope_ask) {
+    const lines = [`  ${c.amber("!")} ${c.bold("Which repo should I check this against?")}`];
+    for (const r of (res.candidates || []).slice(0, 8)) lines.push(`    ${c.dim("·")} ${r}`);
+    if (res.unverified_reason || res.reason) lines.push(`  ${c.dim(String(res.unverified_reason || res.reason))}`);
+    lines.push(`  ${c.dim("Re-run with the repo, e.g. ")}${c.bold("estelle verify <file> --repo owner/name")}`);
+    lines.push(`  ${c.dim("Nothing was verified — this is a question, not a verdict on your file.")}`);
+    return lines;
+  }
+  // 🔴 EVERY FINDING BUCKET, not just `ungrounded`. The original code read ONE of the eight the server
+  // returns, so an arity error, a type error, a fabricated THIRD-PARTY call, a missing required argument
+  // and a style violation ALL rendered as the heading "Ungrounded references:" followed by an empty list.
+  // Measured on prod: a file calling `requests.fetch_all_pages` comes back with `third_party` populated
+  // and `ungrounded` EMPTY — so the one case `verify` is most often pointed at was invisible.
+  // Reading one field and treating its emptiness as "nothing found" is the same shape as the bug above it.
+  const BUCKETS = [
+    ["ungrounded", "Not defined in your repo"],
+    ["third_party", "Called on a third-party library that does not define it"],
+    ["arity_errors", "Wrong number of arguments"],
+    ["type_errors", "Type mismatch"],
+    ["missing_required", "Missing a required argument"],
+    ["incomplete_work", "Left incomplete"],
+    ["style_violations", "Against this repo's conventions"],
+  ];
+  const found = BUCKETS.map(([k, label]) => [label, Array.isArray(res[k]) ? res[k] : []])
+                       .filter(([, items]) => items.length);
+  if (found.length) {
+    const lines = [];
+    for (const [label, items] of found) {
+      lines.push(`  ${c.amber(label + ":")}`);
+      for (const u of items) {
+        lines.push(`    ${c.red("✗")} ${typeof u === "string" ? u : (u.symbol || u.name || JSON.stringify(u))}`);
+      }
+    }
+    return lines;
+  }
+  // THE THIRD STATE, which had no name in the old code: not grounded, nothing flagged, no question. That
+  // is "I could not check", and saying anything else points defect class 3 at the customer's file.
+  const why = String(res.unverified_reason || res.reason || "Estelle could not ground this file");
+  return [`  ${c.amber("!")} ${c.bold("Could not verify.")}${c.dim("  " + why)}`,
+          `  ${c.dim("Nothing was flagged in your file — this is a limit on OUR side, not a finding about yours.")}`];
+}
 
 /** A unified diff, coloured. Nothing else in a terminal communicates a change this fast. */
 function renderDiff(diff, c) {
@@ -737,6 +804,15 @@ function routeInput(input, ctx, opts) {
     case "gate":      return { path: "/gate", body: diff || {} };
     case "scan":      return { path: "/scan", body: diff || {} };
     case "improve":   return { path: "/improve", body: arg ? { focus: arg } : {} };
+    // #84 — THE HEADER ADVERTISED THIS ON EVERY LAUNCH AND IT WAS NOT A COMMAND. `routing auto · 1
+    // provider · /routing to see picks` printed for every customer, and typing it fell through to the
+    // MCP `tools/call` default, which answered "unknown tool". The first thing a customer reads promised
+    // something that errors — the standing rule's INVERSE: a door with no capability.
+    // `POST /route` already answers exactly this question (api_account.py:9 — "which model + reasoning
+    // effort Estelle would route a task to"), so the capability existed and only the door was missing.
+    // `/route` is accepted too, because our own copy uses both spellings.
+    case "routing":
+    case "route":     return { path: "/route", body: arg ? { prompt: arg } : { task_kind: "chat" } };
     case "verify":    return { path: "/verify", body: { answer: arg } };
     case "init":      return { path: "/wiki", body: null, method: "GET" };
     case "sessions":  return { path: "/sessions", body: null, method: "GET" };
@@ -895,6 +971,22 @@ function renderAnswer(res, c) {
   if (answer) lines.push(answer.split("\n").map((l) => `  ${l}`).join("\n"));
 
   if (res.scope_ask) return lines.join("\n");             // "which repo?" is the whole reply
+  // THE ROUTING RECEIPT (#84). `POST /route` answers with a shape nothing here knew how to draw, so the
+  // freshly-wired `/routing` opened onto BLANK LINES — the command was reachable and the customer saw
+  // nothing, which is the same defect one layer over from the one being fixed. Caught by running it
+  // through the customer door and reading the OUTPUT, not by re-reading the routing table.
+  //
+  // `routed: false` is a real answer, not an absence: it means the active provider has no tiers and the
+  // account's own default model is used. Rendering that as silence would be the third version of the
+  // same mistake.
+  if (res.provider !== undefined && res.routed !== undefined) {
+    const bits = [res.provider, res.model].filter(Boolean).join(" · ");
+    lines.push(res.routed
+      ? `  ${c.bold(res.model || "?")} ${c.dim("· " + [res.provider, res.tier, res.effort].filter(Boolean).join(" · "))}`
+      : `  ${c.bold(bits || "your default model")} ${c.dim("· no tiers on this provider, so your default is used")}`);
+    if (res.reason) lines.push(`  ${c.dim(String(res.reason))}`);
+    return lines.join("\n");
+  }
   if (res.diff) lines.push(renderDiff(res.diff, c));
   if (res.gate || res.merge !== undefined || res.verdict) lines.push(renderGate(res.gate || res, c));
   if (res.pr_url) lines.push(`  ${c.dim("→")} ${c.teal(res.pr_url)} ${c.dim("· a human merges it")}`);
@@ -916,7 +1008,7 @@ module.exports = {
   readAuth, writeAuth, storedKey,
   looksLikeKey, maskKey, humanDuration, relativeTime, parseInput, COMMANDS,
   statusLines, welcomeBack, renderAnswer, runSession, routeInput, sessionStatus, handleLocal, HELP_ONLY,
-  resolveRepo, repoStatusLine, memoryStatusLine, commandHint,
+  resolveRepo, repoStatusLine, memoryStatusLine, commandHint, verifyLines,
   expandFileRefs, renderDiff, renderGate, mcpCall, mcpText, unknownTool,
   isSkillExit, runSkill,
   collapsePaste, expandPastes, frecencyScore, parseHistory, historyLine, interruptAction, spinnerPlan,

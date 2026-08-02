@@ -535,6 +535,22 @@ async function cmdSweep() {
   console.log("  " + dim(`Found ${bold(String(files.length))}${dim(" files")} ${dot} ${(bytes / 1024).toFixed(0)} KB ${dot} these upload to ${API}`));
   const repo = repoNameFor(root);
   if (repo) console.log("  " + dim("Filing under repo ") + bold(repo) + dim(" — recall stays scoped to it."));
+  // 🔴 --dry-run, WHICH THIS COMMAND SILENTLY IGNORED (register #86). `init` honours it (:246) and
+  // `reindex` honours it (:636) — so the flag read as a safety net on the ONE command that uploads an
+  // ENTIRE REPOSITORY, and did nothing. `reindex`'s own comment already argued the case: "uploading
+  // against an explicit don't is not a smaller mistake than a typo."
+  //
+  // Found by the walkthrough on its first live run, which started a real sweep of a 6,457-file repo
+  // believing it was a dry run.
+  //
+  // The stop is placed HERE, before `preflightSize`, so a dry run makes NO network call at all. Preflight
+  // only measures — but "nothing was sent" is a claim a customer should be able to take literally, and a
+  // dry run that quietly ships file sizes to a server is not that claim.
+  if (has("--dry-run")) {
+    console.log("  " + dim("--dry-run · nothing was sent."));
+    console.log("");
+    return;
+  }
   // Measure BEFORE uploading. Anything else means a repo that cannot fit still travels the wire in full and
   // lands half-indexed, which is the bug this command had.
   if (!(await preflightSize(files, key, repo))) return;
@@ -1209,18 +1225,20 @@ async function cmdVerify() {
   let code;
   try { code = fs.readFileSync(target, "utf8"); } catch (e) { console.log("  " + amber(`Can't read ${target}: ${String((e && e.message) || e)}`)); return; }
   process.stdout.write("  " + dim(`Grounding ${target} against your repo… `));
-  const r = await apiPost("/verify", { answer: code }, key);
+  // `--repo` makes the server's own question ANSWERABLE. Without it a multi-repo account could read the
+  // scope_ask and have no way to act on it, which is a question asked into a void.
+  const scopeRepo = flag("--repo", "");
+  const r = await apiPost("/verify", scopeRepo ? { answer: code, repo: scopeRepo } : { answer: code }, key);
   if (!r.ok) return failClosed(r, "verify");
   console.log(ok); console.log("");
   const v = r.json || {};
-  const ungrounded = asArray(v.ungrounded);
-  if (v.grounded) {
-    console.log("  " + green("Grounded.") + dim("  Every API this file references exists in your swept repo."));
-  } else {
-    console.log("  " + amber("Ungrounded references (not defined in your repo):"));
-    for (const u of ungrounded) console.log("    " + red("✗") + " " + (typeof u === "string" ? u : (u.name || JSON.stringify(u))));
-    process.exitCode = 1;
-  }
+  // THREE STATES, not two — see `verifyLines` in repl.js for the defect this fixes (#88). The rendering is
+  // shared with the session so the two surfaces cannot describe the same envelope differently.
+  for (const line of require("./repl.js").verifyLines(v, { green, amber, red, dim, bold })) console.log(line);
+  // A NON-ZERO EXIT ONLY WHEN SOMETHING IS ACTUALLY WRONG WITH THE FILE. A scope question and a
+  // could-not-verify are both "nothing was checked" — real, worth saying, and not a verdict on their code.
+  // Exiting 1 on them told CI the file had failed verification when it had never been verified.
+  if (!v.grounded) process.exitCode = 1;
   console.log("");
 }
 
