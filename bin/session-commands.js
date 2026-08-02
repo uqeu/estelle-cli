@@ -90,6 +90,10 @@ async function runShell(command, deps) {
 // The vocabulary is deliberately the SERVER's four names, so the CLI and the product contract cannot drift
 // into two ladders. `plan` and `auto` are aliases onto it, so the founder's words still work.
 
+// The upgrade step, written ONCE. The footer (mode-ui.js) and `/mode` both read it, so a customer can
+// never be sent to two different places to raise the same dial.
+const SETTINGS_URL = "fatelabs.ca/dashboard/settings";
+
 const MODES = ["read_only", "propose", "branch", "execute"];
 
 const MODE_ALIASES = {
@@ -97,6 +101,9 @@ const MODE_ALIASES = {
   // differ in ROUTING (cheap+fast vs reasoning-heavy), never in privilege. A routing distinction that
   // cannot move a privilege is safe by construction; two ladders would not be.
   read: "read_only", plan: "read_only", read_only: "read_only", "read-only": "read_only",
+  // `edit` is what `propose` DISPLAYS as, so it must parse — a customer typing the word on their
+  // own screen being told it is not a mode is the two-vocabularies defect wearing a fix's clothes.
+  edit: "propose",
   readonly: "read_only",
   propose: "propose", pr: "propose",
   branch: "branch",
@@ -110,12 +117,19 @@ const MODE_ALIASES = {
  * it. Codex prints "Plan mode" and says in plain words what it permits; we printed a snake_case enum
  * borrowed from a permissions ladder. A mode you cannot read is a switch you will not touch.
  *
- * `execute` displays as `auto` because that is the founder's word for it and the one the brief uses.
- * `read_only` displays as `read`. Both are DISPLAY ONLY — `parseMode` still resolves every alias to the
- * server rung, and `TestTheCliIsAViewOfThisLadderAndNotASecondOne` fails if the two lists ever diverge. */
+ * THE NAMES, founder's call 2026-08-02: `read_only` shows as `plan`, `propose` as `edit`, and the other
+ * two keep their words. Nobody outside this codebase knows what "propose" means as a MODE — Claude Code has
+ * plan/edit, Codex has plan and defaults to auto, Kimi has plan. We had invented four words nobody
+ * recognises.
+ *
+ * ⛔ THE LADDER ITSELF DOES NOT CHANGE, and the mapping stays 1:1. These are real privilege rungs living in
+ * `serve/autonomy.py`; the CLI is a VIEW of that dial and never a second dial. Collapsing two rungs into one
+ * display name would be the two-things-one-name defect in a new place, which is the defect this whole
+ * session keeps finding. DISPLAY ONLY — `parseMode` resolves every alias back to the server rung, and
+ * `TestTheCliIsAViewOfThisLadderAndNotASecondOne` fails if the two lists ever diverge. */
 const MODE_NAME = {
-  read_only: "read",
-  propose: "propose",
+  read_only: "plan",
+  propose: "edit",
   branch: "branch",
   execute: "auto",
 };
@@ -127,10 +141,10 @@ function modeName(level) {
 
 /** What each rung actually permits, in the product's own terms — /mode is useless if it prints a word. */
 const MODE_WHAT = {
-  read_only: "answer · recall · verify · gate — nothing is written",
-  propose: "+ a sandboxed diff and a reviewable PR a human merges (ADR 0012 default)",
-  branch: "+ commits pushed to a non-main branch, CI run",
-  execute: "+ merge / deploy — only where the server has granted it",
+  read_only: "reads, answers, verifies — nothing is written",
+  propose: "writes to a sandbox and opens a PR a human merges",
+  branch: "pushes a branch",
+  execute: "merges when every guard passes, else degrades to a PR",
 };
 
 /** A typed mode name → the canonical level, or "" when it is not one. Never guesses: an unrecognised word
@@ -163,18 +177,29 @@ function effectiveMode(local, server) {
 function modeReport(local, server, c) {
   const known = modeRank(server) >= 0;
   const effective = effectiveMode(local, server);
+  // NAMES, not enums. `/mode` is the screen a customer opens BECAUSE they are confused; printing the
+  // internal ladder there is what made the founder unable to tell what his own mode meant.
   const lines = [
-    `  ${c.dim("local".padEnd(10))}${local}`,
-    `  ${c.dim("server".padEnd(10))}${known ? server : c.amber("unknown")}`
-      + c.dim(known ? "  — your account's autonomy dial; the enforcement point"
+    `  ${c.dim("here".padEnd(10))}${modeName(local)}${c.dim("  — what this session is set to")}`,
+    `  ${c.dim("account".padEnd(10))}${known ? modeName(server) : c.amber("unknown")}`
+      + c.dim(known ? "  — your account's ceiling; the enforcement point"
                     : "  — could not reach Estelle; assuming read_only (fail-closed)"),
-    `  ${c.dim("effective".padEnd(10))}${c.bold(effective)}${c.dim("  " + MODE_WHAT[effective])}`,
+    `  ${c.dim("in force".padEnd(10))}${c.bold(modeName(effective))}${c.dim("  " + MODE_WHAT[effective])}`,
   ];
   if (known && modeRank(local) > modeRank(server)) {
     // Say it outright. A user who believes the CLI just enabled auto-merge, and finds out when it silently
     // opens a PR instead, has been misled by us — which is the failure this product exists to prevent.
-    lines.push(`  ${c.amber("!")} ${c.dim(`the CLI cannot raise your dial — Estelle refuses anything above ${server}.`)}`);
-    lines.push(`  ${c.dim("  raise it in the dashboard (it needs a signed, audited consent), then /mode again.")}`);
+    lines.push(`  ${c.amber("!")} ${c.dim(`the CLI can only LOWER the ceiling — Estelle refuses anything above ${modeName(server)}.`)}`);
+  }
+  // 🔴 EXPLAIN THE CLAMP AND NAME THE EXACT STEP. The founder hit a ceiling he could not move and could
+  // not find the step to move it — "I could not find it, and I BUILT this." A ceiling with no named exit
+  // is the same defect as the footer advertising a cycle that cannot happen: it reports a state and
+  // withholds the remedy. `/mode` is where the remedy belongs, in full, every time it is clamped.
+  if (known && modeRank(server) <= 0) {
+    lines.push("");
+    lines.push(`  ${c.dim(`Your account is at ${modeName(server)}, the lowest rung, so there is nothing to cycle to.`)}`);
+    lines.push(`  ${c.dim(`To unlock ${modeName("propose")}: open ${SETTINGS_URL} → Autonomy → raise the dial.`)}`);
+    lines.push(`  ${c.dim("It needs a signed, audited consent, which is why the CLI cannot do it for you.")}`);
   }
   return lines;
 }
@@ -257,7 +282,7 @@ function diffBody(diff) {
 }
 
 module.exports = {
-  MODE_NAME, modeName,
+  MODE_NAME, modeName, SETTINGS_URL,
   parseBang, runShell, dangerousCommand,
   MODES, MODE_WHAT, parseMode, modeRank, effectiveMode, modeReport, workRefusal,
   statusRows,

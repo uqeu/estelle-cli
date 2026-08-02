@@ -20,6 +20,9 @@ const readline = require("readline");
 // the git diff /gate and /scan grade. Kept out of here so this file stays a router.
 const local = require("./session-commands.js");
 const slashMenu = require("./slash-menu.js");
+// ONE definition of "which repo am I in", shared with `estelle sweep` and BOTH always-on hooks. The
+// header used to derive its own from basename(cwd) and disagree with all three — see `resolveRepo`.
+const repoName = require("./repo-name.js");
 // Writing a returned diff to the working tree, and the shift+tab switch that says under which ceiling.
 // Both are new primitives rather than new endpoints — the server has no say in what happens on your disk,
 // which is exactly why the guards for it live client-side and fail closed.
@@ -69,6 +72,43 @@ function relativeTime(iso, now) {
   if (diff < 3600) return `${Math.round(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.round(diff / 3600)}h ago`;
   return `${Math.round(diff / 86400)}d ago`;
+}
+
+// Shell tools whose names people type out of habit. A leading one means they want a SHELL, not an answer.
+const SHELL_HEADS = new Set(["git", "npm", "npx", "node", "ls", "cd", "cat", "pnpm", "yarn", "make", "docker"]);
+
+/**
+ * Did they type a COMMAND at Estelle instead of asking it something?
+ *
+ * 🔴 THE DEFECT, observed on 0.1.10: typing `estelle sweep` — **the command in our own README** — matched
+ * neither a slash command nor `!<cmd>`, so it was sent to the model as a question and came back *"I can't
+ * tell what 'estelle sweep' refers to from the provided repository context."* Technically correct and
+ * terrible: **the customer paid for a model call to be told their own product's documented command is not
+ * a repo symbol.**
+ *
+ * Returns `{kind, suggest}` or **null**, and null is the important half. This must not eat prose: *"how
+ * does estelle sweep work"* is a genuine question ABOUT the command, and answering it with a did-you-mean
+ * would be worse than the defect. So the match is anchored — the line must BEGIN with the invocation and
+ * contain nothing but it and a known subcommand.
+ */
+function commandHint(line) {
+  const t = String(line || "").trim();
+  if (!t) return null;
+  const words = t.split(/\s+/);
+  if (SHELL_HEADS.has(words[0]) && !/^npx$/.test(words[0])) {
+    return { kind: "shell", suggest: `!${t}` };
+  }
+  // `estelle <cmd>` and `npx @fatelabs/estelle <cmd>` — the two forms the README and the CLI itself print.
+  const rest = words[0] === "estelle" ? words.slice(1)
+    : (words[0] === "npx" && /estelle/.test(words[1] || "")) ? words.slice(2)
+    : (words[0] === "npx" && words[1] === "-y" && /estelle/.test(words[2] || "")) ? words.slice(3)
+    : null;
+  if (!rest || !rest.length) return null;
+  const name = rest[0].toLowerCase();
+  // Only a KNOWN command suggests. `estelle blorp` is not a typo we can fix, and guessing at it would put
+  // us back to inventing an answer — which is the one thing this product exists not to do.
+  if (!Object.prototype.hasOwnProperty.call(COMMANDS, name)) return null;
+  return { kind: "slash", suggest: `/${name}${rest.length > 1 ? " " + rest.slice(1).join(" ") : ""}` };
 }
 
 /** Split a typed line into a slash command + its argument. Anything else is a question for Estelle. */
@@ -158,6 +198,78 @@ function renderGate(gate, c) {
   return "  " + parts.join(c.dim(" · "));
 }
 
+/**
+ * WHICH REPO AM I IN — the REPL's answer, which must be the SAME answer every other path gives.
+ *
+ * `repo-name.js` is the one definition (E-015 extracted it so the sweep and both hooks could stop
+ * disagreeing about the namespace). The REPL header was a FOURTH consumer that never adopted it: it used
+ * `path.basename(process.cwd())`, so on the founder's machine the session displayed `estelle` while every
+ * path that WRITES memory used `uqeu/estelle`. A name that disagrees with the one memory was written under
+ * is the same defect as no name at all — it addresses a namespace nothing filled.
+ *
+ * This is a one-line delegation ON PURPOSE. A second derivation "just for the header" is exactly how the
+ * first split happened, and a wrapper that only forwards is the cheapest possible guarantee that it cannot
+ * drift again.
+ */
+function resolveRepo(root) {
+  return repoName.repoNameFor(root || process.cwd());
+}
+
+/**
+ * The `repo` header line — the name, and WHETHER THE SERVER ACTUALLY HAS IT.
+ *
+ * 🔴 THE DEFECT THIS EXISTS TO FIX (#23, live in the customer path on 0.1.10). The old line was
+ * `repo <basename(cwd)> · <memories> memories`, which glued together **two facts from two different
+ * places** and implied a third that was false:
+ *   * the NAME came from the local directory and had never touched the server;
+ *   * the COUNT came from `GET /overview`, which is `namespace_stats` — the WHOLE ACCOUNT, every
+ *     namespace aggregated (`api_console.py:370`);
+ *   * so the line asserted "this repo holds 16,991 memories" when the account held 16,991 memories and
+ *     that repo held NOTHING — `GET /repos` -> ["isoproof-bravo"], `repo_files: 0`.
+ *
+ * `indexed` is deliberately THREE-VALUED — true / false / **null for "could not ask"**. A failed `/repos`
+ * fetch must never render as "not indexed": that is a claim about the server manufactured from a failure
+ * to reach it, which is precisely the #76 defect one surface over. A failure to ASK is not evidence.
+ */
+function repoStatusLine(status) {
+  const s = status || {};
+  const repo = String(s.repo || "").trim();
+  if (!repo) return { indexed: null, value: "no repo detected in this directory" };
+  // `filed === null` means the list could not be read. Distinct from `[]`, which means "asked, and this
+  // account has filed nothing" — a real and different answer.
+  if (!Array.isArray(s.filed)) return { indexed: null, value: `${repo} · index state unknown` };
+  // `/repos` stores both `owner/name` and bare names (a repo swept with an explicit `--repo` lands bare),
+  // so membership compares the tail too. A naive `includes` would call a correctly-swept repo unindexed
+  // and nag the customer to re-run a sweep they already ran — the exact regression the header's own
+  // history warns about.
+  const tail = (n) => String(n).split("/").pop().toLowerCase();
+  const isFiled = s.filed.some((f) => String(f).toLowerCase() === repo.toLowerCase() || tail(f) === tail(repo));
+  return isFiled
+    ? { indexed: true, value: `${repo} · indexed` }
+    : { indexed: false, value: `${repo} · not indexed — run \`estelle sweep\` to index it` };
+}
+
+/**
+ * What the ACCOUNT holds — deliberately its OWN line, and labelled as the account's.
+ *
+ * 🔴 THIS SPLIT IS THE FIX. Both numbers come from `GET /overview` -> `namespace_stats(account_key, email)`
+ * (`api_console.py:370`), which aggregates EVERY namespace. Rendering them beside a repo name produced
+ * `repo estelle · 16991 memories` on an account whose `repo_files` was **0** — a sentence a customer can
+ * only read as "this repo holds 16,991 memories", which was false in both halves at once.
+ *
+ * An earlier fix split `files` from `memories` because reporting memories under the label "files" was a
+ * lie about WHICH NUMBER. It was right and it did not go far enough: the numbers were still attached to
+ * the wrong SCOPE. Two true numbers under a false heading is still a false line.
+ */
+function memoryStatusLine(status) {
+  const s = status || {};
+  const files = Number(s.files || 0), memories = Number(s.memories || 0);
+  if (!files && !memories) return "empty — nothing indexed yet";
+  return [memories ? `${commas(memories)} memories` : "", `${commas(files)} code files indexed`]
+    .filter(Boolean).join(" · ") + " (this account, all repos)";
+}
+const commas = (n) => String(Math.max(0, Math.floor(Number(n) || 0))).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
 /** The status block shown on entry — what Estelle already knows, before you ask it anything. */
 function statusLines(status) {
   const s = status || {};
@@ -169,13 +281,12 @@ function statusLines(status) {
   }
   // REPO — the name AND what Estelle actually holds for it, on one line. Two numbers that answer "does it
   // know my code yet?" without a second command.
-  if (s.repo) {
-    const held = [s.files ? `${s.files} files` : "", s.memories ? `${s.memories} memories` : ""]
-      .filter(Boolean).join(" · ");
-    out.push(["repo", held ? `${s.repo} · ${held}` : s.repo]);
-  } else {
-    out.push(["memory", s.files ? `${s.files} files` : "empty — nothing indexed yet"]);
-  }
+  // The name AND whether the server actually HAS it. `repoStatusLine` owns that judgement (and the
+  // three-valued indexed/unknown split) so the same answer can be unit-tested without a terminal.
+  out.push(["repo", repoStatusLine(s).value]);
+  // The account's holdings, on their OWN line and labelled as the account's — never folded into the repo
+  // line, where they read as a claim about that repo. See memoryStatusLine.
+  out.push(["memory", memoryStatusLine(s)]);
   if (s.session_id) out.push(["session", String(s.session_id)]);
   // ROUTING, never `model`. Estelle's whole ORCHESTRA thesis is that the customer does NOT pick a model —
   // every BYOK key is one pool and the router chooses per task (INV-64/68). A `model:` line in this header
@@ -264,8 +375,17 @@ async function runSession(deps) {
     out(`  ${c.red("That key was rejected.")} ${c.dim("Delete ~/.estelle/auth.json and run estelle again.")}`);
     return 1;
   }
-  const header = statusLines({ ...(status || {}), repo: (status && status.repo) || cwd,
-                               directory: deps.cwdPath || "" });
+  // #23: the header used `cwd` — `path.basename(process.cwd())` — while `deps.repo` sat in the SAME deps
+  // object holding `repoNameFor(process.cwd())`, the name the sweep and both hooks actually write under
+  // (estelle.js:1466, whose own comment says "what /status calls the repo is exactly what your memory
+  // calls it"). The right answer was already in the room and the header read the wrong field, so the
+  // session displayed `estelle` while every writing path used `uqeu/estelle`.
+  const repo = deps.repo || resolveRepo(deps.root || deps.cwdPath);
+  // The account's ceiling, known BEFORE anything is drawn — see the note on `state` below. Hoisted here
+  // because the intro line and the header both need it, and both are printed before the loop starts.
+  const dialAtStart = status && typeof status.dial === "string" && local.modeRank(status.dial) >= 0
+    ? status.dial : null;
+  const header = statusLines({ ...(status || {}), repo, directory: deps.cwdPath || "" });
   const labelWidth = header.reduce((w, [label]) => Math.max(w, label.length), 0) + 2;
   for (const [label, value] of header) out(`  ${c.dim(label.padEnd(labelWidth))}${value}`);
 
@@ -285,7 +405,12 @@ async function runSession(deps) {
   if (greeting) { out(""); out(`  ${greeting.split("\n").join("\n  ")}`); }
 
   out("");
-  out(`  ${c.dim("ask anything · /help for commands · shift+tab cycles the mode · ctrl-d to leave")}`);
+  // The same rule as the footer: do not advertise shift+tab to an account that has nowhere to cycle to.
+  // Three surfaces used to promise this key — the footer, `/mode`'s description and this line — and on a
+  // clamped account all three were wrong at once.
+  const canCycle = modeUi.cycleModes(dialAtStart === null ? "" : dialAtStart).length > 1;
+  out(`  ${c.dim("ask anything · /help for commands · "
+      + (canCycle ? "shift+tab cycles the mode · " : "") + "ctrl-d to leave")}`);
   out("");
 
   // The autonomy ceiling, fetched LAZILY. Only /mode, /status and the write path read it, and a fourth
@@ -294,7 +419,15 @@ async function runSession(deps) {
   // fail-closed rendering depends on.
   // `transcript` is the session Estelle OWNS. It is not a log to replay: every turn is assembled from it, and
   // a failed attempt that falls out of the verbatim window leaves its LESSON behind rather than its wreckage.
-  const state = { mode: "propose", serverMode: null, transcript: curate.emptyTranscript() };
+  // 🔴 NEVER DRAW A RUNG WE ARE ABOUT TO TAKE AWAY. This used to start at `propose` with the dial unread,
+  // so a clamped account launched showing `edit`, and the first shift+tab silently dropped it to `plan`.
+  // The founder read that as the mode being unreliable — and he was right to: we advertised a privilege
+  // and withdrew it one keypress later. The dial now arrives WITH the header (sessionStatus fetches it
+  // alongside /account and /overview), so the first thing drawn is already the true one. When the fetch
+  // fails, `serverMode` stays null and the label carries a `?` — "we have not been able to check" is a
+  // different and more honest statement than a rung we are guessing at.
+  const state = { mode: dialAtStart || "read_only", serverMode: dialAtStart,
+                  transcript: curate.emptyTranscript() };
   const serverMode = async () => {
     if (state.serverMode !== null) return state.serverMode;
     const scope = await get("/autonomy/scope", key).catch(() => null);
@@ -315,8 +448,14 @@ async function runSession(deps) {
   // there would claim "we checked and could not tell", which is a different and more alarming fact than
   // "we have not needed to check yet".
   const promptFor = () => {
-    const label = state.serverMode === null ? state.mode : modeUi.promptLabel(state.mode, state.serverMode);
-    return `${c.dim(label)} ${c.teal("›")} `;
+    // ALWAYS the display name, never the raw rung. The unknown-dial branch used to print `state.mode`
+    // straight through, so a session that could not reach the dial showed `read_only ›` — the snake_case
+    // enum the rename exists to get off the customer's screen, on the one line they look at most.
+    //
+    // The `?` marker is now CORRECT rather than alarming: the dial is fetched with the header, so a null
+    // serverMode means "we asked and could not tell", which is exactly what `?` says. It used to mean
+    // "we have not needed to ask yet", which is why this branch avoided it.
+    return `${c.dim(modeUi.promptLabel(state.mode, state.serverMode || ""))} ${c.teal("›")} `;
   };
   // shift+tab. The KEY is Codex's (`KeyCode::BackTab` → `cycle_collaboration_mode`); the SEMANTICS are not
   // — this only ever moves the local ceiling, which can lower what happens and never raise it.
@@ -337,12 +476,17 @@ async function runSession(deps) {
     skillRows = all.map((s) => ({ name: s.name, short: s.short || s.summary || "" }));
   })();
   const menuFor = () => slashMenu.menuRows(
-    COMMANDS, new Set(Object.keys(COMMANDS).filter((n) => !local.HELP_ONLY.has(n))), skillRows);
+    // `HELP_ONLY`, NOT `local.HELP_ONLY`. It is a constant in THIS file (:112), used correctly as a bare
+    // identifier fifty lines below — the `local.` prefix was copied from neighbouring code that legitimately
+    // uses it, and `undefined.has(n)` crashed the whole REPL on the first `/` a customer ever pressed.
+    // Shipped in 0.1.10 past 348 green tests, because this closure — the seam between the pure menu module
+    // and the keypress handler — was the one thing neither side's tests called.
+    COMMANDS, new Set(Object.keys(COMMANDS).filter((n) => !HELP_ONLY.has(n))), skillRows);
   const unbindMenu = (deps.bindMenu || (() => () => {}))(menuFor);
   const leave = (code) => { unbind(); unbindMenu(); return code; };
 
   for (;;) {
-    const line = await prompt(promptFor());
+    let line = await prompt(promptFor());
     if (line === null) { out(""); return leave(0); }      // ctrl-d
 
     // `!cmd` runs on YOUR machine — no server, and deliberately no autonomy ceiling. The ceiling governs
@@ -354,6 +498,22 @@ async function runSession(deps) {
 
     const input = parseInput(line);
     if (!input.text && input.kind === "ask") continue;     // a bare Enter is not a question
+
+    // A COMMAND TYPED AT ESTELLE IS NOT A QUESTION. Offer the right form and let Enter take it — never
+    // run it silently, because "I thought you meant X" acting on its own is how a tool loses trust it
+    // cannot buy back. Declining costs one keypress; the alternative cost a model call and a non-answer.
+    if (input.kind === "ask") {
+      const hint = commandHint(input.text);
+      if (hint) {
+        const take = await prompt(`  ${c.dim("did you mean")} ${c.teal(hint.suggest)}${c.dim("?  enter to run, or type your question")} `);
+        if (take === null) { out(""); return leave(0); }
+        if (!String(take).trim()) { line = hint.suggest; }
+        else { line = String(take); }
+        const redone = parseInput(line);
+        if (redone.kind === "ask" && !redone.text) continue;
+        Object.assign(input, redone);
+      }
+    }
 
     if (input.kind === "command") {
       const done = await handleLocal(input, { out, c, state, serverMode, key, deps });
@@ -389,7 +549,7 @@ async function runSession(deps) {
       ctx.diff = diff;
     }
 
-    const route = routeInput(input, ctx);
+    const route = routeInput(input, ctx, { repo });
     // A command that would fall through to MCP might be a SKILL — run it SERVER-SIDE first via /skill/run, so
     // the playbook is loaded + injected on the server and only the RESULT comes back. The playbook markdown
     // never reaches the client at all (the real IP lock). Not a skill → fall through to the tool call.
@@ -549,8 +709,22 @@ async function handleLocal(input, ctx) {
  * has — a typed question is a Deep Search, `/orchestra` is the fleet, `/gate` is the merge verdict — so
  * the session adds a conversation, not a parallel API.
  */
-function routeInput(input, ctx) {
-  if (input.kind === "ask") return { path: "/deep-search", body: { question: input.text } };
+function routeInput(input, ctx, opts) {
+  // 🔴 THE SCOPE TRAVELS WITH THE QUESTION (#23, reproduced live in the customer path on 0.1.10).
+  //
+  // This used to send `{question}` and nothing else, so the server had no signal and resolved to the BASE
+  // namespace — and the session then answered from UNFILED memory while the header, four lines above on
+  // the same screen, displayed a repo name. Measured on the founder's account: the header said
+  // "repo estelle · 16991 memories"; the answer cited `omega_11`/`omega_9`/`omega_4` and said "no
+  // repository has been filed under a name yet". Two paths resolving scope differently, with nothing
+  // responsible for making them agree — defect class 1, and the fifth instance in one session.
+  //
+  // The repo comes from `resolveRepo`, which is the SAME `repo-name.js` definition the sweep and both
+  // hooks write with. Empty means "we could not tell", and is OMITTED rather than sent as a guess: a wrong
+  // scope signal is worse than none, because the server would honour it.
+  const repo = String((opts && opts.repo) || "").trim();
+  const scoped = (body) => (repo ? { ...body, repo } : body);
+  if (input.kind === "ask") return { path: "/deep-search", body: scoped({ question: input.text }) };
   const arg = input.arg || "";
   // /gate and /scan grade a unified DIFF, and only the client can compute one from git. They used to route
   // with an empty `{}`, so the server answered "the merge gate needs a 'diff'" on EVERY call while /help
@@ -567,7 +741,7 @@ function routeInput(input, ctx) {
     case "init":      return { path: "/wiki", body: null, method: "GET" };
     case "sessions":  return { path: "/sessions", body: null, method: "GET" };
     case "resume":    return { path: "/session", body: null, method: "GET", query: { id: arg } };
-    case "memory":    return { path: "/deep-search", body: { question: "what do you know about this repo?" } };
+    case "memory":    return { path: "/deep-search", body: scoped({ question: "what do you know about this repo?" }) };
     case "tools":     return mcpCall("tools/list", {});
     // EVERYTHING ELSE IS AN MCP TOOL. Estelle exposes its whole surface — the code-graph navigation
     // (find_definition, blast_radius, subsystems…), verify, the session diary, and all ~190 live skill
@@ -624,6 +798,14 @@ async function sessionStatus(deps) {
   // /overview under `memory` as {memories, repo_files, entities}. Best-effort: a failed fetch just means the
   // header omits the count, never a session that refuses to open.
   const overview = await get("/overview", key).catch(() => null);
+  // WHICH REPOS THE SERVER ACTUALLY HAS. Without this the header can only guess, and it guessed wrong:
+  // it paired a local directory name with the ACCOUNT-WIDE memory count and read as "this repo holds
+  // 16,991 memories" for an account whose repo_files was 0. `null` on failure is load-bearing and is NOT
+  // the same as `[]` — see repoStatusLine: unknown must never render as "not indexed".
+  const repos = await get("/repos", key).catch(() => null);
+  // The autonomy ceiling, fetched HERE rather than lazily on first use. It was lazy to avoid a blocking
+  // GET at startup; the cost of that was a mode footer drawn from a guess and corrected a keypress later.
+  const scope = await get("/autonomy/scope", key).catch(() => null);
   const mem = (overview && overview.memory) || {};
   const sessions = await get("/sessions", key).catch(() => null);
   const recent = (sessions && (sessions.sessions || sessions.items) || [])[0] || null;
@@ -639,6 +821,10 @@ async function sessionStatus(deps) {
     // Reporting memories under the label "files" told a customer with 880 indexed files that it had 44,374
     // of them. Brief §1.1 asks for both, separately labelled.
     files: mem.repo_files || (account && (account.files || account.memory_files)) || 0,
+    // `null` when /repos could not be read — a failure to ASK is not evidence that nothing is filed.
+    filed: repos && Array.isArray(repos.repos) ? repos.repos : null,
+    // The account's autonomy ceiling, so the first footer is drawn from the truth. Absent on failure.
+    dial: scope && !scope.error && typeof scope.global === "string" ? scope.global : undefined,
     memories: mem.memories || 0,
     // The handle a support conversation needs. `account_id` is designed to be safe to share.
     account_id: account && account.account_id,
@@ -730,6 +916,7 @@ module.exports = {
   readAuth, writeAuth, storedKey,
   looksLikeKey, maskKey, humanDuration, relativeTime, parseInput, COMMANDS,
   statusLines, welcomeBack, renderAnswer, runSession, routeInput, sessionStatus, handleLocal, HELP_ONLY,
+  resolveRepo, repoStatusLine, memoryStatusLine, commandHint,
   expandFileRefs, renderDiff, renderGate, mcpCall, mcpText, unknownTool,
   isSkillExit, runSkill,
   collapsePaste, expandPastes, frecencyScore, parseHistory, historyLine, interruptAction, spinnerPlan,

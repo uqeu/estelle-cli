@@ -113,14 +113,18 @@ test("an unknown server dial fails CLOSED, never open", () => {
 
 test("the mode report says what the server granted, not what the user typed", () => {
   const clamped = s.modeReport("execute", "read_only", C).join("\n");
-  assert.match(clamped, /local\s+execute/);
-  assert.match(clamped, /server\s+read_only/);
-  assert.match(clamped, /effective\s+read_only/);
-  assert.match(clamped, /cannot raise/i, "the CLI must say it cannot grant autonomy");
+  assert.match(clamped, /here\s+auto/);
+  assert.match(clamped, /account\s+plan/);
+  assert.match(clamped, /in force\s+plan/);
+  assert.match(clamped, /can only LOWER/i, "the CLI must say it cannot grant autonomy");
+  // 🔴 A CEILING WITH NO NAMED EXIT is the defect the founder hit: he could not find the step to raise
+  // his own dial, and he built this. `/mode` must always print the exact step when the dial is clamped.
+  assert.match(clamped, /fatelabs\.ca\/dashboard\/settings/, "name the exact step, every time");
+  assert.match(clamped, /nothing to cycle to/i, "explain WHY shift+tab does nothing");
 
   const honest = s.modeReport("propose", "propose", C).join("\n");
-  assert.doesNotMatch(honest, /cannot raise/i);
-  assert.match(honest, /effective\s+propose/);
+  assert.doesNotMatch(honest, /can only LOWER/i);
+  assert.match(honest, /in force\s+edit/);
 });
 
 test("an unreachable server is DISCLOSED in the report, never rendered as read_only-by-choice", () => {

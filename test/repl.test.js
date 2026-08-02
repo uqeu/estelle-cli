@@ -54,15 +54,28 @@ test("status says what Estelle knows, and admits when it knows nothing", () => {
                                 repo: "acme/payments", account_id: "acct_1", providers: 4 });
   // the account id is the handle a support conversation needs, and it is designed to be safe to share
   assert.deepEqual(known[0], ["account", "khai@fatelabs.ca · Team · acct_1"]);
-  // TWO DIFFERENT NUMBERS. Reporting `memories` under the label "files" told a customer with 857 indexed
-  // files that it had 16,991 of them.
-  assert.deepEqual(known[1], ["repo", "acme/payments · 857 files · 16991 memories"]);
+  // #23 (2026-08-02): this used to assert `["repo", "acme/payments · 857 files · 16991 memories"]`.
+  // An earlier fix had split `files` from `memories` because reporting memories under the label "files"
+  // was a lie about WHICH NUMBER. Right, and not far enough — BOTH numbers come from
+  // `namespace_stats(account_key, email)` and are ACCOUNT-WIDE, so attaching them to a repo name was a lie
+  // about SCOPE. It shipped, and the founder hit it on 0.1.10: the header read
+  // `repo estelle · 16991 memories` on an account whose `repo_files` was 0 and whose only filed repo was
+  // `isoproof-bravo`. Two true numbers under a false heading is still a false line.
+  // The repo line now carries the NAME and the INDEX STATE; the counts moved to their own labelled line.
+  assert.deepEqual(known[1], ["repo", "acme/payments · index state unknown"]);
+  assert.deepEqual(known[2], ["memory", "16,991 memories · 857 code files indexed (this account, all repos)"]);
+  // Filed is three-valued: knowing the list changes the verdict, and a failure to ASK never renders as
+  // "not indexed" — that would be a claim about the server made from not reaching it.
+  const filed = r.statusLines({ email: "k@x.io", repo: "acme/payments", filed: ["acme/payments"] });
+  assert.deepEqual(filed[1], ["repo", "acme/payments · indexed"]);
+  const unfiled = r.statusLines({ email: "k@x.io", repo: "acme/payments", filed: ["other/repo"] });
+  assert.match(unfiled[1][1], /not indexed/);
   // ROUTING, never `model` — a model line would advertise the one thing the product says it does not do
   const routing = known.find(([label]) => label === "routing");
   assert.ok(routing && /4 providers/.test(routing[1]) && /\/routing/.test(routing[1]));
   assert.ok(!known.some(([label]) => label === "model"), "a `model` line is off-thesis (brief §1.1a)");
   const empty = r.statusLines({ email: "k@x.io" });
-  assert.match(empty[1][1], /nothing indexed/);
+  assert.match(empty.find(([l]) => l === "memory")[1], /nothing indexed/);
 });
 
 test("a returning user is greeted with the handoff, a new one with nothing", () => {
@@ -366,7 +379,7 @@ test("/help documents the shell escape in the form you actually type", () => {
 test("/mode with no argument reports; a bad name changes nothing", async () => {
   const { said, ctx } = localCtx();
   await r.handleLocal({ kind: "command", name: "mode", arg: "" }, ctx);
-  assert.match(said.join("\n"), /effective\s+propose/);
+  assert.match(said.join("\n"), /in force\s+edit/);
 
   await r.handleLocal({ kind: "command", name: "mode", arg: "yolo" }, ctx);
   assert.match(said.join("\n"), /no mode called "yolo"/);
@@ -377,16 +390,16 @@ test("/mode plan LOWERS the ceiling — the one direction the CLI is allowed to 
   const { said, ctx } = localCtx();
   await r.handleLocal({ kind: "command", name: "mode", arg: "plan" }, ctx);
   assert.equal(ctx.state.mode, "read_only");
-  assert.match(said.join("\n"), /effective\s+read_only/);
+  assert.match(said.join("\n"), /in force\s+plan/);
 });
 
 test("/mode auto on a propose account is CLAMPED and says so — the CLI cannot grant autonomy", async () => {
   const { said, ctx } = localCtx();
   await r.handleLocal({ kind: "command", name: "mode", arg: "auto" }, ctx);
   const out = said.join("\n");
-  assert.match(out, /local\s+execute/);
-  assert.match(out, /effective\s+propose/);
-  assert.match(out, /cannot raise/i);
+  assert.match(out, /here\s+auto/);
+  assert.match(out, /in force\s+edit/);
+  assert.match(out, /can only LOWER/i);
 });
 
 test("/status answers what this session is pointed at, and masks the key", async () => {
@@ -502,7 +515,11 @@ async function promptSession(lines, over) {
 test("the prompt carries the mode on every line — the ceiling is no longer invisible", async () => {
   const { prompts } = await promptSession(["hello"]);
   assert.ok(prompts.length, "the session must have prompted at all");
-  assert.ok(prompts.every((p) => p.includes("propose")), `mode missing from prompt: ${prompts[0]}`);
+  // The DISPLAY name, and never the raw rung. With no dial reachable this is `plan?` — the `?` says we
+  // could not check, which is a different claim from a rung we are asserting. It used to print the bare
+  // enum `read_only` here, putting the exact word the rename removes back on the busiest line on screen.
+  assert.ok(prompts.every((p) => p.includes("plan")), `mode missing from prompt: ${prompts[0]}`);
+  assert.ok(prompts.every((p) => !p.includes("read_only")), `raw rung leaked into the prompt: ${prompts[0]}`);
 });
 
 test("the prompt shows the CLAMP once the account's dial is known and lower", async () => {
@@ -510,7 +527,7 @@ test("the prompt shows the CLAMP once the account's dial is known and lower", as
   const { prompts } = await promptSession(["/mode execute", "hi"],
     { get: async (p) => (p === "/autonomy/scope" ? { global: "propose" } : {}) });
   // `execute` prints as `auto` now — display only; parseMode still resolves it to the rung.
-  assert.ok(prompts.some((p) => p.includes("auto→propose")), prompts.join(" | "));
+  assert.ok(prompts.some((p) => p.includes("auto→edit")), prompts.join(" | "));
 });
 
 test("shift+tab is BOUND on entry and UNBOUND on the way out", async () => {
@@ -529,7 +546,7 @@ test("the cycle moves the mode and hands back a banner and a fresh prompt", asyn
                                    get: async (p) => (p === "/autonomy/scope" ? { global: "branch" } : {}) });
   const first = await cycle();
   assert.match(first.banner, /shift\+tab/);
-  assert.match(first.prompt, /read|propose|branch|auto/);   // the DISPLAY names
+  assert.match(first.prompt, /plan|edit|branch|auto/);   // the DISPLAY names
   const second = await cycle();
   assert.notEqual(first.prompt, second.prompt, "cycling twice must land on a different rung");
 });

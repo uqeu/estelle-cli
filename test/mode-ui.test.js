@@ -58,19 +58,20 @@ test("a local mode ABOVE the ceiling is pulled back into the set, not carried ar
 // ── what the eye sees ───────────────────────────────────────────────────────────
 
 test("the prompt carries the EFFECTIVE mode — the only thing true of the next command", () => {
-  // The names here are the DISPLAY names: `execute` prints as `auto`, `read_only` as `read`. The founder
-  // designed these modes and could not tell what `read_only` meant while looking at it.
-  assert.equal(ui.promptLabel("propose", "execute"), "propose");
-  assert.equal(ui.promptLabel("execute", "propose"), "auto→propose");      // clamped, and it shows
-  assert.equal(ui.promptLabel("propose", ""), "propose?");                 // dial unverified
+  // The names here are the DISPLAY names (founder's call 2026-08-02): `read_only` prints as `plan`,
+  // `propose` as `edit`, `execute` as `auto`. Nobody outside this codebase knew what "propose" meant as a
+  // MODE — Claude Code has plan/edit, Codex has plan, Kimi has plan; we had invented four words.
+  assert.equal(ui.promptLabel("propose", "execute"), "edit");
+  assert.equal(ui.promptLabel("execute", "propose"), "auto→edit");         // clamped, and it shows
+  assert.equal(ui.promptLabel("propose", ""), "edit?");                    // dial unverified
 });
 
 test("the display name is DISPLAY ONLY — the value underneath is still the server's rung", () => {
   // The whole risk of renaming a privilege ladder for humans is that the rename becomes the value. It
   // must not: parseMode still resolves every word to the rung, and the ladder test would fail otherwise.
-  assert.equal(local.modeName("read_only"), "read");
+  assert.equal(local.modeName("read_only"), "plan");
   assert.equal(local.modeName("execute"), "auto");
-  assert.equal(local.parseMode("read"), "read_only");
+  assert.equal(local.parseMode("plan"), "read_only");
   assert.equal(local.parseMode("auto"), "execute");
   assert.equal(local.parseMode("read_only"), "read_only");   // the rung's own name still works
   assert.equal(local.modeName("nonsense"), "nonsense");      // unknown is shown, never hidden
@@ -78,14 +79,26 @@ test("the display name is DISPLAY ONLY — the value underneath is still the ser
 
 test("the banner names the mode, what it permits, and the cycle key", () => {
   const line = ui.modeBanner("propose", "execute", C);
-  assert.match(line, /propose/);
+  assert.match(line, /edit/);
   assert.match(line, /shift\+tab/);
-  assert.match(line, /reviewable PR/);            // MODE_WHAT, not a bare word
+  assert.match(line, /PR a human merges/);        // MODE_WHAT, not a bare word
+});
+
+test("🔴 a ONE-RUNG ladder offers NO cycle hint, and names the remedy instead", () => {
+  // The founder's own account: the ceiling is read_only, so shift+tab cycled the mode to ITSELF forever
+  // while the footer said "(shift+tab to cycle)". He spammed it believing the CLI was broken; it was
+  // working exactly as designed and told him nothing. Defect class 3 in the UI layer.
+  const line = ui.modeBanner("read_only", "read_only", C);
+  assert.doesNotMatch(line, /shift\+tab/, "never advertise a cycle that cannot happen");
+  assert.match(line, /ceiling/i, "say WHY there is nowhere to go");
+  assert.match(line, /fatelabs\.ca\/dashboard\/settings/, "and name the exact step to change it");
+  // A multi-rung ladder must still offer the cycle — the guard must not have removed the feature.
+  assert.match(ui.modeBanner("read_only", "execute", C), /shift\+tab/);
 });
 
 test("the banner says outright when the account clamps the mode", () => {
   const line = ui.modeBanner("execute", "propose", C);
-  assert.match(line, /propose/);
+  assert.match(line, /edit/);
   assert.match(line, /clamped|cannot raise|account/i);
 });
 

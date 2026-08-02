@@ -75,12 +75,26 @@ function modeBanner(localMode, server, c) {
   const head = `  ${c.bold(local.modeName(effective))} ${c.dim("· " + what)}`;
   const tail = c.dim("  (shift+tab to cycle)");
   if (!known) return `${head}  ${c.amber("· dial unverified — assuming read_only")}${tail}`;
+
+  // 🔴 NEVER OFFER A CYCLE ON A ONE-RUNG LADDER. Observed by the founder on his own account: the ceiling
+  // is `read_only`, so `cycleModes` returns a single rung and shift+tab cycles the mode TO ITSELF forever
+  // while the footer still advertised "(shift+tab to cycle)". He spammed it believing the CLI was broken.
+  // The code was behaving exactly as designed and told him nothing — defect class 3 (unknown rendered as
+  // OK) in the UI layer. This file already reasoned carefully about not hiding rungs on an UNVERIFIED
+  // dial; the case it never covered is a KNOWN dial with exactly one rung.
+  //
+  // So: say the ceiling, and say the REMEDY. A dead end with no exit named is worse than no hint at all.
+  if (cycleModes(server).length <= 1) {
+    return `${head}  ${c.dim(`· your account's ceiling — /mode explains it, `
+      + `raise it at ${local.SETTINGS_URL} to unlock ${local.modeName("propose")}`)}`;
+  }
   if (localMode !== effective) {
     return `${head}  ${c.amber(`· ${local.modeName(localMode)} clamped by your account's dial `
       + `(${local.modeName(server)})`)}${tail}`;
   }
   return head + tail;
 }
+
 
 /** Bind shift+tab on a real terminal. Returns the unbind; a NO-OP on anything else.
  *
