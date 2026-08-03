@@ -57,4 +57,20 @@ function storedKey(env) {
   return (e.ESTELLE_API_KEY || "").trim() || readAuth();
 }
 
-module.exports = { authDir, authFile, readAuth, writeAuth, storedKey };
+/** Remove the stored key. Idempotent — a missing file is the desired end state, not an error.
+ *
+ * 🔴 ONE DEFINITION, because "a rejected key must not stay on disk" was true on ONE of the two doors.
+ * `init` gets it right by never writing an unverified key (`estelle.js:336` — `if (!v.rejected)
+ * persistKey(key)`), and `verify-cli-publish.sh` step 5 asserts exactly that and passes. The SESSION door
+ * writes FIRST and validates after (`repl.js:575`), so a rejected key stayed in `~/.estelle/auth.json` and
+ * the only recovery offered was "delete the file yourself" — dotfile surgery, on the door a first-time
+ * customer meets before any other. Two doors, one guard; this is the guard the second one lacked.
+ *
+ * ⛔ ONLY an EXPLICIT rejection (401/403/404) may call this. A timeout, a firewall or an outage is a
+ * failure to ASK, and discarding a valid key on one is the defect `init`'s comment at :332 was written
+ * to prevent — it would make a brief blip cost the customer their credential. */
+function clearAuth() {
+  try { fs.rmSync(authFile(), { force: true }); } catch { /* already gone is success */ }
+}
+
+module.exports = { authDir, authFile, readAuth, writeAuth, clearAuth, storedKey };

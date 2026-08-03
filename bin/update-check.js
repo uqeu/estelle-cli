@@ -98,8 +98,18 @@ function updateNotice(current, latest) {
   // more than the layout: it shows the command before running it (we are asking to modify their machine),
   // and it says config and sessions carry over — the sentence that actually makes someone press enter.
   // The changelog link closes the other half: we have GitHub releases and pointed at nothing.
+  // 🔴 "RUN npx AND YOU GET THE LATEST" IS FALSE FOR EVERY RETURNING USER, and this notice is where that
+  // lie was cheapest to fix. Measured 2026-08-03: on a machine with 0.2.1 installed globally,
+  // `npx @fatelabs/estelle` resolved to the INSTALLED 0.2.1 and printed this very notice about 0.2.2 —
+  // npx prefers an existing install over the registry. So the people most likely to read this line are
+  // exactly the people for whom plain `npx` will keep running the old build, and a fix shipped to them
+  // silently does nothing. That is how an inert credential scrub survived a release.
+  //
+  // So the notice names BOTH honest routes: upgrade the install, or pin the version for one run. Telling
+  // someone to "just run npx" here would be advice that cannot work.
   return `update available — ${current} → ${latest}   npm i -g @fatelabs/estelle`
-    + `\n  your key, config and sessions carry over · what changed: ${CHANGELOG}`;
+    + `\n  your key, config and sessions carry over · what changed: ${CHANGELOG}`
+    + `\n  plain npx keeps running ${current} while it is installed — npx @fatelabs/estelle@${latest} to try it once`;
 }
 
 /** Read the cached `{checkedAt, latest}`; `{}` on anything unreadable, corrupt, or absent. Never throws:

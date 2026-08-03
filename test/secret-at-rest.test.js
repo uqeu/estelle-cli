@@ -99,3 +99,45 @@ test("the transcript records a secret as (saved), never as the value", () => {
   const rec = ask.recordOf({ kind: "secret", question: "Paste your key" }, ask.accepted(FAKE));
   assert.ok(!JSON.stringify(rec).includes(FAKE), "a transcript is scrolled back to, and screenshotted");
 });
+
+// ── the THIRD surface: a credential must never be DRAWN either ─────────────────
+//
+// Measured on a real pty 2026-08-03 against published 0.2.2, with a BOGUS sentinel so no live key was
+// involved, and with a 12-second settle after the key prompt was already on screen — so this is the
+// product, not a racing test harness:
+//
+//     key ›
+//     queued SENTINEL_LATE_PASTE_ZZZ  · esc to clear      <- drawn in full
+//     **********************                              <- masking, but only after
+//
+// The prompt says "PASTE your Estelle key". A paste lands in exactly the window where the queue is
+// capturing and the masked reader has not attached yet. `historyLine` refuses to WRITE a credential and
+// `scrubHistory` removes ones already written; this third surface — DISPLAY — had no guard at all.
+
+const pending = require("../bin/pending.js");
+
+const plain = { dim: (s) => s, bold: (s) => s };
+
+test("🔴 the queued preview never draws a credential", () => {
+  const key = "estelle_live_" + "9f2b7c1d4e6a8b0c2d4e3f9";   // split so this file is not itself flagged
+  const line = pending.preview([key], plain);
+  assert.ok(!line.includes(key), "the queued indicator drew the credential in full");
+  assert.match(line, /hidden/, "it must SAY why it is hidden, not silently blank");
+  assert.match(line, /esc to clear/, "the customer must still be able to cancel it");
+  assert.match(line, /queued/, "it must still say something is waiting");
+});
+
+test("masking the secret does not blind the ordinary preview", () => {
+  // The paired positive. A `preview` that returned "••••" for everything would pass the test above and
+  // destroy the feature — pending.js exists precisely so a customer can SEE what is queued.
+  const line = pending.preview(["what does greet return?"], plain);
+  assert.match(line, /what does greet return\?/, "ordinary queued text must still be shown verbatim");
+  assert.doesNotMatch(line, /hidden/);
+});
+
+test("a credential hidden in a longer queue still hides, and keeps the count", () => {
+  const key = "sk-" + "abcdefghijklmnopqrstuvwx";
+  const line = pending.preview([key, "second thing"], plain);
+  assert.ok(!line.includes(key));
+  assert.match(line, /\+1 more/, "the rest of the queue must still be counted");
+});

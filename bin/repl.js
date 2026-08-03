@@ -56,7 +56,7 @@ const ask = require("./ask.js");
 // so they cannot drift apart again — they already had, and the cost was the first-run flow: this file
 // saved the key, printed "Run `estelle sweep`", and sweep resolved its key from the environment only.
 const auth = require("./auth.js");
-const { readAuth, writeAuth, storedKey } = auth;
+const { readAuth, writeAuth, clearAuth, storedKey } = auth;
 
 // ── pure helpers (unit-tested; the I/O around them is thin) ─────────────────────
 
@@ -195,7 +195,7 @@ function expandFileRefs(text, readFile) {
 // The input polish (paste collapsing, history, the spinner) lives in input-ui.js and is re-exported at
 // the bottom of this file, so repl.js stays a router and nothing that imports them has to change.
 const inputUi = require("./input-ui.js");
-const { collapsePaste, expandPastes, frecencyScore, parseHistory, historyLine,
+const { collapsePaste, expandPastes, frecencyScore, parseHistory, historyLine, scrubHistory,
         interruptAction, spinnerPlan, withSpinner, HISTORY_MAX } = inputUi;
 
 
@@ -553,7 +553,17 @@ async function runSession(deps) {
     // First run: one paste, ever. Never re-prompted, never echoed back.
     // `/keys` 404s — measured 2026-08-01, both URLs fetched. The dashboard route is `/dashboard/keys`.
     // The very first instruction a new customer follows was wrong.
-    out(`  ${c.dim("Paste your Estelle key — get one at fatelabs.ca/dashboard/keys")}`);
+    // 🔴 THE TOLL GATE. This screen used to be a bare credential demand: no statement of what Estelle is,
+    // no free-tier hint, no mention that `--help` exists. Walked cold as a stranger on 2026-08-03, it was
+    // the single highest-loss point in the funnel — everyone reaches it, before any value is shown, and the
+    // CLI is also the DEMO SURFACE. One screen of copy, and nothing below it changed.
+    out(`  ${c.bold("Estelle grounds your AI coding agents in your real codebase")}`);
+    out(`  ${c.dim("so they cite your actual files instead of inventing APIs that do not exist.")}`);
+    out("");
+    out(`  ${c.dim("Get a free key at ")}${c.teal("fatelabs.ca/dashboard/keys")}${c.dim(" — no card, takes a minute.")}`);
+    out(`  ${c.dim("Just looking? ")}${c.teal("npx @fatelabs/estelle --help")}${c.dim(" needs no key.")}`);
+    out("");
+    out(`  ${c.dim("Paste it below (or press enter to leave).")}`);
     // MASKED. The comment above has claimed "never echoed back" since this shipped, and nothing enforced
     // it — the session's readline attaches stdout in terminal mode, which echoes. `promptSecret` is
     // supplied only on a TTY; on a pipe (CI, every scripted test) there is no terminal echo to suppress
@@ -568,7 +578,16 @@ async function runSession(deps) {
                                  { out, c, promptSecret: deps.promptSecret, readLine: deps.readLine || prompt });
     const pasted = keyAsk.ok ? keyAsk.value : null;
     if (!looksLikeKey(pasted)) {
-      out(`  ${c.red("That doesn't look like an Estelle key.")} ${c.dim("Run estelle again when you have one.")}`);
+      // TWO DIFFERENT THINGS, SAID DIFFERENTLY. Pressing enter without typing used to answer "That doesn't
+      // look like an Estelle key" — blaming the customer for input they never gave, on the reflexive first
+      // keystroke, and then exiting. An empty answer is someone leaving, not someone getting it wrong.
+      const blank = !String(pasted || "").trim();
+      if (blank) {
+        out(`  ${c.dim("No key yet — get one free at ")}${c.teal("fatelabs.ca/dashboard/keys")}${c.dim(", then run this again.")}`);
+        out(`  ${c.dim("Meanwhile ")}${c.teal("npx @fatelabs/estelle --help")}${c.dim(" shows everything it can do.")}`);
+      } else {
+        out(`  ${c.red("That doesn't look like an Estelle key.")} ${c.dim("They start with ")}${c.bold("estelle_live_")}${c.dim(" — copy it again from fatelabs.ca/dashboard/keys.")}`);
+      }
       return 1;
     }
     key = pasted.trim();
@@ -582,7 +601,12 @@ async function runSession(deps) {
   // "is it already in the repo?" before writing anything new.
   const status = await sessionStatus({ get, key });
   if (status && status.rejected) {
-    out(`  ${c.red("That key was rejected.")} ${c.dim("Delete ~/.estelle/auth.json and run estelle again.")}`);
+    // THE KEY IS REMOVED, NOT LEFT FOR THE CUSTOMER TO DELETE. This branch used to print "Delete
+    // ~/.estelle/auth.json and run estelle again" — dotfile surgery as the recovery path, on the first
+    // screen a new customer ever reaches, after a single mistyped paste. `sessionStatus` sets `rejected`
+    // ONLY on 401/404, so this is an explicit rejection and never a network blip (see clearAuth's note).
+    clearAuth();
+    out(`  ${c.red("That key was rejected.")} ${c.dim("It has been removed — run estelle again to paste another.")}`);
     return 1;
   }
   // #23: the header used `cwd` — `path.basename(process.cwd())` — while `deps.repo` sat in the SAME deps
@@ -1454,7 +1478,12 @@ module.exports = {
   resolveRepo, repoStatusLine, memoryStatusLine, repoRow, commandHint, verifyLines,
   expandFileRefs, renderDiff, renderGate, mcpCall, mcpText, unknownTool,
   isSkillExit, runSkill,
-  collapsePaste, expandPastes, frecencyScore, parseHistory, historyLine, interruptAction, spinnerPlan,
+  // 🔴 `scrubHistory` WAS MISSING HERE AND THE OMISSION WAS SILENT. `estelle.js:1543` calls
+  // `repl.scrubHistory(...)` inside a `try` whose `catch` is commented "first run", so the TypeError was
+  // swallowed and TWO things never happened: the credential scrub never ran (a live key stayed at rest in
+  // `~/.estelle/history.jsonl` on every launch), and `history` never loaded — the throw aborts the block
+  // BEFORE `parseHistory`, so ↑/↓ persisted history was dead for everyone who had a history file.
+  collapsePaste, expandPastes, frecencyScore, parseHistory, historyLine, scrubHistory, interruptAction, spinnerPlan,
   withSpinner, HISTORY_MAX,
   readline,
 };

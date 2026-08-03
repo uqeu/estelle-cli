@@ -183,3 +183,82 @@ test("a corrupt auth.json reads as no key, never as a crash", async () => {
     assert.ok(!/at .*\.js:\d+/.test(r.out), `${body} produced a stack trace:\n${r.out}`);
   }
 });
+
+// ── BOTH DOORS DISCARD A REJECTED KEY — the sixth "two doors, one guard" of the campaign ──────────────
+//
+// `verify-cli-publish.sh` step 5 asserts "a 401 discards the key, as it must" and PASSES. It exercises
+// `init`, which gets it right by never persisting an unverified key (`estelle.js:336`). The SESSION door
+// writes first and validates after (`repl.js:575`), so a rejected key stayed in ~/.estelle/auth.json and
+// the recovery printed was "Delete ~/.estelle/auth.json and run estelle again" — dotfile surgery, on the
+// first screen a new customer reaches, after one mistyped paste. Found by walking the path as a stranger.
+//
+// A guard asserted on one door is not a property of the product. Both are asserted here.
+
+const authMod = require("../bin/auth.js");
+
+test("🔴 auth exposes ONE way to remove a stored key", () => {
+  assert.equal(typeof authMod.clearAuth, "function",
+    "both doors must clear through the same definition, or they will disagree about what 'discard' means");
+});
+
+test("🔴 THE SESSION DOOR: an explicitly rejected key is REMOVED, not left for the customer to delete", async () => {
+  const os = require("node:os"), fsMod = require("node:fs"), pathMod = require("node:path");
+  const home = fsMod.mkdtempSync(pathMod.join(os.tmpdir(), "estelle-reject-"));
+  const realHome = os.homedir;
+  os.homedir = () => home;
+  try {
+    authMod.writeAuth("estelle_live_" + "rejectedkey000000000000");
+    assert.ok(fsMod.existsSync(authMod.authFile()), "precondition: the key is on disk");
+
+    const said = [];
+    const repl = require("../bin/repl.js");
+    await repl.runSession({
+      key: "estelle_live_" + "rejectedkey000000000000",
+      // 401 is what the server answers for a key it does not know — an EXPLICIT rejection.
+      get: async () => ({ error: { code: 401 } }),
+      post: async () => ({}),
+      prompt: async () => null,
+      out: (s) => said.push(String(s)),
+      c: new Proxy({}, { get: () => (s) => String(s) }),
+      cwd: "repo", now: () => Date.now(),
+    });
+
+    assert.ok(!fsMod.existsSync(authMod.authFile()),
+      "the rejected key is STILL on disk — the customer is back to deleting a dotfile by hand");
+    const text = said.join("\n");
+    assert.match(text, /rejected/i);
+    assert.doesNotMatch(text, /Delete ~\/\.estelle\/auth\.json/,
+      "dotfile surgery must not be the recovery instruction any more");
+  } finally {
+    os.homedir = realHome;
+    fsMod.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("⛔ a FAILURE TO ASK must never discard the key — only an explicit rejection may", async () => {
+  // The paired negative, and the more important half. `init`'s comment at estelle.js:332 records why:
+  // gating persistence on a round-trip means a firewall or a brief outage costs a customer a VALID key.
+  // A fix that discarded on any error would pass the test above and be strictly worse than the bug.
+  const os = require("node:os"), fsMod = require("node:fs"), pathMod = require("node:path");
+  const home = fsMod.mkdtempSync(pathMod.join(os.tmpdir(), "estelle-outage-"));
+  const realHome = os.homedir;
+  os.homedir = () => home;
+  try {
+    authMod.writeAuth("estelle_live_" + "goodkey00000000000000000");
+    const repl = require("../bin/repl.js");
+    await repl.runSession({
+      key: "estelle_live_" + "goodkey00000000000000000",
+      get: async () => { throw new Error("ETIMEDOUT"); },   // the network, not the server
+      post: async () => ({}),
+      prompt: async () => null,
+      out: () => {},
+      c: new Proxy({}, { get: () => (s) => String(s) }),
+      cwd: "repo", now: () => Date.now(),
+    });
+    assert.ok(fsMod.existsSync(authMod.authFile()),
+      "an outage discarded a VALID key — a blip must never cost the customer their credential");
+  } finally {
+    os.homedir = realHome;
+    fsMod.rmSync(home, { recursive: true, force: true });
+  }
+});

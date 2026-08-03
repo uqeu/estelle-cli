@@ -23,6 +23,11 @@
 //
 // Pure. `estelle.js` owns the array and readline; this owns what it MEANS and how it reads.
 
+// The ONE credential predicate, imported rather than restated. `SECRET_SHAPED` lives in input-ui.js and
+// already backs the history writer and the scrub; a second copy here is how the three surfaces would drift
+// into disagreeing about what a secret looks like. input-ui.js requires nothing, so this adds no cycle.
+const { looksSecret } = require("./input-ui.js");
+
 /** How many lines are waiting behind the one being answered. */
 function depth(queued) {
   return Array.isArray(queued) ? queued.length : 0;
@@ -40,6 +45,25 @@ function preview(queued, c, max) {
   if (!n) return "";
   const width = Math.max(20, max || 48);
   const head = String(queued[0] || "").replace(/\s+/g, " ").trim();
+  // 🔴 A CREDENTIAL IS NEVER RENDERED HERE — the THIRD member of this family, measured on a real pty
+  // 2026-08-03 against a published build. The key prompt says "PASTE your Estelle key", and a paste that
+  // lands while the masked reader is still attaching is captured by this queue and drawn in full:
+  //     queued SENTINEL_LATE_PASTE_ZZZ  · esc to clear
+  // Confirmed real rather than a test artefact — it still happened with a 12s settle after the prompt was
+  // on screen, and with a BOGUS sentinel so no live key was involved. The masking itself works; it simply
+  // engages after this line has already drawn the secret.
+  //
+  // The other two members already had guards and this one had none: `historyLine` refuses to WRITE a
+  // credential (input-ui.js:86) and `scrubHistory` removes ones already written (:94). Same value, same
+  // predicate, third surface — display.
+  //
+  // ⛔ IT IS MASKED, NOT DROPPED. This file's own rule (:20) is that queued input is never discarded
+  // silently: a customer who typed something and never saw it happen has been lied to twice. So the line
+  // still says something is waiting and still offers ESC — it just does not read the secret aloud.
+  if (looksSecret(head)) {
+    const more = n > 1 ? c.dim(` +${n - 1} more`) : "";
+    return `  ${c.dim("queued")} ${c.bold("••••••••")}${c.dim(" (hidden — looks like a credential)")}${more}${c.dim("  · esc to clear")}`;
+  }
   const shown = head.length > width ? `${head.slice(0, width - 1)}…` : head;
   const more = n > 1 ? c.dim(` +${n - 1} more`) : "";
   return `  ${c.dim("queued")} ${c.bold(shown)}${more}${c.dim("  · esc to clear")}`;
