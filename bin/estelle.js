@@ -1261,9 +1261,13 @@ async function cmdVerify() {
   let code;
   try { code = fs.readFileSync(target, "utf8"); } catch (e) { out.line("  " + amber(`Can't read ${target}: ${String((e && e.message) || e)}`)); return; }
   out.partial("  " + dim(`Grounding ${target} against your repo… `));
-  // `--repo` makes the server's own question ANSWERABLE. Without it a multi-repo account could read the
-  // scope_ask and have no way to act on it, which is a question asked into a void.
-  const scopeRepo = flag("--repo", "");
+  // `--repo` makes the server's own question ANSWERABLE — without it a multi-repo account could read the
+  // scope_ask and have no way to act on it, which is a question asked into a void. But it is an OVERRIDE,
+  // not the only source, and treating it as the only source was the third instance of E-043: `estelle
+  // verify x.py`, run from inside a repo, asked the server a question the cwd already answered.
+  // `repoNameFor` is the one definition, exactly as `cmdAsk` uses it at :1065; the flag still wins, for the
+  // case where the directory is not the repo you mean.
+  const scopeRepo = flag("--repo", "") || repoNameFor(process.cwd());
   const r = await apiPost("/verify", scopeRepo ? { answer: code, repo: scopeRepo } : { answer: code }, key);
   if (!r.ok) return failClosed(r, "verify");
   out.line(ok); out.line("");

@@ -1190,7 +1190,11 @@ function routeInput(input, ctx, opts) {
       // question it answered — an unlabelled default reads exactly like a verdict on your last turn.
       return { path: "/route", body: { task_kind: "chat" }, defaultOnly: true };
     }
-    case "verify":    return { path: "/verify", body: { answer: arg } };
+    // THE SECOND CALLER WITH THE RESOLVER ALREADY IN SCOPE. This sent `{answer}` while `scoped()` sat
+    // fourteen lines up, so on a multi-repo account the session asked the server a scope question the
+    // HEADER had already answered — the same omission as the always-on hook (E-043), and the same one
+    // `/deep-search` and `/orchestra` right here already avoid.
+    case "verify":    return { path: "/verify", body: scoped({ answer: arg }) };
     case "init":      return { path: "/wiki", body: null, method: "GET" };
     case "sessions":  return { path: "/sessions", body: null, method: "GET" };
     case "resume":    return { path: "/session", body: null, method: "GET", query: { id: arg } };

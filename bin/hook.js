@@ -414,7 +414,17 @@ async function runHook(mode, payload, deps) {
   const { file, code } = editedFile(payload);
   if (mode === "ground") {
     if (!file.endsWith(".py") || !code.trim()) return 0;
-    const report = await post("/verify", { answer: code }).catch(() => null);
+    // 🔴 `repo` IS THE DIFFERENCE BETWEEN A VERDICT AND A QUESTION, and its absence here made the product's
+    // headline feature inert for every multi-repo customer. Posting `{answer}` alone leaves the server to
+    // resolve scope, and on a multi-repo account it CANNOT: `grounding_ask()` answers
+    // `{grounded:false, reason:"multi-repo account, no scope signal - ask which repo"}`. `groundVerdict`
+    // reads that — correctly — as an ABSTENTION, so this hook printed "CANNOT verify" and let the edit
+    // through, on the one path that fires whether the customer opted in or not. The gate never ran.
+    // Same resolver as the `/reindex` write below, so the namespace the sync hook WRITES is the one the gate
+    // READS — one definition, never a second. Omitted when empty: a guessed scope is worse than none,
+    // because the server would honour it.
+    const repo = repoNameFor(process.cwd());
+    const report = await post("/verify", repo ? { answer: code, repo } : { answer: code }).catch(() => null);
     // Every way this can fail to produce a verdict, in ONE fail-closed order. It used to test
     // `report === null` only, which the real `post` never returns — so a refused or erroring /verify printed
     // nothing and the edit proceeded as if grounded; and an ABSTENTION read as clean for the same reason.
