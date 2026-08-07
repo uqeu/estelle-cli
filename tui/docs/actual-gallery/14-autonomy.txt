@@ -1,0 +1,34 @@
+ESTELLE  ·  uqeu/estelle
+
+┌ CONVERSATION  Tab · Ctrl+←/→ focus ────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+┌ AUTONOMY ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│> plan                      verify · remember · retrieve · advise · current                                                     │
+│  edit                      + sandboxed diff · reviewable PR                                                                    │
+│  branch                    + non-main branch push · CI                                                                         │
+│  auto                      + guarded merge · commands · otherwise reviewable PR                                                │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+shift+tab change mode  ·  tab move focus  ·  / commands  |  plan  ·  routing auto

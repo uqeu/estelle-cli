@@ -1,0 +1,42 @@
+ ESTELLE   ORCHESTRA  fatelabs/estelle  ·  main  ·  repo graph current
+ DESIGN FIXTURE · NOT LIVE DATA · deterministic Ratatui TestBackend render
+                                                                                                                                                        ┌ CONTEXT  Alt+M · /context ────────────────────
+  ● 8 participants finished · 8 completed · 0 failed · $14.62 measured                                                                                  │
+                                                                                                                                                        │ Grounding
+  — Estelle Orchestra — Ground checkout failures — completed x8        ────────────────────────                                                         │ Files            7
+  Participants  GPT-5 ×2 · Claude Opus 4.1 ×2 · Gemini 2.5 Pro ×2 · Grok 4 ×2                                                                           │ Symbols          12 resolved
+                                                                                                                                                        │ Working memory   3 local notes
+  001 [∷∷∷∷∷∷∷∷] ✓ [GPT-5] com 002 [∷∷∷∷∷∷∷∷] ✓ [Opus] comp 003 [∷∷∷∷∷∷∷∷] ✓ [Gemini] co 004 [∷∷∷∷∷∷∷∷] ✓ [Grok] comp 005 [∷∷∷∷∷∷∷∷] ✓ [GPT-5] com      │
+                                                                                                                                                        │ Fleet
+  006 [∷∷∷∷∷∷∷∷] ✓ [Opus] comp 007 [∷∷∷∷∷∷∷∷] ✓ [Gemini] co 008 [∷∷∷∷∷∷∷∷] ✓ [Grok] comp                                                                │ Lifecycle        terminal
+                                                                                                                                                        │ Observed         12s ago
+                                                                                                                                                        │ Source           /orchestra/run
+  ███████████████████████████████████████████████████████████████████completed 8/8 ███████████████████████████████████████████████████████████████████  │
+                                                                                                                                                        │ Cost
+                                                                                                                                                        │ Spent            $14.62
+                                                                                                                                                        │ Ceiling          $180.00
+  Human summary                                                                                                                                         │
+  ✓ 8 grounded outcomes                                                                                                                                 │ Memory
+  No result inferred from elapsed time.                                                                                                                 │ LOCAL differs from team graph
+                                                                                                                                                        │
+  Next action                                                                                                                                           │
+  Open PR #184 for review                                                                                                                               │
+     ·                                              ·                                              ·                                              1     │                                        0
+                                          ·                                              1                                              0               │                              ·
+                                1                                              0                                              ·                         │                    ·
+                      0                                              ·                                              ·                                   │          ×
+            ·                                              ·                                              ×                                             │·
+  ·                                              ×                                              ·                                              ·        │                                     ·
+                                       ·                                              ·                                              ·                  │                           1
+                             ·                                              ·                                              1                            │                 0
+                   ·                                              1                                              0                                      │       ·
+         1                                              0                                              ·                                              · │                                            ×
+                                              ·                                              ·                                              ×           │                                  ·
+                                    ·                                              ×                                              ·                     │                        ·
+                          ×                                              ·                                              ·                               │              ·
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+› Ask Estelle…
+
+
+ orchestra GPT-5 · auto route   ~/Desktop/estelle   main                                                   context: 18%
+

@@ -1,0 +1,153 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1472" height="716" viewBox="0 0 1472 716">
+<rect width="100%" height="100%" fill="#101010"/>
+<g font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="14" xml:space="preserve">
+<text x="16" y="24" fill="#E9E6DC" font-weight="700">ESTELLE</text>
+<text x="79" y="24" fill="#C8C2B3" font-weight="400">  ·  </text>
+<text x="124" y="24" fill="#E9E6DC" font-weight="400">uqeu/estelle</text>
+<text x="16" y="60" fill="#C8C2B3" font-weight="400">┌ CONVERSATION  Tab · Ctrl+←/→ focus ────────────────────────────────────────────────────────────────────────────────┐</text>
+<text x="1078" y="60" fill="#707478" font-weight="400">┌ LIVE PRODUCTION ───────────────────────┐</text>
+<text x="16" y="78" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="78" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="78" fill="#707478" font-weight="400">│</text>
+<text x="1087" y="78" fill="#E9E6DC" font-weight="700">APP HEALTH</text>
+<text x="1447" y="78" fill="#707478" font-weight="400">│</text>
+<text x="16" y="96" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="96" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="96" fill="#707478" font-weight="400">│</text>
+<text x="1087" y="96" fill="#E9E6DC" font-weight="400">error counts · ▂▅▃█  14                 </text>
+<text x="1447" y="96" fill="#707478" font-weight="400">│</text>
+<text x="16" y="114" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="114" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="114" fill="#707478" font-weight="400">│</text>
+<text x="1087" y="114" fill="#E9E6DC" font-weight="400">measured · 14/3292 requests             </text>
+<text x="1447" y="114" fill="#707478" font-weight="400">│</text>
+<text x="16" y="132" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="132" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="132" fill="#707478" font-weight="400">│</text>
+<text x="1087" y="132" fill="#E9E6DC" font-weight="400">uptime checks · 4/4 up                  </text>
+<text x="1447" y="132" fill="#707478" font-weight="400">│</text>
+<text x="16" y="150" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="150" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="150" fill="#707478" font-weight="400">│</text>
+<text x="1447" y="150" fill="#707478" font-weight="400">│</text>
+<text x="16" y="168" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="168" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="168" fill="#707478" font-weight="400">│</text>
+<text x="1087" y="168" fill="#E9E6DC" font-weight="700">AGENT HEALTH</text>
+<text x="1447" y="168" fill="#707478" font-weight="400">│</text>
+<text x="16" y="186" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="186" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="186" fill="#707478" font-weight="400">│State unavailable · no read contract.</text>
+<text x="1447" y="186" fill="#707478" font-weight="400">│</text>
+<text x="16" y="204" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="204" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="204" fill="#707478" font-weight="400">│Send telemetry to POST /agent/events.</text>
+<text x="1447" y="204" fill="#707478" font-weight="400">│</text>
+<text x="16" y="222" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="222" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="222" fill="#707478" font-weight="400">│</text>
+<text x="1447" y="222" fill="#707478" font-weight="400">│</text>
+<text x="16" y="240" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="240" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="240" fill="#707478" font-weight="400">│</text>
+<text x="1087" y="240" fill="#E9E6DC" font-weight="700">WHAT ESTELLE CAUGHT</text>
+<text x="1447" y="240" fill="#707478" font-weight="400">│</text>
+<text x="16" y="258" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="258" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="258" fill="#707478" font-weight="400">│No errors have reached Estelle yet.</text>
+<text x="1447" y="258" fill="#707478" font-weight="400">│</text>
+<text x="16" y="276" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="276" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="276" fill="#707478" font-weight="400">│Point OTLP or Sentry at</text>
+<text x="1447" y="276" fill="#707478" font-weight="400">│</text>
+<text x="16" y="294" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="294" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="294" fill="#707478" font-weight="400">│api.fatelabs.ca/monitor/ingest.</text>
+<text x="1447" y="294" fill="#707478" font-weight="400">│</text>
+<text x="16" y="312" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="312" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="312" fill="#707478" font-weight="400">│</text>
+<text x="1447" y="312" fill="#707478" font-weight="400">│</text>
+<text x="16" y="330" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="330" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="330" fill="#707478" font-weight="400">│</text>
+<text x="1087" y="330" fill="#E9E6DC" font-weight="700">WHAT ESTELLE DID</text>
+<text x="1447" y="330" fill="#707478" font-weight="400">│</text>
+<text x="16" y="348" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="348" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="348" fill="#707478" font-weight="400">│Nothing to repair in the current feed.</text>
+<text x="1447" y="348" fill="#707478" font-weight="400">│</text>
+<text x="16" y="366" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="366" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="366" fill="#707478" font-weight="400">│</text>
+<text x="1447" y="366" fill="#707478" font-weight="400">│</text>
+<text x="16" y="384" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="384" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="384" fill="#707478" font-weight="400">│</text>
+<text x="1087" y="384" fill="#E9E6DC" font-weight="700">GITHUB</text>
+<text x="1447" y="384" fill="#707478" font-weight="400">│</text>
+<text x="16" y="402" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="402" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="402" fill="#707478" font-weight="400">│Connection state not loaded in this</text>
+<text x="1447" y="402" fill="#707478" font-weight="400">│</text>
+<text x="16" y="420" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="420" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="420" fill="#707478" font-weight="400">│pane.</text>
+<text x="1447" y="420" fill="#707478" font-weight="400">│</text>
+<text x="16" y="438" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="438" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="438" fill="#707478" font-weight="400">│Run estelle github status.</text>
+<text x="1447" y="438" fill="#707478" font-weight="400">│</text>
+<text x="16" y="456" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="456" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="456" fill="#707478" font-weight="400">│</text>
+<text x="1447" y="456" fill="#707478" font-weight="400">│</text>
+<text x="16" y="474" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="474" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="474" fill="#707478" font-weight="400">│</text>
+<text x="1447" y="474" fill="#707478" font-weight="400">│</text>
+<text x="16" y="492" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="492" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="492" fill="#707478" font-weight="400">│</text>
+<text x="1447" y="492" fill="#707478" font-weight="400">│</text>
+<text x="16" y="510" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="510" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="510" fill="#707478" font-weight="400">│</text>
+<text x="1447" y="510" fill="#707478" font-weight="400">│</text>
+<text x="16" y="528" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="528" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="528" fill="#707478" font-weight="400">│</text>
+<text x="1447" y="528" fill="#707478" font-weight="400">│</text>
+<text x="16" y="546" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1069" y="546" fill="#C8C2B3" font-weight="400">│</text>
+<text x="1078" y="546" fill="#707478" font-weight="400">│</text>
+<text x="1447" y="546" fill="#707478" font-weight="400">│</text>
+<text x="16" y="564" fill="#C8C2B3" font-weight="400">└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘</text>
+<text x="1078" y="564" fill="#707478" font-weight="400">└────────────────────────────────────────┘</text>
+<text x="16" y="582" fill="#E9E6DC" font-weight="400">input · plan</text>
+<text x="124" y="582" fill="#E9E6DC" font-weight="400">  |  </text>
+<text x="169" y="582" fill="#707478" font-weight="400">routing · auto</text>
+<text x="295" y="582" fill="#E9E6DC" font-weight="400">  |  </text>
+<text x="340" y="582" fill="#707478" font-weight="400">memory unavailable</text>
+<text x="502" y="582" fill="#E9E6DC" font-weight="400">  |  </text>
+<text x="547" y="582" fill="#707478" font-weight="400">server connecting</text>
+<text x="16" y="600" fill="#E9E6DC" font-weight="400">┌ ASK ESTELLE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐</text>
+<text x="16" y="618" fill="#E9E6DC" font-weight="400">│</text>
+<text x="1447" y="618" fill="#E9E6DC" font-weight="400">│</text>
+<text x="16" y="636" fill="#E9E6DC" font-weight="400">│</text>
+<text x="25" y="636" fill="#E9E6DC" font-weight="700">›</text>
+<text x="43" y="636" fill="#E9E6DC" font-weight="400">Ask Estelle</text>
+<text x="1447" y="636" fill="#E9E6DC" font-weight="400">│</text>
+<text x="16" y="654" fill="#E9E6DC" font-weight="400">│</text>
+<text x="1447" y="654" fill="#E9E6DC" font-weight="400">│</text>
+<text x="16" y="672" fill="#E9E6DC" font-weight="400">│</text>
+<text x="52" y="672" fill="#E9E6DC" font-weight="700">enter</text>
+<text x="97" y="672" fill="#E9E6DC" font-weight="400"> ask    </text>
+<text x="169" y="672" fill="#E9E6DC" font-weight="700">shift+enter</text>
+<text x="268" y="672" fill="#E9E6DC" font-weight="400"> newline    </text>
+<text x="376" y="672" fill="#E9E6DC" font-weight="700">?</text>
+<text x="385" y="672" fill="#E9E6DC" font-weight="400"> shortcuts                                                                                                            </text>
+<text x="1447" y="672" fill="#E9E6DC" font-weight="400">│</text>
+<text x="16" y="690" fill="#E9E6DC" font-weight="400">└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘</text>
+</g>
+</svg>

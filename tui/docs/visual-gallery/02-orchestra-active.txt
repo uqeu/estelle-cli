@@ -1,0 +1,42 @@
+ ESTELLE   ORCHESTRA  fatelabs/estelle  ·  main  ·  repo graph current
+ DESIGN FIXTURE · NOT LIVE DATA · deterministic Ratatui TestBackend render
+                                                                                                                                                        ┌ CONTEXT  Alt+M · /context ────────────────────
+  ● 8 participant slots selected · batch purpose grounded · estimated ceiling $180                                                                      │
+                                                                                                                                                        │ Grounding
+  — Estelle Orchestra — Ground checkout failures and prepare review evidence x8        ────────────────────────                                         │ Files            7
+  Participants  GPT-5 ×2 · Claude Opus 4.1 ×2 · Gemini 2.5 Pro ×2 · Grok 4 ×2                                                                           │ Symbols          12 resolved
+                                                                                                                                                        │ Working memory   3 local notes
+  001 [∷·······]  [GPT-5] grou 002 [∷∷······]  [Opus] trace 003 [∷∷∷·····]  [Gemini] ins 004 [∷∷∷∷····]  [Grok] revie 005 [∷∷∷∷∷···]  [GPT-5] comp      │
+                                                                                                                                                        │ Fleet
+  006 [∷·······]  [Opus] check 007 [∷∷······]  [Gemini] ver 008 [∷∷∷·····]  [Grok] summa                                                                │ Lifecycle        running
+                                                                                                                                                        │ Observed         12s ago
+                                                                                                                                                        │ Source           /orchestra/run
+  ████████████████████████████████████████████████████████      ◐ Working…  3/8 measured                                                                │
+                                                                                                                                                        │ Cost
+                                                                                                                                                        │ Spent            $6.08
+                                                                                                                                                        │ Ceiling          $180.00
+  Live narrator                                                                                                                                         │
+  Agents 001–008 are reading the selected account slices.                                                                                               │ Memory
+  Observed 12s ago                                                                                                                                      │ LOCAL differs from team graph
+                                                                                                                                                        │
+  Todo                                                                                                                                                  │
+  ✓ Select grounded tasks                                                                                                                               │
+  ● Run Estelle Orchestra                           ·                                              ·                                              1     │                                        0
+  ○ Score evidence                        ·                                              1                                              0               │                              ·
+                                1                                              0                                              ·                         │                    ·
+                      0                                              ·                                              ·                                   │          ×
+            ·                                              ·                                              ×                                             │·
+  ·                                              ×                                              ·                                              ·        │                                     ·
+                                       ·                                              ·                                              ·                  │                           1
+                             ·                                              ·                                              1                            │                 0
+                   ·                                              1                                              0                                      │       ·
+         1                                              0                                              ·                                              · │                                            ×
+                                              ·                                              ·                                              ×           │                                  ·
+                                    ·                                              ×                                              ·                     │                        ·
+                          ×                                              ·                                              ·                               │              ·
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+› Ask Estelle…
+
+
+ orchestra GPT-5 · auto route   ~/Desktop/estelle   main                                                   context: 18%
+

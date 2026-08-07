@@ -1,0 +1,24 @@
+Estelle CLI
+Copyright 2026 Fate Labs
+
+This product includes software developed by OpenAI for OpenAI Codex
+(https://github.com/openai/codex), Copyright 2025 OpenAI, licensed under
+the Apache License, Version 2.0.
+
+OpenAI Codex includes code derived from Ratatui
+(https://github.com/ratatui/ratatui), licensed under the MIT License,
+Copyright (c) 2016-2022 Florian Dehau and
+Copyright (c) 2023-2025 The Ratatui Developers.
+
+The planned Estelle CLI grafts also reference the following projects. No source
+from these projects is included in P0:
+
+- goose (https://github.com/block/goose), Copyright 2024 Block, Inc.,
+  licensed under the Apache License, Version 2.0.
+- jcode (https://github.com/just-every/code), Copyright 2025 Jeremy Huang,
+  licensed under the MIT License.
+- Kimi Code CLI (https://github.com/MoonshotAI/kimi-cli),
+  Copyright 2025 Moonshot AI, licensed under the Apache License, Version 2.0.
+
+Modified files in this derivative work carry Estelle-specific product and build
+behavior. See README.md and docs/P0-AMPUTATION.md for the fork boundary.

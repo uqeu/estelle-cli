@@ -1,0 +1,38 @@
+ESTELLE  ·  uqeu/estelle
+
+┌ CONVERSATION  Tab · Ctrl+←/→ focus ────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ COMMANDS  ↑/↓ select · Tab complete · Enter run ───────────────────────────────────────────────────────────────────────────────┐
+│> /mcp        list Estelle's MCP tools                                                                                          │
+│  /mode       read or lower the server autonomy ceiling                                                                         │
+│  /model      browse your BYOK model pool                                                                                       │
+│  /memory     what Estelle knows about this repo                                                                                │
+│  /mention    file-mention ownership status                                                                                     │
+│  /memories   what Estelle knows about this repo                                                                                │
+│  /vim        Vim composer mode status                                                                                          │
+│  /theme      terminal theme status                                                                                             │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+input · plan  |  routing · auto  |  memory unavailable  |  server connecting
+┌ ASK ESTELLE ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                │
+│› /m                                                                                                                            │
+│                                                                                                                                │
+│   enter ask    shift+enter newline    ? shortcuts                                                                              │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

@@ -1,0 +1,38 @@
+ESTELLE  ·  uqeu/estelle  ·  Fate Labs · owner
+
+┌ CONVERSATION  Tab · Ctrl+←/→ focus ─────────────────────────────────────────────────────────────────────────┐ ┌ LIVE PRODUCTION ─────────────────────────────┐
+│                                                                                                             │ │APP HEALTH · repo uqeu/estelle                │
+│                                                                                                             │ │error counts · ▂▅▃█  14                       │
+│                                                                                                             │ │measured · 14/3292 requests                   │
+│                                                                                                             │ │uptime checks · 4/4 up                        │
+│                                                                                                             │ │                                              │
+│                                                                                                             │ │AGENT HEALTH                                  │
+│                                                                                                             │ │State unavailable · no read contract · send   │
+│                                                                                                             │ │POST /agent/events.                           │
+│                                                                                                             │ │                                              │
+│                                                                                                             │ │ESTELLE STATUS                                │
+│                                                                                                             │ │caught · Checkout timeout after deploy        │
+│                                                                                                             │ │grouped · 47 event(s) · traced to ·           │
+│                                                                                                             │ │billing/charge.rs:82                          │
+│                                                                                                             │ │                                              │
+│                                                                                                             │ │ESTELLE QUEUE                                 │
+│                                                                                                             │ │drafted repair · Checkout timeout after deploy│
+│                                                                                                             │ │· awaiting human review                       │
+│                                                                                                             │ │       gate absent · awaiting the proposed    │
+│                                                                                                             │ │patch                                         │
+│                                                                                                             │ │                                              │
+│                                                                                                             │ │GITHUB                                        │
+│                                                                                                             │ │Connection state not loaded in this pane.     │
+│                                                                                                             │ │Run estelle github status.                    │
+│                                                                                                             │ │                                              │
+│                                                                                                             │ │                                              │
+│                                                                                                             │ │                                              │
+│                                                                                                             │ │                                              │
+│                                                                                                             │ │                                              │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ └──────────────────────────────────────────────┘
+┌ ASK ESTELLE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                                              │
+│› Ask Estelle                                                                                                                                                 │
+│                                                                                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+shift+tab change mode  ·  tab move focus  ·  / commands  |  plan  ·  routing auto

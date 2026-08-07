@@ -1,0 +1,27 @@
+[package]
+name = "estelle-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-keyring-store = { workspace = true }
+codex-secrets = { workspace = true }
+dirs = { workspace = true }
+reqwest = { workspace = true, features = ["json"] }
+regex = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["preserve_order"] }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["macros", "process"] }
+tokio-util = { workspace = true, features = ["rt"] }
+url = { workspace = true }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+wiremock = { workspace = true }

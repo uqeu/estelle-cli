@@ -1,0 +1,34 @@
+ESTELLE  ·  uqeu/estelle
+
+┌ CONVERSATION  Tab · Ctrl+←/→ focus ────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+│                                                                                                                                │
+┌ SKILLS ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│> review                    Review the current change against production evidence                                               │
+│  trace                     Trace an issue to a bound repository symbol                                                         │
+│  ground                    Check an answer against the current repo graph                                                      │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+shift+tab change mode  ·  tab move focus  ·  / commands  |  plan  ·  routing auto

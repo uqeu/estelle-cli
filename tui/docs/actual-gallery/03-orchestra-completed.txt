@@ -1,0 +1,30 @@
+ESTELLE  ·  uqeu/estelle  ·  repo graph current  ·  1,993 files
+
+┌ ORCHESTRA  Ctrl+←/→ focus ────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ ┌ CONTEXT  Alt+M · /context ─────────────┐
+│All 8 agents reported terminal outcomes                                                                                                │ │Repo graph · team's swept copy          │
+│                                                                                                                                       │ │1,993 files indexed                     │
+│Estelle Orchestra · Trace checkout failures ×8                                                                                         │ │billing/charge.rs:82                    │
+│Participants · Claude Opus 4.1 · GPT-5.5 · Gemini 2.5 Pro                                                                              │ │  symbol  charge_card                   │
+│                                                                                                                                       │ │                                        │
+│001 [∷∷∷∷∷∷∷∷∷∷] ✓ Bound … 002 [∷∷∷∷∷∷∷∷∷∷] ✓ Verifi… 003 [∷∷∷∷∷∷∷∷∷∷] ✓ Groupe… 004 [∷∷∷∷∷∷∷∷∷∷] ✓ Checke… 005 [∷∷∷∷∷∷∷∷∷∷] ✓ Resolv… │ │Working memory · local request context  │
+│006 [∷∷∷∷∷∷∷∷∷∷] ✓ Compar… 007 [∷∷∷∷∷∷∷∷∷∷] ✓ Verifi… 008 [∷∷∷∷∷∷∷∷∷∷] ✓ Checke…                                                       │ │Sent through the configured Estelle     │
+│                                                                                                                                       │ │model path.                             │
+│✓ Completed  [━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━] 8/8                                                                    │ │Not added to the team's Repo graph.     │
+│                                                                                                                                       │ │billing/charge.rs · local, not pushed   │
+│                                                                                                                                       │ │billing/retry.rs · local, not pushed    │
+│                                                                                                                                       │ │                                        │
+│                                                                                                                                       │ │Alt+M or /context closes                │
+│                                                                                                                                       │ │                                        │
+│                                                                                                                                       │ │                                        │
+│                                                                                                                                       │ │                                        │
+│                                                                                                                                       │ │                                        │
+│                                                                                                                                       │ │                                        │
+│                                                                                                                                       │ │                                        │
+│                                                                                                                                       │ │                                        │
+└───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ └────────────────────────────────────────┘
+┌ ASK ESTELLE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                                                                  │
+│› Ask Estelle                                                                                                                                                                     │
+│                                                                                                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+shift+tab change mode  ·  tab move focus  ·  / commands  |  plan  ·  routing auto
