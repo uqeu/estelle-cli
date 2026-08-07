@@ -21,10 +21,60 @@ absent, the absence was confirmed by grep across `src/estelle/serve/*.py` and
 | 4 | `GET /github/status`, `GET /prs` | `/github/identity`, `/github/installs`, `/github/repos`, `/github/connect` exist. No `/github/status`, no `/prs`. | 🟡 **SMALL.** `identity` already answers most of "am I connected". `/prs` is genuinely new. |
 | 5 | Account-wide model selection | `/providers` + `/provider/select` exist and the client is bound to both. | ✅ **DONE.** Nothing owed. |
 | 6 | Durable ACP session identity + event stream | `/session`, `/sessions`, `/resume`, `/context`, `/context/load`, `/contexts`, `/checkpoint` all exist. | 🟡 **CLOSER THAN THE DOC ASSUMES.** Verify what these already guarantee before building a second session store. |
-| 7 | MCP beyond the tool catalogue | `/mcp` exists, tools-only. | 🔵 **IN FLIGHT** — a parallel session owns `serve/mcp_*.py`. Do not touch. |
+| 7 | MCP beyond the tool catalogue | `/mcp` exists. **No longer tools-only** — `prompts/list` + `prompts/get` are live, and `initialize` carries `instructions`. See the row below. | 🔵 **IN FLIGHT** — a parallel session owns `serve/mcp_*.py` and `serve/mcp.py`. Do not touch. |
 | 8 | `GET /repairs/<id>/events` | **Absent.** `/autorepair`, `/autorepair/revert` exist. | ⚪ **DEFER.** Codex's own note: this degrades gracefully to a one-line verdict and blocks nothing. |
 | 9 | Per-role model routing | `/route` exists; `learned_routing.py` exists. No per-role pin map under the `global` suite. | 🟡 **MEDIUM.** |
 | 10 | Durable Working-memory proof | `/context`, `/context/load`, `/contexts`, `/checkpoint` exist. | 🟡 **VERIFY BEFORE BUILDING.** The ask is for a *proof* (write → restart → read → isolation), which may be satisfiable with what exists. |
+
+---
+
+## #7 — what the MCP surface is TODAY (measured, 2026-08-06/07)
+
+All figures are `cl100k` tokens from a real `tools/list` against `api.fatelabs.ca` with a live key, and
+the AFTER row is **read back off prod**, not projected.
+
+| | tools | tokens | % of a 200k window |
+|---|---|---|---|
+| before | 283 (246 playbooks + 37 real) | 49,465 | 24.7% |
+| **after** | **37** | **4,508** | **2.3%** |
+| delta | −246 | **−44,957** | **90.9% of the payload removed** |
+
+The 246 playbooks are now **MCP prompts** — user-initiated, so they cost **zero** model context until
+someone invokes one. Claude Code surfaces them as `/mcp__estelle__<name>`; Cursor lists prompts as
+supported. `prompts/get` dispatches to the same `deliver_skill` closure the tool used, so entitlement,
+personalization, revocation and the multi-repo scope question are unchanged.
+
+**BREAKING:** `skill_<name>` tools no longer exist in any spelling. A cached call gets `-32602`. Verified
+live.
+
+`initialize` now also returns **`instructions`** (1,299 bytes). With Claude Code's tool search on by
+default — *"only tool names and server instructions load at session start"* — that string is what decides
+whether a host searches our tools at all.
+
+### Client support, checked before promising anything
+
+| Feature | Claude Code | Cursor | Codex |
+|---|---|---|---|
+| Tools · Resources · Elicitation | ✅ | ✅ | ✅ |
+| **Prompts** | ✅ `/mcp__server__prompt` | ✅ | — not found |
+| **Apps** | ⚠️ not found | ✅ published table | ✅ `ui://` fixtures |
+| **Tasks (SEP-2663)** | ⚠️ not found | 🔴 word absent from the page | 🔴 client never opts in |
+
+⛔ **Do not build Tasks.** `rmcp-3.0.0/src/handler/server.rs:206`: *"the server MUST NOT return
+CreateTaskResult unless the request declared the tasks extension capability."* No client in our set
+declares it. ⛔ **Do not build lazy tool schemas** — all 283 schemas were ONE identical 35-token shape, the
+spec requires `inputSchema` in `tools/list`, and Claude Code already defers tool definitions host-side.
+⛔ **Do not build sampling** — deprecated `2026-07-28` (SEP-2577).
+
+**Still owed on #7** (none of it widens the surface; all of it makes what we advertise real):
+- `GET /mcp` returns **404**, byte-identical to an unknown path. The spec is a MUST: 405 or
+  `text/event-stream`. A client probing GET cannot tell "does not stream" from "no server here".
+  `DELETE /mcp` returns 501; the spec's code is 405. Both need a route registration in `api.py`
+  (paste-ready in `docs/mcp-surface-measured-2026-08-06.md` §7).
+- We answer `2025-11-25` to a `2026-07-28` request, and results carry no `resultType`. A guard now
+  couples the two so the version cannot be advertised without the field.
+- 10 tools are advertised to plans that cannot call them (`tools/list` is byte-identical on Free and
+  Ultra; entitlement is enforced inside the call). Composition-root change.
 
 ---
 
