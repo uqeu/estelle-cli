@@ -1,7 +1,28 @@
 # Kimi — the CLI lane
 
-**You own `cli-rs/`. It is its own git repo, so nothing you do collides with any other session.**
-Read this file, then `docs/HANDOFF-2026-08-06.md` §0–§5. Do not read the whole repo first.
+**You own `cli-rs/`.** Read this file, then `docs/HANDOFF-2026-08-06.md` §0–§5. Do not read the whole
+repo first.
+
+---
+
+## 🚨 READ THIS BEFORE YOUR FIRST COMMIT
+
+`cli-rs/` is a **separate git repo nested inside the parent `estelle` repo**. Your editor's session root
+is probably `~/Desktop/estelle` — the **parent** — which right now carries **~53 modified files and 14
+unpushed commits** belonging to three other live sessions (server, MCP, web).
+
+**Before every commit, assert your git root:**
+
+```bash
+git rev-parse --show-toplevel     # MUST end in /cli-rs
+```
+
+If it does not, `cd` into `cli-rs` first. **Never run `git add -A` or `git commit` from the parent.**
+
+This is not hypothetical: the server session already committed the MCP session's staged `web/`
+deletions exactly this way and had to rewind. Use explicit paths on every commit.
+
+⛔ **`web/` is a separate worktree. Never touch it.**
 
 ---
 
@@ -43,7 +64,7 @@ Ratatui app), `estelle-acp`, `estelle-mcp`.
 `cargo test -p estelle-tui --bin estelle` **133 passed**, **0 failed**. Re-run both before you write
 anything — two minutes, and it is how you know your later red test is red because of your assertion.
 
-⚠️ **No `target/` — your first build is cold across ~100 crates.**
+`target/` **exists** (a coach `cargo check` created it), so your first build is warm, not cold.
 
 ---
 
@@ -168,6 +189,12 @@ frame before accepting it. Reject a baseline when the fixture did not produce th
 | `cli-rs/docs/HANDOFF-2026-08-06.md` | the five defects in full |
 | `cli-rs/docs/SERVER-CONTRACTS-STATUS-2026-08-06.md` | what the server owes, re-scored |
 | `cli-rs/docs/P3-PARITY.md` | 23/23 session commands, 14/14 top-level |
+
+⚠️ **`architecture/` lives in the PARENT repo, which you do not own and must not commit to.** When
+you land something that changes the picture — a defect closed, a route wired, a surface added —
+record it in `cli-rs/docs/` **and say so plainly in your report**. The coach carries it into the
+parent map. **Do not let a shipped thing exist only in a commit message** — that is exactly how
+`cli-rs` itself drifted out of git for four days.
 
 **Report what you measured, not what you attempted. If something is blocked, say so and finish
 everything else.**
