@@ -34,10 +34,10 @@ method is below so anyone can re-run them.
 
 **Wired since this inventory:** `GET /graph` (`/graph`), `GET /graph/nodes` (`/graph nodes`),
 `GET /me` (`/me`), `GET /me/keys` (`/keys`), `GET /me/team` (`/team`), `GET /memory/cards`
-(`/cards`), `GET /entities` (`/entities`), `GET /usage` (`/usage`), `GET /activity` (`/activity`) —
+(`/cards`), `GET /entities` (`/entities`), `GET /usage` (`/usage`), `GET /activity` (`/activity`), `GET /runs` (`/runs`) —
 all with the honesty pattern: explicit `building`/`truncated`/invite states, null team renders as
-absent, omitted fields render "not returned", unknown is never zero. Client now declares 62,
-reaches 60 of 62. `/me/*` writes
+absent, omitted fields render "not returned", unknown is never zero. Client now declares 63,
+reaches 61 of 63. `/me/*` writes
 (key create/revoke/rotate, team invite/seats, billing) and `memory/cards/{dream,edit,revert}`
 remain unwired — mutations are their own commits.
 
@@ -51,19 +51,19 @@ remain unwired — mutations are their own commits.
 - Research/creation: `POST /ideate`, `POST /dream`, `POST /impact`, `POST /tests`,
   `POST /repo/scan`, `POST /docs/ask`, `POST /search/cross`, `POST /session/reinterpret`
 - Swarm/Orchestra: `POST /swarm`, `POST /swarm/plan`, `POST /swarm/run`, `POST /orchestra/plan`,
-  `POST /orchestra/run`, `GET /runs`, `GET /outcomes`, `POST /pipeline`, `POST /automate`,
+  `POST /orchestra/run`, `GET /runs` ✅, `GET /outcomes`, `POST /pipeline`, `POST /automate`,
   `GET /automations`, `POST /dev/from-ticket`
 - Account self-service (`/me/*` + billing/keys/team): `GET /me` ✅, `GET|POST /me/profile`,
   `GET ✅|POST /me/keys` (+`rename`/`revoke`/`rotate`), `POST /me/provider`,
   `POST /me/provider/label`, `GET ✅|POST /me/team` (+`invite`/`invite/accept`/`invite/revoke`/
   `leave`/`remove`/`transfer`/`role`), `POST /me/billing/{checkout,subscribe,cancel,portal,seats}`,
   `POST /me/avatar`, `GET /plans`, `GET /addons`, `POST /addons/{subscribe,remove}`,
-  `POST /checkout`, `POST /subscribe`, `GET /usage`, `GET /budget`, `POST /budget`,
+  `POST /checkout`, `POST /subscribe`, `GET /usage` ✅, `GET /budget`, `POST /budget`,
   `GET|POST|PUT /settings`, `GET /suite`, `PUT /suite`, `GET /suites`, `POST /suites`,
   `GET /suites/upgrades`, `GET /skills/scored`, `POST /skill`, `POST /skill/feedback`,
   `POST /key`, `POST /key/delete`, `POST /key/web`, `POST /account/worlds`,
   `GET /account/connections`, `GET /connections`, `GET|POST /autonomy/auto-mode`
-- Activity/reads: `GET /activity`, `GET /analytics`, `GET /audit`, `GET /requests`,
+- Activity/reads: `GET /activity` ✅, `GET /analytics`, `GET /audit`, `GET /requests`,
   `GET /leaderboard`, `GET /team/leaderboard`, `GET|POST /presence`, `GET /board`,
   `POST /board/sync`, `GET|POST /marketplace`
 - Agent/monitor extras: `POST /agent/events`, `POST /agent/gate`, `POST /agent/verify`,

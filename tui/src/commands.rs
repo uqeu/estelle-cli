@@ -2,7 +2,7 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 31] = [
+pub(crate) const SESSION_COMMANDS: [&str; 32] = [
     "help",
     "init",
     "graph",
@@ -13,6 +13,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 31] = [
     "entities",
     "usage",
     "activity",
+    "runs",
     "memory",
     "sweep",
     "sessions",
@@ -36,7 +37,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 31] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 31] = [
+const SESSION_HELP: [(&str, &str); 32] = [
     ("help", "what you can do here"),
     ("init", "a grounded brief of this repo"),
     ("graph", "the swept code graph; /graph nodes draws the dependency view"),
@@ -47,6 +48,7 @@ const SESSION_HELP: [(&str, &str); 31] = [
     ("entities", "every symbol the swept repo defines, with defining files"),
     ("usage", "requests and tokens by day"),
     ("activity", "calls and tokens by endpoint, with serving models"),
+    ("runs", "the team's agent-run history with grounding flags"),
     ("memory", "what Estelle knows about this repo"),
     ("sweep", "index this repo into memory"),
     ("sessions", "your recent sessions"),
@@ -164,7 +166,7 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 20] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 31] {
+pub(crate) fn session_command_names() -> [&'static str; 32] {
     SESSION_COMMANDS
 }
 
@@ -561,6 +563,7 @@ pub(crate) fn remote_request(
         "entities" => get(Endpoint::Entities, json!({})),
         "usage" => get(Endpoint::Usage, json!({})),
         "activity" => get(Endpoint::Activity, json!({})),
+        "runs" => get(Endpoint::Runs, json!({})),
         "memory" => post(
             Endpoint::DeepSearch,
             json!({"question": "what do you know about this repo?"}),
@@ -1077,6 +1080,50 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                         .collect::<Vec<_>>()
                         .join("  |  ");
                     lines.push(format!("  served by  {split}"));
+                }
+            }
+            lines
+        }
+        "runs" => {
+            if reply.runs.is_empty() {
+                return vec!["No agent runs recorded for this team yet.".to_string()];
+            }
+            let mut lines = vec![format!(
+                "{} runs",
+                reply
+                    .count
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| reply.runs.len().to_string())
+            )];
+            for run in reply.runs.iter().take(12) {
+                let task = run
+                    .task
+                    .as_deref()
+                    .or(run.subtask.as_deref())
+                    .or(run.title.as_deref())
+                    .unwrap_or("task");
+                let details = [
+                    run.model.as_deref(),
+                    run.tier.as_deref(),
+                    run.effort.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join("  |  ");
+                lines.push(if details.is_empty() {
+                    format!("- {task}")
+                } else {
+                    format!("- {task}  |  {details}")
+                });
+                if run.grounded == Some(false) {
+                    lines.push(format!(
+                        "  not grounded{}",
+                        run.reason
+                            .as_deref()
+                            .map(|reason| format!(": {reason}"))
+                            .unwrap_or_default()
+                    ));
                 }
             }
             lines
@@ -1963,7 +2010,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_inventory_is_exactly_the_31_accepted_commands() {
+    fn session_inventory_is_exactly_the_32_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
@@ -1977,6 +2024,7 @@ mod tests {
                 "entities",
                 "usage",
                 "activity",
+                "runs",
                 "memory",
                 "sweep",
                 "sessions",
@@ -2472,6 +2520,42 @@ mod tests {
     }
 
     #[test]
+    fn runs_reply_renders_run_history_with_models_and_grounding_flags() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "runs": [
+                {"task": "trace auth", "model": "claude-opus-4-8", "grounded": true},
+                {"task": "retry the charge path", "model": "kimi-k2.7", "grounded": false,
+                 "reason": "cited a symbol the repo does not have"}
+            ],
+            "count": 2, "report": "# Runs\n\n…"
+        }))
+        .expect("typed runs reply");
+        let rendered = render_remote_reply("runs", &reply).join("\n");
+
+        assert!(rendered.contains("2 runs"), "count missing\n{rendered}");
+        assert!(rendered.contains("trace auth"), "task missing\n{rendered}");
+        assert!(rendered.contains("claude-opus-4-8"), "model missing\n{rendered}");
+        assert!(
+            rendered.contains("not grounded"),
+            "an ungrounded run was not flagged\n{rendered}"
+        );
+        assert!(
+            rendered.contains("cited a symbol the repo does not have"),
+            "the ungrounded reason was dropped\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn runs_reply_empty_is_an_honest_empty_state() {
+        let reply: estelle_client::CommandReply =
+            serde_json::from_value(json!({"runs": [], "count": 0, "report": ""}))
+                .expect("empty runs");
+        let rendered = render_remote_reply("runs", &reply).join("\n");
+        assert!(rendered.contains("No agent runs"), "empty state missing\n{rendered}");
+        assert!(!rendered.contains("0 runs"), "absence rendered as zero\n{rendered}");
+    }
+
+    #[test]
     fn task_commands_refuse_empty_arguments_before_any_request() {
         let work = parse_input("/work");
         assert_eq!(work.local_refusal(), Some("/work needs a task"));
@@ -2492,6 +2576,7 @@ mod tests {
             ("entities", estelle_client::Endpoint::Entities),
             ("usage", estelle_client::Endpoint::Usage),
             ("activity", estelle_client::Endpoint::Activity),
+            ("runs", estelle_client::Endpoint::Runs),
             ("memory", estelle_client::Endpoint::DeepSearch),
             ("sessions", estelle_client::Endpoint::Sessions),
             ("resume", estelle_client::Endpoint::Session),

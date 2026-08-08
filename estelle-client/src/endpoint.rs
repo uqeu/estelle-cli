@@ -43,6 +43,7 @@ endpoints! {
     (Entities, "entities", [Get], true),
     (Usage, "usage", [Get], false),
     (Activity, "activity", [Get], false),
+    (Runs, "runs", [Get], false),
     (Providers, "providers", [Get], false),
     (ProviderSelect, "provider/select", [Post], false),
     (Overview, "overview", [Get], false),

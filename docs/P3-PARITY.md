@@ -7,7 +7,7 @@
 
 ## Result
 
-P3 implements the 31-command session surface and all 14 top-level commands that belong to P3. The three
+P3 implements the 32-command session surface and all 14 top-level commands that belong to P3. The three
 hook command names remain visible and return explicit P4 deferrals; they do not install or invoke a hollow
 hook. The optimized binary starts the maintained Codex composer, resolves account and repo state after the
 first frame, displays the Estelle command palette, reaches `api.fatelabs.ca`, and exits cleanly.
@@ -18,7 +18,7 @@ Esc cancels`; cancelling invalidates the request ID, so a late response cannot a
 
 ## Command denominator
 
-All **31/31** accepted session names are claimed. Twenty-one have typed remote routes and ten are local by
+All **32/32** accepted session names are claimed. Twenty-two have typed remote routes and ten are local by
 design. Unknown commands send zero requests. `/route` aliases `/routing`; `/quit` aliases `/exit`; a unique
 one-edit typo resolves without guessing between multiple commands. (`/graph` was added 2026-08-07 as the
 first wire of the surface lane; the read family — `/me`, `/keys`, `/team`, `/cards`, `/entities` —
@@ -36,6 +36,7 @@ followed; see `ROUTE-INVENTORY-2026-08-07.md`.)
 | entities | scoped `GET /entities`; symbols with defining files, scope disclosed |
 | usage | `GET /usage`; requests + tokens by day with series totals |
 | activity | `GET /activity`; calls + tokens by endpoint, serving-model split shown |
+| runs | `GET /runs`; team run history, ungrounded runs flagged with reasons |
 | memory | scoped `POST /deep-search` |
 | sweep | local hand-off to the top-level whole-tree command |
 | sessions | `GET /sessions` |
