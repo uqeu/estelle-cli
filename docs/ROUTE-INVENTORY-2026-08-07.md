@@ -34,14 +34,15 @@ method is below so anyone can re-run them.
 
 **Wired since this inventory:** `GET /graph` (`/graph`), `GET /graph/nodes` (`/graph nodes`),
 `GET /me` (`/me`), `GET /me/keys` (`/keys`), `GET /me/team` (`/team`), `GET /memory/cards`
-(`/cards`) — all with the honesty pattern: explicit `building`/`truncated`/invite states, null
-team renders as absent, omitted fields render "not returned", unknown is never zero. Client now
-declares 59, reaches 57 of 59. `/me/*` writes (key create/revoke/rotate, team invite/seats,
-billing) and `memory/cards/{dream,edit,revert}` remain unwired — mutations are their own commits.
+(`/cards`), `GET /entities` (`/entities`) — all with the honesty pattern: explicit
+`building`/`truncated`/invite states, null team renders as absent, omitted fields render
+"not returned", unknown is never zero. Client now declares 60, reaches 58 of 60. `/me/*` writes
+(key create/revoke/rotate, team invite/seats, billing) and `memory/cards/{dream,edit,revert}`
+remain unwired — mutations are their own commits.
 
 **Customer-reachable — the surface lane's backlog (≈128):**
 
-- Memory graph: `GET /graph` ✅, `GET /graph/nodes` ✅, `POST /graph/edges`, `GET /entities`,
+- Memory graph: `GET /graph` ✅, `GET /graph/nodes` ✅, `POST /graph/edges`, `GET /entities` ✅,
   `POST /entity-links`, `GET /memories`, `POST /memory/edit`, `POST /memory/review`,
   `POST /memory/chat`, `GET /memory/cards` ✅, `POST /memory/cards/dream`, `POST /memory/cards/edit`,
   `POST /memory/cards/revert`, `POST /fact`, `POST /facts`, `POST /extract`, `POST /organize`,

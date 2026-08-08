@@ -239,8 +239,12 @@ pub struct CommandReply {
     /// explicit cold-graph signal; `None` means the server did not disclose the state.
     #[serde(default, rename = "files")]
     pub graph_files: Option<u64>,
+    /// `entities` arrives as a COUNT from `GET /graph` and as a LIST of `{symbol, files}` rows
+    /// from `GET /entities` — same key, two shapes, one envelope type. Kept as a raw `Value` so
+    /// neither parse can fail or silently absorb the other; each render arm takes its own shape
+    /// and treats the wrong one as "not returned", never as zero or an empty list.
     #[serde(default, rename = "entities")]
-    pub graph_entities: Option<u64>,
+    pub graph_entities: Option<serde_json::Value>,
     #[serde(default, rename = "subsystems")]
     pub graph_subsystems: Option<u64>,
     #[serde(default, rename = "cycles")]

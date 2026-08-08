@@ -7,7 +7,7 @@
 
 ## Result
 
-P3 implements the 28-command session surface and all 14 top-level commands that belong to P3. The three
+P3 implements the 29-command session surface and all 14 top-level commands that belong to P3. The three
 hook command names remain visible and return explicit P4 deferrals; they do not install or invoke a hollow
 hook. The optimized binary starts the maintained Codex composer, resolves account and repo state after the
 first frame, displays the Estelle command palette, reaches `api.fatelabs.ca`, and exits cleanly.
@@ -18,11 +18,11 @@ Esc cancels`; cancelling invalidates the request ID, so a late response cannot a
 
 ## Command denominator
 
-All **28/28** accepted session names are claimed. Eighteen have typed remote routes and ten are local by
+All **29/29** accepted session names are claimed. Nineteen have typed remote routes and ten are local by
 design. Unknown commands send zero requests. `/route` aliases `/routing`; `/quit` aliases `/exit`; a unique
 one-edit typo resolves without guessing between multiple commands. (`/graph` was added 2026-08-07 as the
-first wire of the surface lane; `/me`, `/keys`, `/team` and `/cards` followed the same day — see
-`ROUTE-INVENTORY-2026-08-07.md`.)
+first wire of the surface lane; the read family — `/me`, `/keys`, `/team`, `/cards`, `/entities` —
+followed; see `ROUTE-INVENTORY-2026-08-07.md`.)
 
 | session command | execution |
 |---|---|
@@ -33,6 +33,7 @@ first wire of the surface lane; `/me`, `/keys`, `/team` and `/cards` followed th
 | keys | `GET /me/keys`; prefixes + expiry/revoked state, raw keys never returned |
 | team | `GET /me/team`; role, seat ledger, members, admin invites; null team renders as absent |
 | cards | `GET /memory/cards`; non-zero folder counts, cards with provenance, edited flags |
+| entities | scoped `GET /entities`; symbols with defining files, scope disclosed |
 | memory | scoped `POST /deep-search` |
 | sweep | local hand-off to the top-level whole-tree command |
 | sessions | `GET /sessions` |

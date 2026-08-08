@@ -2,7 +2,7 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 28] = [
+pub(crate) const SESSION_COMMANDS: [&str; 29] = [
     "help",
     "init",
     "graph",
@@ -10,6 +10,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 28] = [
     "keys",
     "team",
     "cards",
+    "entities",
     "memory",
     "sweep",
     "sessions",
@@ -33,7 +34,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 28] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 28] = [
+const SESSION_HELP: [(&str, &str); 29] = [
     ("help", "what you can do here"),
     ("init", "a grounded brief of this repo"),
     ("graph", "the swept code graph; /graph nodes draws the dependency view"),
@@ -41,6 +42,7 @@ const SESSION_HELP: [(&str, &str); 28] = [
     ("keys", "your API keys — prefixes and expiry state, never raw keys"),
     ("team", "your team: role, seats, members, pending invites"),
     ("cards", "learned-knowledge cards with folder counts and provenance"),
+    ("entities", "every symbol the swept repo defines, with defining files"),
     ("memory", "what Estelle knows about this repo"),
     ("sweep", "index this repo into memory"),
     ("sessions", "your recent sessions"),
@@ -158,7 +160,7 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 20] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 28] {
+pub(crate) fn session_command_names() -> [&'static str; 29] {
     SESSION_COMMANDS
 }
 
@@ -552,6 +554,7 @@ pub(crate) fn remote_request(
         "keys" => get(Endpoint::MeKeys, json!({})),
         "team" => get(Endpoint::MeTeam, json!({})),
         "cards" => get(Endpoint::MemoryCards, json!({})),
+        "entities" => get(Endpoint::Entities, json!({})),
         "memory" => post(
             Endpoint::DeepSearch,
             json!({"question": "what do you know about this repo?"}),
@@ -681,7 +684,7 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
             lines.push(format!(
                 "{} files  |  {} entities  |  {} subsystems  |  {} import cycles",
                 count(reply.graph_files),
-                count(reply.graph_entities),
+                count(reply.graph_entities.as_ref().and_then(Value::as_u64)),
                 count(reply.graph_subsystems),
                 count(reply.graph_cycles)
             ));
@@ -948,6 +951,64 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
             }
             if reply.memory_cards.len() > 10 {
                 lines.push(format!("… {} more cards", reply.memory_cards.len() - 10));
+            }
+            lines
+        }
+        "entities" => {
+            let repo = reply.repo.as_deref().unwrap_or("this repo");
+            let rows = reply
+                .graph_entities
+                .as_ref()
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if rows.is_empty() {
+                return vec![format!(
+                    "No entities returned for {repo} — nothing swept here yet. Run estelle sweep first."
+                )];
+            }
+            let mut lines = vec![format!(
+                "{}{}",
+                repo,
+                reply
+                    .scope
+                    .as_deref()
+                    .map(|scope| format!("  |  {scope}"))
+                    .unwrap_or_default()
+            )];
+            lines.push(format!(
+                "{} entities",
+                reply
+                    .count
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| rows.len().to_string())
+            ));
+            lines.push(String::new());
+            for row in rows.iter().take(12) {
+                let files = row
+                    .get("files")
+                    .and_then(Value::as_array)
+                    .map(|files| {
+                        files
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                lines.push(format!(
+                    "{}{}",
+                    row.get("symbol")
+                        .and_then(Value::as_str)
+                        .unwrap_or("symbol not returned"),
+                    if files.is_empty() {
+                        "  |  defining files not returned".to_string()
+                    } else {
+                        format!("  |  {}", files.join(", "))
+                    }
+                ));
+            }
+            if rows.len() > 12 {
+                lines.push(format!("… {} more", rows.len() - 12));
             }
             lines
         }
@@ -1833,7 +1894,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_inventory_is_exactly_the_28_accepted_commands() {
+    fn session_inventory_is_exactly_the_29_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
@@ -1844,6 +1905,7 @@ mod tests {
                 "keys",
                 "team",
                 "cards",
+                "entities",
                 "memory",
                 "sweep",
                 "sessions",
@@ -2254,6 +2316,35 @@ mod tests {
     }
 
     #[test]
+    fn entities_reply_renders_symbols_defining_files_and_scope() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "entities": [
+                {"symbol": "charge_card", "files": ["billing/charge.rs"]},
+                {"symbol": "retry_after", "files": ["billing/retry.rs", "billing/charge.rs"]}
+            ],
+            "count": 2, "repo": "fatelabs/estelle", "scope": "repo:fatelabs/estelle"
+        }))
+        .expect("typed entities reply");
+        let rendered = render_remote_reply("entities", &reply).join("\n");
+
+        assert!(rendered.contains("fatelabs/estelle"), "scope missing\n{rendered}");
+        assert!(rendered.contains("2 entities"), "count missing\n{rendered}");
+        assert!(rendered.contains("charge_card"), "symbol missing\n{rendered}");
+        assert!(rendered.contains("billing/charge.rs"), "defining file missing\n{rendered}");
+    }
+
+    #[test]
+    fn entities_reply_empty_names_the_remedy() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "entities": [], "count": 0, "repo": "fatelabs/estelle", "scope": "repo:fatelabs/estelle"
+        }))
+        .expect("empty entities");
+        let rendered = render_remote_reply("entities", &reply).join("\n");
+        assert!(rendered.contains("estelle sweep"), "remedy missing\n{rendered}");
+        assert!(!rendered.contains("0 entities"), "absence rendered as zero\n{rendered}");
+    }
+
+    #[test]
     fn task_commands_refuse_empty_arguments_before_any_request() {
         let work = parse_input("/work");
         assert_eq!(work.local_refusal(), Some("/work needs a task"));
@@ -2271,6 +2362,7 @@ mod tests {
             ("keys", estelle_client::Endpoint::MeKeys),
             ("team", estelle_client::Endpoint::MeTeam),
             ("cards", estelle_client::Endpoint::MemoryCards),
+            ("entities", estelle_client::Endpoint::Entities),
             ("memory", estelle_client::Endpoint::DeepSearch),
             ("sessions", estelle_client::Endpoint::Sessions),
             ("resume", estelle_client::Endpoint::Session),
