@@ -3658,12 +3658,14 @@ struct SymbolGroundLayout {
     ink: Vec<u8>,
 }
 
-type SymbolGroundCache = Mutex<HashMap<(usize, usize, bool), Arc<SymbolGroundLayout>>>;
+type SymbolGroundCache = Mutex<HashMap<(usize, usize), Arc<SymbolGroundLayout>>>;
 
 static SYMBOL_GROUND_CACHE: OnceLock<SymbolGroundCache> = OnceLock::new();
 
-fn symbol_ground_layout(width: usize, height: usize, dimmed: bool) -> Arc<SymbolGroundLayout> {
-    let key = (width, height, dimmed);
+// No `dimmed` variant: the scene's lifecycle owner is "has the first message been submitted",
+// not "is the composer empty". It renders full-strength until submission, then not at all.
+fn symbol_ground_layout(width: usize, height: usize) -> Arc<SymbolGroundLayout> {
+    let key = (width, height);
     let cache = SYMBOL_GROUND_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let cached = cache
         .lock()
@@ -3674,7 +3676,7 @@ fn symbol_ground_layout(width: usize, height: usize, dimmed: bool) -> Arc<Symbol
         return layout;
     }
 
-    let opacity = if dimmed { 0.56 } else { 1.0 };
+    let opacity = 1.0;
     let mut cells = vec![' '; width.saturating_mul(height)];
     let mut ink = vec![0_u8; width.saturating_mul(height)];
     for y in 0..height {
@@ -3722,7 +3724,7 @@ fn render_symbol_ground(frame: &mut Frame<'_>, area: Rect, app: &App) {
     if width == 0 || height == 0 {
         return;
     }
-    let layout = symbol_ground_layout(width, height, !app.composer.is_empty());
+    let layout = symbol_ground_layout(width, height);
     let mut rows = Vec::with_capacity(height);
     for y in 0..height {
         let row_start = y * width;
@@ -4889,7 +4891,7 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             render_symbol_ground(frame, transcript_root, app);
         }
         frame.render_widget(paragraph.scroll((scroll, 0)), transcript_root);
-        if show_ground && app.composer.is_empty() {
+        if show_ground {
             render_empty_state(frame, transcript_root, app);
         }
     }
@@ -8059,6 +8061,43 @@ mod tests {
             );
         }
         assert!(rendered.contains('∷'), "lily ink was absent\n{rendered}");
+    }
+
+    #[test]
+    fn welcome_scene_stays_while_the_first_message_is_composed_and_leaves_on_submission() {
+        let mut app = test_app();
+        app.composer.set_text("where does charge fail?");
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 34);
+        assert!(
+            rendered.contains("Ask about"),
+            "welcome copy was erased while the first message was still being composed\n{rendered}"
+        );
+
+        // The scene's lifecycle owner is "has the first message been submitted", not "is the
+        // composer empty" — typing must not dim the ground either.
+        let ground = |app: &App| {
+            let backend = TestBackend::new(120, 34);
+            let mut terminal = Terminal::new(backend).expect("test terminal");
+            terminal
+                .draw(|frame| render_symbol_ground(frame, frame.area(), app))
+                .expect("render ground");
+            format!("{}", terminal.backend())
+        };
+        let empty_composer = ground(&app);
+        app.composer.set_text("where does charge fail? cont");
+        let typed_composer = ground(&app);
+        assert_eq!(
+            empty_composer, typed_composer,
+            "the ground scene dimmed merely because the composer is non-empty"
+        );
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        app.submit("where does charge fail?".to_string(), &tx);
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 34);
+        assert!(
+            !rendered.contains("Ask about"),
+            "welcome copy survived the first submitted turn\n{rendered}"
+        );
     }
 
     #[test]
