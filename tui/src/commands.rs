@@ -2,13 +2,14 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 27] = [
+pub(crate) const SESSION_COMMANDS: [&str; 28] = [
     "help",
     "init",
     "graph",
     "me",
     "keys",
     "team",
+    "cards",
     "memory",
     "sweep",
     "sessions",
@@ -32,13 +33,14 @@ pub(crate) const SESSION_COMMANDS: [&str; 27] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 27] = [
+const SESSION_HELP: [(&str, &str); 28] = [
     ("help", "what you can do here"),
     ("init", "a grounded brief of this repo"),
     ("graph", "the swept code graph; /graph nodes draws the dependency view"),
     ("me", "your account: plan, balance, budget, provider, invites"),
     ("keys", "your API keys — prefixes and expiry state, never raw keys"),
     ("team", "your team: role, seats, members, pending invites"),
+    ("cards", "learned-knowledge cards with folder counts and provenance"),
     ("memory", "what Estelle knows about this repo"),
     ("sweep", "index this repo into memory"),
     ("sessions", "your recent sessions"),
@@ -156,7 +158,7 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 20] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 27] {
+pub(crate) fn session_command_names() -> [&'static str; 28] {
     SESSION_COMMANDS
 }
 
@@ -549,6 +551,7 @@ pub(crate) fn remote_request(
         "me" => get(Endpoint::Me, json!({})),
         "keys" => get(Endpoint::MeKeys, json!({})),
         "team" => get(Endpoint::MeTeam, json!({})),
+        "cards" => get(Endpoint::MemoryCards, json!({})),
         "memory" => post(
             Endpoint::DeepSearch,
             json!({"question": "what do you know about this repo?"}),
@@ -892,6 +895,59 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                         }
                     )
                 }));
+            }
+            lines
+        }
+        "cards" => {
+            if reply.memory_cards.is_empty() {
+                return vec![
+                    "No learned knowledge cards yet. Cards are distilled from sessions (dreaming is not wired into the CLI)."
+                        .to_string(),
+                ];
+            }
+            let mut lines = vec![format!("{} cards", reply.memory_cards.len())];
+            if let Some(folders) = &reply.memory_folders {
+                let counts = folders
+                    .iter()
+                    .filter_map(|(name, count)| {
+                        count
+                            .as_u64()
+                            .filter(|count| *count > 0)
+                            .map(|count| format!("{name}: {count}"))
+                    })
+                    .collect::<Vec<_>>();
+                if !counts.is_empty() {
+                    lines.push(counts.join("  |  "));
+                }
+            } else {
+                lines.push("folder counts not returned".to_string());
+            }
+            lines.push(String::new());
+            for card in reply.memory_cards.iter().take(10) {
+                lines.push(format!(
+                    "{}  |  {}{}",
+                    card.title.as_deref().unwrap_or("title not returned"),
+                    card.category.as_deref().unwrap_or("folder not returned"),
+                    if card.edited == Some(true) {
+                        "  |  edited"
+                    } else {
+                        ""
+                    }
+                ));
+                if let Some(body) = card
+                    .body
+                    .as_deref()
+                    .and_then(|body| body.lines().next())
+                    .filter(|line| !line.trim().is_empty())
+                {
+                    lines.push(format!("  {body}"));
+                }
+                if !card.sources.is_empty() {
+                    lines.push(format!("  provenance  {}", card.sources.join(", ")));
+                }
+            }
+            if reply.memory_cards.len() > 10 {
+                lines.push(format!("… {} more cards", reply.memory_cards.len() - 10));
             }
             lines
         }
@@ -1777,7 +1833,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_inventory_is_exactly_the_27_accepted_commands() {
+    fn session_inventory_is_exactly_the_28_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
@@ -1787,6 +1843,7 @@ mod tests {
                 "me",
                 "keys",
                 "team",
+                "cards",
                 "memory",
                 "sweep",
                 "sessions",
@@ -2152,6 +2209,51 @@ mod tests {
     }
 
     #[test]
+    fn cards_reply_renders_folder_counts_cards_and_provenance() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "cards": [
+                {"id": "decisions:abc", "category": "decisions", "title": "Chose Postgres for memory",
+                 "body": "Because JSON files do not scale.", "sources": ["session 2026-08-01"],
+                 "created_at": "2026-08-01", "edited": true},
+                {"id": "entities:def", "category": "entities", "title": "billing/charge.rs",
+                 "body": "Owns the retry loop.", "sources": ["sweep"],
+                 "created_at": "2026-08-02", "edited": false}
+            ],
+            "folders": {"episodic": 0, "projects": 0, "entities": 1, "people": 0, "decisions": 1, "concepts": 0}
+        }))
+        .expect("typed cards reply");
+        let rendered = render_remote_reply("cards", &reply).join("\n");
+
+        assert!(rendered.contains("2 cards"), "count missing\n{rendered}");
+        assert!(rendered.contains("decisions: 1"), "folder count missing\n{rendered}");
+        assert!(
+            !rendered.contains("episodic: 0"),
+            "empty folders rendered as noise\n{rendered}"
+        );
+        assert!(
+            rendered.contains("Chose Postgres for memory"),
+            "card title missing\n{rendered}"
+        );
+        assert!(rendered.contains("edited"), "edited flag missing\n{rendered}");
+        assert!(rendered.contains("session 2026-08-01"), "provenance missing\n{rendered}");
+    }
+
+    #[test]
+    fn cards_reply_empty_is_an_honest_empty_state() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "cards": [],
+            "folders": {"episodic": 0, "projects": 0, "entities": 0, "people": 0, "decisions": 0, "concepts": 0}
+        }))
+        .expect("empty cards");
+        let rendered = render_remote_reply("cards", &reply).join("\n");
+        assert!(
+            rendered.contains("No learned knowledge"),
+            "empty state missing\n{rendered}"
+        );
+        assert!(!rendered.contains("0 cards"), "absence rendered as zero\n{rendered}");
+    }
+
+    #[test]
     fn task_commands_refuse_empty_arguments_before_any_request() {
         let work = parse_input("/work");
         assert_eq!(work.local_refusal(), Some("/work needs a task"));
@@ -2168,6 +2270,7 @@ mod tests {
             ("me", estelle_client::Endpoint::Me),
             ("keys", estelle_client::Endpoint::MeKeys),
             ("team", estelle_client::Endpoint::MeTeam),
+            ("cards", estelle_client::Endpoint::MemoryCards),
             ("memory", estelle_client::Endpoint::DeepSearch),
             ("sessions", estelle_client::Endpoint::Sessions),
             ("resume", estelle_client::Endpoint::Session),

@@ -267,6 +267,12 @@ pub struct CommandReply {
     /// the key was absent; both render as an explicit state, never an invented roster.
     #[serde(default, rename = "team")]
     pub me_team: Option<TeamView>,
+    /// `GET /memory/cards` — the learned-knowledge folders view. `folders` is the full taxonomy
+    /// (zeros included) straight from the server; `None` means the server did not send it.
+    #[serde(default, rename = "cards")]
+    pub memory_cards: Vec<MemoryCard>,
+    #[serde(default, rename = "folders")]
+    pub memory_folders: Option<Map<String, Value>>,
     #[serde(default)]
     pub result: Option<serde_json::Value>,
     #[serde(default)]
@@ -385,6 +391,24 @@ pub struct SeatLedger {
     pub available: Option<u64>,
     #[serde(default)]
     pub full: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct MemoryCard {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub sources: Vec<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub edited: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]

@@ -39,6 +39,7 @@ endpoints! {
     (Me, "me", [Get], false),
     (MeKeys, "me/keys", [Get], false),
     (MeTeam, "me/team", [Get], false),
+    (MemoryCards, "memory/cards", [Get], false),
     (Providers, "providers", [Get], false),
     (ProviderSelect, "provider/select", [Post], false),
     (Overview, "overview", [Get], false),
