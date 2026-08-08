@@ -234,6 +234,23 @@ pub struct CommandReply {
     pub todo: Option<TodoSnapshot>,
     #[serde(default)]
     pub sources: Vec<Source>,
+    /// `GET /graph` summary counts and indexes. Counts are `Option` so a server that omits one
+    /// renders "not returned" — unknown is never rendered as zero. `building` is the server's
+    /// explicit cold-graph signal; `None` means the server did not disclose the state.
+    #[serde(default, rename = "files")]
+    pub graph_files: Option<u64>,
+    #[serde(default, rename = "entities")]
+    pub graph_entities: Option<u64>,
+    #[serde(default, rename = "subsystems")]
+    pub graph_subsystems: Option<u64>,
+    #[serde(default, rename = "cycles")]
+    pub graph_cycles: Option<u64>,
+    #[serde(default, rename = "building")]
+    pub graph_building: Option<bool>,
+    #[serde(default, rename = "file_index")]
+    pub graph_file_index: Vec<GraphFileEntry>,
+    #[serde(default, rename = "roots")]
+    pub graph_roots: Vec<GraphRoot>,
     #[serde(default)]
     pub result: Option<serde_json::Value>,
     #[serde(default)]
@@ -244,6 +261,22 @@ pub struct CommandReply {
     pub merge: Option<serde_json::Value>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct GraphFileEntry {
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub symbols: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct GraphRoot {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub files: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]

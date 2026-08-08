@@ -2,9 +2,10 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 23] = [
+pub(crate) const SESSION_COMMANDS: [&str; 24] = [
     "help",
     "init",
+    "graph",
     "memory",
     "sweep",
     "sessions",
@@ -28,9 +29,10 @@ pub(crate) const SESSION_COMMANDS: [&str; 23] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 23] = [
+const SESSION_HELP: [(&str, &str); 24] = [
     ("help", "what you can do here"),
     ("init", "a grounded brief of this repo"),
+    ("graph", "the swept code graph as counts and roots"),
     ("memory", "what Estelle knows about this repo"),
     ("sweep", "index this repo into memory"),
     ("sessions", "your recent sessions"),
@@ -148,7 +150,7 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 20] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 23] {
+pub(crate) fn session_command_names() -> [&'static str; 24] {
     SESSION_COMMANDS
 }
 
@@ -536,6 +538,7 @@ pub(crate) fn remote_request(
     };
     match name {
         "init" => get(Endpoint::Wiki, json!({})),
+        "graph" => get(Endpoint::Graph, json!({})),
         "memory" => post(
             Endpoint::DeepSearch,
             json!({"question": "what do you know about this repo?"}),
@@ -626,6 +629,58 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                     .unwrap_or_default()
             )];
             lines.extend(wiki.lines().map(str::to_string));
+            lines
+        }
+        "graph" => {
+            let repo = reply.repo.as_deref().unwrap_or("this repo");
+            if reply.graph_building == Some(true) {
+                return vec![format!(
+                    "The repo graph for {repo} is being built — the server is warming a cold surface; ask again in a moment."
+                )];
+            }
+            let Some(files) = reply.graph_files else {
+                return vec![format!(
+                    "The server returned no graph summary for {repo}. Absent is absent — no counts are invented."
+                )];
+            };
+            if files == 0 {
+                return vec![format!(
+                    "No swept graph for {repo} yet. Run estelle sweep first."
+                )];
+            }
+            let count = |value: Option<u64>| {
+                value
+                    .map(|number| number.to_string())
+                    .unwrap_or_else(|| "not returned".to_string())
+            };
+            let mut lines = vec![format!(
+                "{}{}",
+                repo,
+                reply
+                    .scope
+                    .as_deref()
+                    .map(|scope| format!("  |  {scope}"))
+                    .unwrap_or_default()
+            )];
+            lines.push(format!(
+                "{} files  |  {} entities  |  {} subsystems  |  {} import cycles",
+                count(reply.graph_files),
+                count(reply.graph_entities),
+                count(reply.graph_subsystems),
+                count(reply.graph_cycles)
+            ));
+            if !reply.graph_roots.is_empty() {
+                lines.push(String::new());
+                lines.extend(reply.graph_roots.iter().take(8).map(|root| {
+                    format!(
+                        "{:>6}  {}",
+                        root.files
+                            .map(|files| files.to_string())
+                            .unwrap_or_else(|| "?".to_string()),
+                        root.name
+                    )
+                }));
+            }
             lines
         }
         "memory" | "memories" => reply
@@ -1440,12 +1495,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_inventory_is_exactly_the_23_accepted_commands() {
+    fn session_inventory_is_exactly_the_24_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
                 "help",
                 "init",
+                "graph",
                 "memory",
                 "sweep",
                 "sessions",
@@ -1595,6 +1651,52 @@ mod tests {
     }
 
     #[test]
+    fn graph_reply_renders_counts_scope_and_roots() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "files": 42, "entities": 517, "subsystems": 6, "cycles": 2,
+            "roots": [{"name": "src", "files": 30}, {"name": "tests", "files": 12}],
+            "file_index": [{"path": "src/main.rs", "symbols": 88}],
+            "building": false,
+            "repo": "fatelabs/estelle", "scope": "repo:fatelabs/estelle"
+        }))
+        .expect("typed graph reply");
+        let rendered = render_remote_reply("graph", &reply).join("\n");
+
+        assert!(rendered.contains("fatelabs/estelle"), "scope missing\n{rendered}");
+        assert!(rendered.contains("42 files"), "files count missing\n{rendered}");
+        assert!(rendered.contains("517 entities"), "entities count missing\n{rendered}");
+        assert!(rendered.contains("6 subsystems"), "subsystems count missing\n{rendered}");
+        assert!(rendered.contains("2 import cycles"), "cycles count missing\n{rendered}");
+        assert!(rendered.contains("src"), "roots missing\n{rendered}");
+    }
+
+    #[test]
+    fn graph_building_and_unswept_are_honest_states_not_zero_counts() {
+        let building: estelle_client::CommandReply = serde_json::from_value(json!({
+            "files": 0, "entities": 0, "subsystems": 0, "cycles": 0,
+            "file_index": [], "roots": [], "building": true, "repo": "fatelabs/estelle"
+        }))
+        .expect("building reply");
+        let rendered = render_remote_reply("graph", &building).join("\n");
+        assert!(rendered.contains("being built"), "cold graph not disclosed\n{rendered}");
+        assert!(
+            !rendered.contains("0 files"),
+            "a warming graph rendered as a zero count\n{rendered}"
+        );
+
+        let unswept: estelle_client::CommandReply = serde_json::from_value(json!({
+            "files": 0, "entities": 0, "subsystems": 0, "cycles": 0,
+            "file_index": [], "roots": [], "building": false, "repo": "fatelabs/estelle"
+        }))
+        .expect("unswept reply");
+        let rendered = render_remote_reply("graph", &unswept).join("\n");
+        assert!(
+            rendered.contains("estelle sweep"),
+            "unswept repo did not name the remedy\n{rendered}"
+        );
+    }
+
+    #[test]
     fn task_commands_refuse_empty_arguments_before_any_request() {
         let work = parse_input("/work");
         assert_eq!(work.local_refusal(), Some("/work needs a task"));
@@ -1607,6 +1709,7 @@ mod tests {
     fn every_remote_session_command_has_one_explicit_route() {
         let routed = [
             ("init", estelle_client::Endpoint::Wiki),
+            ("graph", estelle_client::Endpoint::Graph),
             ("memory", estelle_client::Endpoint::DeepSearch),
             ("sessions", estelle_client::Endpoint::Sessions),
             ("resume", estelle_client::Endpoint::Session),
