@@ -34,11 +34,13 @@ method is below so anyone can re-run them.
 
 **Wired since this inventory:** `GET /graph` — declared as `Endpoint::Graph`, reachable via the
 `/graph` session command (scoped `?repo=`, counts + roots rendered, explicit `building`/unswept
-states, unknown counts render "not returned"). Client now declares 54, reaches 52 of 54.
+states, unknown counts render "not returned"). `GET /graph/nodes` — declared as
+`Endpoint::GraphNodes`, reachable via `/graph nodes` (nodes/edges rendered, `truncated` and
+`building` named explicitly, cycle legs called out). Client now declares 56, reaches 54 of 56.
 
 **Customer-reachable — the surface lane's backlog (≈128):**
 
-- Memory graph: `GET /graph` ✅, `GET /graph/nodes`, `POST /graph/edges`, `GET /entities`,
+- Memory graph: `GET /graph` ✅, `GET /graph/nodes` ✅, `POST /graph/edges`, `GET /entities`,
   `POST /entity-links`, `GET /memories`, `POST /memory/edit`, `POST /memory/review`,
   `POST /memory/chat`, `GET /memory/cards`, `POST /memory/cards/dream`, `POST /memory/cards/edit`,
   `POST /memory/cards/revert`, `POST /fact`, `POST /facts`, `POST /extract`, `POST /organize`,

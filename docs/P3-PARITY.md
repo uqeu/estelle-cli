@@ -27,7 +27,7 @@ first wire of the surface lane — see `ROUTE-INVENTORY-2026-08-07.md`.)
 |---|---|
 | help | local table generated from the command registry |
 | init | scoped `GET /wiki` |
-| graph | scoped `GET /graph`; counts, roots, explicit `building`/unswept states |
+| graph | scoped `GET /graph`; counts, roots, explicit `building`/unswept states. `/graph nodes` → scoped `GET /graph/nodes`; nodes/edges, explicit `truncated` |
 | memory | scoped `POST /deep-search` |
 | sweep | local hand-off to the top-level whole-tree command |
 | sessions | `GET /sessions` |

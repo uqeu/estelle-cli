@@ -67,6 +67,7 @@ endpoints! {
     (DeletionReceipts, "deletion-receipts", [Get], false),
     (Wiki, "wiki", [Get], true),
     (Graph, "graph", [Get], true),
+    (GraphNodes, "graph/nodes", [Get], true),
     (SkillRun, "skill/run", [Post], true),
     (Autonomy, "autonomy", [Post], false),
     (AutonomyScope, "autonomy/scope", [Get, Post], true),

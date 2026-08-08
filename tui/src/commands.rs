@@ -32,7 +32,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 24] = [
 const SESSION_HELP: [(&str, &str); 24] = [
     ("help", "what you can do here"),
     ("init", "a grounded brief of this repo"),
-    ("graph", "the swept code graph as counts and roots"),
+    ("graph", "the swept code graph; /graph nodes draws the dependency view"),
     ("memory", "what Estelle knows about this repo"),
     ("sweep", "index this repo into memory"),
     ("sessions", "your recent sessions"),
@@ -538,6 +538,7 @@ pub(crate) fn remote_request(
     };
     match name {
         "init" => get(Endpoint::Wiki, json!({})),
+        "graph" if argument == "nodes" => get(Endpoint::GraphNodes, json!({})),
         "graph" => get(Endpoint::Graph, json!({})),
         "memory" => post(
             Endpoint::DeepSearch,
@@ -637,6 +638,9 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                 return vec![format!(
                     "The repo graph for {repo} is being built — the server is warming a cold surface; ask again in a moment."
                 )];
+            }
+            if reply.graph_truncated.is_some() {
+                return render_graph_nodes_reply(reply, repo);
             }
             let Some(files) = reply.graph_files else {
                 return vec![format!(
@@ -927,6 +931,76 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
         "skill:" => render_skill_reply(reply),
         _ => render_unknown_reply(reply),
     }
+}
+
+/// The `/graph nodes` view — the drawable dependency graph (`GET /graph/nodes`). The server's
+/// own honesty states lead: `truncated` is named, never silently capped; counts come from the
+/// payload itself, never derived from timing or absence.
+fn render_graph_nodes_reply(reply: &estelle_client::CommandReply, repo: &str) -> Vec<String> {
+    let mut lines = vec![format!(
+        "{}{}",
+        repo,
+        reply
+            .scope
+            .as_deref()
+            .map(|scope| format!("  |  {scope}"))
+            .unwrap_or_default()
+    )];
+    let cycle_edges = reply
+        .graph_edges
+        .iter()
+        .filter(|edge| edge.kind == "cycle")
+        .count();
+    lines.push(format!(
+        "{} nodes  |  {} edges ({} cycle {})  |  {} files total",
+        reply.graph_nodes.len(),
+        reply.graph_edges.len(),
+        cycle_edges,
+        if cycle_edges == 1 { "leg" } else { "legs" },
+        reply
+            .graph_files
+            .map(|files| files.to_string())
+            .unwrap_or_else(|| "not returned".to_string())
+    ));
+    if reply.graph_truncated == Some(true) {
+        lines.push(
+            "truncated — the repo is larger than the node limit; the highest-weight files are shown."
+                .to_string(),
+        );
+    }
+    if reply.graph_nodes.is_empty() {
+        lines.push("No nodes returned for this repo.".to_string());
+        return lines;
+    }
+    lines.push(String::new());
+    for node in reply.graph_nodes.iter().take(12) {
+        lines.push(format!(
+            "{}{}{}",
+            node.path,
+            node.subsystem
+                .map(|subsystem| format!("  |  subsystem {subsystem}"))
+                .unwrap_or_default(),
+            node.symbols
+                .map(|symbols| format!("  |  {symbols} symbols"))
+                .unwrap_or_default()
+        ));
+    }
+    if reply.graph_nodes.len() > 12 {
+        lines.push(format!("… {} more nodes", reply.graph_nodes.len() - 12));
+    }
+    if cycle_edges > 0 {
+        lines.push(String::new());
+        lines.push("import cycle legs:".to_string());
+        lines.extend(
+            reply
+                .graph_edges
+                .iter()
+                .filter(|edge| edge.kind == "cycle")
+                .take(6)
+                .map(|edge| format!("{} -> {}", edge.from_path, edge.to_path)),
+        );
+    }
+    lines
 }
 
 fn render_model_pool(reply: &estelle_client::CommandReply) -> Vec<String> {
@@ -1693,6 +1767,63 @@ mod tests {
         assert!(
             rendered.contains("estelle sweep"),
             "unswept repo did not name the remedy\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn graph_nodes_argument_routes_to_the_drawable_graph() {
+        let request = remote_request("graph", "nodes", None, None)
+            .expect("route")
+            .expect("route present");
+        assert_eq!(request.endpoint, estelle_client::Endpoint::GraphNodes);
+        assert!(matches!(request.method, RemoteMethod::Get));
+        let summary = remote_request("graph", "", None, None)
+            .expect("route")
+            .expect("route present");
+        assert_eq!(summary.endpoint, estelle_client::Endpoint::Graph);
+    }
+
+    #[test]
+    fn graph_nodes_reply_renders_nodes_edges_and_the_explicit_truncated_state() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "nodes": [
+                {"id": "src/main.rs", "path": "src/main.rs", "symbols": 12, "subsystem": 0, "weight": 0.31},
+                {"id": "src/lib.rs", "path": "src/lib.rs", "symbols": 8, "subsystem": 0, "weight": 0.22}
+            ],
+            "edges": [
+                {"from": "src/main.rs", "to": "src/lib.rs", "kind": "import"},
+                {"from": "src/a.rs", "to": "src/b.rs", "kind": "cycle"}
+            ],
+            "files": 57, "truncated": true, "building": false,
+            "repo": "fatelabs/estelle", "scope": "repo:fatelabs/estelle"
+        }))
+        .expect("typed nodes reply");
+        let rendered = render_remote_reply("graph", &reply).join("\n");
+
+        assert!(rendered.contains("fatelabs/estelle"), "scope missing\n{rendered}");
+        assert!(rendered.contains("2 nodes"), "node count missing\n{rendered}");
+        assert!(rendered.contains("2 edges"), "edge count missing\n{rendered}");
+        assert!(rendered.contains("57 files"), "total files missing\n{rendered}");
+        assert!(
+            rendered.contains("truncated"),
+            "a cut graph did not say so — a silently capped graph lies about the codebase\n{rendered}"
+        );
+        assert!(rendered.contains("src/main.rs"), "top node missing\n{rendered}");
+        assert!(rendered.contains("cycle"), "cycle edge kind invisible\n{rendered}");
+    }
+
+    #[test]
+    fn graph_nodes_building_is_a_warming_notice_not_an_empty_graph() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "nodes": [], "edges": [], "files": 0, "truncated": false, "building": true,
+            "repo": "fatelabs/estelle"
+        }))
+        .expect("building reply");
+        let rendered = render_remote_reply("graph", &reply).join("\n");
+        assert!(rendered.contains("being built"), "cold graph not disclosed\n{rendered}");
+        assert!(
+            !rendered.contains("0 nodes"),
+            "a warming graph rendered as zero nodes\n{rendered}"
         );
     }
 

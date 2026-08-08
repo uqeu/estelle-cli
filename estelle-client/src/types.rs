@@ -251,6 +251,14 @@ pub struct CommandReply {
     pub graph_file_index: Vec<GraphFileEntry>,
     #[serde(default, rename = "roots")]
     pub graph_roots: Vec<GraphRoot>,
+    /// `GET /graph/nodes` payload — the drawable dependency graph itself. `truncated` doubles as
+    /// the discriminator between this view and the `/graph` summary: only `/graph/nodes` sends it.
+    #[serde(default, rename = "nodes")]
+    pub graph_nodes: Vec<GraphNode>,
+    #[serde(default, rename = "edges")]
+    pub graph_edges: Vec<GraphEdge>,
+    #[serde(default, rename = "truncated")]
+    pub graph_truncated: Option<bool>,
     #[serde(default)]
     pub result: Option<serde_json::Value>,
     #[serde(default)]
@@ -277,6 +285,30 @@ pub struct GraphRoot {
     pub name: String,
     #[serde(default)]
     pub files: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct GraphNode {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub symbols: Option<u64>,
+    #[serde(default)]
+    pub subsystem: Option<u64>,
+    #[serde(default)]
+    pub weight: Option<f64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct GraphEdge {
+    #[serde(default, rename = "from")]
+    pub from_path: String,
+    #[serde(default, rename = "to")]
+    pub to_path: String,
+    #[serde(default)]
+    pub kind: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
