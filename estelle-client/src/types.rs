@@ -280,6 +280,10 @@ pub struct CommandReply {
     /// `GET /usage` — requests + tokens bucketed by day, oldest to newest.
     #[serde(default, rename = "series")]
     pub usage_series: Vec<UsagePoint>,
+    /// `GET /activity` — calls + tokens rolled up by endpoint, busiest first. `models` splits
+    /// tokens by the model that ACTUALLY served them, so a fallback reads as its own line.
+    #[serde(default, rename = "by_endpoint")]
+    pub activity_rows: Vec<ActivityRow>,
     #[serde(default)]
     pub result: Option<serde_json::Value>,
     #[serde(default)]
@@ -426,6 +430,18 @@ pub struct UsagePoint {
     pub requests: Option<u64>,
     #[serde(default)]
     pub tokens: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ActivityRow {
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default)]
+    pub count: Option<u64>,
+    #[serde(default)]
+    pub tokens: Option<u64>,
+    #[serde(default)]
+    pub models: Option<Map<String, Value>>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]

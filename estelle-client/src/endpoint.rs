@@ -42,6 +42,7 @@ endpoints! {
     (MemoryCards, "memory/cards", [Get], false),
     (Entities, "entities", [Get], true),
     (Usage, "usage", [Get], false),
+    (Activity, "activity", [Get], false),
     (Providers, "providers", [Get], false),
     (ProviderSelect, "provider/select", [Post], false),
     (Overview, "overview", [Get], false),

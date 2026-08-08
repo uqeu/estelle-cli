@@ -2,7 +2,7 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 30] = [
+pub(crate) const SESSION_COMMANDS: [&str; 31] = [
     "help",
     "init",
     "graph",
@@ -12,6 +12,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 30] = [
     "cards",
     "entities",
     "usage",
+    "activity",
     "memory",
     "sweep",
     "sessions",
@@ -35,7 +36,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 30] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 30] = [
+const SESSION_HELP: [(&str, &str); 31] = [
     ("help", "what you can do here"),
     ("init", "a grounded brief of this repo"),
     ("graph", "the swept code graph; /graph nodes draws the dependency view"),
@@ -45,6 +46,7 @@ const SESSION_HELP: [(&str, &str); 30] = [
     ("cards", "learned-knowledge cards with folder counts and provenance"),
     ("entities", "every symbol the swept repo defines, with defining files"),
     ("usage", "requests and tokens by day"),
+    ("activity", "calls and tokens by endpoint, with serving models"),
     ("memory", "what Estelle knows about this repo"),
     ("sweep", "index this repo into memory"),
     ("sessions", "your recent sessions"),
@@ -162,7 +164,7 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 20] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 30] {
+pub(crate) fn session_command_names() -> [&'static str; 31] {
     SESSION_COMMANDS
 }
 
@@ -558,6 +560,7 @@ pub(crate) fn remote_request(
         "cards" => get(Endpoint::MemoryCards, json!({})),
         "entities" => get(Endpoint::Entities, json!({})),
         "usage" => get(Endpoint::Usage, json!({})),
+        "activity" => get(Endpoint::Activity, json!({})),
         "memory" => post(
             Endpoint::DeepSearch,
             json!({"question": "what do you know about this repo?"}),
@@ -1048,6 +1051,33 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                         .map(|tokens| format!("{tokens} tokens"))
                         .unwrap_or_else(|| "tokens not returned".to_string())
                 ));
+            }
+            lines
+        }
+        "activity" => {
+            if reply.activity_rows.is_empty() {
+                return vec!["No activity recorded for this account yet.".to_string()];
+            }
+            let mut lines = vec![format!("{} endpoints", reply.activity_rows.len())];
+            for row in &reply.activity_rows {
+                lines.push(format!(
+                    "{}  |  {}  |  {}",
+                    row.endpoint.as_deref().unwrap_or("endpoint not returned"),
+                    row.count
+                        .map(|count| format!("{count} calls"))
+                        .unwrap_or_else(|| "calls not returned".to_string()),
+                    row.tokens
+                        .map(|tokens| format!("{tokens} tokens"))
+                        .unwrap_or_else(|| "tokens not returned".to_string())
+                ));
+                if let Some(models) = row.models.as_ref().filter(|models| !models.is_empty()) {
+                    let split = models
+                        .iter()
+                        .map(|(model, tokens)| format!("{model} {tokens}"))
+                        .collect::<Vec<_>>()
+                        .join("  |  ");
+                    lines.push(format!("  served by  {split}"));
+                }
             }
             lines
         }
@@ -1933,7 +1963,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_inventory_is_exactly_the_30_accepted_commands() {
+    fn session_inventory_is_exactly_the_31_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
@@ -1946,6 +1976,7 @@ mod tests {
                 "cards",
                 "entities",
                 "usage",
+                "activity",
                 "memory",
                 "sweep",
                 "sessions",
@@ -2411,6 +2442,36 @@ mod tests {
     }
 
     #[test]
+    fn activity_reply_renders_endpoints_calls_tokens_and_serving_models() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "by_endpoint": [
+                {"endpoint": "deep-search", "count": 14, "tokens": 90210,
+                 "models": {"claude-opus-4-8": 80000, "kimi-k2.7": 10210}},
+                {"endpoint": "sweep/estimate", "count": 3, "tokens": 0}
+            ]
+        }))
+        .expect("typed activity reply");
+        let rendered = render_remote_reply("activity", &reply).join("\n");
+
+        assert!(rendered.contains("deep-search"), "endpoint missing\n{rendered}");
+        assert!(rendered.contains("14 calls"), "call count missing\n{rendered}");
+        assert!(rendered.contains("90210"), "tokens missing\n{rendered}");
+        assert!(
+            rendered.contains("kimi-k2.7"),
+            "the model that actually served the tokens is invisible\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn activity_reply_empty_is_an_honest_empty_state() {
+        let reply: estelle_client::CommandReply =
+            serde_json::from_value(json!({"by_endpoint": []})).expect("empty activity");
+        let rendered = render_remote_reply("activity", &reply).join("\n");
+        assert!(rendered.contains("No activity"), "empty state missing\n{rendered}");
+        assert!(!rendered.contains("0 calls"), "absence rendered as zero\n{rendered}");
+    }
+
+    #[test]
     fn task_commands_refuse_empty_arguments_before_any_request() {
         let work = parse_input("/work");
         assert_eq!(work.local_refusal(), Some("/work needs a task"));
@@ -2430,6 +2491,7 @@ mod tests {
             ("cards", estelle_client::Endpoint::MemoryCards),
             ("entities", estelle_client::Endpoint::Entities),
             ("usage", estelle_client::Endpoint::Usage),
+            ("activity", estelle_client::Endpoint::Activity),
             ("memory", estelle_client::Endpoint::DeepSearch),
             ("sessions", estelle_client::Endpoint::Sessions),
             ("resume", estelle_client::Endpoint::Session),
