@@ -2,7 +2,7 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 32] = [
+pub(crate) const SESSION_COMMANDS: [&str; 33] = [
     "help",
     "init",
     "graph",
@@ -14,6 +14,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 32] = [
     "usage",
     "activity",
     "runs",
+    "outcomes",
     "memory",
     "sweep",
     "sessions",
@@ -37,7 +38,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 32] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 32] = [
+const SESSION_HELP: [(&str, &str); 33] = [
     ("help", "what you can do here"),
     ("init", "a grounded brief of this repo"),
     ("graph", "the swept code graph; /graph nodes draws the dependency view"),
@@ -49,6 +50,7 @@ const SESSION_HELP: [(&str, &str); 32] = [
     ("usage", "requests and tokens by day"),
     ("activity", "calls and tokens by endpoint, with serving models"),
     ("runs", "the team's agent-run history with grounding flags"),
+    ("outcomes", "how the team's applied changes fared: accept/revert/reject"),
     ("memory", "what Estelle knows about this repo"),
     ("sweep", "index this repo into memory"),
     ("sessions", "your recent sessions"),
@@ -166,7 +168,7 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 20] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 32] {
+pub(crate) fn session_command_names() -> [&'static str; 33] {
     SESSION_COMMANDS
 }
 
@@ -564,6 +566,7 @@ pub(crate) fn remote_request(
         "usage" => get(Endpoint::Usage, json!({})),
         "activity" => get(Endpoint::Activity, json!({})),
         "runs" => get(Endpoint::Runs, json!({})),
+        "outcomes" => get(Endpoint::Outcomes, json!({})),
         "memory" => post(
             Endpoint::DeepSearch,
             json!({"question": "what do you know about this repo?"}),
@@ -1126,6 +1129,39 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                     ));
                 }
             }
+            lines
+        }
+        "outcomes" => {
+            let number = |key: &str| {
+                reply
+                    .extra
+                    .get(key)
+                    .map(json_scalar)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| "not returned".to_string())
+            };
+            if reply.extra.get("total").and_then(Value::as_u64) == Some(0) {
+                return vec![
+                    "No outcomes recorded yet — accept/revert signal accrues as the team applies Estelle's changes."
+                        .to_string(),
+                ];
+            }
+            let mut lines = vec![format!(
+                "{} outcomes  |  {} accepted  |  {} reverted  |  {} rejected",
+                number("total"),
+                number("accepted"),
+                number("reverted"),
+                number("rejected")
+            )];
+            lines.push(format!(
+                "accept rate {}  |  revert rate {}",
+                number("accept_rate"),
+                number("revert_rate")
+            ));
+            lines.push(
+                "A high revert rate is the server's cue to be more conservative here — surfaced, not silently applied."
+                    .to_string(),
+            );
             lines
         }
         "memory" | "memories" => reply
@@ -2010,7 +2046,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_inventory_is_exactly_the_32_accepted_commands() {
+    fn session_inventory_is_exactly_the_33_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
@@ -2025,6 +2061,7 @@ mod tests {
                 "usage",
                 "activity",
                 "runs",
+                "outcomes",
                 "memory",
                 "sweep",
                 "sessions",
@@ -2556,6 +2593,38 @@ mod tests {
     }
 
     #[test]
+    fn outcomes_reply_renders_the_accept_revert_reject_signal() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "total": 12, "accepted": 8, "reverted": 3, "rejected": 1,
+            "accept_rate": 0.667, "revert_rate": 0.25
+        }))
+        .expect("typed outcomes reply");
+        let rendered = render_remote_reply("outcomes", &reply).join("\n");
+
+        assert!(rendered.contains("12 outcomes"), "total missing\n{rendered}");
+        assert!(rendered.contains("8 accepted"), "accepted missing\n{rendered}");
+        assert!(rendered.contains("3 reverted"), "reverted missing\n{rendered}");
+        assert!(rendered.contains("1 rejected"), "rejected missing\n{rendered}");
+        assert!(rendered.contains("0.667"), "accept rate missing\n{rendered}");
+        assert!(rendered.contains("0.25"), "revert rate missing\n{rendered}");
+    }
+
+    #[test]
+    fn outcomes_reply_empty_is_an_honest_empty_state() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "total": 0, "accepted": 0, "reverted": 0, "rejected": 0,
+            "accept_rate": 0.0, "revert_rate": 0.0
+        }))
+        .expect("empty outcomes");
+        let rendered = render_remote_reply("outcomes", &reply).join("\n");
+        assert!(
+            rendered.contains("No outcomes"),
+            "empty state missing\n{rendered}"
+        );
+        assert!(!rendered.contains("0.0"), "no signal rendered as a zero rate\n{rendered}");
+    }
+
+    #[test]
     fn task_commands_refuse_empty_arguments_before_any_request() {
         let work = parse_input("/work");
         assert_eq!(work.local_refusal(), Some("/work needs a task"));
@@ -2577,6 +2646,7 @@ mod tests {
             ("usage", estelle_client::Endpoint::Usage),
             ("activity", estelle_client::Endpoint::Activity),
             ("runs", estelle_client::Endpoint::Runs),
+            ("outcomes", estelle_client::Endpoint::Outcomes),
             ("memory", estelle_client::Endpoint::DeepSearch),
             ("sessions", estelle_client::Endpoint::Sessions),
             ("resume", estelle_client::Endpoint::Session),

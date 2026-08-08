@@ -44,6 +44,7 @@ endpoints! {
     (Usage, "usage", [Get], false),
     (Activity, "activity", [Get], false),
     (Runs, "runs", [Get], false),
+    (Outcomes, "outcomes", [Get], false),
     (Providers, "providers", [Get], false),
     (ProviderSelect, "provider/select", [Post], false),
     (Overview, "overview", [Get], false),
