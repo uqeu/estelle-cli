@@ -60,6 +60,11 @@ followed; see `ROUTE-INVENTORY-2026-08-07.md`.)
 | clear | local transcript reset |
 | exit | local clean shutdown |
 
+`/memories` (a graft name, not a session-registry row) was split off its `/memory` alias on
+2026-08-07: it now routes to scoped `GET /memories` — the held-memory listing with the server's
+trust tiers (`grounded`/`acquired`, `externally authored`) and the explicit `truncated` cap.
+`/memory` keeps the deep-search answer.
+
 All **17/17** canonical top-level names are claimed before TUI fallback. Fourteen execute their P3
 contract; three name the phase that owns them instead of pretending to work.
 

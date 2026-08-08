@@ -51,7 +51,7 @@ const SESSION_HELP: [(&str, &str); 33] = [
     ("activity", "calls and tokens by endpoint, with serving models"),
     ("runs", "the team's agent-run history with grounding flags"),
     ("outcomes", "how the team's applied changes fared: accept/revert/reject"),
-    ("memory", "what Estelle knows about this repo"),
+    ("memory", "an answered question: what Estelle knows about this repo"),
     ("sweep", "index this repo into memory"),
     ("sessions", "your recent sessions"),
     ("resume", "pick a past session back up"),
@@ -82,7 +82,7 @@ const GRAFT_HELP: &[(&str, &str)] = &[
     ("settings", "open interactive Estelle settings"),
     ("model", "browse your BYOK model pool"),
     ("plan", "enter the server-enforced planning ceiling"),
-    ("memories", "what Estelle knows about this repo"),
+    ("memories", "the held-memory listing with trust tiers"),
     ("mcp", "list Estelle's MCP tools"),
     ("grep", "search code with server-side structure"),
     ("ide", "IDE context status"),
@@ -571,10 +571,7 @@ pub(crate) fn remote_request(
             Endpoint::DeepSearch,
             json!({"question": "what do you know about this repo?"}),
         ),
-        "memories" => post(
-            Endpoint::DeepSearch,
-            json!({"question": "what do you know about this repo?"}),
-        ),
+        "memories" => get(Endpoint::Memories, json!({})),
         "model" if argument.is_empty() => get(Endpoint::Providers, json!({})),
         "grep" => post(Endpoint::Search, json!({"query": argument, "code": true})),
         "skill:" => {
@@ -1164,7 +1161,63 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
             );
             lines
         }
-        "memory" | "memories" => reply
+        "memories" => {
+            let repo = reply.repo.as_deref().unwrap_or("this repo");
+            if reply.memory_items.is_empty() {
+                return vec![format!(
+                    "No memories held for {repo} — nothing swept yet. Run estelle sweep first."
+                )];
+            }
+            let mut lines = vec![format!(
+                "{}{}",
+                repo,
+                reply
+                    .scope
+                    .as_deref()
+                    .map(|scope| format!("  |  {scope}"))
+                    .unwrap_or_default()
+            )];
+            lines.push(format!(
+                "{} memories in this response  |  cap {}",
+                reply
+                    .count
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| reply.memory_items.len().to_string()),
+                reply
+                    .extra
+                    .get("limit")
+                    .map(json_scalar)
+                    .filter(|limit| !limit.is_empty())
+                    .unwrap_or_else(|| "not returned".to_string())
+            ));
+            if reply.graph_truncated == Some(true) {
+                lines.push(
+                    "truncated — more is held than shown; the count is rows in this response, not the total."
+                        .to_string(),
+                );
+            }
+            lines.push(String::new());
+            for item in reply.memory_items.iter().take(12) {
+                lines.push(format!(
+                    "{}  |  {}{}{}",
+                    item.source.as_deref().unwrap_or("source not returned"),
+                    item.trust.as_deref().unwrap_or("trust not returned"),
+                    item.chunks
+                        .map(|chunks| format!("  |  {chunks} chunks"))
+                        .unwrap_or_default(),
+                    if item.externally_authored == Some(true) {
+                        "  |  externally authored"
+                    } else {
+                        ""
+                    }
+                ));
+            }
+            if reply.memory_items.len() > 12 {
+                lines.push(format!("… {} more", reply.memory_items.len() - 12));
+            }
+            lines
+        }
+        "memory" => reply
             .answer
             .as_deref()
             .filter(|answer| !answer.trim().is_empty())
@@ -2625,6 +2678,51 @@ mod tests {
     }
 
     #[test]
+    fn memories_reply_renders_trust_tiers_and_the_explicit_truncated_cap() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "memories": [
+                {"source": "billing/charge.rs", "kind": "code", "chunks": 12,
+                 "trust": "grounded", "may_ground": true, "externally_authored": false},
+                {"source": "slack:#eng", "kind": "slack", "chunks": 4,
+                 "trust": "acquired", "may_ground": false, "externally_authored": true}
+            ],
+            "count": 2, "limit": 200, "truncated": true,
+            "repo": "fatelabs/estelle", "scope": "repo:fatelabs/estelle"
+        }))
+        .expect("typed memories reply");
+        let rendered = render_remote_reply("memories", &reply).join("\n");
+
+        assert!(rendered.contains("fatelabs/estelle"), "scope missing\n{rendered}");
+        assert!(rendered.contains("2 memories"), "count missing\n{rendered}");
+        assert!(rendered.contains("billing/charge.rs"), "source missing\n{rendered}");
+        assert!(
+            rendered.contains("grounded"),
+            "the trust tier is invisible — which held items may certify is the first fact\n{rendered}"
+        );
+        assert!(rendered.contains("acquired"), "acquired tier missing\n{rendered}");
+        assert!(
+            rendered.contains("externally authored"),
+            "an attacker-reachable source was not marked\n{rendered}"
+        );
+        assert!(
+            rendered.contains("truncated"),
+            "a capped listing did not say so — count is rows in this response, not the total\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn memories_reply_empty_names_the_remedy() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "memories": [], "count": 0, "limit": 200, "truncated": false,
+            "repo": "fatelabs/estelle", "scope": "repo:fatelabs/estelle"
+        }))
+        .expect("empty memories");
+        let rendered = render_remote_reply("memories", &reply).join("\n");
+        assert!(rendered.contains("estelle sweep"), "remedy missing\n{rendered}");
+        assert!(!rendered.contains("0 memories"), "absence rendered as zero\n{rendered}");
+    }
+
+    #[test]
     fn task_commands_refuse_empty_arguments_before_any_request() {
         let work = parse_input("/work");
         assert_eq!(work.local_refusal(), Some("/work needs a task"));
@@ -2647,6 +2745,7 @@ mod tests {
             ("activity", estelle_client::Endpoint::Activity),
             ("runs", estelle_client::Endpoint::Runs),
             ("outcomes", estelle_client::Endpoint::Outcomes),
+            ("memories", estelle_client::Endpoint::Memories),
             ("memory", estelle_client::Endpoint::DeepSearch),
             ("sessions", estelle_client::Endpoint::Sessions),
             ("resume", estelle_client::Endpoint::Session),

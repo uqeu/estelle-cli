@@ -284,6 +284,11 @@ pub struct CommandReply {
     /// tokens by the model that ACTUALLY served them, so a fallback reads as its own line.
     #[serde(default, rename = "by_endpoint")]
     pub activity_rows: Vec<ActivityRow>,
+    /// `GET /memories` — the "what do you know about my code" listing. `trust`/`may_ground`/
+    /// `externally_authored` are the server's content-trust labels: which held items may certify
+    /// an answer is the first fact about a memory, not a footnote.
+    #[serde(default, rename = "memories")]
+    pub memory_items: Vec<MemoryItem>,
     #[serde(default)]
     pub result: Option<serde_json::Value>,
     #[serde(default)]
@@ -442,6 +447,22 @@ pub struct ActivityRow {
     pub tokens: Option<u64>,
     #[serde(default)]
     pub models: Option<Map<String, Value>>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct MemoryItem {
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub chunks: Option<u64>,
+    #[serde(default)]
+    pub trust: Option<String>,
+    #[serde(default)]
+    pub may_ground: Option<bool>,
+    #[serde(default)]
+    pub externally_authored: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
