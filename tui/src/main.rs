@@ -129,7 +129,10 @@ impl Theme {
 
     fn background(self) -> Color {
         match self {
-            Self::Dark => Color::Black,
+            // ANSI 0 is a painted colour — most terminal themes render it as a grey sheet.
+            // Reset inherits the terminal's own background. Cream Ink is the deliberate
+            // painted surface and stays painted.
+            Self::Dark => Color::Reset,
             Self::CreamInk => FATE_BG,
         }
     }
@@ -8210,6 +8213,77 @@ mod tests {
                 .all(|cell| cell.bg == app.theme.background()),
             "focused composer inherited a foreign message-fill background"
         );
+    }
+
+    #[test]
+    fn dark_theme_inherits_the_terminal_background_instead_of_painting_ansi_black() {
+        // Color::Black is ANSI 0 — a painted colour most terminal themes render as a grey
+        // sheet. Color::Reset inherits the terminal's own background. Cream Ink is the
+        // deliberate painted surface and stays painted.
+        assert_eq!(Theme::Dark.background(), Color::Reset);
+        assert_eq!(Theme::CreamInk.background(), FATE_BG);
+
+        let app = test_app();
+        let buffer = rendered_buffer_at_size(&app, Instant::now(), 120, 32);
+        assert!(
+            buffer.content.iter().all(|cell| cell.bg == Color::Reset),
+            "dark theme painted a background instead of inheriting the terminal"
+        );
+    }
+
+    #[test]
+    fn transcript_turns_carry_distinguishable_speaker_labels() {
+        let mut app = test_app();
+        app.transcript
+            .push(TranscriptEntry::User("where does charge fail?".to_string()));
+        app.transcript.push(TranscriptEntry::Answer {
+            text: "at the retry loop in billing/charge.rs.".to_string(),
+            grounded: Some(true),
+            degraded: false,
+            sources: Vec::new(),
+        });
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
+        let row_count = |needle: &str| {
+            rendered
+                .lines()
+                .filter(|line| line.contains(needle))
+                .count()
+        };
+        assert_eq!(
+            row_count("you  where does charge fail?"),
+            1,
+            "exactly one user-labelled turn\n{rendered}"
+        );
+        assert_eq!(
+            row_count("estelle  grounded"),
+            1,
+            "exactly one assistant-labelled turn\n{rendered}"
+        );
+
+        // The labels must be distinguishable in the rendered buffer, not merely present in
+        // the model: different ink, and only the assistant label is bold.
+        let buffer = rendered_buffer_at_size(&app, Instant::now(), 120, 32);
+        let label_cell = |needle: &str| {
+            buffer
+                .content
+                .chunks(120)
+                .find_map(|row| {
+                    let text = row
+                        .iter()
+                        .map(ratatui::buffer::Cell::symbol)
+                        .collect::<String>();
+                    text.contains(needle).then(|| row[1].clone())
+                })
+                .unwrap_or_else(|| panic!("no rendered row for {needle:?}"))
+        };
+        let user_label = label_cell("you  where does charge fail?");
+        let estelle_label = label_cell("estelle  grounded");
+        assert_ne!(
+            user_label.fg, estelle_label.fg,
+            "speaker labels share ink and are not glanceable"
+        );
+        assert!(!user_label.modifier.contains(Modifier::BOLD));
+        assert!(estelle_label.modifier.contains(Modifier::BOLD));
     }
 
     #[test]
