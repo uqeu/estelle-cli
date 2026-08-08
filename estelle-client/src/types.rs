@@ -259,6 +259,10 @@ pub struct CommandReply {
     pub graph_edges: Vec<GraphEdge>,
     #[serde(default, rename = "truncated")]
     pub graph_truncated: Option<bool>,
+    /// `GET /me/keys` — the caller's API keys. The server never returns a raw key (id + prefix +
+    /// label + expiry state only), and this struct has no field that could hold one.
+    #[serde(default, rename = "keys")]
+    pub me_keys: Vec<KeySummary>,
     #[serde(default)]
     pub result: Option<serde_json::Value>,
     #[serde(default)]
@@ -309,6 +313,24 @@ pub struct GraphEdge {
     pub to_path: String,
     #[serde(default)]
     pub kind: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct KeySummary {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub prefix: Option<String>,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    #[serde(default)]
+    pub expired: Option<bool>,
+    #[serde(default)]
+    pub revoked: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]

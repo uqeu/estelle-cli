@@ -36,6 +36,8 @@ macro_rules! endpoints {
 
 endpoints! {
     (Account, "account", [Get], false),
+    (Me, "me", [Get], false),
+    (MeKeys, "me/keys", [Get], false),
     (Providers, "providers", [Get], false),
     (ProviderSelect, "provider/select", [Post], false),
     (Overview, "overview", [Get], false),

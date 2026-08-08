@@ -2,10 +2,12 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 24] = [
+pub(crate) const SESSION_COMMANDS: [&str; 26] = [
     "help",
     "init",
     "graph",
+    "me",
+    "keys",
     "memory",
     "sweep",
     "sessions",
@@ -29,10 +31,12 @@ pub(crate) const SESSION_COMMANDS: [&str; 24] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 24] = [
+const SESSION_HELP: [(&str, &str); 26] = [
     ("help", "what you can do here"),
     ("init", "a grounded brief of this repo"),
     ("graph", "the swept code graph; /graph nodes draws the dependency view"),
+    ("me", "your account: plan, balance, budget, provider, invites"),
+    ("keys", "your API keys — prefixes and expiry state, never raw keys"),
     ("memory", "what Estelle knows about this repo"),
     ("sweep", "index this repo into memory"),
     ("sessions", "your recent sessions"),
@@ -150,7 +154,7 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 20] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 24] {
+pub(crate) fn session_command_names() -> [&'static str; 26] {
     SESSION_COMMANDS
 }
 
@@ -540,6 +544,8 @@ pub(crate) fn remote_request(
         "init" => get(Endpoint::Wiki, json!({})),
         "graph" if argument == "nodes" => get(Endpoint::GraphNodes, json!({})),
         "graph" => get(Endpoint::Graph, json!({})),
+        "me" => get(Endpoint::Me, json!({})),
+        "keys" => get(Endpoint::MeKeys, json!({})),
         "memory" => post(
             Endpoint::DeepSearch,
             json!({"question": "what do you know about this repo?"}),
@@ -684,6 +690,138 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                         root.name
                     )
                 }));
+            }
+            lines
+        }
+        "me" => {
+            let scalar = |key: &str| {
+                reply
+                    .extra
+                    .get(key)
+                    .map(json_scalar)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| "not returned".to_string())
+            };
+            let money = |key: &str| {
+                reply
+                    .extra
+                    .get(key)
+                    .and_then(Value::as_f64)
+                    .map(|value| format!("${value:.2}"))
+                    .unwrap_or_else(|| "not returned".to_string())
+            };
+            let identity = scalar("email");
+            let mut lines = vec![format!(
+                "{identity}{}",
+                reply
+                    .extra
+                    .get("company")
+                    .map(json_scalar)
+                    .filter(|company| !company.is_empty())
+                    .map(|company| format!("  |  {company}"))
+                    .unwrap_or_default()
+            )];
+            lines.push(format!(
+                "plan {}  |  {}{}",
+                scalar("plan"),
+                match reply.extra.get("plan_active").and_then(Value::as_bool) {
+                    Some(true) => "active",
+                    Some(false) => "INACTIVE",
+                    None => "activity not returned",
+                },
+                reply
+                    .extra
+                    .get("seats")
+                    .and_then(Value::as_u64)
+                    .map(|seats| format!("  |  {seats} seats"))
+                    .unwrap_or_default()
+            ));
+            lines.push(format!(
+                "balance {}  |  budget {}  |  spent this period {}",
+                money("balance_usd"),
+                money("budget_usd"),
+                money("period_spend_usd")
+            ));
+            match reply.extra.get("has_provider_key").and_then(Value::as_bool) {
+                Some(true) => lines.push(format!(
+                    "provider {}  |  {}",
+                    reply
+                        .provider
+                        .as_deref()
+                        .unwrap_or("not returned"),
+                    scalar("provider_model")
+                )),
+                Some(false) => lines.push(
+                    "no provider key — set one (BYOK) before grounded calls".to_string(),
+                ),
+                None => lines.push("provider state not returned".to_string()),
+            }
+            if let Some(invites) = reply
+                .extra
+                .get("pending_invites")
+                .and_then(Value::as_array)
+                .filter(|invites| !invites.is_empty())
+            {
+                lines.push(format!(
+                    "{} pending team {} — joining is explicit (POST /me/team/invite/accept), never a side effect",
+                    invites.len(),
+                    if invites.len() == 1 { "invite" } else { "invites" }
+                ));
+            }
+            if let Some(entitlements) = reply.extra.get("entitlements").and_then(Value::as_object)
+            {
+                let toggle = |key: &str| {
+                    entitlements
+                        .get(key)
+                        .and_then(Value::as_bool)
+                        .map(|on| if on { "on" } else { "off" })
+                        .unwrap_or("not returned")
+                };
+                lines.push(format!(
+                    "entitlements  |  persist_index {}  |  best_retrieval {}  |  memory packs {}",
+                    toggle("persist_index"),
+                    toggle("best_retrieval"),
+                    entitlements
+                        .get("memory_pack_qty")
+                        .map(json_scalar)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or_else(|| "not returned".to_string())
+                ));
+            }
+            lines
+        }
+        "keys" => {
+            if reply.me_keys.is_empty() {
+                return vec![
+                    "No keys on this account. New keys are created on the dashboard and shown once."
+                        .to_string(),
+                ];
+            }
+            let mut lines = vec![format!(
+                "{} keys  |  raw keys are never returned — prefixes only",
+                reply.me_keys.len()
+            )];
+            for key in &reply.me_keys {
+                let mut row = format!(
+                    "{}  |  {}  |  {}",
+                    key.label.as_deref().unwrap_or("(unlabelled)"),
+                    key.prefix.as_deref().unwrap_or("prefix not returned"),
+                    key.id.as_deref().unwrap_or("id not returned")
+                );
+                if let Some(created) = key.created_at.as_deref() {
+                    row.push_str(&format!("  |  created {created}"));
+                }
+                row.push_str(&match key.expires_at.as_deref() {
+                    Some(expires) => format!("  |  expires {expires}"),
+                    None => "  |  never expires".to_string(),
+                });
+                if key.expired == Some(true) {
+                    row.push_str("  |  expired");
+                }
+                if key.revoked == Some(true) {
+                    row.push_str("  |  revoked");
+                }
+                lines.push(row);
             }
             lines
         }
@@ -1569,13 +1707,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_inventory_is_exactly_the_24_accepted_commands() {
+    fn session_inventory_is_exactly_the_26_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
                 "help",
                 "init",
                 "graph",
+                "me",
+                "keys",
                 "memory",
                 "sweep",
                 "sessions",
@@ -1828,6 +1968,73 @@ mod tests {
     }
 
     #[test]
+    fn me_reply_renders_plan_balance_budget_and_pending_invites_honestly() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "email": "dev@example.com", "account_id": "acct-1", "company": "Fate Labs",
+            "plan": "pro", "plan_active": true, "seats": 3,
+            "balance_usd": 12.5, "budget_usd": 50.0, "period_spend_usd": 4.25,
+            "has_provider_key": true, "provider": "anthropic", "provider_model": "claude-opus-4-8",
+            "pending_invites": [{"team": "core", "from": "founder@example.com"}],
+            "entitlements": {"persist_index": true, "best_retrieval": false, "memory_pack_qty": 2}
+        }))
+        .expect("typed me reply");
+        let rendered = render_remote_reply("me", &reply).join("\n");
+
+        assert!(rendered.contains("dev@example.com"), "identity missing\n{rendered}");
+        assert!(rendered.contains("pro"), "plan missing\n{rendered}");
+        assert!(rendered.contains("12.5"), "balance missing\n{rendered}");
+        assert!(rendered.contains("50"), "budget missing\n{rendered}");
+        assert!(rendered.contains("anthropic"), "provider missing\n{rendered}");
+        assert!(
+            rendered.contains("1 pending team invite"),
+            "a pending invite was not surfaced — joining must be visible and explicit\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn me_reply_omitted_fields_render_not_returned_never_zero() {
+        let reply: estelle_client::CommandReply =
+            serde_json::from_value(json!({"email": "dev@example.com"})).expect("sparse reply");
+        let rendered = render_remote_reply("me", &reply).join("\n");
+        assert!(rendered.contains("not returned"), "absent state invented\n{rendered}");
+        assert!(!rendered.contains("$0"), "absent balance rendered as zero\n{rendered}");
+    }
+
+    #[test]
+    fn keys_reply_lists_keys_with_expiry_state_and_never_a_raw_key() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "keys": [
+                {"id": "k1", "prefix": "estelle_live_ab", "label": "laptop",
+                 "created_at": "2026-01-01", "expires_at": null, "expired": false, "revoked": false},
+                {"id": "k2", "prefix": "estelle_live_cd", "label": "ci",
+                 "created_at": "2025-06-01", "expires_at": "2025-07-01", "expired": true, "revoked": false},
+                {"id": "k3", "prefix": "estelle_live_ef", "label": "old",
+                 "created_at": "2025-01-01", "expires_at": null, "expired": false, "revoked": true}
+            ]
+        }))
+        .expect("typed keys reply");
+        let rendered = render_remote_reply("keys", &reply).join("\n");
+
+        assert!(rendered.contains("3 keys"), "count missing\n{rendered}");
+        assert!(rendered.contains("laptop"), "label missing\n{rendered}");
+        assert!(rendered.contains("estelle_live_ab"), "prefix missing\n{rendered}");
+        assert!(rendered.contains("expired"), "expired flag missing\n{rendered}");
+        assert!(rendered.contains("revoked"), "revoked flag missing\n{rendered}");
+        assert!(
+            !rendered.contains("estelle_live_abcdef"),
+            "a raw key appeared — the server sends prefixes only"
+        );
+    }
+
+    #[test]
+    fn keys_reply_empty_is_an_honest_empty_state() {
+        let reply: estelle_client::CommandReply =
+            serde_json::from_value(json!({"keys": []})).expect("empty keys");
+        let rendered = render_remote_reply("keys", &reply).join("\n");
+        assert!(rendered.contains("No keys"), "empty state missing\n{rendered}");
+    }
+
+    #[test]
     fn task_commands_refuse_empty_arguments_before_any_request() {
         let work = parse_input("/work");
         assert_eq!(work.local_refusal(), Some("/work needs a task"));
@@ -1841,6 +2048,8 @@ mod tests {
         let routed = [
             ("init", estelle_client::Endpoint::Wiki),
             ("graph", estelle_client::Endpoint::Graph),
+            ("me", estelle_client::Endpoint::Me),
+            ("keys", estelle_client::Endpoint::MeKeys),
             ("memory", estelle_client::Endpoint::DeepSearch),
             ("sessions", estelle_client::Endpoint::Sessions),
             ("resume", estelle_client::Endpoint::Session),

@@ -5733,7 +5733,9 @@ mod tests {
         let mut slash = test_app();
         slash.prod_panel_visible = false;
         slash.composer.set_text("/m");
-        capture("06-slash-palette", &slash, 130, 38, "> /mcp");
+        // "/me" is the shortest "m" command, so it heads the palette; the needle pins the
+        // palette-open state with the first match selected, not a particular command's rank.
+        capture("06-slash-palette", &slash, 130, 38, "> /me");
 
         let mut settings = test_app();
         settings.prod_panel_visible = false;

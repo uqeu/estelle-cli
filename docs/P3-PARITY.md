@@ -18,16 +18,19 @@ Esc cancels`; cancelling invalidates the request ID, so a late response cannot a
 
 ## Command denominator
 
-All **24/24** accepted session names are claimed. Fourteen have typed remote routes and ten are local by
+All **26/26** accepted session names are claimed. Sixteen have typed remote routes and ten are local by
 design. Unknown commands send zero requests. `/route` aliases `/routing`; `/quit` aliases `/exit`; a unique
 one-edit typo resolves without guessing between multiple commands. (`/graph` was added 2026-08-07 as the
-first wire of the surface lane — see `ROUTE-INVENTORY-2026-08-07.md`.)
+first wire of the surface lane, `/me` and `/keys` followed the same day — see
+`ROUTE-INVENTORY-2026-08-07.md`.)
 
 | session command | execution |
 |---|---|
 | help | local table generated from the command registry |
 | init | scoped `GET /wiki` |
 | graph | scoped `GET /graph`; counts, roots, explicit `building`/unswept states. `/graph nodes` → scoped `GET /graph/nodes`; nodes/edges, explicit `truncated` |
+| me | `GET /me`; plan, balance, budget, provider, seats; pending invites explicit, omitted fields "not returned" |
+| keys | `GET /me/keys`; prefixes + expiry/revoked state, raw keys never returned |
 | memory | scoped `POST /deep-search` |
 | sweep | local hand-off to the top-level whole-tree command |
 | sessions | `GET /sessions` |
