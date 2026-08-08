@@ -277,6 +277,9 @@ pub struct CommandReply {
     pub memory_cards: Vec<MemoryCard>,
     #[serde(default, rename = "folders")]
     pub memory_folders: Option<Map<String, Value>>,
+    /// `GET /usage` — requests + tokens bucketed by day, oldest to newest.
+    #[serde(default, rename = "series")]
+    pub usage_series: Vec<UsagePoint>,
     #[serde(default)]
     pub result: Option<serde_json::Value>,
     #[serde(default)]
@@ -413,6 +416,16 @@ pub struct MemoryCard {
     pub created_at: Option<String>,
     #[serde(default)]
     pub edited: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct UsagePoint {
+    #[serde(default)]
+    pub date: Option<String>,
+    #[serde(default)]
+    pub requests: Option<u64>,
+    #[serde(default)]
+    pub tokens: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
