@@ -47,7 +47,6 @@ use crossterm::terminal::LeaveAlternateScreen;
 use crossterm::terminal::disable_raw_mode;
 use crossterm::terminal::enable_raw_mode;
 use estelle_client::AccountResponse;
-use estelle_client::ChatCompletionRequest;
 use estelle_client::Client;
 use estelle_client::CommandReply;
 use estelle_client::CredentialSource;
@@ -2431,51 +2430,74 @@ async fn answer_question(
     session_context: Option<String>,
     cancel: &CancellationToken,
 ) -> Result<AnswerReply, Error> {
+    // ONE model round-trip per question, always through /deep-search: the server owns the
+    // conversational fast path (`utterance.is_conversational`), the scope decision and the
+    // grounding certificate. `AnswerReply.text` is what a human reads — retrieval context is
+    // model INPUT, never assistant output — so the transcript carries the rendered answer only
+    // and provenance is disclosed from the typed `working_paths` field (see /context).
     let working_files = tokio::task::spawn_blocking(move || top_level::working_memory_files(&root))
         .await
         .ok()
         .and_then(Result::ok)
         .unwrap_or_default();
-    let repo_request = DeepSearchRequest::new(&question);
-    let repo_answer = client.deep_search(&repo, &repo_request, cancel);
-    if working_files.is_empty() && session_context.is_none() {
-        let response = repo_answer.await?;
-        return Ok(AnswerReply {
-            text: response.rendered_answer().unwrap_or_default().to_string(),
-            grounded: response.grounded,
-            degraded: response.degraded,
-            sources: response.sources,
-            working_paths: Vec::new(),
-        });
-    }
-
-    let (working_prompt, working_paths) =
-        working_memory_prompt(&question, &working_files, session_context.as_deref());
-    let local_request = ChatCompletionRequest::question(working_prompt);
-    let local_answer = client.chat_completion(&repo, &local_request, cancel);
-    let (repo_response, local_response) = tokio::try_join!(repo_answer, local_answer)?;
-    let local_text = local_response.answer().unwrap_or(
-        "No Working-memory answer was returned; the local files are not represented as a model answer.",
-    );
-    let team_text = repo_response
-        .rendered_answer()
-        .unwrap_or("No Repo-graph answer was returned.");
+    // The conversational gate decides BANDWIDTH, not a verdict: without it, "hi" in a dirty
+    // repo would upload up to 80 KB of working memory inside the `question` field, which the
+    // server's fast path would then (correctly) read as non-conversational — defeating the
+    // very path the question was routed to. This is deliberately NOT a shared copy of the
+    // server's rule: that check decides whether retrieval and the grounding gate run, where a
+    // mistake is a wrong answer; this one only decides whether local files are attached, where
+    // both failure directions are safe — attach needlessly and one upload is wasted, skip the
+    // attachment and the server still answers from the repo graph, degraded but never wrong.
+    // Do not "fix" drift between the two vocabularies by importing a rule that does not exist.
+    let attach_context = !is_conversational_turn(&question)
+        && (!working_files.is_empty() || session_context.is_some());
+    let (request, working_paths) = if attach_context {
+        let (prompt, paths) =
+            working_memory_prompt(&question, &working_files, session_context.as_deref());
+        (DeepSearchRequest::new(prompt), paths)
+    } else {
+        (DeepSearchRequest::new(&question), Vec::new())
+    };
+    let response = client.deep_search(&repo, &request, cancel).await?;
     Ok(AnswerReply {
-        text: format!(
-            "Working memory (local snapshot scoped to this request: {})\nSent to Estelle's configured model path; not added to the team's Repo graph.\n{}\n\nRepo graph (the team's swept copy; shown separately because it may differ)\n{}",
-            if working_paths.is_empty() {
-                "session context only".to_string()
-            } else {
-                working_paths.join(", ")
-            },
-            local_text,
-            team_text
-        ),
-        grounded: repo_response.grounded,
-        degraded: repo_response.degraded,
-        sources: repo_response.sources,
+        text: response.rendered_answer().unwrap_or_default().to_string(),
+        grounded: response.grounded,
+        degraded: response.degraded,
+        sources: response.sources,
         working_paths,
     })
+}
+
+/// Crude client-side BANDWIDTH gate — see `answer_question` for why this is not a verdict and
+/// must not converge with the server's `is_conversational`. True only when the message is at
+/// most eight tokens and every token is in a small closed social vocabulary; anything else,
+/// including any digit, attaches working memory (the safe direction).
+fn is_conversational_turn(message: &str) -> bool {
+    const MAX_SOCIAL_TOKENS: usize = 8;
+    const SOCIAL_TOKENS: &[&str] = &[
+        "hi", "hii", "hey", "heya", "hello", "yo", "gm", "morning", "afternoon", "evening",
+        "good", "thanks", "thank", "thx", "ty", "tysm", "cheers", "appreciated", "appreciate",
+        "much", "ok", "okay", "k", "kk", "cool", "nice", "great", "perfect", "awesome",
+        "excellent", "lovely", "got", "it", "makes", "sense", "understood", "gotcha", "right",
+        "sweet", "brilliant", "helpful", "that", "thats", "very", "yes", "yep", "yeah", "yup",
+        "no", "nope", "nah", "sure", "please", "bye", "goodbye", "see", "you", "later", "cya",
+        "night", "sorry", "apologies", "my", "bad", "oops", "i", "im", "am", "is", "was", "and",
+        "a", "the", "to",
+    ];
+    if message.chars().any(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    let stripped = message.replace(['\'', '\u{2019}'], "");
+    let tokens = stripped
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .filter(|token| !token.is_empty())
+        .map(str::to_lowercase)
+        .collect::<Vec<_>>();
+    !tokens.is_empty()
+        && tokens.len() <= MAX_SOCIAL_TOKENS
+        && tokens
+            .iter()
+            .all(|token| SOCIAL_TOKENS.contains(&token.as_str()))
 }
 
 fn working_memory_prompt(
@@ -7438,6 +7460,207 @@ mod tests {
 
         assert!(rendered.contains("api/charge.ts:52"));
         assert!(rendered.contains("Ask Estelle"));
+    }
+
+    fn dirty_working_tree() -> tempfile::TempDir {
+        let root = tempfile::tempdir().expect("working tree");
+        let git = |arguments: &[&str]| {
+            let status = std::process::Command::new("git")
+                .args(arguments)
+                .current_dir(root.path())
+                .status()
+                .expect("git invocation");
+            assert!(status.success(), "git {arguments:?} failed");
+        };
+        git(&["init"]);
+        std::fs::write(root.path().join("main.rs"), "fn baseline() {}\n").expect("baseline");
+        git(&["add", "."]);
+        git(&[
+            "-c",
+            "user.name=Estelle Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "baseline",
+        ]);
+        std::fs::write(
+            root.path().join("main.rs"),
+            "fn changed() -> &'static str { \"local sentinel content\" }\n",
+        )
+        .expect("changed");
+        root
+    }
+
+    #[tokio::test]
+    async fn answer_turn_shows_the_answer_only_never_the_retrieval_plumbing() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/deep-search"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "answer": "TEAM SENTINEL ANSWER",
+                "grounded": true,
+                "sources": []
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "model": "estelle",
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "LOCAL SENTINEL ANSWER"},
+                    "finish_reason": "stop"
+                }]
+            })))
+            .mount(&server)
+            .await;
+        let client = Client::new(
+            &format!("{}/", server.uri()),
+            estelle_client::ApiKey::new("test-key").expect("key"),
+            Duration::from_secs(120),
+        )
+        .expect("client");
+        let root = dirty_working_tree();
+        let reply = answer_question(
+            client,
+            Repo::new("fatelabs/estelle").expect("repo"),
+            root.path().to_path_buf(),
+            "what does the changed function return?".to_string(),
+            None,
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("answer");
+
+        // The transcript string is the answer, and only the answer. Retrieval context is model
+        // input; it never becomes assistant output.
+        assert_eq!(reply.text, "TEAM SENTINEL ANSWER");
+        assert!(!reply.text.contains("Working memory ("));
+        assert!(
+            !reply.text.contains("LOCAL SENTINEL ANSWER"),
+            "the working-memory leg must not surface as a second spliced answer"
+        );
+        for working_path in &reply.working_paths {
+            assert!(
+                !reply.text.contains(working_path),
+                "provenance path {working_path} leaked into the transcript text"
+            );
+        }
+        // Provenance is disclosed from the typed field, not from prose in the transcript.
+        assert_eq!(reply.working_paths, ["main.rs"]);
+
+        // One model round-trip per question, to /deep-search, with working memory riding the
+        // request as model INPUT.
+        let requests = server
+            .received_requests()
+            .await
+            .expect("request recording");
+        assert_eq!(
+            requests.len(),
+            1,
+            "exactly one model round-trip may fire per question"
+        );
+        assert_eq!(requests[0].url.path(), "/deep-search");
+        let body: Value = serde_json::from_slice(&requests[0].body).expect("json body");
+        let question = body["question"].as_str().expect("question string");
+        assert!(question.contains("what does the changed function return?"));
+        assert!(
+            question.contains("local sentinel content"),
+            "working memory must still reach the model as input"
+        );
+
+        // And the rendered frame shows the answer without the plumbing.
+        let mut app = test_app();
+        app.active = Some(ActiveRequest {
+            id: 9,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        let (tx, _rx) = mpsc::unbounded_channel();
+        app.handle_ui_event(UiEvent::Answer { id: 9, result: Ok(reply) }, &tx);
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 30);
+        assert!(rendered.contains("TEAM SENTINEL ANSWER"));
+        assert!(!rendered.contains("Working memory ("));
+        assert!(!rendered.contains("main.rs"));
+    }
+
+    #[tokio::test]
+    async fn conversational_question_rides_the_fast_path_with_no_working_memory_upload() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/deep-search"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "answer": "HI SENTINEL ANSWER",
+                "grounded": true,
+                "sources": []
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "model": "estelle",
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "LOCAL SENTINEL ANSWER"},
+                    "finish_reason": "stop"
+                }]
+            })))
+            .mount(&server)
+            .await;
+        let client = Client::new(
+            &format!("{}/", server.uri()),
+            estelle_client::ApiKey::new("test-key").expect("key"),
+            Duration::from_secs(120),
+        )
+        .expect("client");
+        let root = dirty_working_tree();
+        let reply = answer_question(
+            client,
+            Repo::new("fatelabs/estelle").expect("repo"),
+            root.path().to_path_buf(),
+            "hi".to_string(),
+            None,
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("answer");
+
+        assert_eq!(reply.text, "HI SENTINEL ANSWER");
+        assert!(reply.working_paths.is_empty());
+        // A conversational turn uploads the question ALONE, so the server's is_conversational
+        // fast path can fire; 80 KB of working memory would defeat it. One request, no chat leg.
+        let requests = server
+            .received_requests()
+            .await
+            .expect("request recording");
+        assert_eq!(
+            requests.len(),
+            1,
+            "a conversational turn must not fire the raw chat endpoint"
+        );
+        assert_eq!(requests[0].url.path(), "/deep-search");
+        let body: Value = serde_json::from_slice(&requests[0].body).expect("json body");
+        assert_eq!(body["question"].as_str(), Some("hi"));
+    }
+
+    #[test]
+    fn conversational_gate_decides_bandwidth_not_a_verdict() {
+        assert!(is_conversational_turn("hi"));
+        assert!(is_conversational_turn("thanks, that's helpful"));
+        assert!(is_conversational_turn("good morning"));
+        assert!(!is_conversational_turn(""));
+        assert!(!is_conversational_turn("how does the auth flow work"));
+        assert!(!is_conversational_turn("ok 500"));
+        assert!(!is_conversational_turn("hi what does charge_card do"));
+        assert!(!is_conversational_turn("yes yes yes yes yes yes yes yes yes"));
     }
 
     #[tokio::test]

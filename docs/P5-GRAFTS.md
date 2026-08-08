@@ -137,8 +137,9 @@ Dynamic `/skill:<name> <task>` is ported to Estelle `/skill/run`; `/odel` is ass
   the account-wide provider selection and leaves auto routing active.
 - Working memory is the one local capability without a server owner. It is session-private and collects
   only changed, staged and untracked source files from Git; ignored files, symlink escapes, unsupported
-  extensions and credential-shaped content remain excluded. Answers render Working memory and Repo graph
-  separately.
+  extensions and credential-shaped content remain excluded. Since D1 (2026-08-07, see
+  `docs/2026-08-07-D1-answer-pipeline.md`) it rides the single `/deep-search` call as model input and is
+  disclosed from the typed `working_paths` field — never spliced into the transcript answer.
 - `codex-memories-extension` is installed only by the preserved app-server binary
   (`app-server/src/extensions.rs`), not by the Estelle TUI binary. The customer-reachable memory commands
   are repointed to Estelle. The inherited local backend remains a P0 compile exception, not a shipped
