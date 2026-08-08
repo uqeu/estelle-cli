@@ -7,7 +7,7 @@
 
 ## Result
 
-P3 implements the 24-command session surface and all 14 top-level commands that belong to P3. The three
+P3 implements the 27-command session surface and all 14 top-level commands that belong to P3. The three
 hook command names remain visible and return explicit P4 deferrals; they do not install or invoke a hollow
 hook. The optimized binary starts the maintained Codex composer, resolves account and repo state after the
 first frame, displays the Estelle command palette, reaches `api.fatelabs.ca`, and exits cleanly.
@@ -18,10 +18,10 @@ Esc cancels`; cancelling invalidates the request ID, so a late response cannot a
 
 ## Command denominator
 
-All **26/26** accepted session names are claimed. Sixteen have typed remote routes and ten are local by
+All **27/27** accepted session names are claimed. Seventeen have typed remote routes and ten are local by
 design. Unknown commands send zero requests. `/route` aliases `/routing`; `/quit` aliases `/exit`; a unique
 one-edit typo resolves without guessing between multiple commands. (`/graph` was added 2026-08-07 as the
-first wire of the surface lane, `/me` and `/keys` followed the same day — see
+first wire of the surface lane; `/me`, `/keys` and `/team` followed the same day — see
 `ROUTE-INVENTORY-2026-08-07.md`.)
 
 | session command | execution |
@@ -31,6 +31,7 @@ first wire of the surface lane, `/me` and `/keys` followed the same day — see
 | graph | scoped `GET /graph`; counts, roots, explicit `building`/unswept states. `/graph nodes` → scoped `GET /graph/nodes`; nodes/edges, explicit `truncated` |
 | me | `GET /me`; plan, balance, budget, provider, seats; pending invites explicit, omitted fields "not returned" |
 | keys | `GET /me/keys`; prefixes + expiry/revoked state, raw keys never returned |
+| team | `GET /me/team`; role, seat ledger, members, admin invites; null team renders as absent |
 | memory | scoped `POST /deep-search` |
 | sweep | local hand-off to the top-level whole-tree command |
 | sessions | `GET /sessions` |

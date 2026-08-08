@@ -263,6 +263,10 @@ pub struct CommandReply {
     /// label + expiry state only), and this struct has no field that could hold one.
     #[serde(default, rename = "keys")]
     pub me_keys: Vec<KeySummary>,
+    /// `GET /me/team` — `None` means the server sent `"team": null` (the caller is on no team) OR
+    /// the key was absent; both render as an explicit state, never an invented roster.
+    #[serde(default, rename = "team")]
+    pub me_team: Option<TeamView>,
     #[serde(default)]
     pub result: Option<serde_json::Value>,
     #[serde(default)]
@@ -331,6 +335,56 @@ pub struct KeySummary {
     pub expired: Option<bool>,
     #[serde(default)]
     pub revoked: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct TeamView {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub you: Option<String>,
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub you_are_owner: Option<bool>,
+    #[serde(default)]
+    pub seats: Option<u64>,
+    #[serde(default)]
+    pub members: Vec<TeamMember>,
+    #[serde(default)]
+    pub seat_ledger: Option<SeatLedger>,
+    #[serde(default)]
+    pub invites: Vec<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct TeamMember {
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub since: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct SeatLedger {
+    #[serde(default)]
+    pub purchased: Option<u64>,
+    #[serde(default)]
+    pub used: Option<u64>,
+    #[serde(default)]
+    pub pending: Option<u64>,
+    #[serde(default)]
+    pub available: Option<u64>,
+    #[serde(default)]
+    pub full: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]

@@ -33,10 +33,11 @@ method is below so anyone can re-run them.
 ## The 153 undeclared server paths, grouped
 
 **Wired since this inventory:** `GET /graph` (`/graph`), `GET /graph/nodes` (`/graph nodes`),
-`GET /me` (`/me`), `GET /me/keys` (`/keys`) — all with the honesty pattern: explicit
-`building`/`truncated`/invite states, omitted fields render "not returned", unknown is never
-zero. Client now declares 57, reaches 55 of 57. `/me/*` writes (key create/revoke/rotate, team
-invite/seats, billing) remain unwired — mutations are their own commits.
+`GET /me` (`/me`), `GET /me/keys` (`/keys`), `GET /me/team` (`/team`) — all with the honesty
+pattern: explicit `building`/`truncated`/invite states, null team renders as absent, omitted
+fields render "not returned", unknown is never zero. Client now declares 58, reaches 56 of 58.
+`/me/*` writes (key create/revoke/rotate, team invite/seats, billing) remain unwired — mutations
+are their own commits.
 
 **Customer-reachable — the surface lane's backlog (≈128):**
 
@@ -52,7 +53,7 @@ invite/seats, billing) remain unwired — mutations are their own commits.
   `GET /automations`, `POST /dev/from-ticket`
 - Account self-service (`/me/*` + billing/keys/team): `GET /me` ✅, `GET|POST /me/profile`,
   `GET ✅|POST /me/keys` (+`rename`/`revoke`/`rotate`), `POST /me/provider`,
-  `POST /me/provider/label`, `GET|POST /me/team` (+`invite`/`invite/accept`/`invite/revoke`/
+  `POST /me/provider/label`, `GET ✅|POST /me/team` (+`invite`/`invite/accept`/`invite/revoke`/
   `leave`/`remove`/`transfer`/`role`), `POST /me/billing/{checkout,subscribe,cancel,portal,seats}`,
   `POST /me/avatar`, `GET /plans`, `GET /addons`, `POST /addons/{subscribe,remove}`,
   `POST /checkout`, `POST /subscribe`, `GET /usage`, `GET /budget`, `POST /budget`,

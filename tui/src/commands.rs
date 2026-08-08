@@ -2,12 +2,13 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 26] = [
+pub(crate) const SESSION_COMMANDS: [&str; 27] = [
     "help",
     "init",
     "graph",
     "me",
     "keys",
+    "team",
     "memory",
     "sweep",
     "sessions",
@@ -31,12 +32,13 @@ pub(crate) const SESSION_COMMANDS: [&str; 26] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 26] = [
+const SESSION_HELP: [(&str, &str); 27] = [
     ("help", "what you can do here"),
     ("init", "a grounded brief of this repo"),
     ("graph", "the swept code graph; /graph nodes draws the dependency view"),
     ("me", "your account: plan, balance, budget, provider, invites"),
     ("keys", "your API keys — prefixes and expiry state, never raw keys"),
+    ("team", "your team: role, seats, members, pending invites"),
     ("memory", "what Estelle knows about this repo"),
     ("sweep", "index this repo into memory"),
     ("sessions", "your recent sessions"),
@@ -154,7 +156,7 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 20] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 26] {
+pub(crate) fn session_command_names() -> [&'static str; 27] {
     SESSION_COMMANDS
 }
 
@@ -546,6 +548,7 @@ pub(crate) fn remote_request(
         "graph" => get(Endpoint::Graph, json!({})),
         "me" => get(Endpoint::Me, json!({})),
         "keys" => get(Endpoint::MeKeys, json!({})),
+        "team" => get(Endpoint::MeTeam, json!({})),
         "memory" => post(
             Endpoint::DeepSearch,
             json!({"question": "what do you know about this repo?"}),
@@ -822,6 +825,73 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                     row.push_str("  |  revoked");
                 }
                 lines.push(row);
+            }
+            lines
+        }
+        "team" => {
+            let Some(team) = &reply.me_team else {
+                return vec![
+                    "You're not on a team yet. Teams are created on the dashboard.".to_string(),
+                ];
+            };
+            let mut lines = vec![format!(
+                "{}  |  you are {}{}",
+                team.name.as_deref().unwrap_or("name not returned"),
+                team.role.as_deref().unwrap_or("role not returned"),
+                if team.you_are_owner == Some(true) {
+                    " (owner)"
+                } else {
+                    ""
+                }
+            )];
+            if let Some(ledger) = &team.seat_ledger {
+                let seat = |value: Option<u64>| {
+                    value
+                        .map(|number| number.to_string())
+                        .unwrap_or_else(|| "?".to_string())
+                };
+                lines.push(format!(
+                    "{} of {} seats used  |  {} pending  |  {} available{}",
+                    seat(ledger.used),
+                    seat(ledger.purchased),
+                    seat(ledger.pending),
+                    seat(ledger.available),
+                    if ledger.full == Some(true) {
+                        "  |  full"
+                    } else {
+                        ""
+                    }
+                ));
+            } else {
+                lines.push("seat ledger not returned".to_string());
+            }
+            if !team.invites.is_empty() {
+                lines.push(format!(
+                    "{} pending invite{}",
+                    team.invites.len(),
+                    if team.invites.len() == 1 { "" } else { "s" }
+                ));
+            }
+            if !team.members.is_empty() {
+                lines.push(String::new());
+                lines.extend(team.members.iter().map(|member| {
+                    let email = member.email.as_deref().unwrap_or("email not returned");
+                    format!(
+                        "{}{}  |  {}{}",
+                        member
+                            .display_name
+                            .as_deref()
+                            .map(|name| format!("{name} · "))
+                            .unwrap_or_default(),
+                        email,
+                        member.role.as_deref().unwrap_or("role not returned"),
+                        if team.owner.as_deref() == member.email.as_deref() {
+                            "  |  owner"
+                        } else {
+                            ""
+                        }
+                    )
+                }));
             }
             lines
         }
@@ -1707,7 +1777,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_inventory_is_exactly_the_26_accepted_commands() {
+    fn session_inventory_is_exactly_the_27_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
@@ -1716,6 +1786,7 @@ mod tests {
                 "graph",
                 "me",
                 "keys",
+                "team",
                 "memory",
                 "sweep",
                 "sessions",
@@ -2035,6 +2106,52 @@ mod tests {
     }
 
     #[test]
+    fn team_reply_renders_role_seat_ledger_members_and_owner_honestly() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "team": {
+                "id": "team-1", "name": "Fate Labs", "you": "dev@example.com", "role": "admin",
+                "owner": "founder@example.com", "you_are_owner": false, "seats": 4,
+                "members": [
+                    {"email": "founder@example.com", "role": "admin", "since": "2026-01-01"},
+                    {"email": "dev@example.com", "role": "admin", "since": "2026-02-01"},
+                    {"email": "intern@example.com", "role": "member", "since": "2026-03-01",
+                     "display_name": "Intern"}
+                ],
+                "seat_ledger": {"purchased": 4, "used": 3, "pending": 1, "available": 0, "full": true},
+                "invites": [{"email": "new@example.com"}]
+            }
+        }))
+        .expect("typed team reply");
+        let rendered = render_remote_reply("team", &reply).join("\n");
+
+        assert!(rendered.contains("Fate Labs"), "team name missing\n{rendered}");
+        assert!(rendered.contains("admin"), "role missing\n{rendered}");
+        assert!(rendered.contains("3 of 4 seats used"), "seat ledger missing\n{rendered}");
+        assert!(rendered.contains("full"), "a full ledger did not say so\n{rendered}");
+        assert!(rendered.contains("founder@example.com"), "member missing\n{rendered}");
+        assert!(rendered.contains("owner"), "owner not marked\n{rendered}");
+        assert!(
+            rendered.contains("1 pending invite"),
+            "admin-visible invites not surfaced\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn team_reply_null_team_is_an_explicit_absent_state() {
+        let reply: estelle_client::CommandReply =
+            serde_json::from_value(json!({"team": null})).expect("null team");
+        let rendered = render_remote_reply("team", &reply).join("\n");
+        assert!(
+            rendered.contains("not on a team"),
+            "a null team was not rendered as absent\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("0 members"),
+            "absence rendered as an empty roster\n{rendered}"
+        );
+    }
+
+    #[test]
     fn task_commands_refuse_empty_arguments_before_any_request() {
         let work = parse_input("/work");
         assert_eq!(work.local_refusal(), Some("/work needs a task"));
@@ -2050,6 +2167,7 @@ mod tests {
             ("graph", estelle_client::Endpoint::Graph),
             ("me", estelle_client::Endpoint::Me),
             ("keys", estelle_client::Endpoint::MeKeys),
+            ("team", estelle_client::Endpoint::MeTeam),
             ("memory", estelle_client::Endpoint::DeepSearch),
             ("sessions", estelle_client::Endpoint::Sessions),
             ("resume", estelle_client::Endpoint::Session),
