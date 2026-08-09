@@ -2,7 +2,7 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 38] = [
+pub(crate) const SESSION_COMMANDS: [&str; 39] = [
     "help",
     "init",
     "graph",
@@ -20,6 +20,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 38] = [
     "requests",
     "presence",
     "leaderboard",
+    "billing",
     "memory",
     "sweep",
     "sessions",
@@ -43,7 +44,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 38] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 38] = [
+const SESSION_HELP: [(&str, &str); 39] = [
     ("help", "what you can do here"),
     ("init", "a grounded brief of this repo"),
     ("graph", "the swept code graph; /graph nodes draws the dependency view"),
@@ -61,6 +62,7 @@ const SESSION_HELP: [(&str, &str); 38] = [
     ("requests", "the billable engine-call stream with the log total"),
     ("presence", "who's active, files in flight, pending handoffs"),
     ("leaderboard", "skills ranked by verified grounded outcome"),
+    ("billing", "settings catalog with monthly pricing and current choices"),
     ("memory", "an answered question: what Estelle knows about this repo"),
     ("sweep", "index this repo into memory"),
     ("sessions", "your recent sessions"),
@@ -178,7 +180,7 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 20] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 38] {
+pub(crate) fn session_command_names() -> [&'static str; 39] {
     SESSION_COMMANDS
 }
 
@@ -587,6 +589,7 @@ pub(crate) fn remote_request(
         "requests" => get(Endpoint::Requests, json!({})),
         "presence" => get(Endpoint::Presence, json!({})),
         "leaderboard" => get(Endpoint::Leaderboard, json!({})),
+        "billing" => get(Endpoint::BillingCatalog, json!({})),
         "model" if argument.is_empty() => get(Endpoint::Providers, json!({})),
         "grep" => post(Endpoint::Search, json!({"query": argument, "code": true})),
         "skill:" => {
@@ -1515,6 +1518,62 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
             }
             lines
         }
+        "billing" => {
+            let mut lines = Vec::new();
+            match reply.extra.get("settings").and_then(Value::as_object) {
+                Some(settings) if !settings.is_empty() => {
+                    for (key, value) in settings {
+                        lines.push(format!("{key}  |  {}", json_scalar(value)));
+                    }
+                }
+                _ => lines.push("current settings not returned".to_string()),
+            }
+            match reply.extra.get("pricing").and_then(Value::as_object) {
+                Some(pricing) => {
+                    lines.push(format!(
+                        "adds {}/month",
+                        pricing
+                            .get("total_monthly_usd")
+                            .and_then(Value::as_f64)
+                            .map(|total| format!("${total:.2}"))
+                            .unwrap_or_else(|| "not returned".to_string())
+                    ));
+                    for row in pricing
+                        .get("breakdown")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                    {
+                        let label = row
+                            .get("label")
+                            .and_then(Value::as_str)
+                            .unwrap_or("setting not returned");
+                        let value = row
+                            .get("value")
+                            .and_then(Value::as_str)
+                            .unwrap_or("value not returned");
+                        if row.get("included").and_then(Value::as_bool) == Some(true) {
+                            lines.push(format!(
+                                "  {label} = {value}  |  included in plan"
+                            ));
+                        } else {
+                            lines.push(format!(
+                                "  {label} = {value}  |  +{}/month",
+                                row.get("monthly_usd")
+                                    .and_then(Value::as_f64)
+                                    .map(|usd| format!("${usd:.2}"))
+                                    .unwrap_or_else(|| "not returned".to_string())
+                            ));
+                        }
+                    }
+                }
+                None => lines.push("pricing not returned".to_string()),
+            }
+            if let Some(catalog) = reply.extra.get("catalog").and_then(Value::as_array) {
+                lines.push(format!("{} configurable settings in the catalog", catalog.len()));
+            }
+            lines
+        }
         "memory" => reply
             .answer
             .as_deref()
@@ -2399,7 +2458,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_inventory_is_exactly_the_38_accepted_commands() {
+    fn session_inventory_is_exactly_the_39_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
@@ -2420,6 +2479,7 @@ mod tests {
                 "requests",
                 "presence",
                 "leaderboard",
+                "billing",
                 "memory",
                 "sweep",
                 "sessions",
@@ -3225,6 +3285,40 @@ mod tests {
     }
 
     #[test]
+    fn billing_reply_renders_current_choices_pricing_and_included_flags() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "settings": {"autonomy_ceiling": "propose", "rerank_quality": "best",
+                         "rerank_quality_locked": true},
+            "catalog": [{"key": "rerank_quality", "label": "Retrieval quality", "default": "standard",
+                         "options": [{"value": "standard", "monthly_usd": 0, "note": ""},
+                                     {"value": "best", "monthly_usd": 20, "note": "reranker"}]}],
+            "pricing": {"total_monthly_usd": 0.0,
+                        "breakdown": [{"setting": "rerank_quality", "label": "Retrieval quality",
+                                       "value": "best", "monthly_usd": 0.0, "base_usd": 20.0,
+                                       "included": true, "note": "reranker"}]}
+        }))
+        .expect("typed billing reply");
+        let rendered = render_remote_reply("billing", &reply).join("\n");
+
+        assert!(rendered.contains("propose"), "current setting missing\n{rendered}");
+        assert!(rendered.contains("best"), "rerank choice missing\n{rendered}");
+        assert!(rendered.contains("$0.00"), "total missing\n{rendered}");
+        assert!(
+            rendered.contains("included in plan"),
+            "a plan-included option did not say so — it must not read as a new charge\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn billing_reply_absent_sections_render_as_absent() {
+        let reply: estelle_client::CommandReply =
+            serde_json::from_value(json!({})).expect("sparse billing reply");
+        let rendered = render_remote_reply("billing", &reply).join("\n");
+        assert!(rendered.contains("not returned"), "absent state invented\n{rendered}");
+        assert!(!rendered.contains("$0.00"), "absent pricing rendered as zero\n{rendered}");
+    }
+
+    #[test]
     fn task_commands_refuse_empty_arguments_before_any_request() {
         let work = parse_input("/work");
         assert_eq!(work.local_refusal(), Some("/work needs a task"));
@@ -3253,6 +3347,7 @@ mod tests {
             ("requests", estelle_client::Endpoint::Requests),
             ("presence", estelle_client::Endpoint::Presence),
             ("leaderboard", estelle_client::Endpoint::Leaderboard),
+            ("billing", estelle_client::Endpoint::BillingCatalog),
             ("memory", estelle_client::Endpoint::DeepSearch),
             ("sessions", estelle_client::Endpoint::Sessions),
             ("resume", estelle_client::Endpoint::Session),

@@ -37,10 +37,11 @@ method is below so anyone can re-run them.
 (`/cards`), `GET /entities` (`/entities`), `GET /usage` (`/usage`), `GET /activity` (`/activity`), `GET /runs` (`/runs`),
 `GET /outcomes` (`/outcomes`), `GET /memories` (`/memories` — split off the `/memory` alias),
 `GET /analytics` (`/analytics`), `GET /audit` (`/audit`), `GET /requests` (`/requests`),
-`GET /presence` (`/presence`), `GET /leaderboard` (`/leaderboard`) —
+`GET /presence` (`/presence`), `GET /leaderboard` (`/leaderboard`),
+`GET /settings` (`/billing` — the `/settings` name belongs to the local preferences picker) —
 all with the honesty pattern: explicit `building`/`truncated`/invite states, null team renders as
-absent, omitted fields render "not returned", unknown is never zero. Client now declares 70,
-reaches 68 of 70. `/me/*` writes
+absent, omitted fields render "not returned", unknown is never zero. Client now declares 71,
+reaches 69 of 71. `/me/*` writes
 (key create/revoke/rotate, team invite/seats, billing) and `memory/cards/{dream,edit,revert}`
 remain unwired — mutations are their own commits.
 
@@ -62,7 +63,7 @@ remain unwired — mutations are their own commits.
   `leave`/`remove`/`transfer`/`role`), `POST /me/billing/{checkout,subscribe,cancel,portal,seats}`,
   `POST /me/avatar`, `GET /plans`, `GET /addons`, `POST /addons/{subscribe,remove}`,
   `POST /checkout`, `POST /subscribe`, `GET /usage` ✅, `GET /budget`, `POST /budget`,
-  `GET|POST|PUT /settings`, `GET /suite`, `PUT /suite`, `GET /suites`, `POST /suites`,
+  `GET ✅|POST|PUT /settings` (read via `/billing`), `GET /suite`, `PUT /suite`, `GET /suites`, `POST /suites`,
   `GET /suites/upgrades`, `GET /skills/scored`, `POST /skill`, `POST /skill/feedback`,
   `POST /key`, `POST /key/delete`, `POST /key/web`, `POST /account/worlds`,
   `GET /account/connections`, `GET /connections`, `GET|POST /autonomy/auto-mode`
