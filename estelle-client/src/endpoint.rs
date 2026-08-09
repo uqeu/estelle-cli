@@ -48,6 +48,7 @@ endpoints! {
     (Memories, "memories", [Get], true),
     (Analytics, "analytics", [Get], false),
     (Audit, "audit", [Get], false),
+    (Requests, "requests", [Get], false),
     (Providers, "providers", [Get], false),
     (ProviderSelect, "provider/select", [Post], false),
     (Overview, "overview", [Get], false),

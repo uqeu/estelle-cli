@@ -2,7 +2,7 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 35] = [
+pub(crate) const SESSION_COMMANDS: [&str; 36] = [
     "help",
     "init",
     "graph",
@@ -17,6 +17,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 35] = [
     "outcomes",
     "analytics",
     "audit",
+    "requests",
     "memory",
     "sweep",
     "sessions",
@@ -40,7 +41,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 35] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 35] = [
+const SESSION_HELP: [(&str, &str); 36] = [
     ("help", "what you can do here"),
     ("init", "a grounded brief of this repo"),
     ("graph", "the swept code graph; /graph nodes draws the dependency view"),
@@ -55,6 +56,7 @@ const SESSION_HELP: [(&str, &str); 35] = [
     ("outcomes", "how the team's applied changes fared: accept/revert/reject"),
     ("analytics", "your usage analytics derived from run history"),
     ("audit", "the tamper-evident trail of privileged actions on your account"),
+    ("requests", "the billable engine-call stream with the log total"),
     ("memory", "an answered question: what Estelle knows about this repo"),
     ("sweep", "index this repo into memory"),
     ("sessions", "your recent sessions"),
@@ -172,7 +174,7 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 20] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 35] {
+pub(crate) fn session_command_names() -> [&'static str; 36] {
     SESSION_COMMANDS
 }
 
@@ -578,6 +580,7 @@ pub(crate) fn remote_request(
         "memories" => get(Endpoint::Memories, json!({})),
         "analytics" => get(Endpoint::Analytics, json!({})),
         "audit" => get(Endpoint::Audit, json!({})),
+        "requests" => get(Endpoint::Requests, json!({})),
         "model" if argument.is_empty() => get(Endpoint::Providers, json!({})),
         "grep" => post(Endpoint::Search, json!({"query": argument, "code": true})),
         "skill:" => {
@@ -1311,6 +1314,39 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
             }
             if reply.audit_entries.len() > 12 {
                 lines.push(format!("… {} more", reply.audit_entries.len() - 12));
+            }
+            lines
+        }
+        "requests" => {
+            if reply.request_records.is_empty() {
+                return vec!["No requests recorded for this account yet.".to_string()];
+            }
+            let mut lines = vec![format!(
+                "{} of {} requests  |  newest first",
+                reply.request_records.len(),
+                reply
+                    .count
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| "total not returned".to_string())
+            )];
+            for record in reply.request_records.iter().take(12) {
+                lines.push(format!(
+                    "{}  {}  |  {} tokens{}",
+                    record.ts.as_deref().unwrap_or("ts not returned"),
+                    record.endpoint.as_deref().unwrap_or("endpoint not returned"),
+                    record
+                        .tokens
+                        .map(|tokens| tokens.to_string())
+                        .unwrap_or_else(|| "?".to_string()),
+                    record
+                        .model
+                        .as_deref()
+                        .map(|model| format!("  |  {model}"))
+                        .unwrap_or_default()
+                ));
+            }
+            if reply.request_records.len() > 12 {
+                lines.push(format!("… {} more in this page", reply.request_records.len() - 12));
             }
             lines
         }
@@ -2198,7 +2234,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_inventory_is_exactly_the_35_accepted_commands() {
+    fn session_inventory_is_exactly_the_36_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
@@ -2216,6 +2252,7 @@ mod tests {
                 "outcomes",
                 "analytics",
                 "audit",
+                "requests",
                 "memory",
                 "sweep",
                 "sessions",
@@ -2915,6 +2952,36 @@ mod tests {
     }
 
     #[test]
+    fn requests_reply_renders_the_stream_with_the_log_total_as_denominator() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "requests": [
+                {"ts": "2026-08-06T22:00Z", "endpoint": "deep-search", "tokens": 8100, "model": "claude-opus-4-8"},
+                {"ts": "2026-08-06T21:00Z", "endpoint": "sweep/estimate", "tokens": 0}
+            ],
+            "count": 47
+        }))
+        .expect("typed requests reply");
+        let rendered = render_remote_reply("requests", &reply).join("\n");
+
+        assert!(
+            rendered.contains("2 of 47"),
+            "the page was implied to be the whole log — count is the total, not the page\n{rendered}"
+        );
+        assert!(rendered.contains("deep-search"), "endpoint missing\n{rendered}");
+        assert!(rendered.contains("8100"), "tokens missing\n{rendered}");
+        assert!(rendered.contains("claude-opus-4-8"), "serving model missing\n{rendered}");
+    }
+
+    #[test]
+    fn requests_reply_empty_is_an_honest_empty_state() {
+        let reply: estelle_client::CommandReply =
+            serde_json::from_value(json!({"requests": [], "count": 0})).expect("empty requests");
+        let rendered = render_remote_reply("requests", &reply).join("\n");
+        assert!(rendered.contains("No requests"), "empty state missing\n{rendered}");
+        assert!(!rendered.contains("0 of 0"), "absence rendered as a zero fraction\n{rendered}");
+    }
+
+    #[test]
     fn task_commands_refuse_empty_arguments_before_any_request() {
         let work = parse_input("/work");
         assert_eq!(work.local_refusal(), Some("/work needs a task"));
@@ -2940,6 +3007,7 @@ mod tests {
             ("memories", estelle_client::Endpoint::Memories),
             ("analytics", estelle_client::Endpoint::Analytics),
             ("audit", estelle_client::Endpoint::Audit),
+            ("requests", estelle_client::Endpoint::Requests),
             ("memory", estelle_client::Endpoint::DeepSearch),
             ("sessions", estelle_client::Endpoint::Sessions),
             ("resume", estelle_client::Endpoint::Session),

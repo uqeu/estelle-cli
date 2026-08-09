@@ -313,6 +313,10 @@ pub struct CommandReply {
     /// ride the envelope (typed `reason`, `extra` for the rest).
     #[serde(default, rename = "entries")]
     pub audit_entries: Vec<AuditEntry>,
+    /// `GET /requests` — the billable engine-call stream, newest first. `count` (typed) is the
+    /// log's TOTAL, so the view can say "N of total" rather than implying the page is all.
+    #[serde(default, rename = "requests")]
+    pub request_records: Vec<RequestRecord>,
     #[serde(default)]
     pub result: Option<serde_json::Value>,
     #[serde(default)]
@@ -519,6 +523,18 @@ pub struct AuditEntry {
     pub action: Option<String>,
     #[serde(default)]
     pub detail: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct RequestRecord {
+    #[serde(default)]
+    pub ts: Option<String>,
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default)]
+    pub tokens: Option<u64>,
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
