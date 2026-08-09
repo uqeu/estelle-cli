@@ -2,7 +2,7 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 34] = [
+pub(crate) const SESSION_COMMANDS: [&str; 35] = [
     "help",
     "init",
     "graph",
@@ -16,6 +16,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 34] = [
     "runs",
     "outcomes",
     "analytics",
+    "audit",
     "memory",
     "sweep",
     "sessions",
@@ -39,7 +40,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 34] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 34] = [
+const SESSION_HELP: [(&str, &str); 35] = [
     ("help", "what you can do here"),
     ("init", "a grounded brief of this repo"),
     ("graph", "the swept code graph; /graph nodes draws the dependency view"),
@@ -53,6 +54,7 @@ const SESSION_HELP: [(&str, &str); 34] = [
     ("runs", "the team's agent-run history with grounding flags"),
     ("outcomes", "how the team's applied changes fared: accept/revert/reject"),
     ("analytics", "your usage analytics derived from run history"),
+    ("audit", "the tamper-evident trail of privileged actions on your account"),
     ("memory", "an answered question: what Estelle knows about this repo"),
     ("sweep", "index this repo into memory"),
     ("sessions", "your recent sessions"),
@@ -170,7 +172,7 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 20] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 34] {
+pub(crate) fn session_command_names() -> [&'static str; 35] {
     SESSION_COMMANDS
 }
 
@@ -575,6 +577,7 @@ pub(crate) fn remote_request(
         ),
         "memories" => get(Endpoint::Memories, json!({})),
         "analytics" => get(Endpoint::Analytics, json!({})),
+        "audit" => get(Endpoint::Audit, json!({})),
         "model" if argument.is_empty() => get(Endpoint::Providers, json!({})),
         "grep" => post(Endpoint::Search, json!({"query": argument, "code": true})),
         "skill:" => {
@@ -1269,6 +1272,45 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                 if !rows.is_empty() {
                     lines.push(format!("{label}  {}", rows.join("  |  ")));
                 }
+            }
+            lines
+        }
+        "audit" => {
+            if reply.audit_entries.is_empty() {
+                return vec!["No audit entries yet — privileged actions record here.".to_string()];
+            }
+            let mut lines = vec![format!(
+                "{} entries  |  chain {}{}",
+                reply
+                    .count
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| reply.audit_entries.len().to_string()),
+                reply
+                    .extra
+                    .get("state")
+                    .map(json_scalar)
+                    .filter(|state| !state.is_empty())
+                    .unwrap_or_else(|| "state not returned".to_string()),
+                reply
+                    .reason
+                    .as_deref()
+                    .map(|reason| format!("  |  {reason}"))
+                    .unwrap_or_default()
+            )];
+            for entry in reply.audit_entries.iter().take(12) {
+                lines.push(format!(
+                    "{}  {}{}",
+                    entry.at.as_deref().unwrap_or("at not returned"),
+                    entry.action.as_deref().unwrap_or("action not returned"),
+                    entry
+                        .detail
+                        .as_deref()
+                        .map(|detail| format!("  |  {detail}"))
+                        .unwrap_or_default()
+                ));
+            }
+            if reply.audit_entries.len() > 12 {
+                lines.push(format!("… {} more", reply.audit_entries.len() - 12));
             }
             lines
         }
@@ -2156,7 +2198,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_inventory_is_exactly_the_34_accepted_commands() {
+    fn session_inventory_is_exactly_the_35_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
@@ -2173,6 +2215,7 @@ mod tests {
                 "runs",
                 "outcomes",
                 "analytics",
+                "audit",
                 "memory",
                 "sweep",
                 "sessions",
@@ -2822,6 +2865,56 @@ mod tests {
     }
 
     #[test]
+    fn audit_reply_renders_entries_and_the_chain_state_with_its_reason() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "entries": [
+                {"at": "2026-08-05T10:00Z", "action": "key.issue", "detail": "laptop"},
+                {"at": "2026-08-04T09:00Z", "action": "provider.set", "detail": "anthropic"}
+            ],
+            "count": 2, "verified": true, "state": "verified",
+            "reason": "chain intact", "verification": {"checked": 2}
+        }))
+        .expect("typed audit reply");
+        let rendered = render_remote_reply("audit", &reply).join("\n");
+
+        assert!(rendered.contains("2 entries"), "count missing\n{rendered}");
+        assert!(rendered.contains("key.issue"), "action missing\n{rendered}");
+        assert!(rendered.contains("laptop"), "detail missing\n{rendered}");
+        assert!(
+            rendered.contains("verified"),
+            "the integrity badge is invisible on an integrity surface\n{rendered}"
+        );
+        assert!(rendered.contains("chain intact"), "the reason was dropped\n{rendered}");
+    }
+
+    #[test]
+    fn audit_reply_broken_chain_states_the_reason_not_a_bare_negative() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "entries": [{"at": "2026-08-05T10:00Z", "action": "key.revoke", "detail": "old"}],
+            "count": 1, "verified": false, "state": "broken",
+            "reason": "segment written under a retired key", "verification": {"checked": 1}
+        }))
+        .expect("broken audit");
+        let rendered = render_remote_reply("audit", &reply).join("\n");
+        assert!(rendered.contains("broken"), "broken state hidden\n{rendered}");
+        assert!(
+            rendered.contains("segment written under a retired key"),
+            "a bare negative shipped without the reason\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn audit_reply_empty_is_an_honest_empty_state() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "entries": [], "count": 0, "verified": true, "state": "empty",
+            "reason": "no privileged actions yet", "verification": {"checked": 0}
+        }))
+        .expect("empty audit");
+        let rendered = render_remote_reply("audit", &reply).join("\n");
+        assert!(rendered.contains("No audit entries"), "empty state missing\n{rendered}");
+    }
+
+    #[test]
     fn task_commands_refuse_empty_arguments_before_any_request() {
         let work = parse_input("/work");
         assert_eq!(work.local_refusal(), Some("/work needs a task"));
@@ -2846,6 +2939,7 @@ mod tests {
             ("outcomes", estelle_client::Endpoint::Outcomes),
             ("memories", estelle_client::Endpoint::Memories),
             ("analytics", estelle_client::Endpoint::Analytics),
+            ("audit", estelle_client::Endpoint::Audit),
             ("memory", estelle_client::Endpoint::DeepSearch),
             ("sessions", estelle_client::Endpoint::Sessions),
             ("resume", estelle_client::Endpoint::Session),

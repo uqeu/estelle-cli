@@ -47,6 +47,7 @@ endpoints! {
     (Outcomes, "outcomes", [Get], false),
     (Memories, "memories", [Get], true),
     (Analytics, "analytics", [Get], false),
+    (Audit, "audit", [Get], false),
     (Providers, "providers", [Get], false),
     (ProviderSelect, "provider/select", [Post], false),
     (Overview, "overview", [Get], false),

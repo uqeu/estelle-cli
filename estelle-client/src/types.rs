@@ -308,6 +308,11 @@ pub struct CommandReply {
     /// an answer is the first fact about a memory, not a footnote.
     #[serde(default, rename = "memories")]
     pub memory_items: Vec<MemoryItem>,
+    /// `GET /audit` — the tamper-evident trail of privileged actions. `actor` fields are
+    /// non-secret key prefixes by server contract; the chain's `state`/`reason`/`verification`
+    /// ride the envelope (typed `reason`, `extra` for the rest).
+    #[serde(default, rename = "entries")]
+    pub audit_entries: Vec<AuditEntry>,
     #[serde(default)]
     pub result: Option<serde_json::Value>,
     #[serde(default)]
@@ -504,6 +509,16 @@ pub struct MemoryItem {
     pub may_ground: Option<bool>,
     #[serde(default)]
     pub externally_authored: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct AuditEntry {
+    #[serde(default)]
+    pub at: Option<String>,
+    #[serde(default)]
+    pub action: Option<String>,
+    #[serde(default)]
+    pub detail: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
