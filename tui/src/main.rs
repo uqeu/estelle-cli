@@ -3574,11 +3574,17 @@ fn render_picker(frame: &mut Frame<'_>, picker: &PickerSurface, area: Rect, app:
         .enumerate()
         .map(|(index, row)| {
             let selected = index == picker.selected;
+            let badge = if index < 9 {
+                (index + 1).to_string()
+            } else {
+                " ".to_string()
+            };
             Line::from(vec![
                 Span::styled(
                     format!(
-                        "{} {:<label_width$}  ",
+                        "{} {} {:<label_width$}  ",
                         if selected { ">" } else { " " },
+                        badge,
                         truncate_display(&row.label, label_width),
                     ),
                     if selected {
@@ -3596,7 +3602,7 @@ fn render_picker(frame: &mut Frame<'_>, picker: &PickerSurface, area: Rect, app:
             ])
         })
         .chain(std::iter::once(Line::styled(
-            "↑↓ navigate · Enter select · Esc close",
+            "↑↓ navigate · 1-9 or Enter select · Esc close",
             Style::default().fg(Color::DarkGray),
         )))
         .collect::<Vec<_>>();
@@ -5168,6 +5174,24 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
             }
             KeyCode::Up => picker.selected = picker.selected.saturating_sub(1),
             KeyCode::Enter => app.activate_picker(tx),
+            // Number-key direct select, ported from Codex's ListSelectionView
+            // (bottom_pane/list_selection_view.rs:1054): a digit picks that row and activates
+            // it in one keypress — no arrow walk, no Enter.
+            KeyCode::Char(c)
+                if c.is_ascii_digit()
+                    && !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                if let Some(index) = c
+                    .to_digit(10)
+                    .map(|digit| digit as usize)
+                    .and_then(|number| number.checked_sub(1))
+                    .filter(|index| *index < picker.rows.len())
+                {
+                    picker.selected = index;
+                    app.activate_picker(tx);
+                }
+            }
             _ => {}
         }
         return false;
@@ -6061,7 +6085,7 @@ mod tests {
         app.submit("/settings".to_string(), &tx);
         let opened = rendered_frame_at_size(&app, Instant::now(), 120, 32);
         assert!(opened.contains("SETTINGS"));
-        assert!(opened.contains("> Mode"));
+        assert!(opened.contains("> 1 Mode"));
         assert!(opened.contains("server enforced"));
         assert!(opened.contains("client display"));
 
@@ -6071,7 +6095,7 @@ mod tests {
             &tx,
         );
         let moved = rendered_frame_at_size(&app, Instant::now(), 120, 32);
-        assert!(moved.contains("> Theme"));
+        assert!(moved.contains("> 2 Theme"));
     }
 
     #[test]
@@ -6460,7 +6484,7 @@ mod tests {
 
         let model = rendered_frame_at_size(&app, Instant::now(), 120, 32);
         assert!(model.contains("MODEL POOL · ACCOUNT-WIDE"));
-        assert!(model.contains("> claude-opus"));
+        assert!(model.contains("> 1 claude-opus"));
         assert!(model.contains("current"));
         assert!(model.contains("gpt-5.5"));
 
@@ -6492,7 +6516,7 @@ mod tests {
 
         let skills = rendered_frame_at_size(&app, Instant::now(), 120, 32);
         assert!(skills.contains("SKILLS"));
-        assert!(skills.contains("> review"));
+        assert!(skills.contains("> 1 review"));
         assert!(skills.contains("trace"));
         handle_key(
             &mut app,
@@ -8481,6 +8505,33 @@ mod tests {
         );
         assert!(!user_label.modifier.contains(Modifier::BOLD));
         assert!(estelle_label.modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn picker_number_keys_select_directly_ported_from_codex_list_selection() {
+        let mut app = test_app();
+        app.picker = Some(PickerSurface::themes(&app));
+        assert_eq!(app.theme, Theme::Dark);
+
+        // The numbered badge is visible before any key is pressed.
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 40);
+        assert!(
+            rendered.contains("2 Estelle Cream Ink"),
+            "the second row did not carry its number badge\n{rendered}"
+        );
+
+        // One digit selects and activates — no arrow keys, no Enter.
+        let (tx, _rx) = mpsc::unbounded_channel();
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE),
+            &tx,
+        );
+        assert_eq!(
+            app.theme,
+            Theme::CreamInk,
+            "pressing 2 did not select the second row"
+        );
     }
 
     #[test]
