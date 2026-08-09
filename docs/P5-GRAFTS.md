@@ -145,6 +145,23 @@ Dynamic `/skill:<name> <task>` is ported to Estelle `/skill/run`; `/odel` is ass
   are repointed to Estelle. The inherited local backend remains a P0 compile exception, not a shipped
   Estelle memory owner.
 
+## 2026-08-07 — the DROP batch: 22 Codex-only names removed outright
+
+Per the founder's slash-command audit, these graft stubs are gone entirely — not stubbed with an
+explanation, REMOVED: `pet vim theme statusline title raw copy mention ide apps plugins
+experimental app import logout rollout debug-config test-approval debug-m-drop debug-m-update
+setup-default-sandbox sandbox-add-read-dir`. Their names never resolve: a `DROPPED_COMMANDS`
+guard runs before the one-edit typo matcher, which otherwise guessed wrong neighbors (`/vim` →
+`/vis`). Unknown commands send zero requests. Two stub arms that were restored after the batch
+because their names stay: `/feedback` (stub text updated to describe the removed transport) and
+`/personality` (COLLIDES list, pending a founder decision). Also fixed: `/init`'s inherited
+description said "instructions for Codex" — wrong product name in a user-facing string.
+
+One find worth recording: the `/usage` graft stub ("not in the accepted contract") was SHADOWING
+the real `GET /usage` wire — `handle_local_command` consults graft dispositions before remote
+routing. The stub is deleted; `/usage` reaches the server now, and a test pins that no wired read
+may ever fall back to a graft stub again.
+
 ## Measurements
 
 - `Cargo.lock`: **1,311 packages**, up 4 from P4's measured 1,307. ACP introduced published protocol

@@ -97,15 +97,9 @@ const GRAFT_HELP: &[(&str, &str)] = &[
     ("memories", "the held-memory listing with trust tiers"),
     ("mcp", "list Estelle's MCP tools"),
     ("grep", "search code with server-side structure"),
-    ("ide", "IDE context status"),
     ("permissions", "view the effective autonomy boundary"),
     ("keymap", "composer keymap status"),
-    ("vim", "Vim composer mode status"),
-    ("setup-default-sandbox", "sandbox ownership status"),
-    ("sandbox-add-read-dir", "sandbox ownership status"),
-    ("experimental", "experimental feature ownership status"),
     ("approve", "approval ownership status"),
-    ("import", "cross-harness import status"),
     ("hooks", "canonical Estelle hook status"),
     ("review", "run Estelle's grounded merge gate"),
     ("rename", "session-title ownership status"),
@@ -113,34 +107,17 @@ const GRAFT_HELP: &[(&str, &str)] = &[
     ("archive", "archive ownership status"),
     ("delete", "delete-session ownership status"),
     ("fork", "fork-session ownership status"),
-    ("app", "desktop handoff ownership status"),
     ("compact", "context compaction ownership status"),
     ("goal", "long-running goal ownership status"),
     ("agent", "agent-thread ownership status"),
     ("side", "ephemeral side-question ownership status"),
     ("btw", "ephemeral side-question ownership status"),
-    ("copy", "copy the last answer"),
-    ("raw", "raw scrollback status"),
     ("diff", "show the local working-tree diff"),
-    ("mention", "file-mention ownership status"),
-    ("usage", "account-usage ownership status"),
-    ("debug-config", "configuration ownership status"),
-    ("title", "terminal-title ownership status"),
-    ("statusline", "status-line ownership status"),
-    ("theme", "terminal theme status"),
-    ("pet", "decorative terminal feature status"),
-    ("apps", "application connector ownership status"),
-    ("plugins", "server plugin ownership status"),
-    ("logout", "credential removal status"),
     ("feedback", "feedback transport ownership status"),
-    ("rollout", "local rollout ownership status"),
     ("ps", "background process ownership status"),
     ("stop", "background process ownership status"),
     ("personality", "personality ownership status"),
-    ("test-approval", "approval test ownership status"),
     ("subagents", "server orchestra view status"),
-    ("debug-m-drop", "deleted local-memory debug command"),
-    ("debug-m-update", "deleted local-memory debug command"),
     // Kimi interaction surfaces not already present above.
     ("version", "show this Estelle build"),
     ("editor", "external-editor ownership status"),
@@ -239,12 +216,43 @@ pub(crate) fn palette_rows(input: &str) -> Vec<(&'static str, &'static str)> {
         .collect()
 }
 
+/// Codex-only names REMOVED from the Estelle surface (the founder's DROP list, 2026-08-07).
+/// A dropped name never resolves — not even through the one-edit typo matcher, which would
+/// otherwise guess a wrong neighbor (`/vim` → `/vis`). Unknown commands send zero requests.
+const DROPPED_COMMANDS: &[&str] = &[
+    "pet",
+    "vim",
+    "theme",
+    "statusline",
+    "title",
+    "raw",
+    "copy",
+    "mention",
+    "ide",
+    "apps",
+    "plugins",
+    "experimental",
+    "app",
+    "import",
+    "logout",
+    "rollout",
+    "debug-config",
+    "test-approval",
+    "debug-m-drop",
+    "debug-m-update",
+    "setup-default-sandbox",
+    "sandbox-add-read-dir",
+];
+
 pub(crate) fn resolve_session_name(raw: &str) -> Option<&'static str> {
     let name = raw.trim().to_ascii_lowercase();
     match name.as_str() {
         "route" => return Some("routing"),
         "quit" => return Some("exit"),
         _ => {}
+    }
+    if DROPPED_COMMANDS.contains(&name.as_str()) {
+        return None;
     }
     if let Some(exact) = SESSION_COMMANDS
         .iter()
@@ -337,29 +345,18 @@ pub(crate) fn inherited_command_lines(name: &str) -> Option<Vec<String>> {
         ]
     };
     match name {
-        "ide" => Some(repointed(
-            "the editor MCP connection",
-            "Run estelle init --client <name> to configure it.",
-        )),
-        "keymap" | "vim" | "raw" | "theme" | "title" | "statusline" | "editor" => Some(repointed(
+        "keymap" | "editor" => Some(repointed(
             "the maintained terminal layer",
             "This compact Estelle session has no persisted setting for it yet.",
         )),
-        "setup-default-sandbox" | "sandbox-add-read-dir" => Some(deleted(
-            "Estelle's repair sandbox is server-side; a second client sandbox would assert the wrong security boundary.",
-        )),
-        "experimental" | "approve" | "test-approval" => Some(deleted(
-            "OpenAI's local agent feature and approval brain were removed; Estelle's server autonomy gate is authoritative.",
-        )),
-        "import" => Some(repointed(
-            "Estelle sessions",
-            "Cross-harness session import has no server endpoint today; existing /sessions remain available.",
+        "approve" => Some(deleted(
+            "OpenAI's local agent approval brain was removed; Estelle's server autonomy gate is authoritative.",
         )),
         "rename" | "new" | "archive" | "delete" | "fork" | "goal" => Some(repointed(
             "Estelle sessions",
             "The current server contract exposes read/resume, not this mutation; the command is visible and inert.",
         )),
-        "app" | "web" => Some(repointed(
+        "web" => Some(repointed(
             "fatelabs.ca",
             "Browser launching is not performed from the TUI without an explicit URL contract.",
         )),
@@ -375,44 +372,18 @@ pub(crate) fn inherited_command_lines(name: &str) -> Option<Vec<String>> {
             "the current Estelle session",
             "Ephemeral forks have no server owner today, so this command does not create a second local agent.",
         )),
-        "copy" => Some(repointed(
-            "the terminal's native selection",
-            "Rendered answers remain selectable; clipboard mutation is not performed implicitly.",
-        )),
         "diff" => Some(repointed(
             "the local Git working tree",
             "Use !git diff --no-color; no diff is sent until /gate, /scan, or /review is requested.",
         )),
-        "mention" => Some(repointed(
-            "Working memory",
-            "Changed files attach automatically to ordinary questions; explicit @mention parsing has no server contract yet.",
-        )),
-        "usage" => Some(repointed(
-            "the account API",
-            "The accepted 50-endpoint CLI contract does not include /analytics; /status shows available account state.",
-        )),
-        "debug-config" | "rollout" | "ps" | "stop" => Some(deleted(
+        "ps" | "stop" => Some(deleted(
             "This inspected OpenAI's local agent/app-server state, which is not an Estelle runtime.",
         )),
-        "apps" | "plugins" => Some(repointed(
-            "Estelle's server integrations",
-            "No matching endpoint exists in the accepted CLI contract; the inherited OpenAI catalog is not shown.",
-        )),
-        "logout" => Some(repointed(
-            "Estelle credential storage",
-            "Use the top-level credential workflow; this session never touches OpenAI auth.",
-        )),
         "feedback" => Some(deleted(
-            "OpenAI feedback transport was removed and Estelle has no replacement endpoint in this contract.",
-        )),
-        "pet" => Some(deleted(
-            "Decorative local-agent state is not part of Estelle's working terminal surface.",
+            "The inherited feedback upload transport pointed at the upstream Sentry host and was removed end to end (P0-AMPUTATION.md, 2026-08-07). No replacement endpoint exists.",
         )),
         "personality" => Some(deleted(
             "Estelle's server prompt owns response policy; a competing client-side personality brain would drift.",
-        )),
-        "debug-m-drop" | "debug-m-update" => Some(deleted(
-            "Codex local memory generation was removed; Estelle's memory endpoints are authoritative.",
         )),
         "version" => Some(vec![format!("Estelle {}", env!("CARGO_PKG_VERSION"))]),
         "changelog" | "upgrade" => Some(repointed(
@@ -3316,6 +3287,44 @@ mod tests {
         let rendered = render_remote_reply("billing", &reply).join("\n");
         assert!(rendered.contains("not returned"), "absent state invented\n{rendered}");
         assert!(!rendered.contains("$0.00"), "absent pricing rendered as zero\n{rendered}");
+    }
+
+    #[test]
+    fn dropped_codex_only_commands_are_unknown_and_kept_names_still_resolve() {
+        // The DROP list (founder, 2026-08-07): Codex-only or wrong-branded names must not exist
+        // on the Estelle surface at all — an unknown name sends zero requests.
+        for dropped in [
+            "pet", "vim", "theme", "statusline", "title", "raw", "copy", "mention", "ide",
+            "apps", "plugins", "experimental", "app", "import", "logout", "rollout",
+            "debug-config", "test-approval", "debug-m-drop", "debug-m-update",
+            "setup-default-sandbox", "sandbox-add-read-dir",
+        ] {
+            assert!(
+                resolve_session_name(dropped).is_none(),
+                "/{dropped} should be dropped, not reachable"
+            );
+            assert!(
+                remote_request(dropped, "", None, None)
+                    .expect("route classification")
+                    .is_none(),
+                "/{dropped} must not reach a remote route"
+            );
+        }
+        // The wired reads must never fall back to a graft stub again.
+        assert!(
+            inherited_command_lines("usage").is_none(),
+            "/usage was shadowed by a graft stub; it must route to GET /usage"
+        );
+        // The KEEP list still resolves.
+        for kept in [
+            "new", "clear", "resume", "fork", "rename", "archive", "delete", "diff", "status",
+            "keymap", "permissions", "ps", "stop", "goal", "side", "btw", "quit", "exit",
+        ] {
+            assert!(
+                resolve_session_name(kept).is_some(),
+                "/{kept} must stay reachable"
+            );
+        }
     }
 
     #[test]
