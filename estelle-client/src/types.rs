@@ -317,6 +317,9 @@ pub struct CommandReply {
     /// log's TOTAL, so the view can say "N of total" rather than implying the page is all.
     #[serde(default, rename = "requests")]
     pub request_records: Vec<RequestRecord>,
+    /// `GET /leaderboard` — skills ranked by VERIFIED grounded outcome, not install count.
+    #[serde(default, rename = "leaderboard")]
+    pub leaderboard_rows: Vec<LeaderboardRow>,
     #[serde(default)]
     pub result: Option<serde_json::Value>,
     #[serde(default)]
@@ -535,6 +538,18 @@ pub struct RequestRecord {
     pub tokens: Option<u64>,
     #[serde(default)]
     pub model: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct LeaderboardRow {
+    #[serde(default)]
+    pub skill: Option<String>,
+    #[serde(default)]
+    pub uses: Option<u64>,
+    #[serde(default)]
+    pub successes: Option<u64>,
+    #[serde(default)]
+    pub success_rate: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]

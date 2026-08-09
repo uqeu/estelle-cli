@@ -2,7 +2,7 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 37] = [
+pub(crate) const SESSION_COMMANDS: [&str; 38] = [
     "help",
     "init",
     "graph",
@@ -19,6 +19,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 37] = [
     "audit",
     "requests",
     "presence",
+    "leaderboard",
     "memory",
     "sweep",
     "sessions",
@@ -42,7 +43,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 37] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 37] = [
+const SESSION_HELP: [(&str, &str); 38] = [
     ("help", "what you can do here"),
     ("init", "a grounded brief of this repo"),
     ("graph", "the swept code graph; /graph nodes draws the dependency view"),
@@ -59,6 +60,7 @@ const SESSION_HELP: [(&str, &str); 37] = [
     ("audit", "the tamper-evident trail of privileged actions on your account"),
     ("requests", "the billable engine-call stream with the log total"),
     ("presence", "who's active, files in flight, pending handoffs"),
+    ("leaderboard", "skills ranked by verified grounded outcome"),
     ("memory", "an answered question: what Estelle knows about this repo"),
     ("sweep", "index this repo into memory"),
     ("sessions", "your recent sessions"),
@@ -176,7 +178,7 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 20] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 37] {
+pub(crate) fn session_command_names() -> [&'static str; 38] {
     SESSION_COMMANDS
 }
 
@@ -584,6 +586,7 @@ pub(crate) fn remote_request(
         "audit" => get(Endpoint::Audit, json!({})),
         "requests" => get(Endpoint::Requests, json!({})),
         "presence" => get(Endpoint::Presence, json!({})),
+        "leaderboard" => get(Endpoint::Leaderboard, json!({})),
         "model" if argument.is_empty() => get(Endpoint::Providers, json!({})),
         "grep" => post(Endpoint::Search, json!({"query": argument, "code": true})),
         "skill:" => {
@@ -1446,6 +1449,69 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                         .and_then(Value::as_str)
                         .unwrap_or("at not returned")
                 ));
+            }
+            lines
+        }
+        "leaderboard" => {
+            if reply.leaderboard_rows.is_empty() {
+                return vec![
+                    "No verified skill outcomes yet — the board fills as skills complete grounded work."
+                        .to_string(),
+                ];
+            }
+            let mut lines = vec![format!(
+                "{} skills ranked by verified grounded outcome",
+                reply
+                    .count
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| reply.leaderboard_rows.len().to_string())
+            )];
+            for row in &reply.leaderboard_rows {
+                lines.push(format!(
+                    "{}  |  {} uses  |  {} verified  |  {}",
+                    row.skill.as_deref().unwrap_or("skill not returned"),
+                    row.uses
+                        .map(|uses| uses.to_string())
+                        .unwrap_or_else(|| "?".to_string()),
+                    row.successes
+                        .map(|successes| successes.to_string())
+                        .unwrap_or_else(|| "?".to_string()),
+                    row.success_rate
+                        .map(|rate| rate.to_string())
+                        .unwrap_or_else(|| "rate not returned".to_string())
+                ));
+            }
+            if let Some(affinity) = reply.extra.get("affinity").and_then(Value::as_object) {
+                let worked = affinity
+                    .get("worked")
+                    .and_then(Value::as_array)
+                    .map(|models| {
+                        models
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default();
+                let pick = affinity
+                    .get("would_pick")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if !worked.is_empty() || !pick.is_empty() {
+                    lines.push(format!(
+                        "affinity (advisory — nothing routes on this yet)  worked: {}{}",
+                        if worked.is_empty() {
+                            "not returned".to_string()
+                        } else {
+                            worked
+                        },
+                        if pick.is_empty() {
+                            String::new()
+                        } else {
+                            format!("  |  would pick: {pick}")
+                        }
+                    ));
+                }
             }
             lines
         }
@@ -2333,7 +2399,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_inventory_is_exactly_the_37_accepted_commands() {
+    fn session_inventory_is_exactly_the_38_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
@@ -2353,6 +2419,7 @@ mod tests {
                 "audit",
                 "requests",
                 "presence",
+                "leaderboard",
                 "memory",
                 "sweep",
                 "sessions",
@@ -3119,6 +3186,45 @@ mod tests {
     }
 
     #[test]
+    fn leaderboard_reply_ranks_by_verified_outcome_and_marks_affinity_advisory() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "leaderboard": [
+                {"skill": "review", "uses": 9, "successes": 8, "success_rate": 0.889},
+                {"skill": "trace", "uses": 4, "successes": 2, "success_rate": 0.5}
+            ],
+            "count": 2,
+            "affinity": {"worked": ["claude-opus-4-8"], "would_pick": "claude-opus-4-8"}
+        }))
+        .expect("typed leaderboard reply");
+        let rendered = render_remote_reply("leaderboard", &reply).join("\n");
+
+        assert!(rendered.contains("review"), "skill missing\n{rendered}");
+        assert!(rendered.contains("9 uses"), "uses missing\n{rendered}");
+        assert!(rendered.contains("8 verified"), "successes missing\n{rendered}");
+        assert!(rendered.contains("0.889"), "rate missing\n{rendered}");
+        assert!(
+            rendered.contains("claude-opus-4-8"),
+            "affinity invisible\n{rendered}"
+        );
+        assert!(
+            rendered.contains("advisory"),
+            "affinity rendered without the 'nothing routes on this yet' caveat\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn leaderboard_reply_empty_is_an_honest_empty_state() {
+        let reply: estelle_client::CommandReply =
+            serde_json::from_value(json!({"leaderboard": [], "count": 0})).expect("empty board");
+        let rendered = render_remote_reply("leaderboard", &reply).join("\n");
+        assert!(
+            rendered.contains("No verified skill outcomes"),
+            "empty state missing\n{rendered}"
+        );
+        assert!(!rendered.contains("0 uses"), "absence rendered as zero\n{rendered}");
+    }
+
+    #[test]
     fn task_commands_refuse_empty_arguments_before_any_request() {
         let work = parse_input("/work");
         assert_eq!(work.local_refusal(), Some("/work needs a task"));
@@ -3146,6 +3252,7 @@ mod tests {
             ("audit", estelle_client::Endpoint::Audit),
             ("requests", estelle_client::Endpoint::Requests),
             ("presence", estelle_client::Endpoint::Presence),
+            ("leaderboard", estelle_client::Endpoint::Leaderboard),
             ("memory", estelle_client::Endpoint::DeepSearch),
             ("sessions", estelle_client::Endpoint::Sessions),
             ("resume", estelle_client::Endpoint::Session),

@@ -37,10 +37,10 @@ method is below so anyone can re-run them.
 (`/cards`), `GET /entities` (`/entities`), `GET /usage` (`/usage`), `GET /activity` (`/activity`), `GET /runs` (`/runs`),
 `GET /outcomes` (`/outcomes`), `GET /memories` (`/memories` — split off the `/memory` alias),
 `GET /analytics` (`/analytics`), `GET /audit` (`/audit`), `GET /requests` (`/requests`),
-`GET /presence` (`/presence`) —
+`GET /presence` (`/presence`), `GET /leaderboard` (`/leaderboard`) —
 all with the honesty pattern: explicit `building`/`truncated`/invite states, null team renders as
-absent, omitted fields render "not returned", unknown is never zero. Client now declares 69,
-reaches 67 of 69. `/me/*` writes
+absent, omitted fields render "not returned", unknown is never zero. Client now declares 70,
+reaches 68 of 70. `/me/*` writes
 (key create/revoke/rotate, team invite/seats, billing) and `memory/cards/{dream,edit,revert}`
 remain unwired — mutations are their own commits.
 
@@ -67,7 +67,7 @@ remain unwired — mutations are their own commits.
   `POST /key`, `POST /key/delete`, `POST /key/web`, `POST /account/worlds`,
   `GET /account/connections`, `GET /connections`, `GET|POST /autonomy/auto-mode`
 - Activity/reads: `GET /activity` ✅, `GET /analytics` ✅, `GET /audit` ✅, `GET /requests` ✅,
-  `GET /leaderboard`, `GET /team/leaderboard`, `GET|POST /presence` ✅ (read), `GET /board`,
+  `GET /leaderboard` ✅, `GET /team/leaderboard`, `GET|POST /presence` ✅ (read), `GET /board`,
   `POST /board/sync`, `GET|POST /marketplace`
 - Agent/monitor extras: `POST /agent/events`, `POST /agent/gate`, `POST /agent/verify`,
   `POST /agent/triage`, `GET /agent/docs`, `POST /autorepair`, `POST /autorepair/revert`,

@@ -50,6 +50,7 @@ endpoints! {
     (Audit, "audit", [Get], false),
     (Requests, "requests", [Get], false),
     (Presence, "presence", [Get], false),
+    (Leaderboard, "leaderboard", [Get], false),
     (Providers, "providers", [Get], false),
     (ProviderSelect, "provider/select", [Post], false),
     (Overview, "overview", [Get], false),
