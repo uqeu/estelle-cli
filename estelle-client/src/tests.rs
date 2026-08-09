@@ -173,7 +173,7 @@ fn credential_file_is_created_with_mode_0600_and_secret_is_masked() {
 }
 
 #[test]
-fn secure_store_round_trips_and_discards_the_rejected_source() {
+fn secure_store_round_trips_and_delete_stored_discards_it() {
     let home = tempfile::tempdir().expect("temp home");
     let estelle_home = home.path().join(".estelle");
     let keyring = Arc::new(MockKeyringStore::default());
@@ -193,91 +193,62 @@ fn secure_store_round_trips_and_discards_the_rejected_source() {
         CredentialSource::SecureStore
     );
 
-    let rejected = Error::Http {
-        status: reqwest::StatusCode::UNAUTHORIZED,
-        message: "rejected".to_string(),
-    };
     assert!(
         store
-            .clear_if_rejected(CredentialSource::SecureStore, &rejected)
-            .expect("clear secure rejection")
+            .delete_stored(CredentialSource::SecureStore)
+            .expect("delete secure credential")
     );
     assert!(matches!(store.resolve(), Err(Error::NoCredential)));
 }
 
 #[test]
-fn only_a_stored_key_rejected_with_401_is_deleted() {
+fn delete_stored_only_deletes_a_stored_credential_and_needs_no_error() {
     let home = tempfile::tempdir().expect("temp home");
     let store = CredentialStore::new(home.path().join(".estelle/auth.json"));
     store.write(&test_key()).expect("write credential");
-    let outage = Error::Http {
-        status: reqwest::StatusCode::BAD_GATEWAY,
-        message: "outage".to_string(),
-    };
+    // An environment credential has no stored file to delete; the call is a no-op and the
+    // stored file stays.
     assert!(
         !store
-            .clear_if_rejected(CredentialSource::Stored, &outage)
-            .expect("retain on outage")
-    );
-    assert!(store.path().exists());
-    let rejected = Error::Http {
-        status: reqwest::StatusCode::UNAUTHORIZED,
-        message: "rejected".to_string(),
-    };
-    assert!(
-        !store
-            .clear_if_rejected(CredentialSource::Environment, &rejected)
+            .delete_stored(CredentialSource::Environment)
             .expect("environment is not stored")
     );
     assert!(store.path().exists());
     assert!(
         store
-            .clear_if_rejected(CredentialSource::Stored, &rejected)
-            .expect("clear stored rejection")
+            .delete_stored(CredentialSource::Stored)
+            .expect("delete stored credential")
     );
     assert!(!store.path().exists());
 }
 
 #[test]
-fn every_explicit_auth_rejection_discards_a_stored_key_but_an_outage_does_not() {
+fn an_explicit_auth_rejection_is_a_recording_signal_never_a_delete_trigger() {
+    // The store exposes no path from an error value to deletion: a rejection is recorded by the
+    // CALLER, and deletion (delete_stored) takes no error argument at all. This test pins the
+    // predicate the caller records on — 401/403/404 are explicit rejections, an outage is not.
     for status in [
         reqwest::StatusCode::UNAUTHORIZED,
         reqwest::StatusCode::FORBIDDEN,
         reqwest::StatusCode::NOT_FOUND,
     ] {
-        let home = tempfile::tempdir().expect("temp home");
-        let store = CredentialStore::new(home.path().join(".estelle/auth.json"));
-        store.write(&test_key()).expect("write credential");
         assert!(
-            store
-                .clear_if_rejected(
-                    CredentialSource::Stored,
-                    &Error::Http {
-                        status,
-                        message: "explicit rejection".to_string(),
-                    },
-                )
-                .expect("clear explicit rejection"),
-            "HTTP {status} must discard the rejected key"
+            Error::Http {
+                status,
+                message: "explicit rejection".to_string(),
+            }
+            .is_explicit_auth_rejection(),
+            "HTTP {status} must read as an explicit rejection"
         );
-        assert!(!store.path().exists());
     }
-
-    let home = tempfile::tempdir().expect("temp home");
-    let store = CredentialStore::new(home.path().join(".estelle/auth.json"));
-    store.write(&test_key()).expect("write credential");
     assert!(
-        !store
-            .clear_if_rejected(
-                CredentialSource::Stored,
-                &Error::Http {
-                    status: reqwest::StatusCode::BAD_GATEWAY,
-                    message: "outage".to_string(),
-                },
-            )
-            .expect("retain on outage")
+        !Error::Http {
+            status: reqwest::StatusCode::BAD_GATEWAY,
+            message: "outage".to_string(),
+        }
+        .is_explicit_auth_rejection(),
+        "an outage is not an auth rejection"
     );
-    assert!(store.path().exists());
 }
 
 #[tokio::test]
@@ -576,9 +547,10 @@ async fn production_deep_search_contract() {
     let cancel = CancellationToken::new();
     let account = client.account(&cancel).await;
     if let Err(error) = &account {
-        store
-            .clear_if_rejected(credential.source, error)
-            .expect("rejected-key handling");
+        assert!(
+            !error.is_explicit_auth_rejection(),
+            "the configured credential was rejected on /account: {error} — the credential is NOT deleted; fix or re-login manually"
+        );
     }
     account.expect("production account contract");
 

@@ -170,22 +170,22 @@ impl CredentialStore {
         result
     }
 
-    pub fn clear_if_rejected(
-        &self,
-        source: CredentialSource,
-        error: &Error,
-    ) -> Result<bool, Error> {
-        let rejected = error.is_explicit_auth_rejection();
-        if source != CredentialSource::Stored || !rejected {
-            if source != CredentialSource::SecureStore || !rejected {
-                return Ok(false);
-            }
+    /// Delete the stored credential. This is NEVER the reaction to a single rejection: a 401
+    /// from one route is route scope, not proof of a bad key — measured on prod, `login`
+    /// verified and a question succeeded on the SAME credential that one `/me` 401 then wiped.
+    /// The legitimate caller has cross-route evidence (repeated rejections across DIFFERENT
+    /// routes) and says so out loud before calling this. Callers decide; this only deletes.
+    pub fn delete_stored(&self, source: CredentialSource) -> Result<bool, Error> {
+        if source == CredentialSource::SecureStore {
             let Some(secure) = &self.secure else {
                 return Ok(false);
             };
             return secure
                 .delete(&SecretScope::Global, &credential_name()?)
                 .map_err(|error| Error::CredentialStore(error.to_string()));
+        }
+        if source != CredentialSource::Stored {
+            return Ok(false);
         }
         remove_if_present(&self.path).map(|()| true)
     }

@@ -14,7 +14,6 @@ use estelle_client::ChatCompletionRequest;
 use estelle_client::ChatCompletionResponse;
 use estelle_client::Client;
 use estelle_client::CommandReply;
-use estelle_client::CredentialSource;
 use estelle_client::CredentialStore;
 use estelle_client::Endpoint;
 use estelle_client::Error;
@@ -584,8 +583,6 @@ fn is_estelle_hook(group: &Value) -> bool {
 struct Api {
     client: Client,
     api_key: estelle_client::ApiKey,
-    store: CredentialStore,
-    source: CredentialSource,
     cancel: CancellationToken,
 }
 
@@ -598,22 +595,28 @@ impl Api {
         Ok(Self {
             client,
             api_key,
-            store,
-            source: credential.source,
             cancel: CancellationToken::new(),
         })
     }
 
-    fn finish<T>(&self, result: Result<T, Error>) -> Result<T, String> {
-        if let Err(error) = &result {
-            let _ = self.store.clear_if_rejected(self.source, error);
-        }
-        result.map_err(|error| error.to_string())
+    /// A headless command is one-shot — no cross-route evidence can accumulate, so a rejection
+    /// NEVER deletes the credential here. The route is named so the user can tell route scope
+    /// from a bad key.
+    fn finish<T>(&self, result: Result<T, Error>, route: &str) -> Result<T, String> {
+        result.map_err(|error| {
+            if error.is_explicit_auth_rejection() {
+                format!(
+                    "{error} — the stored credential was rejected on {route} and was NOT removed; a single rejection can be route scope, not a bad key. Run estelle login only if you revoked it."
+                )
+            } else {
+                error.to_string()
+            }
+        })
     }
 
     async fn get(&self, endpoint: Endpoint, query: &Value) -> Result<Value, String> {
         let result = self.client.get(endpoint, query, &self.cancel).await;
-        self.finish(result)
+        self.finish(result, endpoint.path())
     }
 
     async fn get_scoped(
@@ -626,12 +629,12 @@ impl Api {
             .client
             .get_scoped(endpoint, repo, query, &self.cancel)
             .await;
-        self.finish(result)
+        self.finish(result, endpoint.path())
     }
 
     async fn post(&self, endpoint: Endpoint, body: &Value) -> Result<Value, String> {
         let result = self.client.post(endpoint, body, &self.cancel).await;
-        self.finish(result)
+        self.finish(result, endpoint.path())
     }
 
     async fn post_scoped(
@@ -644,12 +647,12 @@ impl Api {
             .client
             .post_scoped(endpoint, repo, body, &self.cancel)
             .await;
-        self.finish(result)
+        self.finish(result, endpoint.path())
     }
 
     async fn put(&self, endpoint: Endpoint, body: &Value) -> Result<Value, String> {
         let result = self.client.put(endpoint, body, &self.cancel).await;
-        self.finish(result)
+        self.finish(result, endpoint.path())
     }
 }
 
@@ -932,8 +935,14 @@ async fn sweep(api: &Api, repo: &Repo, root: &Path, dry_run: bool) -> Result<Vec
     {
         Ok(lines) => Ok(lines),
         Err(SweepFailure::Client(error)) => {
-            let _ = api.store.clear_if_rejected(api.source, &error);
-            Err(error.to_string())
+            let message = if error.is_explicit_auth_rejection() {
+                format!(
+                    "{error} — the stored credential was rejected during the sweep and was NOT removed; a single rejection can be route scope, not a bad key. Run estelle login only if you revoked it."
+                )
+            } else {
+                error.to_string()
+            };
+            Err(message)
         }
         Err(SweepFailure::Local(error)) => Err(error),
     }
@@ -1309,7 +1318,7 @@ async fn ask(api: &Api, repo: &Repo, words: &[String]) -> Result<Vec<String>, St
             &api.cancel,
         )
         .await;
-    let response: ChatCompletionResponse = api.finish(result)?;
+    let response: ChatCompletionResponse = api.finish(result, "v1/chat/completions")?;
     Ok(vec![
         response
             .answer()

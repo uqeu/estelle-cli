@@ -6,6 +6,7 @@ mod login;
 mod test_gallery;
 mod top_level;
 
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::ffi::OsString;
@@ -1080,6 +1081,9 @@ struct App {
     repo: Repo,
     client: Option<Client>,
     auth: Option<AuthContext>,
+    /// Routes whose responses explicitly rejected the stored credential this session. Deletion
+    /// is justified only when this holds DIFFERENT routes — see `clear_rejected`.
+    rejected_routes: BTreeSet<String>,
     next_request_id: u64,
     credential_input_hidden: bool,
     auth_resolved: bool,
@@ -1187,6 +1191,7 @@ impl App {
             repo,
             client: None,
             auth: None,
+            rejected_routes: BTreeSet::new(),
             next_request_id: 0,
             credential_input_hidden: false,
             auth_resolved: false,
@@ -2264,7 +2269,7 @@ impl App {
                     }
                     Err(Error::Cancelled) => {}
                     Err(error) => {
-                        self.clear_rejected(&error);
+                        self.clear_rejected(&error, "/deep-search");
                         self.transcript
                             .push(TranscriptEntry::Failure(failure_lines(&error)));
                     }
@@ -2315,7 +2320,7 @@ impl App {
                     }
                     Err(CommandFailure::Client(Error::Cancelled)) => {}
                     Err(CommandFailure::Client(error)) => {
-                        self.clear_rejected(&error);
+                        self.clear_rejected(&error, name);
                         self.transcript
                             .push(TranscriptEntry::Failure(failure_lines(&error)));
                     }
@@ -2368,7 +2373,7 @@ impl App {
                     }),
                     Err(top_level::SweepFailure::Client(Error::Cancelled)) => {}
                     Err(top_level::SweepFailure::Client(error)) => {
-                        self.clear_rejected(&error);
+                        self.clear_rejected(&error, "sweep");
                         self.transcript
                             .push(TranscriptEntry::Failure(failure_lines(&error)));
                     }
@@ -2404,23 +2409,46 @@ impl App {
     }
 
     fn handle_background_error(&mut self, error: &Error) {
-        self.clear_rejected(error);
+        self.clear_rejected(error, "a background poll");
     }
 
-    fn clear_rejected(&mut self, error: &Error) {
+    /// A single rejection NEVER deletes the credential: one route's 401/403/404 is route scope,
+    /// not proof of a bad key (measured on prod: login verified and a question succeeded on the
+    /// SAME credential that one /me 401 then wiped). The rejection is recorded against its route
+    /// and reported with the credential KEPT. Only repeated rejections across DIFFERENT routes
+    /// justify deletion — and the transcript says which routes before the credential is removed.
+    fn clear_rejected(&mut self, error: &Error, route: &str) {
+        if !error.is_explicit_auth_rejection() {
+            return;
+        }
         let Some(auth) = &self.auth else {
             return;
         };
-        if auth
-            .store
-            .clear_if_rejected(auth.source, error)
-            .unwrap_or(false)
-        {
+        if !matches!(
+            auth.source,
+            CredentialSource::Stored | CredentialSource::SecureStore
+        ) {
+            return;
+        }
+        self.rejected_routes.insert(route.to_string());
+        if self.rejected_routes.len() < 2 {
+            self.transcript.push(TranscriptEntry::System(format!(
+                "The stored credential was rejected on {route}. It was NOT removed — a single rejection can be route scope, not a bad key. Run estelle login only if you revoked it."
+            )));
+            return;
+        }
+        let routes = self
+            .rejected_routes
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        if auth.store.delete_stored(auth.source).unwrap_or(false) {
             self.client = None;
             self.header.connected = false;
-            self.transcript.push(TranscriptEntry::System(
-                "The rejected stored credential was removed.".to_string(),
-            ));
+            self.transcript.push(TranscriptEntry::System(format!(
+                "The stored credential was rejected on {routes} — different routes, so it was removed. Run estelle login to store a fresh key."
+            )));
         }
     }
 }
@@ -8255,6 +8283,68 @@ mod tests {
         assert!(
             buffer.content.iter().all(|cell| cell.bg == Color::Reset),
             "dark theme painted a background instead of inheriting the terminal"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_single_rejection_keeps_the_credential_and_only_two_different_routes_remove_it() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/account"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+                "error": {"message": "rejected"}
+            })))
+            .mount(&server)
+            .await;
+        let client = Client::new(
+            &format!("{}/", server.uri()),
+            estelle_client::ApiKey::new("estelle_live_test-only").expect("key"),
+            Duration::from_secs(120),
+        )
+        .expect("client");
+        let rejected = || async {
+            client
+                .account(&CancellationToken::new())
+                .await
+                .expect_err("the mock always 401s")
+        };
+
+        let home = tempfile::tempdir().expect("temp home");
+        let store = CredentialStore::new(home.path().join(".estelle/auth.json"));
+        store
+            .write(&estelle_client::ApiKey::new("estelle_live_test-only").expect("key"))
+            .expect("write credential");
+        let path = store.path().to_path_buf();
+        let mut app = test_app();
+        app.auth = Some(AuthContext {
+            store,
+            source: CredentialSource::Stored,
+        });
+
+        app.clear_rejected(&rejected().await, "/me");
+        assert!(
+            path.exists(),
+            "a single rejection deleted the stored credential"
+        );
+        let text = format!("{:?}", render_transcript(&app.transcript));
+        assert!(text.contains("/me"), "the rejecting route was not named");
+        assert!(text.contains("NOT removed"), "the keep was not disclosed");
+
+        app.clear_rejected(&rejected().await, "/me");
+        assert!(
+            path.exists(),
+            "the same route twice is still one route's word against the key"
+        );
+
+        app.clear_rejected(&rejected().await, "/deep-search");
+        assert!(
+            !path.exists(),
+            "two different routes rejecting did not remove the credential"
+        );
+        let text = format!("{:?}", render_transcript(&app.transcript));
+        assert!(
+            text.contains("/me") && text.contains("/deep-search"),
+            "the deletion did not name both routes"
         );
     }
 
