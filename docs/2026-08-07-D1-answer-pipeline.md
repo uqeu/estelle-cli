@@ -13,6 +13,13 @@ spend), and a dirty-repo "hi" shipped 80 KB to a frontier model (~90 s).
 
 ## The fix, as landed
 
+> **⚠️ Superseded the same day by D16:** the first cut folded `working_memory_prompt` into the
+> deep-search `question` field — the CLI authoring prompt prose. Measured on prod, that wrapper
+> defeated the server's `is_conversational` fast path on length alone. The final shape is below
+> in the HANDOFF's D16 entry: `question` is the user's message verbatim, working memory rides a
+> separate top-level `working_memory` key as data, and `working_memory_prompt` is deleted, not
+> improved. The rest of this section is the historical record.
+
 One round-trip per question, always `POST /deep-search`:
 
 - **Non-conversational question + local context:** `working_memory_prompt` output rides the

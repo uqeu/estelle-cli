@@ -111,13 +111,25 @@ pub struct ChatMessage {
 #[derive(Clone, Debug, Serialize)]
 pub struct DeepSearchRequest {
     pub question: String,
+    /// Local working memory as DATA (paths + contents + optional session context), never
+    /// prose instructions — the server ignores this key until its typed `working_memory`
+    /// contract (register item 14b) ships. `question` always carries the user's message
+    /// verbatim; nothing is ever prepended to it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub working_memory: Option<Value>,
 }
 
 impl DeepSearchRequest {
     pub fn new(question: impl Into<String>) -> Self {
         Self {
             question: question.into(),
+            working_memory: None,
         }
+    }
+
+    pub fn with_working_memory(mut self, working_memory: Value) -> Self {
+        self.working_memory = Some(working_memory);
+        self
     }
 }
 
