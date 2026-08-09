@@ -59,3 +59,24 @@ to the P1 transplant, not be hidden behind a successful P0 claim.
 
 `jcode` is MIT-licensed in the vendored repository, not Apache-2.0 as the port spec states. `NOTICE`
 records its actual license. No jcode source is copied in P0.
+
+## Post-P0 removals
+
+**2026-08-07 — the feedback upload transport (Sentry).** Traced end to end after the founder's
+audit flagged `/feedback`: the TUI's feedback flow attached the full session rollout and submitted
+it through the app-server's `FeedbackUpload` request to a hardcoded Sentry DSN at
+`feedback/src/lib.rs` — `o33249.ingest.us.sentry.io`, **upstream OpenAI Codex's org, not an
+Estelle host**. It was consent-gated (category picker, `include_logs` opt-in) but the receiving
+host had never been audited. Removed, not disabled:
+
+- `codex-feedback`: the DSN constant, `upload_feedback`, its tag/attachment helpers and the
+  upload-only structs are deleted; the `sentry` dependency is gone from the crate. The log ring
+  buffer and tracing layers remain (inherited-lib machinery) but feed nothing.
+- `app-server`: `FeedbackRequestProcessor` answers every `FeedbackUpload` with an explicit
+  "removed … nothing was sent" error; the rollout/doctor-report attachment gathering
+  (`feedback_doctor_report.rs`) is deleted with it.
+- The Estelle TUI's `/feedback` command already rendered the transport as deleted
+  (`tui/src/commands.rs`); that stub stays accurate and now describes reality end to end.
+
+No replacement endpoint exists; if Estelle ever grows one, it is new work against an Estelle host
+with a redaction pass, not a revival of this path.

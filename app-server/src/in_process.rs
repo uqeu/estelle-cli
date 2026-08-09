@@ -463,7 +463,6 @@ async fn start_uninitialized(args: InProcessStartArgs) -> IoResult<InProcessClie
                 config: args.config,
                 config_manager,
                 environment_manager: args.environment_manager,
-                feedback: args.feedback,
                 log_db: args.log_db,
                 state_db: args.state_db,
                 config_warnings: args.config_warnings,

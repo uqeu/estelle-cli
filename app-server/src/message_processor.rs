@@ -67,7 +67,6 @@ use codex_code_mode::CodeModeSessionProvider;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
 use codex_exec_server::EnvironmentManager;
-use codex_feedback::CodexFeedback;
 use codex_goal_extension::GoalService;
 use codex_home::CodexHomeUserInstructionsProvider;
 use codex_login::AuthManager;
@@ -204,7 +203,6 @@ pub(crate) struct MessageProcessorArgs {
     pub(crate) config: Arc<Config>,
     pub(crate) config_manager: ConfigManager,
     pub(crate) environment_manager: Arc<EnvironmentManager>,
-    pub(crate) feedback: CodexFeedback,
     pub(crate) log_db: Option<LogDbLayer>,
     pub(crate) state_db: Option<StateDbHandle>,
     pub(crate) config_warnings: Vec<ConfigWarningNotification>,
@@ -228,7 +226,6 @@ impl MessageProcessor {
             config,
             config_manager,
             environment_manager,
-            feedback,
             log_db,
             state_db,
             config_warnings,
@@ -372,14 +369,7 @@ impl MessageProcessor {
             outgoing.clone(),
             Arc::clone(&environment_manager_for_requests),
         );
-        let feedback_processor = FeedbackRequestProcessor::new(
-            auth_manager.clone(),
-            Arc::clone(&thread_manager),
-            Arc::clone(&config),
-            feedback,
-            log_db.clone(),
-            state_db.clone(),
-        );
+        let feedback_processor = FeedbackRequestProcessor::new();
         let git_processor = GitRequestProcessor::new();
         let initialize_processor = InitializeRequestProcessor::new(
             outgoing.clone(),

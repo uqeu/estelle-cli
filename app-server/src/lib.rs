@@ -888,7 +888,6 @@ pub async fn run_main_with_transport_options(
             config: Arc::new(config),
             config_manager,
             environment_manager,
-            feedback: feedback.clone(),
             log_db,
             state_db: state_db.clone(),
             config_warnings,
