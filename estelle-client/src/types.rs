@@ -230,16 +230,23 @@ pub struct CommandReply {
     pub run_count: Option<u64>,
     #[serde(default)]
     pub skill_count: Option<u64>,
+    /// `/repos` sends a list of repo names; `/analytics` sends a per-repo tally OBJECT. Same key,
+    /// two shapes — raw `Value`, arms take their own shape.
     #[serde(default)]
-    pub repos: Vec<String>,
+    pub repos: Option<serde_json::Value>,
+    /// `/sessions` sends a list of session summaries; `/analytics` sends a COUNT. Same key, two
+    /// shapes — raw `Value`; typed access via `session_summaries()`.
     #[serde(default)]
-    pub sessions: Vec<SessionSummary>,
+    pub sessions: Option<serde_json::Value>,
     #[serde(default)]
     pub findings: Vec<Finding>,
     #[serde(default)]
     pub proposals: Vec<Proposal>,
+    /// `/orchestra` and `/runs` send `runs` as a LIST of agent runs; `/analytics` sends it as a
+    /// COUNT. Same key, two shapes, one envelope — kept as a raw `Value` so neither parse can
+    /// fail or silently absorb the other; typed access goes through `agent_runs()`.
     #[serde(default)]
-    pub runs: Vec<AgentRun>,
+    pub runs: Option<serde_json::Value>,
     #[serde(default)]
     pub fleet: Option<FleetSnapshot>,
     #[serde(default)]
@@ -311,6 +318,28 @@ pub struct CommandReply {
     pub merge: Option<serde_json::Value>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+impl CommandReply {
+    /// The `runs` key as typed agent runs — non-empty only when the server sent a LIST
+    /// (`/orchestra`, `/runs`). `/analytics` sends a count in the same key; that arm reads it
+    /// with `as_u64` instead. Anything unparseable yields an empty vec, never a failed reply.
+    pub fn agent_runs(&self) -> Vec<AgentRun> {
+        self.runs
+            .as_ref()
+            .and_then(|runs| serde_json::from_value(runs.clone()).ok())
+            .unwrap_or_default()
+    }
+
+    /// The `sessions` key as typed session summaries — non-empty only when the server sent a
+    /// LIST (`/sessions`). `/analytics` sends a count in the same key; that arm reads it with
+    /// `as_u64` instead.
+    pub fn session_summaries(&self) -> Vec<SessionSummary> {
+        self.sessions
+            .as_ref()
+            .and_then(|sessions| serde_json::from_value(sessions.clone()).ok())
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]

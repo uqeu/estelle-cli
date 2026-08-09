@@ -2,7 +2,7 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 33] = [
+pub(crate) const SESSION_COMMANDS: [&str; 34] = [
     "help",
     "init",
     "graph",
@@ -15,6 +15,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 33] = [
     "activity",
     "runs",
     "outcomes",
+    "analytics",
     "memory",
     "sweep",
     "sessions",
@@ -38,7 +39,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 33] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 33] = [
+const SESSION_HELP: [(&str, &str); 34] = [
     ("help", "what you can do here"),
     ("init", "a grounded brief of this repo"),
     ("graph", "the swept code graph; /graph nodes draws the dependency view"),
@@ -51,6 +52,7 @@ const SESSION_HELP: [(&str, &str); 33] = [
     ("activity", "calls and tokens by endpoint, with serving models"),
     ("runs", "the team's agent-run history with grounding flags"),
     ("outcomes", "how the team's applied changes fared: accept/revert/reject"),
+    ("analytics", "your usage analytics derived from run history"),
     ("memory", "an answered question: what Estelle knows about this repo"),
     ("sweep", "index this repo into memory"),
     ("sessions", "your recent sessions"),
@@ -168,7 +170,7 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 20] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 33] {
+pub(crate) fn session_command_names() -> [&'static str; 34] {
     SESSION_COMMANDS
 }
 
@@ -572,6 +574,7 @@ pub(crate) fn remote_request(
             json!({"question": "what do you know about this repo?"}),
         ),
         "memories" => get(Endpoint::Memories, json!({})),
+        "analytics" => get(Endpoint::Analytics, json!({})),
         "model" if argument.is_empty() => get(Endpoint::Providers, json!({})),
         "grep" => post(Endpoint::Search, json!({"query": argument, "code": true})),
         "skill:" => {
@@ -1085,7 +1088,8 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
             lines
         }
         "runs" => {
-            if reply.runs.is_empty() {
+            let runs = reply.agent_runs();
+            if runs.is_empty() {
                 return vec!["No agent runs recorded for this team yet.".to_string()];
             }
             let mut lines = vec![format!(
@@ -1093,9 +1097,9 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                 reply
                     .count
                     .map(|count| count.to_string())
-                    .unwrap_or_else(|| reply.runs.len().to_string())
+                    .unwrap_or_else(|| runs.len().to_string())
             )];
-            for run in reply.runs.iter().take(12) {
+            for run in runs.iter().take(12) {
                 let task = run
                     .task
                     .as_deref()
@@ -1217,6 +1221,57 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
             }
             lines
         }
+        "analytics" => {
+            let number = |key: &str| {
+                reply
+                    .extra
+                    .get(key)
+                    .map(json_scalar)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| "not returned".to_string())
+            };
+            let run_count = reply.runs.as_ref().and_then(Value::as_u64);
+            if run_count == Some(0) {
+                return vec![
+                    "No usage analytics for this account yet — they derive from run history as it accrues."
+                        .to_string(),
+                ];
+            }
+            let mut lines = vec![format!(
+                "{} runs  |  {} sessions  |  {} turns",
+                run_count
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| "not returned".to_string()),
+                reply
+                    .sessions
+                    .as_ref()
+                    .and_then(Value::as_u64)
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| "not returned".to_string()),
+                number("turns")
+            )];
+            let tally = |value: Option<&Value>| {
+                value
+                    .and_then(Value::as_object)
+                    .map(|rows| {
+                        rows.iter()
+                            .map(|(name, count)| format!("{name}: {}", json_scalar(count)))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            };
+            let repo_rows = tally(reply.repos.as_ref());
+            if !repo_rows.is_empty() {
+                lines.push(format!("repos  {}", repo_rows.join("  |  ")));
+            }
+            for (key, label) in [("skills", "skills"), ("outcomes", "outcomes")] {
+                let rows = tally(reply.extra.get(key));
+                if !rows.is_empty() {
+                    lines.push(format!("{label}  {}", rows.join("  |  ")));
+                }
+            }
+            lines
+        }
         "memory" => reply
             .answer
             .as_deref()
@@ -1224,15 +1279,16 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
             .map(|answer| answer.lines().map(str::to_string).collect())
             .unwrap_or_else(|| vec!["No memory recall came back for this repo.".to_string()]),
         "sessions" => {
-            if reply.sessions.is_empty() {
+            let sessions = reply.session_summaries();
+            if sessions.is_empty() {
                 return vec!["No sessions yet. This one is the first.".to_string()];
             }
             let mut lines = vec![format!(
                 "{} of {} sessions  |  /resume <id> to pick one up",
-                reply.sessions.len(),
-                reply.count.unwrap_or(reply.sessions.len() as u64)
+                sessions.len(),
+                reply.count.unwrap_or(sessions.len() as u64)
             )];
-            for session in reply.sessions.iter().take(10) {
+            for session in sessions.iter().take(10) {
                 lines.push(format!(
                     "{}  {}{}",
                     session
@@ -1285,16 +1341,17 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
             if let Some(fleet) = &reply.fleet {
                 return fleet_view_lines(fleet, 160);
             }
+            let runs = reply.agent_runs();
             let mut lines = vec![format!(
                 "{} agents{}",
-                reply.count.unwrap_or(reply.runs.len() as u64),
+                reply.count.unwrap_or(runs.len() as u64),
                 reply
                     .level
                     .as_deref()
                     .map(|level| format!("  |  at {level}"))
                     .unwrap_or_default()
             )];
-            for run in reply.runs.iter().take(12) {
+            for run in runs.iter().take(12) {
                 let task = run
                     .task
                     .as_deref()
@@ -2099,7 +2156,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_inventory_is_exactly_the_33_accepted_commands() {
+    fn session_inventory_is_exactly_the_34_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
@@ -2115,6 +2172,7 @@ mod tests {
                 "activity",
                 "runs",
                 "outcomes",
+                "analytics",
                 "memory",
                 "sweep",
                 "sessions",
@@ -2723,6 +2781,47 @@ mod tests {
     }
 
     #[test]
+    fn analytics_reply_renders_usage_tallies_without_inventing_zeros() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "namespace": "dev@example.com",
+            "runs": 12,
+            "sessions": 5,
+            "turns": 31,
+            "repos": {"fatelabs/estelle": 4},
+            "skills": {"review": 2},
+            "artifacts": 7,
+            "outcomes": {"accepted": 8, "reverted": 1},
+            "events": {"gate.completed": 3}
+        }))
+        .expect("typed analytics reply");
+        let rendered = render_remote_reply("analytics", &reply).join("\n");
+
+        assert!(rendered.contains("12 runs"), "run count missing\n{rendered}");
+        assert!(rendered.contains("5 sessions"), "session count missing\n{rendered}");
+        assert!(rendered.contains("31 turns"), "turn count missing\n{rendered}");
+        assert!(
+            rendered.contains("fatelabs/estelle"),
+            "repo tally missing\n{rendered}"
+        );
+        assert!(rendered.contains("accepted"), "outcome tally missing\n{rendered}");
+    }
+
+    #[test]
+    fn analytics_reply_empty_is_an_honest_empty_state() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "namespace": "dev@example.com", "runs": 0, "sessions": 0, "turns": 0,
+            "repos": {}, "skills": {}, "artifacts": 0, "outcomes": {}, "events": {}
+        }))
+        .expect("empty analytics");
+        let rendered = render_remote_reply("analytics", &reply).join("\n");
+        assert!(
+            rendered.contains("No usage analytics"),
+            "empty state missing\n{rendered}"
+        );
+        assert!(!rendered.contains("0 sessions"), "absence rendered as zero\n{rendered}");
+    }
+
+    #[test]
     fn task_commands_refuse_empty_arguments_before_any_request() {
         let work = parse_input("/work");
         assert_eq!(work.local_refusal(), Some("/work needs a task"));
@@ -2746,6 +2845,7 @@ mod tests {
             ("runs", estelle_client::Endpoint::Runs),
             ("outcomes", estelle_client::Endpoint::Outcomes),
             ("memories", estelle_client::Endpoint::Memories),
+            ("analytics", estelle_client::Endpoint::Analytics),
             ("memory", estelle_client::Endpoint::DeepSearch),
             ("sessions", estelle_client::Endpoint::Sessions),
             ("resume", estelle_client::Endpoint::Session),

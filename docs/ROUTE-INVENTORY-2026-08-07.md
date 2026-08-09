@@ -35,10 +35,11 @@ method is below so anyone can re-run them.
 **Wired since this inventory:** `GET /graph` (`/graph`), `GET /graph/nodes` (`/graph nodes`),
 `GET /me` (`/me`), `GET /me/keys` (`/keys`), `GET /me/team` (`/team`), `GET /memory/cards`
 (`/cards`), `GET /entities` (`/entities`), `GET /usage` (`/usage`), `GET /activity` (`/activity`), `GET /runs` (`/runs`),
-`GET /outcomes` (`/outcomes`), `GET /memories` (`/memories` — split off the `/memory` alias) —
+`GET /outcomes` (`/outcomes`), `GET /memories` (`/memories` — split off the `/memory` alias),
+`GET /analytics` (`/analytics`) —
 all with the honesty pattern: explicit `building`/`truncated`/invite states, null team renders as
-absent, omitted fields render "not returned", unknown is never zero. Client now declares 65,
-reaches 63 of 65. `/me/*` writes
+absent, omitted fields render "not returned", unknown is never zero. Client now declares 66,
+reaches 64 of 66. `/me/*` writes
 (key create/revoke/rotate, team invite/seats, billing) and `memory/cards/{dream,edit,revert}`
 remain unwired — mutations are their own commits.
 
@@ -64,7 +65,7 @@ remain unwired — mutations are their own commits.
   `GET /suites/upgrades`, `GET /skills/scored`, `POST /skill`, `POST /skill/feedback`,
   `POST /key`, `POST /key/delete`, `POST /key/web`, `POST /account/worlds`,
   `GET /account/connections`, `GET /connections`, `GET|POST /autonomy/auto-mode`
-- Activity/reads: `GET /activity` ✅, `GET /analytics`, `GET /audit`, `GET /requests`,
+- Activity/reads: `GET /activity` ✅, `GET /analytics` ✅, `GET /audit`, `GET /requests`,
   `GET /leaderboard`, `GET /team/leaderboard`, `GET|POST /presence`, `GET /board`,
   `POST /board/sync`, `GET|POST /marketplace`
 - Agent/monitor extras: `POST /agent/events`, `POST /agent/gate`, `POST /agent/verify`,

@@ -21,7 +21,7 @@ fn test_key() -> ApiKey {
 
 #[test]
 fn endpoint_inventory_is_unique_and_matches_the_server_audit() {
-    assert_eq!(API_ENDPOINTS.len(), 65);
+    assert_eq!(API_ENDPOINTS.len(), 66);
     let unique = API_ENDPOINTS
         .iter()
         .map(|spec| spec.path)
@@ -397,10 +397,10 @@ fn command_reply_deserializes_every_p3_renderer_shape() {
     }))
     .expect("typed command reply");
 
-    assert_eq!(reply.sessions.len(), 1);
+    assert_eq!(reply.session_summaries().len(), 1);
     assert_eq!(reply.findings[0].line, Some(52));
     assert_eq!(reply.proposals.len(), 1);
-    assert_eq!(reply.runs.len(), 1);
+    assert_eq!(reply.agent_runs().len(), 1);
     assert_eq!(reply.candidates, ["fatelabs/estelle"]);
 }
 
