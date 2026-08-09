@@ -3169,6 +3169,19 @@ fn failure_lines(error: &Error) -> [String; 3] {
     failure_lines_for(&FailureView::from(error))
 }
 
+/// The filled user-turn block, ported from Codex (`style.rs::user_message_style_for`,
+/// `history_cell/messages.rs::UserHistoryCell`): a subtle tint over the terminal's own
+/// background. Under Cream Ink the painted surface is known, so the tint is deterministic;
+/// under Dark the background is inherited (D3), runtime detection decides, and an undetectable
+/// background yields NO fill rather than a guessed one.
+fn user_turn_style(theme: Theme) -> Style {
+    let terminal_bg = match theme {
+        Theme::CreamInk => Some((0xE9, 0xE6, 0xDC)),
+        Theme::Dark => codex_tui::default_bg(),
+    };
+    codex_tui::user_message_style_for(terminal_bg)
+}
+
 #[cfg(test)]
 fn render_transcript(entries: &[TranscriptEntry]) -> Text<'static> {
     render_transcript_with_citations(entries, true, Theme::Dark)
@@ -3199,7 +3212,7 @@ fn render_transcript_with_citations(
             TranscriptEntry::User(message) => {
                 text.lines.push(Line::from(vec![
                     Span::styled("you  ", Style::default().fg(Color::Gray)),
-                    Span::raw(mask_secret(message)),
+                    Span::styled(mask_secret(message), user_turn_style(theme)),
                 ]));
                 text.lines.push(Line::default());
             }
@@ -3428,7 +3441,10 @@ fn status_line(app: &App, now: Instant) -> Line<'static> {
         };
         let mut spans = vec![
             Span::styled(label, Style::default().fg(Color::Yellow)),
-            Span::raw(format!("  {elapsed}s  |  Esc cancels")),
+            Span::raw(format!(
+                "  {}  |  Esc cancels",
+                codex_tui::fmt_elapsed_compact(elapsed)
+            )),
         ];
         if elapsed >= 30 {
             spans.push(Span::raw("  |  no response received yet"));
@@ -6534,7 +6550,7 @@ mod tests {
 
         let rendered = format!("{:?}", status_line(&app, now));
         assert!(rendered.contains("still waiting for Estelle"));
-        assert!(rendered.contains("83s"));
+        assert!(rendered.contains("1m 23s"));
         assert!(rendered.contains("no response received yet"));
         assert!(!rendered.contains("cache"));
     }
@@ -7124,6 +7140,26 @@ mod tests {
         assert_eq!(app.local_mode, "read_only");
         assert!(app.active.is_none());
         assert!(app.queue.is_empty());
+    }
+
+    #[test]
+    fn long_waits_render_compact_elapsed_ported_from_codex_status_indicator() {
+        let mut app = test_app();
+        let started = Instant::now();
+        app.active = Some(ActiveRequest {
+            id: 1,
+            label: "thinking".to_string(),
+            started,
+            cancel: CancellationToken::new(),
+        });
+
+        let rendered = rendered_frame(&app, started + Duration::from_secs(93));
+
+        assert!(
+            rendered.contains("1m 33s"),
+            "the wait did not render as compact elapsed time\n{rendered}"
+        );
+        assert!(!rendered.contains("93s"), "raw seconds survived\n{rendered}");
     }
 
     #[test]
@@ -8345,6 +8381,50 @@ mod tests {
         assert!(
             text.contains("/me") && text.contains("/deep-search"),
             "the deletion did not name both routes"
+        );
+    }
+
+    #[test]
+    fn user_turns_render_as_filled_blocks_ported_from_codex_history_cell() {
+        let mut app = test_app();
+        app.theme = Theme::CreamInk;
+        app.transcript
+            .push(TranscriptEntry::User("trace the charge path".to_string()));
+        app.transcript.push(TranscriptEntry::Answer {
+            text: "at the retry loop.".to_string(),
+            grounded: Some(true),
+            degraded: false,
+            sources: Vec::new(),
+        });
+        let buffer = rendered_buffer_at_size(&app, Instant::now(), 120, 32);
+        let expected_bg = codex_tui::user_message_style_for(Some((0xE9, 0xE6, 0xDC)))
+            .bg
+            .expect("a known terminal background yields a fill");
+        let row_with = |needle: &str| {
+            buffer
+                .content
+                .chunks(120)
+                .find(|row| {
+                    row.iter()
+                        .map(ratatui::buffer::Cell::symbol)
+                        .collect::<String>()
+                        .contains(needle)
+                })
+                .unwrap_or_else(|| panic!("no rendered row for {needle:?}"))
+        };
+        let user_row = row_with("trace the charge path");
+        let filled = user_row
+            .iter()
+            .filter(|cell| cell.bg == expected_bg)
+            .count();
+        assert!(
+            filled >= "trace the charge path".len(),
+            "the user turn did not render as a filled block (ported fill missing)"
+        );
+        let estelle_row = row_with("at the retry loop.");
+        assert!(
+            estelle_row.iter().all(|cell| cell.bg != expected_bg),
+            "the assistant turn borrowed the user's fill — turns must stay distinguishable"
         );
     }
 

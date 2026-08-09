@@ -223,6 +223,9 @@ use crate::tui::Tui;
 pub use cli::Cli;
 use codex_arg0::Arg0DispatchPaths;
 pub use markdown_render::render_markdown_text;
+pub use status_indicator_widget::fmt_elapsed_compact;
+pub use style::user_message_style_for;
+pub use terminal_palette::default_bg;
 pub use public_widgets::composer_input::ComposerAction;
 pub use public_widgets::composer_input::ComposerInput;
 // (tests access modules directly within the crate)
