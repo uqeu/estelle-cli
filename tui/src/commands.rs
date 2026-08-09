@@ -2,7 +2,7 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 36] = [
+pub(crate) const SESSION_COMMANDS: [&str; 37] = [
     "help",
     "init",
     "graph",
@@ -18,6 +18,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 36] = [
     "analytics",
     "audit",
     "requests",
+    "presence",
     "memory",
     "sweep",
     "sessions",
@@ -41,7 +42,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 36] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 36] = [
+const SESSION_HELP: [(&str, &str); 37] = [
     ("help", "what you can do here"),
     ("init", "a grounded brief of this repo"),
     ("graph", "the swept code graph; /graph nodes draws the dependency view"),
@@ -57,6 +58,7 @@ const SESSION_HELP: [(&str, &str); 36] = [
     ("analytics", "your usage analytics derived from run history"),
     ("audit", "the tamper-evident trail of privileged actions on your account"),
     ("requests", "the billable engine-call stream with the log total"),
+    ("presence", "who's active, files in flight, pending handoffs"),
     ("memory", "an answered question: what Estelle knows about this repo"),
     ("sweep", "index this repo into memory"),
     ("sessions", "your recent sessions"),
@@ -174,7 +176,7 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 20] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 36] {
+pub(crate) fn session_command_names() -> [&'static str; 37] {
     SESSION_COMMANDS
 }
 
@@ -581,6 +583,7 @@ pub(crate) fn remote_request(
         "analytics" => get(Endpoint::Analytics, json!({})),
         "audit" => get(Endpoint::Audit, json!({})),
         "requests" => get(Endpoint::Requests, json!({})),
+        "presence" => get(Endpoint::Presence, json!({})),
         "model" if argument.is_empty() => get(Endpoint::Providers, json!({})),
         "grep" => post(Endpoint::Search, json!({"query": argument, "code": true})),
         "skill:" => {
@@ -1347,6 +1350,102 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
             }
             if reply.request_records.len() > 12 {
                 lines.push(format!("… {} more in this page", reply.request_records.len() - 12));
+            }
+            lines
+        }
+        "presence" => {
+            let rows = |key: &str| {
+                reply
+                    .extra
+                    .get(key)
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default()
+            };
+            let active = rows("active");
+            let overnight = rows("overnight");
+            let files = rows("files_in_use");
+            let handoffs = rows("handoffs");
+            if active.is_empty() && overnight.is_empty() && files.is_empty() && handoffs.is_empty()
+            {
+                return vec![
+                    "No team presence — nobody active, no overnight work, no handoffs pending."
+                        .to_string(),
+                ];
+            }
+            let mut lines = vec![format!(
+                "{} active  |  {} overnight",
+                active.len(),
+                overnight.len()
+            )];
+            for member in &active {
+                let member_files = member
+                    .get("files")
+                    .and_then(Value::as_array)
+                    .map(|files| {
+                        files
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default();
+                lines.push(format!(
+                    "{}  |  since {}{}",
+                    member
+                        .get("member")
+                        .and_then(Value::as_str)
+                        .unwrap_or("member not returned"),
+                    member
+                        .get("since")
+                        .and_then(Value::as_str)
+                        .unwrap_or("since not returned"),
+                    if member_files.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  |  {member_files}")
+                    }
+                ));
+            }
+            for member in &overnight {
+                lines.push(format!(
+                    "overnight  {}  |  at {}",
+                    member
+                        .get("member")
+                        .and_then(Value::as_str)
+                        .unwrap_or("member not returned"),
+                    member
+                        .get("at")
+                        .and_then(Value::as_str)
+                        .unwrap_or("at not returned")
+                ));
+            }
+            if !files.is_empty() {
+                lines.push(format!(
+                    "files in flight  {}",
+                    files
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            for handoff in &handoffs {
+                lines.push(format!(
+                    "handoff  {}: {}  |  {}",
+                    handoff
+                        .get("member")
+                        .and_then(Value::as_str)
+                        .unwrap_or("member not returned"),
+                    handoff
+                        .get("note")
+                        .and_then(Value::as_str)
+                        .unwrap_or("note not returned"),
+                    handoff
+                        .get("at")
+                        .and_then(Value::as_str)
+                        .unwrap_or("at not returned")
+                ));
             }
             lines
         }
@@ -2234,7 +2333,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_inventory_is_exactly_the_36_accepted_commands() {
+    fn session_inventory_is_exactly_the_37_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
@@ -2253,6 +2352,7 @@ mod tests {
                 "analytics",
                 "audit",
                 "requests",
+                "presence",
                 "memory",
                 "sweep",
                 "sessions",
@@ -2982,6 +3082,43 @@ mod tests {
     }
 
     #[test]
+    fn presence_reply_renders_active_overnight_files_and_handoffs() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "active": [{"member": "dana@example.com", "files": ["billing/charge.rs"],
+                        "since": "2026-08-06T20:00Z"}],
+            "overnight": [{"member": "kai@example.com", "at": "2026-08-06T02:00Z"}],
+            "files_in_use": ["billing/charge.rs", "api/routes.py"],
+            "handoffs": [{"member": "dana@example.com", "note": "check the retry ceiling",
+                          "at": "2026-08-06T22:00Z"}]
+        }))
+        .expect("typed presence reply");
+        let rendered = render_remote_reply("presence", &reply).join("\n");
+
+        assert!(rendered.contains("1 active"), "active count missing\n{rendered}");
+        assert!(rendered.contains("dana@example.com"), "member missing\n{rendered}");
+        assert!(rendered.contains("1 overnight"), "overnight count missing\n{rendered}");
+        assert!(
+            rendered.contains("billing/charge.rs"),
+            "file in flight missing — the collision guard is invisible\n{rendered}"
+        );
+        assert!(
+            rendered.contains("check the retry ceiling"),
+            "pending handoff dropped\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn presence_reply_empty_is_an_honest_empty_state() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "active": [], "overnight": [], "files_in_use": [], "handoffs": []
+        }))
+        .expect("empty presence");
+        let rendered = render_remote_reply("presence", &reply).join("\n");
+        assert!(rendered.contains("No team presence"), "empty state missing\n{rendered}");
+        assert!(!rendered.contains("0 active"), "absence rendered as zero\n{rendered}");
+    }
+
+    #[test]
     fn task_commands_refuse_empty_arguments_before_any_request() {
         let work = parse_input("/work");
         assert_eq!(work.local_refusal(), Some("/work needs a task"));
@@ -3008,6 +3145,7 @@ mod tests {
             ("analytics", estelle_client::Endpoint::Analytics),
             ("audit", estelle_client::Endpoint::Audit),
             ("requests", estelle_client::Endpoint::Requests),
+            ("presence", estelle_client::Endpoint::Presence),
             ("memory", estelle_client::Endpoint::DeepSearch),
             ("sessions", estelle_client::Endpoint::Sessions),
             ("resume", estelle_client::Endpoint::Session),
