@@ -8444,6 +8444,83 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn a_pasted_image_never_reaches_the_server_because_no_image_path_exists() {
+        // PROBE, not a read. Part one: the inherited lib's image chord (Ctrl+V runs
+        // paste_image_to_temp_png in Codex's chatwidget) is not wired here at all.
+        let mut app = test_app();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL),
+            &tx,
+        );
+        assert!(
+            app.composer.is_empty(),
+            "Ctrl+V put something in the composer — an image path exists in this binary"
+        );
+        assert!(app.picker.is_none() && app.active.is_none());
+
+        // Part two: a terminal that delivers an image paste as a file-path string sends TEXT.
+        // The question goes verbatim (D16) and no image bytes, no image field, and no read of
+        // the pasted file ever occur — the server has zero multimodal handling, and the client
+        // must not invent one.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/deep-search"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "answer": "IMAGE PROBE SENTINEL",
+                "grounded": true,
+                "sources": []
+            })))
+            .mount(&server)
+            .await;
+        let client = Client::new(
+            &format!("{}/", server.uri()),
+            estelle_client::ApiKey::new("test-key").expect("key"),
+            Duration::from_secs(120),
+        )
+        .expect("client");
+        let root = tempfile::tempdir().expect("working tree");
+        let typed = "what does this show? /tmp/screenshot-with-key.png".to_string();
+        let reply = answer_question(
+            client,
+            Repo::new("fatelabs/estelle").expect("repo"),
+            root.path().to_path_buf(),
+            typed.clone(),
+            None,
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("answer");
+
+        let requests = server
+            .received_requests()
+            .await
+            .expect("request recording");
+        assert_eq!(requests.len(), 1);
+        let body: Value = serde_json::from_slice(&requests[0].body).expect("json body");
+        assert_eq!(
+            body["question"].as_str(),
+            Some(typed.as_str()),
+            "the pasted path text must go verbatim, nothing more"
+        );
+        let raw = String::from_utf8_lossy(&requests[0].body);
+        let keys = body
+            .as_object()
+            .expect("body object")
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys.len(),
+            2,
+            "only question and repo may ride the request: {raw}"
+        );
+        assert!(body.get("repo").is_some());
+        assert_eq!(reply.text, "IMAGE PROBE SENTINEL");
+    }
+
     #[test]
     fn transcript_turns_carry_distinguishable_speaker_labels() {
         let mut app = test_app();
