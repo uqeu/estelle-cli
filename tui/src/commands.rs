@@ -50,7 +50,7 @@ const SESSION_HELP: [(&str, &str); 39] = [
     ("graph", "the swept code graph; /graph nodes draws the dependency view"),
     ("me", "your account: plan, balance, budget, provider, invites"),
     ("keys", "your API keys — prefixes and expiry state, never raw keys"),
-    ("team", "your team: role, seats, members, pending invites"),
+    ("team", "your team: role, seats, members, invites; /team board ranks members"),
     ("cards", "learned-knowledge cards with folder counts and provenance"),
     ("entities", "every symbol the swept repo defines, with defining files"),
     ("usage", "requests and tokens by day"),
@@ -543,6 +543,7 @@ pub(crate) fn remote_request(
         "graph" => get(Endpoint::Graph, json!({})),
         "me" => get(Endpoint::Me, json!({})),
         "keys" => get(Endpoint::MeKeys, json!({})),
+        "team" if argument == "board" => get(Endpoint::TeamLeaderboard, json!({})),
         "team" => get(Endpoint::MeTeam, json!({})),
         "cards" => get(Endpoint::MemoryCards, json!({})),
         "entities" => get(Endpoint::Entities, json!({})),
@@ -891,6 +892,52 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
             lines
         }
         "team" => {
+            if let Some(board) = reply.leaderboard.as_ref().and_then(Value::as_array) {
+                // /team board — the honest per-actor board. Zero-activity members are included
+                // by the server on purpose; the window and metric head the view.
+                if board.is_empty() && reply.me_team.is_none() {
+                    return vec![
+                        "You're not on a team yet. Teams are created on the dashboard.".to_string(),
+                    ];
+                }
+                let mut lines = vec![format!(
+                    "team board  |  {}  |  by {}",
+                    reply
+                        .extra
+                        .get("window")
+                        .map(json_scalar)
+                        .filter(|window| !window.is_empty())
+                        .unwrap_or_else(|| "window not returned".to_string()),
+                    reply
+                        .extra
+                        .get("metric")
+                        .map(json_scalar)
+                        .filter(|metric| !metric.is_empty())
+                        .unwrap_or_else(|| "metric not returned".to_string())
+                )];
+                for member in board.iter().take(10) {
+                    lines.push(format!(
+                        "{}  {}  |  {}",
+                        member
+                            .get("rank")
+                            .map(json_scalar)
+                            .filter(|rank| !rank.is_empty())
+                            .unwrap_or_else(|| "?".to_string()),
+                        member
+                            .get("display_name")
+                            .and_then(Value::as_str)
+                            .filter(|name| !name.is_empty())
+                            .or_else(|| member.get("email").and_then(Value::as_str))
+                            .unwrap_or("member not returned"),
+                        member
+                            .get("value")
+                            .map(json_scalar)
+                            .filter(|value| !value.is_empty())
+                            .unwrap_or_else(|| "value not returned".to_string())
+                    ));
+                }
+                return lines;
+            }
             let Some(team) = &reply.me_team else {
                 return vec![
                     "You're not on a team yet. Teams are created on the dashboard.".to_string(),
@@ -1485,7 +1532,8 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
             lines
         }
         "leaderboard" => {
-            if reply.leaderboard_rows.is_empty() {
+            let rows = reply.skill_leaderboard_rows();
+            if rows.is_empty() {
                 return vec![
                     "No verified skill outcomes yet — the board fills as skills complete grounded work."
                         .to_string(),
@@ -1496,9 +1544,9 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                 reply
                     .count
                     .map(|count| count.to_string())
-                    .unwrap_or_else(|| reply.leaderboard_rows.len().to_string())
+                    .unwrap_or_else(|| rows.len().to_string())
             )];
-            for row in &reply.leaderboard_rows {
+            for row in &rows {
                 lines.push(format!(
                     "{}  |  {} uses  |  {} verified  |  {}",
                     row.skill.as_deref().unwrap_or("skill not returned"),
@@ -3536,6 +3584,47 @@ mod tests {
             scan_lockfile_attachments(root.path(), missing).is_empty(),
             "a lockfile absent on disk must not be fabricated"
         );
+    }
+
+    #[test]
+    fn team_board_argument_routes_to_the_team_leaderboard() {
+        let board = remote_request("team", "board", None, None)
+            .expect("route")
+            .expect("route present");
+        assert_eq!(board.endpoint, estelle_client::Endpoint::TeamLeaderboard);
+        let plain = remote_request("team", "", None, None)
+            .expect("route")
+            .expect("route present");
+        assert_eq!(plain.endpoint, estelle_client::Endpoint::MeTeam);
+    }
+
+    #[test]
+    fn team_board_reply_renders_member_rows_with_window_and_metric() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "window": "week", "metric": "runs",
+            "leaderboard": [
+                {"email": "dana@example.com", "display_name": "Dana", "metric_key": "runs",
+                 "value": 12, "rank": 1, "usage": {}},
+                {"email": "kai@example.com", "display_name": null, "metric_key": "runs",
+                 "value": 3, "rank": 2, "usage": {}}
+            ]
+        }))
+        .expect("typed team board reply");
+        let rendered = render_remote_reply("team", &reply).join("\n");
+
+        assert!(rendered.contains("week"), "window missing\n{rendered}");
+        assert!(rendered.contains("runs"), "metric missing\n{rendered}");
+        assert!(rendered.contains("Dana"), "member missing\n{rendered}");
+        assert!(rendered.contains("12"), "value missing\n{rendered}");
+        assert!(rendered.contains("kai@example.com"), "email fallback missing\n{rendered}");
+    }
+
+    #[test]
+    fn team_board_empty_membership_is_explicit_not_zero() {
+        let reply: estelle_client::CommandReply =
+            serde_json::from_value(json!({"team": null, "leaderboard": []})).expect("no team");
+        let rendered = render_remote_reply("team", &reply).join("\n");
+        assert!(rendered.contains("not on a team"), "absent state missing\n{rendered}");
     }
 
     #[test]

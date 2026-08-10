@@ -68,7 +68,7 @@ remain unwired — mutations are their own commits.
   `POST /key`, `POST /key/delete`, `POST /key/web`, `POST /account/worlds`,
   `GET /account/connections`, `GET /connections`, `GET|POST /autonomy/auto-mode`
 - Activity/reads: `GET /activity` ✅, `GET /analytics` ✅, `GET /audit` ✅, `GET /requests` ✅,
-  `GET /leaderboard` ✅, `GET /team/leaderboard`, `GET|POST /presence` ✅ (read), `GET /board`,
+  `GET /leaderboard` ✅, `GET /team/leaderboard` ✅ (`/team board`), `GET|POST /presence` ✅ (read), `GET /board`,
   `POST /board/sync`, `GET|POST /marketplace`
 - Agent/monitor extras: `POST /agent/events`, `POST /agent/gate`, `POST /agent/verify`,
   `POST /agent/triage`, `GET /agent/docs`, `POST /autorepair`, `POST /autorepair/revert`,

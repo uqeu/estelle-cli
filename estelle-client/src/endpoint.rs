@@ -52,6 +52,7 @@ endpoints! {
     (Presence, "presence", [Get], false),
     (Leaderboard, "leaderboard", [Get], false),
     (BillingCatalog, "settings", [Get], false),
+    (TeamLeaderboard, "team/leaderboard", [Get], false),
     (Providers, "providers", [Get], false),
     (ProviderSelect, "provider/select", [Post], false),
     (Overview, "overview", [Get], false),

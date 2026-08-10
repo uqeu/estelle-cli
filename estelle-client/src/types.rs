@@ -317,9 +317,11 @@ pub struct CommandReply {
     /// log's TOTAL, so the view can say "N of total" rather than implying the page is all.
     #[serde(default, rename = "requests")]
     pub request_records: Vec<RequestRecord>,
-    /// `GET /leaderboard` — skills ranked by VERIFIED grounded outcome, not install count.
+    /// `/leaderboard` sends skill rows; `/team/leaderboard` sends MEMBER rows — same key,
+    /// different shapes. Raw `Value` like `entities`/`runs`/`sessions`: each arm parses its own
+    /// shape and the wrong one can never be silently absorbed into all-None fields.
     #[serde(default, rename = "leaderboard")]
-    pub leaderboard_rows: Vec<LeaderboardRow>,
+    pub leaderboard: Option<serde_json::Value>,
     #[serde(default)]
     pub result: Option<serde_json::Value>,
     #[serde(default)]
@@ -350,6 +352,14 @@ impl CommandReply {
         self.sessions
             .as_ref()
             .and_then(|sessions| serde_json::from_value(sessions.clone()).ok())
+            .unwrap_or_default()
+    }
+
+    /// The `leaderboard` key as typed SKILL rows — non-empty only for `/leaderboard`.
+    pub fn skill_leaderboard_rows(&self) -> Vec<LeaderboardRow> {
+        self.leaderboard
+            .as_ref()
+            .and_then(|rows| serde_json::from_value(rows.clone()).ok())
             .unwrap_or_default()
     }
 }
