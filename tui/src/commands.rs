@@ -631,6 +631,53 @@ pub(crate) fn remote_request(
     }
 }
 
+/// Whole-lockfile CVE attachments for /scan. When the measured diff TOUCHES a lockfile, the
+/// transitive-dep risk changed — and a per-added-line diff scan can't pair (name, version)
+/// across lines, so the server's whole-lockfile path exists (api_intel.py handle_scan).
+/// yarn.lock/pnpm-lock.yaml are excluded here too: the server ignores them silently, and sending
+/// them would pretend coverage that does not exist. A lockfile named in the diff but unreadable
+/// on disk yields NO entry — never fabricated content.
+pub(crate) fn scan_lockfile_attachments(root: &std::path::Path, diff: &str) -> Vec<Value> {
+    const LOCKFILES: &[&str] = &[
+        "poetry.lock",
+        "uv.lock",
+        "pipfile.lock",
+        "package-lock.json",
+        "go.sum",
+        "go.mod",
+        "cargo.lock",
+    ];
+    let mut touched = Vec::new();
+    for line in diff.lines() {
+        if let Some(path) = line.strip_prefix("+++ b/") {
+            let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+            if LOCKFILES.contains(&name.as_str()) {
+                touched.push(path.to_string());
+            }
+        }
+    }
+    touched.sort();
+    touched.dedup();
+    let Ok(canonical_root) = root.canonicalize() else {
+        return Vec::new();
+    };
+    touched
+        .into_iter()
+        .filter_map(|path| {
+            let full = root.join(&path);
+            let canonical = full.canonicalize().ok()?;
+            if !canonical.starts_with(&canonical_root) {
+                return None;
+            }
+            let content = std::fs::read_to_string(&full).ok()?;
+            if estelle_client::is_secret_shaped(&content) {
+                return None;
+            }
+            Some(json!({"path": path, "content": content}))
+        })
+        .collect()
+}
+
 pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandReply) -> Vec<String> {
     match name {
         "init" => {
@@ -3455,6 +3502,39 @@ mod tests {
         assert!(
             rendered.contains("retry loop drops the error"),
             "the deep finding is invisible\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn scan_attachments_follow_lockfiles_the_diff_touches() {
+        let root = tempfile::tempdir().expect("repo root");
+        std::fs::write(
+            root.path().join("Cargo.lock"),
+            "[[package]]\nname = \"openssl-sys\"\nversion = \"0.9.0\"\n",
+        )
+        .expect("lockfile");
+        let touching = "diff --git a/Cargo.lock b/Cargo.lock\n--- a/Cargo.lock\n+++ b/Cargo.lock\n@@\n+openssl\n";
+        let not_touching = "diff --git a/src/main.rs b/src/main.rs\n+++ b/src/main.rs\n@@\n+fn main() {}\n";
+
+        let attachments = scan_lockfile_attachments(root.path(), touching);
+        assert_eq!(attachments.len(), 1, "a touched lockfile was not attached");
+        assert_eq!(attachments[0]["path"].as_str(), Some("Cargo.lock"));
+        assert!(
+            attachments[0]["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("openssl-sys")),
+            "the attachment does not carry the lockfile content"
+        );
+
+        assert!(
+            scan_lockfile_attachments(root.path(), not_touching).is_empty(),
+            "an untouched lockfile must not upload"
+        );
+        // Touched in the diff but gone from disk: no entry, no invented content.
+        let missing = "+++ b/package-lock.json\n@@\n+lodash\n";
+        assert!(
+            scan_lockfile_attachments(root.path(), missing).is_empty(),
+            "a lockfile absent on disk must not be fabricated"
         );
     }
 

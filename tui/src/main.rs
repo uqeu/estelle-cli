@@ -2571,7 +2571,7 @@ async fn execute_remote_command(
     let diff = measured_diff
         .as_ref()
         .map(|measured| measured.patch.as_str());
-    let request = commands::remote_request(
+    let mut request = commands::remote_request(
         pending.name,
         &pending.argument,
         diff,
@@ -2591,6 +2591,16 @@ async fn execute_remote_command(
             "Report this command name; nothing was sent.".to_string(),
         ])
     })?;
+    // /scan's whole-lockfile CVE pass needs the full file the diff only excerpts — attach the
+    // lockfiles the measured diff touches (api_intel.py handle_scan reads "files").
+    if pending.name == "scan"
+        && let (Some(body), Some(diff_text)) = (request.body.as_mut(), diff)
+    {
+        let attachments = commands::scan_lockfile_attachments(&root, diff_text);
+        if !attachments.is_empty() {
+            body["files"] = Value::Array(attachments);
+        }
+    }
 
     let result = match (request.method, request.endpoint.requires_repo()) {
         (commands::RemoteMethod::Get, true) => {
