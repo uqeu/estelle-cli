@@ -1909,7 +1909,16 @@ async fn memory(
     values: &[String],
 ) -> Result<Vec<String>, String> {
     let action = action.unwrap_or("receipts");
-    let (endpoint, method, payload) = memory_request(action, values)?;
+    let confirmed = values.iter().any(|value| value == "--yes");
+    let values = values
+        .iter()
+        .filter(|value| *value != "--yes")
+        .cloned()
+        .collect::<Vec<_>>();
+    if let Some(lines) = erasure_gate(action, &values, confirmed) {
+        return Ok(lines);
+    }
+    let (endpoint, method, payload) = memory_request(action, &values)?;
     let reply = match (method, memory_scope(endpoint)) {
         (MemoryMethod::Get, MemoryScope::Account) => api.get(endpoint, &payload).await?,
         (MemoryMethod::Get, MemoryScope::Repo) => api.get_scoped(endpoint, repo, &payload).await?,
@@ -1919,6 +1928,28 @@ async fn memory(
         }
     };
     render_suite_reply("memory", action, &reply)
+}
+
+/// The S2 gate: `memory forget`/`retract` erase across EVERY namespace the account owns — the
+/// server has no repo-scoped erasure, and the class sweep caught the client implying one by
+/// demanding and injecting a repo the server never reads. The confirmation names the true
+/// radius BEFORE anything is sent; without `--yes` nothing leaves the machine.
+fn erasure_gate(action: &str, values: &[String], confirmed: bool) -> Option<Vec<String>> {
+    if !matches!(action, "forget" | "retract") || confirmed {
+        return None;
+    }
+    let target = values
+        .iter()
+        .find(|value| !value.starts_with('-'))
+        .map(String::as_str)
+        .unwrap_or("");
+    Some(vec![
+        format!(
+            "memory {action} {target} erases across ALL namespaces this account owns — not just this repo."
+        ),
+        "The server has no repo-scoped erasure today, so the CLI does not imply one.".to_string(),
+        "Re-run with --yes to confirm. Nothing was sent.".to_string(),
+    ])
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3057,9 +3088,36 @@ mod tests {
     }
 
     #[test]
+    fn memory_erasure_discloses_the_true_radius_and_waits_for_yes() {
+        let blocked = erasure_gate("forget", &["billing/charge.rs".to_string()], false)
+            .expect("unconfirmed erasure must be blocked");
+        let text = blocked.join("\n");
+        assert!(text.contains("ALL namespaces"), "true radius hidden\n{text}");
+        assert!(text.contains("--yes"), "no remedy named\n{text}");
+        assert!(text.contains("Nothing was sent"), "no nothing-sent line\n{text}");
+        assert!(text.contains("billing/charge.rs"), "target missing\n{text}");
+
+        assert!(
+            erasure_gate("forget", &["billing/charge.rs".to_string()], true).is_none(),
+            "a confirmed erasure must proceed"
+        );
+        assert!(
+            erasure_gate("retract", &["key:deploy-target".to_string()], false).is_some(),
+            "retract skips the gate"
+        );
+        assert!(
+            erasure_gate("receipts", &[], false).is_none(),
+            "a read must never hit the gate"
+        );
+    }
+
+    #[test]
     fn memory_flags_are_not_mistaken_for_the_thing_being_erased() {
-        assert_eq!(memory_scope(Endpoint::Retract), MemoryScope::Repo);
-        assert_eq!(memory_scope(Endpoint::Forget), MemoryScope::Repo);
+        // S2: erasure is account-wide on the server; the client no longer demands or injects a
+        // repo the server never reads — a field demanded by the client and ignored by the
+        // server is the blast-radius lie itself.
+        assert_eq!(memory_scope(Endpoint::Retract), MemoryScope::Account);
+        assert_eq!(memory_scope(Endpoint::Forget), MemoryScope::Account);
         assert_eq!(memory_scope(Endpoint::Unlearn), MemoryScope::Account);
         assert_eq!(
             memory_request("receipts", &["--limit".to_string(), "5".to_string()])
