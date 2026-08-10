@@ -405,6 +405,70 @@ fn command_reply_deserializes_every_p3_renderer_shape() {
 }
 
 #[test]
+fn multi_shape_envelope_keys_fail_loudly_on_the_wrong_shape() {
+    // The envelope-collision class: one JSON key, two row shapes. A wrong-arm payload must
+    // produce NOTHING RENDERABLE — never a vec of all-None rows, which looks like data, passes
+    // every check, and means nothing.
+    use serde_json::json;
+
+    // leaderboard: skill rows vs member rows.
+    let skill_board: CommandReply = serde_json::from_value(json!({
+        "leaderboard": [{"skill": "review", "uses": 9, "successes": 8, "success_rate": 0.889}]
+    }))
+    .expect("skill board");
+    let rows = skill_board.skill_leaderboard_rows();
+    assert_eq!(rows.len(), 1, "right shape must parse");
+    assert_eq!(rows[0].skill, "review", "shape assertion, not a vacuity guard");
+    let member_board: CommandReply = serde_json::from_value(json!({
+        "leaderboard": [{"email": "dana@example.com", "metric_key": "runs", "value": 12, "rank": 1}]
+    }))
+    .expect("member board");
+    assert!(
+        member_board.skill_leaderboard_rows().is_empty(),
+        "member rows were silently absorbed as all-None skill rows"
+    );
+
+    // runs/sessions: the /analytics counts must not become run/session rows.
+    let analytics: CommandReply =
+        serde_json::from_value(json!({"runs": 12, "sessions": 5})).expect("analytics");
+    assert!(
+        analytics.agent_runs().is_empty(),
+        "a runs COUNT absorbed as run rows"
+    );
+    assert!(
+        analytics.session_summaries().is_empty(),
+        "a sessions COUNT absorbed as session rows"
+    );
+    let real_runs: CommandReply =
+        serde_json::from_value(json!({"runs": [{"task": "trace auth"}]})).expect("runs list");
+    assert_eq!(real_runs.agent_runs().len(), 1);
+    let real_sessions: CommandReply =
+        serde_json::from_value(json!({"sessions": [{"id": "s-1", "title": "t"}]}))
+            .expect("sessions list");
+    assert_eq!(real_sessions.session_summaries().len(), 1);
+
+    // entities: count vs rows — the arms read the raw Value, each claiming its own shape.
+    let graph: CommandReply = serde_json::from_value(json!({"entities": 42})).expect("graph count");
+    assert_eq!(
+        graph.graph_entities.as_ref().and_then(Value::as_u64),
+        Some(42)
+    );
+    assert!(graph.graph_entities.as_ref().and_then(Value::as_array).is_none());
+    let entity_rows: CommandReply =
+        serde_json::from_value(json!({"entities": [{"symbol": "s", "files": []}]}))
+            .expect("entity rows");
+    assert!(entity_rows.graph_entities.as_ref().and_then(Value::as_u64).is_none());
+    assert_eq!(
+        entity_rows
+            .graph_entities
+            .as_ref()
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(1)
+    );
+}
+
+#[test]
 fn fleet_snapshot_preserves_the_server_reported_model_roster() {
     let reply: CommandReply = serde_json::from_value(serde_json::json!({
         "fleet": {

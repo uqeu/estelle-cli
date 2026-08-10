@@ -563,8 +563,10 @@ pub struct RequestRecord {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct LeaderboardRow {
-    #[serde(default)]
-    pub skill: Option<String>,
+    /// Required on purpose: a row WITHOUT a skill (e.g. a /team/leaderboard member row, same
+    /// envelope key) must fail the parse so the accessor returns empty — never an all-None row,
+    /// which looks like data and means nothing.
+    pub skill: String,
     #[serde(default)]
     pub uses: Option<u64>,
     #[serde(default)]

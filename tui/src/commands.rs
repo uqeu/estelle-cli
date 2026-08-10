@@ -1558,7 +1558,7 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
             for row in &rows {
                 lines.push(format!(
                     "{}  |  {} uses  |  {} verified  |  {}",
-                    row.skill.as_deref().unwrap_or("skill not returned"),
+                    row.skill.as_str(),
                     row.uses
                         .map(|uses| uses.to_string())
                         .unwrap_or_else(|| "?".to_string()),
