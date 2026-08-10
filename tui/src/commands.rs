@@ -577,13 +577,21 @@ pub(crate) fn remote_request(
             let diff = diff
                 .filter(|value| !value.trim().is_empty())
                 .ok_or(RouteError::MissingDiff)?;
+            // /review is Estelle Review's DEEP mode — opt-in via body["deep"], computed after
+            // the deterministic verdict so a slow/failed review can't disturb it. /gate and
+            // /scan stay the deterministic pass.
+            let body = if name == "review" {
+                json!({"diff": diff, "deep": true})
+            } else {
+                json!({"diff": diff})
+            };
             post(
                 if matches!(name, "gate" | "review") {
                     Endpoint::Gate
                 } else {
                     Endpoint::Scan
                 },
-                json!({"diff": diff}),
+                body,
             )
         }
         "improve" => post(
@@ -1669,6 +1677,18 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                 .or_else(|| reply.merge.as_ref().map(json_scalar))
                 .unwrap_or_else(|| "unverified".to_string());
             let mut lines = vec![format!("Verdict  {verdict}")];
+            if let Some(deterministic) = reply.extra.get("deterministic") {
+                // The deep pass changed the outcome; the pre-deep deterministic verdict is
+                // preserved server-side under this key. Say which pass produced the block.
+                let pre_deep = deterministic
+                    .get("verdict")
+                    .map(json_scalar)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| "not blocked".to_string());
+                lines.push(format!(
+                    "deep review changed the outcome — the deterministic pass said: {pre_deep}"
+                ));
+            }
             append_object_rows(&mut lines, reply.extra.get("blockers"), "BLOCKED");
             append_object_rows(&mut lines, reply.extra.get("warnings"), "warning");
             lines
@@ -3388,6 +3408,54 @@ mod tests {
             .expect("route")
             .expect("route present");
         assert_eq!(bare.body, Some(json!({})));
+    }
+
+    #[test]
+    fn review_invokes_the_deep_mode_gate_and_scan_do_not() {
+        // Estelle Review's deep mode is opt-in via body["deep"] — the sweep found /review
+        // wire-identical to /gate, so the deep pass was unreachable from this client.
+        let review = remote_request("review", "", Some("diff body"), None)
+            .expect("route")
+            .expect("route present");
+        assert_eq!(review.endpoint, estelle_client::Endpoint::Gate);
+        assert_eq!(
+            review.body,
+            Some(json!({"diff": "diff body", "deep": true})),
+            "/review must opt into the deep pass"
+        );
+        for shallow in ["gate", "scan"] {
+            let request = remote_request(shallow, "", Some("diff body"), None)
+                .expect("route")
+                .expect("route present");
+            assert!(
+                request
+                    .body
+                    .as_ref()
+                    .and_then(|body| body.get("deep"))
+                    .is_none(),
+                "/{shallow} must stay the deterministic pass"
+            );
+        }
+    }
+
+    #[test]
+    fn review_reply_discloses_when_the_deep_pass_changed_the_outcome() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "merge": false, "verdict": "blocked-logic",
+            "deterministic": {"verdict": "merge"},
+            "blockers": [{"body": "deep finding: retry loop drops the error"}]
+        }))
+        .expect("typed review reply");
+        let rendered = render_remote_reply("review", &reply).join("\n");
+        assert!(
+            rendered.contains("deep review changed the outcome"),
+            "a model-authored block must say it is not the deterministic gate's\n{rendered}"
+        );
+        assert!(rendered.contains("merge"), "the pre-deep verdict was dropped\n{rendered}");
+        assert!(
+            rendered.contains("retry loop drops the error"),
+            "the deep finding is invisible\n{rendered}"
+        );
     }
 
     #[test]
