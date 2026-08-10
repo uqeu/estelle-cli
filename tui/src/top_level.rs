@@ -1053,7 +1053,12 @@ where
             })
             .map_err(SweepFailure::Local)?;
             let response: Value = client
-                .post_scoped(Endpoint::Sync, repo, &json!({"files": files}), cancel)
+                .post_scoped(
+                    Endpoint::Sync,
+                    repo,
+                    &with_measured_head(json!({"files": files}), root),
+                    cancel,
+                )
                 .await
                 .map_err(SweepFailure::Client)?;
             lines.push("Repo swept. The server accepted the complete source set.".to_string());
@@ -1067,8 +1072,9 @@ where
             .map_err(SweepFailure::Local)?;
         }
         SweepTransport::Background => {
+            let body = with_measured_head(json!({"files": files}), root);
             lines.extend(
-                ingest_with_progress(client, repo, files, file_count, bytes, cancel, &mut report)
+                ingest_with_progress(client, repo, body, file_count, bytes, cancel, &mut report)
                     .await?,
             );
         }
@@ -1093,7 +1099,7 @@ fn sweep_transport(file_count: usize) -> SweepTransport {
 async fn ingest_with_progress<F>(
     client: &Client,
     repo: &Repo,
-    files: Vec<FilePayload>,
+    body: Value,
     file_count: usize,
     bytes: usize,
     cancel: &CancellationToken,
@@ -1110,12 +1116,7 @@ where
     })
     .map_err(SweepFailure::Local)?;
     let started: Value = client
-        .post_scoped(
-            Endpoint::IngestStart,
-            repo,
-            &json!({"files": files}),
-            cancel,
-        )
+        .post_scoped(Endpoint::IngestStart, repo, &body, cancel)
         .await
         .map_err(SweepFailure::Client)?;
     let mut lines = dropped_lines(&started);
@@ -1284,12 +1285,37 @@ async fn reindex(
         .post_scoped(
             Endpoint::Reindex,
             repo,
-            &json!({"files": files, "removed": deleted_set}),
+            &with_measured_head(json!({"files": files, "removed": deleted_set}), root),
         )
         .await?;
     lines.push("Memory current. Untouched files kept their symbols.".to_string());
     lines.extend(dropped_lines(&response));
     Ok(lines)
+}
+
+/// The commit SHA the swept content was measured against — the server's graph-currency
+/// baseline (`api_memory` reads `head`; the class sweep found the CLI never sent it, leaving
+/// the baseline permanently UNKNOWN for the ingest path that built the graph). The field is
+/// omitted when HEAD cannot be read — never invented.
+fn git_head(root: &Path) -> Option<String> {
+    let output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let head = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!head.is_empty()).then_some(head)
+}
+
+fn with_measured_head(mut body: Value, root: &Path) -> Value {
+    if let Some(head) = git_head(root) {
+        body["head"] = Value::String(head);
+    }
+    body
 }
 
 fn dropped_lines(response: &Value) -> Vec<String> {
@@ -2985,6 +3011,47 @@ mod tests {
             skipped
                 .iter()
                 .all(|path| path.contains("outside Git inventory"))
+        );
+    }
+
+    #[test]
+    fn swept_bodies_carry_the_measured_head_and_omit_it_when_unreadable() {
+        let root = tempfile::tempdir().expect("git root");
+        let git = |arguments: &[&str]| {
+            let output = ProcessCommand::new("git")
+                .args(arguments)
+                .current_dir(root.path())
+                .output()
+                .expect("git invocation");
+            assert!(output.status.success(), "git {arguments:?} failed");
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        };
+        git(&["init"]);
+        fs::write(root.path().join("main.rs"), "fn main() {}\n").expect("source");
+        git(&["add", "."]);
+        git(&[
+            "-c",
+            "user.name=Estelle Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "baseline",
+        ]);
+        let head = git(&["rev-parse", "HEAD"]);
+
+        let body = with_measured_head(json!({"files": []}), root.path());
+        assert_eq!(
+            body["head"].as_str(),
+            Some(head.as_str()),
+            "the measured HEAD did not ride the body — the graph-currency baseline stays UNKNOWN"
+        );
+
+        let plain = tempfile::tempdir().expect("non-repo");
+        let body = with_measured_head(json!({"files": []}), plain.path());
+        assert!(
+            body.get("head").is_none(),
+            "an unreadable HEAD must omit the field, never invent one"
         );
     }
 
