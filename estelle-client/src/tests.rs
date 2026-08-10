@@ -21,7 +21,7 @@ fn test_key() -> ApiKey {
 
 #[test]
 fn endpoint_inventory_is_unique_and_matches_the_server_audit() {
-    assert_eq!(API_ENDPOINTS.len(), 72);
+    assert_eq!(API_ENDPOINTS.len(), 73);
     let unique = API_ENDPOINTS
         .iter()
         .map(|spec| spec.path)

@@ -2,7 +2,7 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 39] = [
+pub(crate) const SESSION_COMMANDS: [&str; 40] = [
     "help",
     "init",
     "graph",
@@ -21,6 +21,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 39] = [
     "presence",
     "leaderboard",
     "billing",
+    "marketplace",
     "memory",
     "sweep",
     "sessions",
@@ -44,7 +45,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 39] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 39] = [
+const SESSION_HELP: [(&str, &str); 40] = [
     ("help", "what you can do here"),
     ("init", "a grounded brief of this repo"),
     ("graph", "the swept code graph; /graph nodes draws the dependency view"),
@@ -63,6 +64,7 @@ const SESSION_HELP: [(&str, &str); 39] = [
     ("presence", "who's active, files in flight, pending handoffs"),
     ("leaderboard", "skills ranked by verified grounded outcome"),
     ("billing", "settings catalog with monthly pricing and current choices"),
+    ("marketplace", "the team's published plugins"),
     ("memory", "an answered question: what Estelle knows about this repo"),
     ("sweep", "index this repo into memory"),
     ("sessions", "your recent sessions"),
@@ -153,7 +155,7 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 20] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 39] {
+pub(crate) fn session_command_names() -> [&'static str; 40] {
     SESSION_COMMANDS
 }
 
@@ -556,6 +558,7 @@ pub(crate) fn remote_request(
             json!({"question": "what do you know about this repo?"}),
         ),
         "memories" => get(Endpoint::Memories, json!({})),
+        "marketplace" => get(Endpoint::Marketplace, json!({})),
         "analytics" => get(Endpoint::Analytics, json!({})),
         "audit" => get(Endpoint::Audit, json!({})),
         "requests" => get(Endpoint::Requests, json!({})),
@@ -1651,6 +1654,31 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
             }
             lines
         }
+        "marketplace" => {
+            if reply.marketplace_plugins.is_empty() {
+                return vec!["No published plugins for this team yet.".to_string()];
+            }
+            let mut lines = vec![format!(
+                "{} plugins",
+                reply
+                    .count
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| reply.marketplace_plugins.len().to_string())
+            )];
+            for plugin in reply.marketplace_plugins.iter().take(10) {
+                lines.push(format!(
+                    "{}  |  {}{}",
+                    plugin.name.as_deref().unwrap_or("name not returned"),
+                    plugin.mode.as_deref().unwrap_or("mode not returned"),
+                    if plugin.skills.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  |  skills: {}", plugin.skills.join(", "))
+                    }
+                ));
+            }
+            lines
+        }
         "memory" => reply
             .answer
             .as_deref()
@@ -2547,7 +2575,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_inventory_is_exactly_the_39_accepted_commands() {
+    fn session_inventory_is_exactly_the_40_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
@@ -2569,6 +2597,7 @@ mod tests {
                 "presence",
                 "leaderboard",
                 "billing",
+                "marketplace",
                 "memory",
                 "sweep",
                 "sessions",
@@ -3628,6 +3657,34 @@ mod tests {
     }
 
     #[test]
+    fn marketplace_reply_renders_plugins_with_contents() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "plugins": [
+                {"name": "fatelabs/core", "mode": "curated", "groups": ["eng"],
+                 "skills": ["review", "trace"], "mcp_servers": ["estelle"]}
+            ],
+            "count": 1
+        }))
+        .expect("typed marketplace reply");
+        let rendered = render_remote_reply("marketplace", &reply).join("\n");
+
+        assert!(rendered.contains("fatelabs/core"), "plugin name missing\n{rendered}");
+        assert!(rendered.contains("curated"), "mode missing\n{rendered}");
+        assert!(rendered.contains("review"), "skill list missing\n{rendered}");
+    }
+
+    #[test]
+    fn marketplace_reply_empty_is_an_honest_empty_state() {
+        let reply: estelle_client::CommandReply =
+            serde_json::from_value(json!({"plugins": [], "count": 0})).expect("empty marketplace");
+        let rendered = render_remote_reply("marketplace", &reply).join("\n");
+        assert!(
+            rendered.contains("No published plugins"),
+            "empty state missing\n{rendered}"
+        );
+    }
+
+    #[test]
     fn task_commands_refuse_empty_arguments_before_any_request() {
         let work = parse_input("/work");
         assert_eq!(work.local_refusal(), Some("/work needs a task"));
@@ -3651,6 +3708,7 @@ mod tests {
             ("runs", estelle_client::Endpoint::Runs),
             ("outcomes", estelle_client::Endpoint::Outcomes),
             ("memories", estelle_client::Endpoint::Memories),
+            ("marketplace", estelle_client::Endpoint::Marketplace),
             ("analytics", estelle_client::Endpoint::Analytics),
             ("audit", estelle_client::Endpoint::Audit),
             ("requests", estelle_client::Endpoint::Requests),

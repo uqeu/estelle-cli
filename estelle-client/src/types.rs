@@ -322,6 +322,9 @@ pub struct CommandReply {
     /// shape and the wrong one can never be silently absorbed into all-None fields.
     #[serde(default, rename = "leaderboard")]
     pub leaderboard: Option<serde_json::Value>,
+    /// `GET /marketplace` — the team's published plugins.
+    #[serde(default, rename = "plugins")]
+    pub marketplace_plugins: Vec<MarketplacePlugin>,
     #[serde(default)]
     pub result: Option<serde_json::Value>,
     #[serde(default)]
@@ -560,6 +563,20 @@ pub struct LeaderboardRow {
     pub successes: Option<u64>,
     #[serde(default)]
     pub success_rate: Option<f64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct MarketplacePlugin {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub groups: Vec<String>,
+    #[serde(default)]
+    pub skills: Vec<String>,
+    #[serde(default)]
+    pub mcp_servers: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
