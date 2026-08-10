@@ -100,31 +100,27 @@ const GRAFT_HELP: &[(&str, &str)] = &[
     ("permissions", "view the effective autonomy boundary"),
     ("keymap", "composer keymap status"),
     ("approve", "approval ownership status"),
-    ("hooks", "canonical Estelle hook status"),
     ("review", "run Estelle's grounded merge gate"),
     ("rename", "session-title ownership status"),
     ("new", "new-session ownership status"),
     ("archive", "archive ownership status"),
     ("delete", "delete-session ownership status"),
     ("fork", "fork-session ownership status"),
-    ("compact", "context compaction ownership status"),
+    ("compact", "LOCAL-ONLY, inert — removed the day Guardian's server compaction ships"),
     ("goal", "long-running goal ownership status"),
-    ("agent", "agent-thread ownership status"),
     ("side", "ephemeral side-question ownership status"),
     ("btw", "ephemeral side-question ownership status"),
     ("diff", "show the local working-tree diff"),
     ("feedback", "feedback transport ownership status"),
     ("ps", "background process ownership status"),
     ("stop", "background process ownership status"),
-    ("personality", "personality ownership status"),
-    ("subagents", "server orchestra view status"),
+    ("task", "view server orchestra work"),
     // Kimi interaction surfaces not already present above.
     ("version", "show this Estelle build"),
     ("editor", "external-editor ownership status"),
     ("changelog", "release-note ownership status"),
     ("add-dir", "additional-directory ownership status"),
     ("export", "session export ownership status"),
-    ("task", "view server orchestra work"),
     ("web", "web application ownership status"),
     ("vis", "trace visualizer ownership status"),
     ("upgrade", "upgrade ownership status"),
@@ -242,6 +238,13 @@ const DROPPED_COMMANDS: &[&str] = &[
     "debug-m-update",
     "setup-default-sandbox",
     "sandbox-add-read-dir",
+    // COLLIDES deletions (founder, 2026-08-07): a toggleable trust layer is broken by design;
+    // style comes from the repo, not a picker; agent surfaces re-add WITH the Orchestra client
+    // surface, not before.
+    "hooks",
+    "personality",
+    "agent",
+    "subagents",
 ];
 
 pub(crate) fn resolve_session_name(raw: &str) -> Option<&'static str> {
@@ -362,9 +365,9 @@ pub(crate) fn inherited_command_lines(name: &str) -> Option<Vec<String>> {
         )),
         "compact" => Some(repointed(
             "server session memory",
-            "There is no compaction endpoint today; Estelle will not fake a local summary as shared memory.",
+            "HOLD (founder, 2026-08-07): nothing compacts in this binary today — the local Codex compactor is not part of the Estelle surface, and Guardian's server-side compaction (edges, not paraphrase) is not built yet. This command is kept visible and inert so nobody believes a compaction touched server memory; it comes OUT the day Guardian's ships.",
         )),
-        "agent" | "subagents" | "task" => Some(repointed(
+        "task" => Some(repointed(
             "Estelle /orchestra",
             "Use /orchestra <task> to run one server task. The fixed fleet view opens only when the server emits revisioned live state; production does not emit it yet.",
         )),
@@ -381,9 +384,6 @@ pub(crate) fn inherited_command_lines(name: &str) -> Option<Vec<String>> {
         )),
         "feedback" => Some(deleted(
             "The inherited feedback upload transport pointed at the upstream Sentry host and was removed end to end (P0-AMPUTATION.md, 2026-08-07). No replacement endpoint exists.",
-        )),
-        "personality" => Some(deleted(
-            "Estelle's server prompt owns response policy; a competing client-side personality brain would drift.",
         )),
         "version" => Some(vec![format!("Estelle {}", env!("CARGO_PKG_VERSION"))]),
         "changelog" | "upgrade" => Some(repointed(
@@ -2531,7 +2531,7 @@ mod tests {
         for (command, _) in GRAFT_HELP {
             let local = matches!(
                 *command,
-                "prod" | "todo" | "settings" | "plan" | "permissions" | "hooks" | "model"
+                "prod" | "todo" | "settings" | "plan" | "permissions" | "model"
             );
             let remote = remote_request(command, "task", Some("diff"), Some("question"))
                 .expect("route decision")
@@ -3298,6 +3298,10 @@ mod tests {
             "apps", "plugins", "experimental", "app", "import", "logout", "rollout",
             "debug-config", "test-approval", "debug-m-drop", "debug-m-update",
             "setup-default-sandbox", "sandbox-add-read-dir",
+            // COLLIDES deletions (founder, 2026-08-07): a toggleable trust layer is broken by
+            // design; style comes from the repo, not a picker; agent surfaces re-add WITH the
+            // Orchestra client surface, not before.
+            "hooks", "personality", "agent", "subagents",
         ] {
             assert!(
                 resolve_session_name(dropped).is_none(),
@@ -3323,6 +3327,44 @@ mod tests {
             assert!(
                 resolve_session_name(kept).is_some(),
                 "/{kept} must stay reachable"
+            );
+        }
+    }
+
+    #[test]
+    fn no_graft_stub_shadows_a_wired_remote_route() {
+        // The /usage lesson: handle_local_command consults graft dispositions before remote
+        // routing, so any leftover stub silently shadows the real wire. Every remote-routed
+        // command must have NO graft disposition. Class-wide, not a one-off.
+        let routed = [
+            ("init", estelle_client::Endpoint::Wiki),
+            ("graph", estelle_client::Endpoint::Graph),
+            ("me", estelle_client::Endpoint::Me),
+            ("keys", estelle_client::Endpoint::MeKeys),
+            ("team", estelle_client::Endpoint::MeTeam),
+            ("cards", estelle_client::Endpoint::MemoryCards),
+            ("entities", estelle_client::Endpoint::Entities),
+            ("usage", estelle_client::Endpoint::Usage),
+            ("activity", estelle_client::Endpoint::Activity),
+            ("runs", estelle_client::Endpoint::Runs),
+            ("outcomes", estelle_client::Endpoint::Outcomes),
+            ("analytics", estelle_client::Endpoint::Analytics),
+            ("audit", estelle_client::Endpoint::Audit),
+            ("requests", estelle_client::Endpoint::Requests),
+            ("presence", estelle_client::Endpoint::Presence),
+            ("leaderboard", estelle_client::Endpoint::Leaderboard),
+            ("billing", estelle_client::Endpoint::BillingCatalog),
+            ("memory", estelle_client::Endpoint::DeepSearch),
+            ("memories", estelle_client::Endpoint::Memories),
+        ];
+        for (name, endpoint) in routed {
+            let request = remote_request(name, "", None, None)
+                .expect("route classification")
+                .unwrap_or_else(|| panic!("missing route for {name}"));
+            assert_eq!(request.endpoint, endpoint, "wrong route for {name}");
+            assert!(
+                inherited_command_lines(name).is_none(),
+                "/{name} is shadowed by a graft stub — the wire never runs"
             );
         }
     }
@@ -3363,6 +3405,7 @@ mod tests {
             ("work", estelle_client::Endpoint::Work),
             ("orchestra", estelle_client::Endpoint::Orchestra),
             ("gate", estelle_client::Endpoint::Gate),
+            ("review", estelle_client::Endpoint::Gate),
             ("scan", estelle_client::Endpoint::Scan),
             ("improve", estelle_client::Endpoint::Improve),
             ("verify", estelle_client::Endpoint::Verify),

@@ -1462,14 +1462,6 @@ impl App {
                 name: "permissions".to_string(),
                 lines: commands::mode_lines(&self.local_mode, self.server_mode.as_deref()),
             }),
-            "hooks" => self.transcript.push(TranscriptEntry::Command {
-                name: "hooks".to_string(),
-                lines: vec![
-                    "Estelle's Rust ground/sync hooks are canonical.".to_string(),
-                    "Run estelle install-hooks or estelle uninstall-hooks outside the TUI."
-                        .to_string(),
-                ],
-            }),
             "model" if !argument.trim().is_empty() => {
                 self.transcript.push(TranscriptEntry::Command {
                     name: "model".to_string(),

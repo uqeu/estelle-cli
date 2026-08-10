@@ -160,7 +160,26 @@ description said "instructions for Codex" — wrong product name in a user-facin
 One find worth recording: the `/usage` graft stub ("not in the accepted contract") was SHADOWING
 the real `GET /usage` wire — `handle_local_command` consults graft dispositions before remote
 routing. The stub is deleted; `/usage` reaches the server now, and a test pins that no wired read
-may ever fall back to a graft stub again.
+may ever fall back to a graft stub again. The same-day class-wide sweep
+(`no_graft_stub_shadows_a_wired_remote_route`, mutant-proven) found NO other shadowed route.
+
+## 2026-08-07 — COLLIDES decisions, per the founder
+
+- **Deleted outright** (in `DROPPED_COMMANDS`, never resolve): `/hooks` (ours is always-on by
+  design — a toggleable trust layer is broken), `/personality` (house style comes from the repo),
+  `/agent` + `/subagents` (re-add WITH the Orchestra client surface, not before).
+- **Already ours, verified and pinned**: `/review` routes the measured diff to the Estelle gate
+  (added to the route-table pin), `/model` drives the account-wide provider pool, `/skills` reads
+  the library and `/skill:<name>` hits `/skill/run`. `/mcp` stays informational; `/memories` is
+  ours since e811041.
+- **`/plan`: already ours** — it drives the server-enforced autonomy ceiling (`read_only` =
+  planning mode). It does NOT run `/work`'s planning phase: no plan-only contract exists in
+  `POST /work` (`{task, path?}` plans AND implements). Repointing `/plan <task>` at a plan-only
+  flow is a server contract ask, not something the client may fake.
+- **`/compact`: HELD.** Nothing compacts in this binary — the local Codex compactor is not part
+  of the Estelle surface (the founder's premise that it survives here was wrong). The stub now
+  says so, is marked LOCAL-ONLY/inert in the palette, and is flagged in code to be removed the
+  day Guardian's server-side compaction ships.
 
 ## Measurements
 
