@@ -342,6 +342,10 @@ struct PendingCommand {
     name: &'static str,
     argument: String,
     last_question: Option<String>,
+    /// The per-skill conversation this run continues (see `skill_threads`). Only set for
+    /// "skill:" commands; the server runs an interactive skill over `messages` when present
+    /// and restarts single-turn from `task` when not.
+    skill_thread: Option<Vec<(String, String)>>,
 }
 
 #[derive(Clone, Debug)]
@@ -1081,6 +1085,11 @@ struct App {
     repo: Repo,
     client: Option<Client>,
     auth: Option<AuthContext>,
+    /// Per-skill conversations for interactive `/skill:` runs, and the run currently in flight.
+    /// The server continues a skill over `messages` when they arrive and restarts from `task`
+    /// when they don't — without this, every follow-up was a silent fresh start.
+    skill_threads: HashMap<String, Vec<(String, String)>>,
+    pending_skill: Option<(String, String)>,
     /// Routes whose responses explicitly rejected the stored credential this session. Deletion
     /// is justified only when this holds DIFFERENT routes — see `clear_rejected`.
     rejected_routes: BTreeSet<String>,
@@ -1191,6 +1200,8 @@ impl App {
             repo,
             client: None,
             auth: None,
+            skill_threads: HashMap::new(),
+            pending_skill: None,
             rejected_routes: BTreeSet::new(),
             next_request_id: 0,
             credential_input_hidden: false,
@@ -1341,10 +1352,20 @@ impl App {
                 {
                     self.transcript.push(TranscriptEntry::System(refusal));
                 } else if !self.handle_local_command(name, &argument, tx) {
+                    let skill_thread = if name == "skill:" {
+                        let mut parts = argument.splitn(2, char::is_whitespace);
+                        let skill = parts.next().unwrap_or_default().to_string();
+                        let task = parts.next().unwrap_or_default().trim().to_string();
+                        self.pending_skill = Some((skill.clone(), task));
+                        self.skill_threads.get(&skill).cloned()
+                    } else {
+                        None
+                    };
                     self.queue.push_back(QueuedRequest::Command(PendingCommand {
                         name,
                         argument,
                         last_question: self.last_question.clone(),
+                        skill_thread,
                     }));
                 }
             }
@@ -2305,13 +2326,32 @@ impl App {
                                 .filter(|diff| !diff.trim().is_empty())
                                 .map(str::to_string);
                         }
+                        if name == "skill:"
+                            && let Some((skill, task)) = self.pending_skill.take()
+                        {
+                            let thread = self.skill_threads.entry(skill).or_default();
+                            if !task.trim().is_empty() {
+                                thread.push(("user".to_string(), task));
+                            }
+                            if let Some(reply_text) = reply
+                                .extra
+                                .get("reply")
+                                .and_then(Value::as_str)
+                                .filter(|text| !text.trim().is_empty())
+                            {
+                                thread.push(("assistant".to_string(), reply_text.to_string()));
+                            }
+                        }
                         self.transcript.push(TranscriptEntry::Command {
                             name: name.to_string(),
                             lines: commands::render_remote_reply(name, &reply),
                         });
                     }
-                    Err(CommandFailure::Client(Error::Cancelled)) => {}
+                    Err(CommandFailure::Client(Error::Cancelled)) => {
+                        self.pending_skill = None;
+                    }
                     Err(CommandFailure::Client(error)) => {
+                        self.pending_skill = None;
                         self.clear_rejected(&error, name);
                         self.transcript
                             .push(TranscriptEntry::Failure(failure_lines(&error)));
@@ -2600,6 +2640,27 @@ async fn execute_remote_command(
         if !attachments.is_empty() {
             body["files"] = Value::Array(attachments);
         }
+    }
+    // An interactive skill continues over "messages" (skill_run.py conversation_messages):
+    // the prior thread plus the new turn. Without it every follow-up restarts single-turn.
+    if pending.name == "skill:"
+        && let Some(thread) = pending.skill_thread.as_ref().filter(|thread| !thread.is_empty())
+        && let Some(body) = request.body.as_mut()
+    {
+        let mut messages = thread
+            .iter()
+            .map(|(role, content)| serde_json::json!({"role": role, "content": content}))
+            .collect::<Vec<_>>();
+        let task = pending
+            .argument
+            .split_once(char::is_whitespace)
+            .map(|(_, task)| task)
+            .unwrap_or_default()
+            .trim();
+        if !task.is_empty() {
+            messages.push(serde_json::json!({"role": "user", "content": task}));
+        }
+        body["messages"] = Value::Array(messages);
     }
 
     let result = match (request.method, request.endpoint.requires_repo()) {
@@ -7705,6 +7766,115 @@ mod tests {
         assert!(rendered.contains("TEAM SENTINEL ANSWER"));
         assert!(!rendered.contains("Working memory ("));
         assert!(!rendered.contains("main.rs"));
+    }
+
+    #[tokio::test]
+    async fn a_second_skill_run_sends_the_conversation_the_first_one_built() {
+        // The server runs an interactive skill over body["messages"] when present and restarts
+        // single-turn from "task" when not — so a CLI that never sends messages makes every
+        // follow-up a fresh start. The first run sends no messages key; the SECOND run of the
+        // same skill carries the whole prior exchange plus the new turn.
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/skill/run"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "skill": "grill-me",
+                "reply": "R1 SENTINEL REPLY"
+            })))
+            .mount(&server)
+            .await;
+        let root = tempfile::tempdir().expect("working tree");
+        let mut app = test_app();
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        // First run: no thread exists yet.
+        app.submit("/skill:grill-me first claim".to_string(), &tx);
+        let first = app.queue.pop_front().expect("first run queued");
+        let QueuedRequest::Command(first_pending) = first else {
+            panic!("expected a command")
+        };
+        let client = || {
+            Client::new(
+                &format!("{}/", server.uri()),
+                estelle_client::ApiKey::new("test-key").expect("key"),
+                Duration::from_secs(120),
+            )
+            .expect("client")
+        };
+        let repo = || Repo::new("fatelabs/estelle").expect("repo");
+        let first_reply = execute_remote_command(
+            client(),
+            repo(),
+            root.path().to_path_buf(),
+            first_pending,
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("first run");
+        app.active = Some(ActiveRequest {
+            id: 9,
+            label: "/skill:grill-me".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        app.handle_ui_event(
+            UiEvent::CommandAnswer {
+                id: 9,
+                name: "skill:",
+                result: Ok(first_reply),
+            },
+            &tx,
+        );
+
+        // Second run of the same skill: the thread must ride the request.
+        app.submit("/skill:grill-me second claim".to_string(), &tx);
+        let second = app.queue.pop_front().expect("second run queued");
+        let QueuedRequest::Command(second_pending) = second else {
+            panic!("expected a command")
+        };
+        execute_remote_command(
+            client(),
+            repo(),
+            root.path().to_path_buf(),
+            second_pending,
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("second run");
+
+        let requests = server
+            .received_requests()
+            .await
+            .expect("request recording");
+        assert_eq!(requests.len(), 2);
+        let first_body: Value = serde_json::from_slice(&requests[0].body).expect("first body");
+        assert!(
+            first_body.get("messages").is_none(),
+            "the first run must not invent a history: {first_body}"
+        );
+        let second_body: Value = serde_json::from_slice(&requests[1].body).expect("second body");
+        let messages = second_body["messages"]
+            .as_array()
+            .expect("the second run carries the conversation");
+        let turns = messages
+            .iter()
+            .map(|turn| {
+                format!(
+                    "{}:{}",
+                    turn["role"].as_str().unwrap_or("?"),
+                    turn["content"].as_str().unwrap_or("?")
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            turns,
+            [
+                "user:first claim",
+                "assistant:R1 SENTINEL REPLY",
+                "user:second claim"
+            ],
+            "the second run did not carry the prior exchange plus the new turn"
+        );
     }
 
     #[tokio::test]
