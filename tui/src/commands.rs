@@ -2,7 +2,7 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 41] = [
+pub(crate) const SESSION_COMMANDS: [&str; 42] = [
     "help",
     "init",
     "graph",
@@ -23,6 +23,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 41] = [
     "billing",
     "marketplace",
     "automations",
+    "suites",
     "memory",
     "sweep",
     "sessions",
@@ -46,7 +47,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 41] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 41] = [
+const SESSION_HELP: [(&str, &str); 42] = [
     ("help", "what you can do here"),
     ("init", "a grounded brief of this repo"),
     ("graph", "the swept code graph; /graph nodes draws the dependency view"),
@@ -67,6 +68,7 @@ const SESSION_HELP: [(&str, &str); 41] = [
     ("billing", "settings catalog with monthly pricing and current choices"),
     ("marketplace", "the team's published plugins"),
     ("automations", "stored gated agents — with their live/firing state"),
+    ("suites", "your custom suites with draft/active status"),
     ("memory", "an answered question: what Estelle knows about this repo"),
     ("sweep", "index this repo into memory"),
     ("sessions", "your recent sessions"),
@@ -157,7 +159,7 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 20] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 41] {
+pub(crate) fn session_command_names() -> [&'static str; 42] {
     SESSION_COMMANDS
 }
 
@@ -562,6 +564,7 @@ pub(crate) fn remote_request(
         "memories" => get(Endpoint::Memories, json!({})),
         "marketplace" => get(Endpoint::Marketplace, json!({})),
         "automations" => get(Endpoint::Automations, json!({})),
+        "suites" => get(Endpoint::Suites, json!({})),
         "analytics" => get(Endpoint::Analytics, json!({})),
         "audit" => get(Endpoint::Audit, json!({})),
         "requests" => get(Endpoint::Requests, json!({})),
@@ -1726,6 +1729,31 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
             }
             lines
         }
+        "suites" => {
+            if reply.suite_rows.is_empty() {
+                return vec!["No custom suites for this namespace yet.".to_string()];
+            }
+            let mut lines = vec![format!(
+                "{} custom suites",
+                reply
+                    .count
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| reply.suite_rows.len().to_string())
+            )];
+            for suite in reply.suite_rows.iter().take(10) {
+                lines.push(format!(
+                    "{}  |  {}{}  |  {} playbooks",
+                    suite.name.as_deref().unwrap_or("name not returned"),
+                    suite.status.as_deref().unwrap_or("status not returned"),
+                    suite
+                        .version
+                        .map(|version| format!("  |  v{version}"))
+                        .unwrap_or_default(),
+                    suite.playbooks.len()
+                ));
+            }
+            lines
+        }
         "memory" => reply
             .answer
             .as_deref()
@@ -2622,7 +2650,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_inventory_is_exactly_the_41_accepted_commands() {
+    fn session_inventory_is_exactly_the_42_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
@@ -2646,6 +2674,7 @@ mod tests {
                 "billing",
                 "marketplace",
                 "automations",
+                "suites",
                 "memory",
                 "sweep",
                 "sessions",
@@ -3769,6 +3798,35 @@ mod tests {
     }
 
     #[test]
+    fn suites_reply_renders_custom_suites_with_status_and_version() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "suites": [
+                {"id": "s1", "name": "Estelle Billing", "description": "charge-path expertise",
+                 "status": "draft", "version": 2, "playbooks": [{"name": "review"}]}
+            ],
+            "count": 1
+        }))
+        .expect("typed suites reply");
+        let rendered = render_remote_reply("suites", &reply).join("\n");
+
+        assert!(rendered.contains("Estelle Billing"), "name missing\n{rendered}");
+        assert!(
+            rendered.contains("draft"),
+            "a DRAFT suite did not say so — proposals are never auto-applied\n{rendered}"
+        );
+        assert!(rendered.contains("v2"), "version missing\n{rendered}");
+        assert!(rendered.contains("1 playbooks"), "playbook count missing\n{rendered}");
+    }
+
+    #[test]
+    fn suites_reply_empty_is_an_honest_empty_state() {
+        let reply: estelle_client::CommandReply =
+            serde_json::from_value(json!({"suites": [], "count": 0})).expect("empty suites");
+        let rendered = render_remote_reply("suites", &reply).join("\n");
+        assert!(rendered.contains("No custom suites"), "empty state missing\n{rendered}");
+    }
+
+    #[test]
     fn task_commands_refuse_empty_arguments_before_any_request() {
         let work = parse_input("/work");
         assert_eq!(work.local_refusal(), Some("/work needs a task"));
@@ -3794,6 +3852,7 @@ mod tests {
             ("memories", estelle_client::Endpoint::Memories),
             ("marketplace", estelle_client::Endpoint::Marketplace),
             ("automations", estelle_client::Endpoint::Automations),
+            ("suites", estelle_client::Endpoint::Suites),
             ("analytics", estelle_client::Endpoint::Analytics),
             ("audit", estelle_client::Endpoint::Audit),
             ("requests", estelle_client::Endpoint::Requests),

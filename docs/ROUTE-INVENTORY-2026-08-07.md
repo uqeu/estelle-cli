@@ -63,7 +63,7 @@ remain unwired — mutations are their own commits.
   `leave`/`remove`/`transfer`/`role`), `POST /me/billing/{checkout,subscribe,cancel,portal,seats}`,
   `POST /me/avatar`, `GET /plans`, `GET /addons`, `POST /addons/{subscribe,remove}`,
   `POST /checkout`, `POST /subscribe`, `GET /usage` ✅, `GET /budget`, `POST /budget`,
-  `GET ✅|POST|PUT /settings` (read via `/billing`), `GET /suite`, `PUT /suite`, `GET /suites`, `POST /suites`,
+  `GET ✅|POST|PUT /settings` (read via `/billing`), `GET /suite`, `PUT /suite`, `GET /suites` ✅ (`/suites`), `POST /suites`,
   `GET /suites/upgrades`, `GET /skills/scored`, `POST /skill`, `POST /skill/feedback`,
   `POST /key`, `POST /key/delete`, `POST /key/web`, `POST /account/worlds`,
   `GET /account/connections`, `GET /connections`, `GET|POST /autonomy/auto-mode`

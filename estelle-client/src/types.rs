@@ -329,6 +329,10 @@ pub struct CommandReply {
     /// server says explicitly that the trigger bus is not live, and the render must say so too.
     #[serde(default, rename = "automations")]
     pub automation_rows: Vec<AutomationRow>,
+    /// `GET /suites` — the namespace's custom suites. `status` is the server's own
+    /// draft/active value; a draft renders as a draft.
+    #[serde(default, rename = "suites")]
+    pub suite_rows: Vec<SuiteRow>,
     #[serde(default)]
     pub result: Option<serde_json::Value>,
     #[serde(default)]
@@ -597,6 +601,22 @@ pub struct AutomationRow {
     pub repo: Option<String>,
     #[serde(default)]
     pub autonomy_ceiling: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct SuiteRow {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub version: Option<u64>,
+    #[serde(default)]
+    pub playbooks: Vec<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
