@@ -21,7 +21,7 @@ fn test_key() -> ApiKey {
 
 #[test]
 fn endpoint_inventory_is_unique_and_matches_the_server_audit() {
-    assert_eq!(API_ENDPOINTS.len(), 75);
+    assert_eq!(API_ENDPOINTS.len(), 73);
     let unique = API_ENDPOINTS
         .iter()
         .map(|spec| spec.path)
@@ -29,7 +29,11 @@ fn endpoint_inventory_is_unique_and_matches_the_server_audit() {
     assert_eq!(unique.len(), API_ENDPOINTS.len());
     assert!(!unique.contains("help"));
     assert!(!unique.contains("c"));
-    assert!(unique.contains("github/app/callback"));
+    // Removed 2026-08-07: "checkpoint" (declared, never called — the TUI checkpoint is the local
+    // session_gap mechanism; wire it back WITH a surface) and "github/app/callback" (the browser
+    // redirect target — correctly never a client call).
+    assert!(!unique.contains("checkpoint"));
+    assert!(!unique.contains("github/app/callback"));
     assert!(!unique.contains("github/callback"));
 }
 

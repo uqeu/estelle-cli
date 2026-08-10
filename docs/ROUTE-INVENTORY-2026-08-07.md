@@ -23,25 +23,30 @@ method is below so anyone can re-run them.
 | Client reaches (has a call site) | 52 | **51** | `Endpoint::Checkpoint` has **no call site** — the TUI's "checkpoint" is the local `session_gap.rs` mechanism, never `POST /checkpoint`. `Endpoint::GithubAppCallback` has none either — it is the browser redirect target, not a client call. |
 | Server paths with no client declaration | ~130 | **153** | mine includes admin/webhook/slack/oauth internal routes the "~130 customer-reachable" figure excludes; filtering those lands at ≈128, consistent. |
 
-## Declared but never called (2)
+## Declared but never called (0 — both removed 2026-08-07)
 
-- `Checkpoint` (`POST /checkpoint`) — dead declaration today. Wire it or delete it; the local
-  session-gap checkpoint is a different thing with the same name.
-- `GithubAppCallback` (`GET /github/app/callback`) — correctly never called by the client
-  (browser redirect). Candidate for removal from the endpoint table, not wiring.
+- ~~`Checkpoint` (`POST /checkpoint`)~~ — **removed from the endpoint table.** The TUI's
+  checkpoint is the local `session_gap.rs` mechanism; the server's context-survival write is a
+  real route with no current CLI surface. Wire it back WITH the surface that needs it.
+- ~~`GithubAppCallback` (`GET /github/app/callback`)~~ — **removed.** It is GitHub's browser
+  redirect target, correctly never a client call; declaring it as one was a declaration error.
+
+**Every declared endpoint is now reached: 73 / 73.**
 
 ## The 153 undeclared server paths, grouped
 
 **Wired since this inventory:** `GET /graph` (`/graph`), `GET /graph/nodes` (`/graph nodes`),
-`GET /me` (`/me`), `GET /me/keys` (`/keys`), `GET /me/team` (`/team`), `GET /memory/cards`
-(`/cards`), `GET /entities` (`/entities`), `GET /usage` (`/usage`), `GET /activity` (`/activity`), `GET /runs` (`/runs`),
-`GET /outcomes` (`/outcomes`), `GET /memories` (`/memories` — split off the `/memory` alias),
-`GET /analytics` (`/analytics`), `GET /audit` (`/audit`), `GET /requests` (`/requests`),
-`GET /presence` (`/presence`), `GET /leaderboard` (`/leaderboard`),
-`GET /settings` (`/billing` — the `/settings` name belongs to the local preferences picker) —
+`GET /me` (`/me`), `GET /me/keys` (`/keys`), `GET /me/team` (`/team`), `GET /team/leaderboard`
+(`/team board`), `GET /memory/cards` (`/cards`), `GET /entities` (`/entities`), `GET /usage`
+(`/usage`), `GET /activity` (`/activity`), `GET /runs` (`/runs`), `GET /outcomes` (`/outcomes`),
+`GET /memories` (`/memories` — split off the `/memory` alias), `GET /analytics` (`/analytics`),
+`GET /audit` (`/audit`), `GET /requests` (`/requests`), `GET /presence` (`/presence`),
+`GET /leaderboard` (`/leaderboard`), `GET /marketplace` (`/marketplace`), `GET /automations`
+(`/automations`), `GET /suites` (`/suites`), `GET /settings` (`/billing` — the `/settings` name
+belongs to the local preferences picker) —
 all with the honesty pattern: explicit `building`/`truncated`/invite states, null team renders as
-absent, omitted fields render "not returned", unknown is never zero. Client now declares 71,
-reaches 69 of 71. `/me/*` writes
+absent, omitted fields render "not returned", unknown is never zero. The client declares 73 and
+reaches all 73. `/me/*` writes
 (key create/revoke/rotate, team invite/seats, billing) and `memory/cards/{dream,edit,revert}`
 remain unwired — mutations are their own commits.
 
