@@ -591,7 +591,10 @@ pub(crate) fn remote_request(
             if argument.is_empty() {
                 json!({})
             } else {
-                json!({"focus": argument})
+                // The server reads body["path"] for the focus (api_intel.py handle_improve) —
+                // the class sweep found the old "focus" key was never read and the argument
+                // silently dropped.
+                json!({"path": argument})
             },
         ),
         "verify" => post(Endpoint::Verify, json!({"answer": argument})),
@@ -3367,6 +3370,24 @@ mod tests {
                 "/{name} is shadowed by a graft stub — the wire never runs"
             );
         }
+    }
+
+    #[test]
+    fn improve_sends_the_focus_in_the_key_the_server_reads() {
+        // The class sweep (S1): the server reads body["path"]; the client sent "focus", so the
+        // user's argument was silently dropped and the whole repo scanned.
+        let request = remote_request("improve", "src/auth", None, None)
+            .expect("route")
+            .expect("route present");
+        assert_eq!(
+            request.body,
+            Some(json!({"path": "src/auth"})),
+            "the server reads body.path — any other key drops the focus"
+        );
+        let bare = remote_request("improve", "", None, None)
+            .expect("route")
+            .expect("route present");
+        assert_eq!(bare.body, Some(json!({})));
     }
 
     #[test]
