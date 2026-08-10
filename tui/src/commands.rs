@@ -2,7 +2,7 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 40] = [
+pub(crate) const SESSION_COMMANDS: [&str; 41] = [
     "help",
     "init",
     "graph",
@@ -22,6 +22,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 40] = [
     "leaderboard",
     "billing",
     "marketplace",
+    "automations",
     "memory",
     "sweep",
     "sessions",
@@ -45,7 +46,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 40] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 40] = [
+const SESSION_HELP: [(&str, &str); 41] = [
     ("help", "what you can do here"),
     ("init", "a grounded brief of this repo"),
     ("graph", "the swept code graph; /graph nodes draws the dependency view"),
@@ -65,6 +66,7 @@ const SESSION_HELP: [(&str, &str); 40] = [
     ("leaderboard", "skills ranked by verified grounded outcome"),
     ("billing", "settings catalog with monthly pricing and current choices"),
     ("marketplace", "the team's published plugins"),
+    ("automations", "stored gated agents — with their live/firing state"),
     ("memory", "an answered question: what Estelle knows about this repo"),
     ("sweep", "index this repo into memory"),
     ("sessions", "your recent sessions"),
@@ -155,7 +157,7 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 20] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 40] {
+pub(crate) fn session_command_names() -> [&'static str; 41] {
     SESSION_COMMANDS
 }
 
@@ -559,6 +561,7 @@ pub(crate) fn remote_request(
         ),
         "memories" => get(Endpoint::Memories, json!({})),
         "marketplace" => get(Endpoint::Marketplace, json!({})),
+        "automations" => get(Endpoint::Automations, json!({})),
         "analytics" => get(Endpoint::Analytics, json!({})),
         "audit" => get(Endpoint::Audit, json!({})),
         "requests" => get(Endpoint::Requests, json!({})),
@@ -1679,6 +1682,50 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
             }
             lines
         }
+        "automations" => {
+            if reply.automation_rows.is_empty() {
+                return vec!["No automations stored for this team.".to_string()];
+            }
+            let mut lines = Vec::new();
+            // The trigger bus is not live; the server says so in the envelope and it leads here
+            // — a stored automation must never read as a firing one.
+            if reply.extra.get("active").and_then(Value::as_bool) == Some(false) {
+                lines.push(
+                    reply
+                        .reason
+                        .as_deref()
+                        .unwrap_or("automations are stored but not firing")
+                        .to_string(),
+                );
+            }
+            lines.push(format!(
+                "{} automations",
+                reply
+                    .count
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| reply.automation_rows.len().to_string())
+            ));
+            for row in reply.automation_rows.iter().take(10) {
+                lines.push(format!(
+                    "{}  |  {}{}{}",
+                    row.name.as_deref().unwrap_or("name not returned"),
+                    match row.enabled {
+                        Some(true) => "enabled",
+                        Some(false) => "disabled",
+                        None => "state not returned",
+                    },
+                    row.model
+                        .as_deref()
+                        .map(|model| format!("  |  {model}"))
+                        .unwrap_or_default(),
+                    row.repo
+                        .as_deref()
+                        .map(|repo| format!("  |  {repo}"))
+                        .unwrap_or_default()
+                ));
+            }
+            lines
+        }
         "memory" => reply
             .answer
             .as_deref()
@@ -2575,7 +2622,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_inventory_is_exactly_the_40_accepted_commands() {
+    fn session_inventory_is_exactly_the_41_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
@@ -2598,6 +2645,7 @@ mod tests {
                 "leaderboard",
                 "billing",
                 "marketplace",
+                "automations",
                 "memory",
                 "sweep",
                 "sessions",
@@ -3685,6 +3733,42 @@ mod tests {
     }
 
     #[test]
+    fn automations_reply_shows_the_inactive_trigger_bus_reason_not_a_live_claim() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "automations": [
+                {"id": "a1", "name": "nightly triage", "enabled": true,
+                 "model": "claude-opus-4-8", "repo": "fatelabs/estelle",
+                 "autonomy_ceiling": "propose"}
+            ],
+            "count": 1, "active": false,
+            "reason": "trigger bus not yet live — the automation is stored but nothing fires it yet"
+        }))
+        .expect("typed automations reply");
+        let rendered = render_remote_reply("automations", &reply).join("\n");
+
+        assert!(rendered.contains("nightly triage"), "name missing\n{rendered}");
+        assert!(rendered.contains("claude-opus-4-8"), "model missing\n{rendered}");
+        assert!(
+            rendered.contains("nothing fires it yet"),
+            "a stored-but-never-fires automation rendered as live — the server's reason must lead\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn automations_reply_empty_is_an_honest_empty_state() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "automations": [], "count": 0, "active": false,
+            "reason": "trigger bus not yet live"
+        }))
+        .expect("empty automations");
+        let rendered = render_remote_reply("automations", &reply).join("\n");
+        assert!(
+            rendered.contains("No automations"),
+            "empty state missing\n{rendered}"
+        );
+    }
+
+    #[test]
     fn task_commands_refuse_empty_arguments_before_any_request() {
         let work = parse_input("/work");
         assert_eq!(work.local_refusal(), Some("/work needs a task"));
@@ -3709,6 +3793,7 @@ mod tests {
             ("outcomes", estelle_client::Endpoint::Outcomes),
             ("memories", estelle_client::Endpoint::Memories),
             ("marketplace", estelle_client::Endpoint::Marketplace),
+            ("automations", estelle_client::Endpoint::Automations),
             ("analytics", estelle_client::Endpoint::Analytics),
             ("audit", estelle_client::Endpoint::Audit),
             ("requests", estelle_client::Endpoint::Requests),

@@ -56,7 +56,7 @@ remain unwired — mutations are their own commits.
   `POST /repo/scan`, `POST /docs/ask`, `POST /search/cross`, `POST /session/reinterpret`
 - Swarm/Orchestra: `POST /swarm`, `POST /swarm/plan`, `POST /swarm/run`, `POST /orchestra/plan`,
   `POST /orchestra/run`, `GET /runs` ✅, `GET /outcomes` ✅, `POST /pipeline`, `POST /automate`,
-  `GET /automations`, `POST /dev/from-ticket`
+  `GET /automations` ✅, `POST /dev/from-ticket`
 - Account self-service (`/me/*` + billing/keys/team): `GET /me` ✅, `GET|POST /me/profile`,
   `GET ✅|POST /me/keys` (+`rename`/`revoke`/`rotate`), `POST /me/provider`,
   `POST /me/provider/label`, `GET ✅|POST /me/team` (+`invite`/`invite/accept`/`invite/revoke`/

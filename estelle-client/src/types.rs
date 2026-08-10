@@ -325,6 +325,10 @@ pub struct CommandReply {
     /// `GET /marketplace` — the team's published plugins.
     #[serde(default, rename = "plugins")]
     pub marketplace_plugins: Vec<MarketplacePlugin>,
+    /// `GET /automations` — stored gated agents. `active`/`reason` ride the envelope: the
+    /// server says explicitly that the trigger bus is not live, and the render must say so too.
+    #[serde(default, rename = "automations")]
+    pub automation_rows: Vec<AutomationRow>,
     #[serde(default)]
     pub result: Option<serde_json::Value>,
     #[serde(default)]
@@ -577,6 +581,22 @@ pub struct MarketplacePlugin {
     pub skills: Vec<String>,
     #[serde(default)]
     pub mcp_servers: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct AutomationRow {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub repo: Option<String>,
+    #[serde(default)]
+    pub autonomy_ceiling: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
