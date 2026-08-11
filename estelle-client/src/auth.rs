@@ -28,6 +28,36 @@ static SECRET_SHAPE: LazyLock<Result<Regex, regex::Error>> = LazyLock::new(|| {
     )
 });
 
+/// The named registry, in match order. A refusal that cannot say WHICH shape fired at WHICH
+/// line cannot be tuned (the 2026-08-10 false positive was a scanner-test fixture shaped like an
+/// AWS key). The matched value is never returned — shape name + line number only.
+const SECRET_SHAPES: &[(&str, &str)] = &[
+    ("an Estelle key", r"estelle_live_[A-Za-z0-9_-]{12,}"),
+    ("an sk- API key", r"sk-[A-Za-z0-9_-]{16,}"),
+    ("a Stripe live key", r"sk_live_[A-Za-z0-9]{10,}"),
+    ("a GitHub token", r"ghp_[A-Za-z0-9]{20,}"),
+    ("a GitHub PAT", r"github_pat_[A-Za-z0-9_]{20,}"),
+    ("an AWS access key", r"AKIA[0-9A-Z]{16}"),
+    ("a private key block", r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+];
+
+static SECRET_SHAPE_RES: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
+    SECRET_SHAPES
+        .iter()
+        .filter_map(|(name, pattern)| Regex::new(pattern).ok().map(|re| (*name, re)))
+        .collect()
+});
+
+/// The first credential shape found, as (shape name, 1-based line), else None.
+pub fn find_secret_shape(value: &str) -> Option<(&'static str, usize)> {
+    value.lines().enumerate().find_map(|(index, line)| {
+        SECRET_SHAPE_RES
+            .iter()
+            .find(|(_, re)| re.is_match(line))
+            .map(|(name, _)| (*name, index + 1))
+    })
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CredentialSource {
     Environment,

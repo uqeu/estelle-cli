@@ -370,16 +370,20 @@ fn finding_text(value: &Value) -> String {
         .unwrap_or_else(|| serde_json::to_string(value).unwrap_or_else(|_| value.to_string()))
 }
 
-fn hook_sync_refusal(path: &str, content: &str) -> Option<&'static str> {
+fn hook_sync_refusal(path: &str, content: &str) -> Option<String> {
     const EXTENSIONS: &[&str] = &["py", "md", "ts", "js", "tsx", "jsx", "go", "rs"];
     let indexable = Path::new(path)
         .extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| EXTENSIONS.contains(&extension));
     if !indexable {
-        return Some("not an indexable file type");
+        return Some("not an indexable file type".to_string());
     }
-    is_secret_shaped(content).then_some("contains something shaped like a live credential")
+    // The refusal names the shape and the line — a guard that cannot say why it fired cannot be
+    // tuned (the 2026-08-10 false positive on the scanner's own test fixture).
+    estelle_client::find_secret_shape(content).map(|(shape, line)| {
+        format!("contains something shaped like a live credential ({shape} at line {line})")
+    })
 }
 
 fn install_hooks() -> Result<Vec<String>, String> {
@@ -2649,6 +2653,20 @@ mod tests {
             let expected = python_hook("may_sync", &json!([path, content]));
             assert_eq!(Value::String(actual.to_string()), expected, "{path}");
         }
+    }
+
+    #[test]
+    fn sync_refusal_names_the_shape_and_the_line() {
+        let content = "def f():\n    return 1\n\nKEY = \"AKIAJKL4NOPQ7RSTUVWX\"\n";
+        let refusal = hook_sync_refusal("test_mcp.py", content).expect("refusal");
+        assert!(
+            refusal.contains("an AWS access key at line 4"),
+            "the refusal did not name the shape and line: {refusal}"
+        );
+        assert!(
+            !refusal.contains("AKIAJKL4NOPQ7RSTUVWX"),
+            "the matched value leaked into the refusal"
+        );
     }
 
     #[test]

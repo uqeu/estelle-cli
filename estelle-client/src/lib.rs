@@ -413,5 +413,6 @@ mod tests;
 pub use auth::CredentialSource;
 pub use auth::CredentialStore;
 pub use auth::ResolvedCredential;
+pub use auth::find_secret_shape;
 pub use auth::is_secret_shaped;
 pub use auth::mask_secret;
