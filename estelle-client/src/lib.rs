@@ -1,6 +1,7 @@
 #![deny(clippy::print_stderr, clippy::print_stdout)]
 
 mod auth;
+mod auth_record;
 mod endpoint;
 mod repo;
 mod types;
@@ -8,6 +9,7 @@ mod types;
 use std::fmt;
 use std::time::Duration;
 
+pub use auth_record::AuthRecord;
 pub use endpoint::API_ENDPOINTS;
 pub use endpoint::Endpoint;
 pub use endpoint::HttpMethod;

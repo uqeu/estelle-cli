@@ -5369,7 +5369,10 @@ dependencies = [
 name = "estelle-client"
 version = "0.2.4"
 dependencies = [
+ "base64 0.22.1",
  "codex-keyring-store",
+ "codex-login",
+ "codex-protocol",
  "codex-secrets",
  "dirs",
  "regex",

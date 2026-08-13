@@ -9,6 +9,7 @@ workspace = true
 
 [dependencies]
 codex-keyring-store = { workspace = true }
+codex-login = { workspace = true }
 codex-secrets = { workspace = true }
 dirs = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
@@ -22,6 +23,8 @@ url = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+base64 = { workspace = true }
+codex-protocol = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 wiremock = { workspace = true }
