@@ -6,8 +6,12 @@ already knew everything." Your plan does the thinking; Estelle does the groundin
 **Proof status, stated before the steps:** every step below is wired and gate-tested (217 tui + 22 client
 + 9 acp tests, clippy clean). Steps 6–8 make REAL calls on YOUR plan and OUR server — wiremock covers them
 in the suite, but the live run is yours to make, and it is the whole point. Claude Max OAuth exists
-nowhere in the tree; this walkthrough is the ChatGPT half. That is a separate question with its own
-evidence, not a hedge.
+nowhere in the tree; this walkthrough is the ChatGPT half. **The absence is now MEASURED, not inferred:**
+opencode (vendor clone, 31 provider plugins) does ChatGPT plan login with the same issuer and device flow
+(`packages/core/src/plugin/provider/openai.ts`) and has NO Anthropic plan login at all — no claude.ai/oauth,
+no Max, no subscription path (`packages/core/src/plugin/provider/anthropic.ts`). OpenAI publishes a device
+flow for Codex; Anthropic publishes no equivalent. That is an ecosystem fact with a file path for a
+citation, so nobody re-opens it every month.
 
 ## 0. Build the binary
 
@@ -116,3 +120,29 @@ is BLOCKED, and it is the only step that is.
 - The model slug comes from `GET /models` under your plan at session start; what your plan is entitled to
   is what you will see.
 - `estelle acp` speaks ACP over stdio — an agent protocol, not MCP. The no-local-MCP ruling is untouched.
+
+## The ACP shape review (2026-08-11, against opencode's acp/ — read for shape, nothing copied)
+
+estelle-acp works; these are the gaps a client will notice, ordered, each verified against
+`vendor-reference/opencode/packages/opencode/src/acp/`. Not bugs — a roadmap with citations:
+
+1. **Tool-call lifecycle streaming** (`tool_call`/`tool_call_update` with locations and diff content —
+  their tool.ts:124-228). We send text chunks only; Zed renders tool cards from this. The most visible gap.
+2. **`stopReason` correctness** — `cancelled`/`max_tokens`/`refusal` and `usage` on the prompt response
+  (their service.ts:824-873). Clients key UI off it.
+3. **`session/request_permission`** — the moment any gated action exists, clients expect it (their
+  permission.ts: per-session serialization, diff previews, fail-closed to reject).
+4. **`usage_update` notifications + prompt-response usage** (their usage.ts) — the context-remaining bar.
+5. **`session/load` + replay, `/resume`, `/list`, `/close`, `/fork`** — we advertise `loadSession:false`,
+  so spec-compliant clients won't call them; resume-after-restart is a feature users notice.
+6. **Model/mode selectors** (`configOptions` from session/new), **`initialize` authMethods**, rich prompt
+  content (images, resource links with line refs), `agent_thought_chunk`, structured JSON-RPC errors
+  (`authRequired` etc.).
+7. **Client-provided MCP servers** — opencode accepts and dedups them per session; we REJECT them
+  (deliberate divergence, estelle-acp/src/lib.rs:62-66). Also missing on BOTH sides: `terminal/*` methods.
+
+Parity notes from the same read: our refresh is STRICTER than theirs (JWT-exp vs trusting `expires_in`; a
+permanent-failure taxonomy they lack); single-flight exists on both; neither retries on 401; and their two
+coexisting login implementations differ on refresh margin — the rot class is real, and our two edges
+(claim fallbacks, metadata preservation) are ported in cli-rs `54e294a`. The three-type auth record
+(api/oauth/wellknown) landed in `ef14216` — the client half of the MCP lane's discovery-based auth.
