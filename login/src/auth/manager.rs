@@ -1317,6 +1317,18 @@ fn persist_tokens(
         .ok_or(std::io::Error::other("Token data is not available."))?;
 
     let tokens = auth_dot_json.tokens.get_or_insert_with(TokenData::default);
+    // Metadata preservation (opencode: `metadata: next.metadata ?? value.metadata`): the
+    // account id is recomputed from the response's tokens when they carry one — id_token
+    // first, then the access token — and the STORED value is kept when they don't, so a
+    // refresh whose response can't be re-parsed never drops it.
+    let next_account_id = id_token
+        .as_deref()
+        .and_then(crate::token_data::account_id_from_jwt)
+        .or_else(|| {
+            access_token
+                .as_deref()
+                .and_then(crate::token_data::account_id_from_jwt)
+        });
     if let Some(id_token) = id_token {
         tokens.id_token = parse_chatgpt_jwt_claims(&id_token).map_err(std::io::Error::other)?;
     }
@@ -1326,6 +1338,7 @@ fn persist_tokens(
     if let Some(refresh_token) = refresh_token {
         tokens.refresh_token = refresh_token;
     }
+    tokens.account_id = next_account_id.or(tokens.account_id.take());
     auth_dot_json.last_refresh = Some(Utc::now());
     storage.save(&auth_dot_json)?;
     Ok(auth_dot_json)

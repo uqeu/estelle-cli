@@ -233,3 +233,54 @@ fn workspace_account_detection_matches_workspace_plans() {
     };
     assert_eq!(personal.is_workspace_account(), false);
 }
+
+#[test]
+fn account_id_falls_back_to_organizations_first_entry() {
+    // opencode parity (vendor openai.ts claim()): the account id can live ONLY in
+    // organizations[0].id and must still be found — through the token parser too.
+    let jwt = fake_jwt(serde_json::json!({
+        "organizations": [{"id": "org-from-array", "title": "Acme"}]
+    }));
+
+    assert_eq!(account_id_from_jwt(&jwt).as_deref(), Some("org-from-array"));
+    let info = parse_chatgpt_jwt_claims(&jwt).expect("should parse");
+    assert_eq!(info.chatgpt_account_id.as_deref(), Some("org-from-array"));
+}
+
+#[test]
+fn account_id_prefers_the_flat_claim_then_the_namespaced_one() {
+    let flat = fake_jwt(serde_json::json!({
+        "chatgpt_account_id": "flat-id",
+        "https://api.openai.com/auth": {"chatgpt_account_id": "namespaced-id"},
+        "organizations": [{"id": "org-id"}]
+    }));
+    assert_eq!(account_id_from_jwt(&flat).as_deref(), Some("flat-id"));
+
+    let namespaced = fake_jwt(serde_json::json!({
+        "https://api.openai.com/auth": {"chatgpt_account_id": "namespaced-id"},
+        "organizations": [{"id": "org-id"}]
+    }));
+    assert_eq!(account_id_from_jwt(&namespaced).as_deref(), Some("namespaced-id"));
+}
+
+#[test]
+fn account_id_from_tokens_checks_the_id_token_then_the_access_token() {
+    let bare = fake_jwt(serde_json::json!({"email": "user@example.com"}));
+    let access = fake_jwt(serde_json::json!({"organizations": [{"id": "org-from-access"}]}));
+
+    assert_eq!(
+        account_id_from_tokens(&bare, &access).as_deref(),
+        Some("org-from-access")
+    );
+    let id = fake_jwt(serde_json::json!({"chatgpt_account_id": "from-id-token"}));
+    assert_eq!(
+        account_id_from_tokens(&id, &access).as_deref(),
+        Some("from-id-token")
+    );
+    assert_eq!(account_id_from_tokens(&bare, &bare), None);
+    // An unparseable token is skipped, never fatal.
+    assert_eq!(
+        account_id_from_tokens("not-a-jwt", &access).as_deref(),
+        Some("org-from-access")
+    );
+}

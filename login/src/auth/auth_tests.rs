@@ -2308,3 +2308,104 @@ async fn missing_plan_type_maps_to_unknown() {
 
     pretty_assertions::assert_eq!(auth.account_plan_type(), Some(AccountPlanType::Unknown));
 }
+
+#[tokio::test]
+async fn refresh_persist_preserves_or_updates_the_account_id_like_opencode() {
+    // opencode parity (vendor openai.ts:221): metadata: next.metadata ?? value.metadata — the
+    // stored account id is UPDATED when the refresh response's tokens carry one (id_token
+    // first, then the access token) and KEPT when they don't.
+    let codex_home = tempdir().unwrap();
+    let stored_id_jwt = fake_jwt_for_auth_file_params(&AuthFileParams {
+        openai_api_key: None,
+        chatgpt_plan_type: None,
+        chatgpt_account_id: Some("acct-kept".to_string()),
+    })
+    .expect("stored id token");
+    let auth_json = json!({
+        "tokens": {
+            "id_token": stored_id_jwt,
+            "access_token": "old-access-token",
+            "refresh_token": "old-refresh-token",
+            "account_id": "acct-kept"
+        },
+        "last_refresh": Utc::now(),
+    });
+    std::fs::write(
+        get_auth_file(codex_home.path()),
+        serde_json::to_string_pretty(&auth_json).unwrap(),
+    )
+    .unwrap();
+    let storage = create_auth_storage(
+        codex_home.path().to_path_buf(),
+        AuthCredentialsStoreMode::File,
+        AuthKeyringBackendKind::default(),
+    );
+
+    // A refresh response whose id_token has NO account claim anywhere: the stored id survives.
+    let bare_id_token = {
+        #[derive(Serialize)]
+        struct Header {
+            alg: &'static str,
+            typ: &'static str,
+        }
+        let header = Header {
+            alg: "none",
+            typ: "JWT",
+        };
+        let payload = json!({"email": "user@example.com"});
+        format!(
+            "{}.{}.{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(serde_json::to_vec(&header).unwrap()),
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(serde_json::to_vec(&payload).unwrap()),
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"sig")
+        )
+    };
+    let updated = super::persist_tokens(
+        &storage,
+        Some(bare_id_token),
+        Some("new-access-token".to_string()),
+        Some("new-refresh-token".to_string()),
+    )
+    .expect("persist without an account claim");
+    assert_eq!(
+        updated.tokens.as_ref().and_then(|t| t.account_id.as_deref()),
+        Some("acct-kept"),
+        "a refresh that cannot be re-parsed for an account id must not drop the stored one"
+    );
+
+    // A refresh response that DOES carry one (here only in organizations[0].id): it replaces.
+    let claimed_id_token = {
+        #[derive(Serialize)]
+        struct Header {
+            alg: &'static str,
+            typ: &'static str,
+        }
+        let header = Header {
+            alg: "none",
+            typ: "JWT",
+        };
+        let payload = json!({"organizations": [{"id": "acct-new"}]});
+        format!(
+            "{}.{}.{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(serde_json::to_vec(&header).unwrap()),
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(serde_json::to_vec(&payload).unwrap()),
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"sig")
+        )
+    };
+    let updated = super::persist_tokens(
+        &storage,
+        Some(claimed_id_token),
+        Some("newer-access-token".to_string()),
+        Some("newer-refresh-token".to_string()),
+    )
+    .expect("persist with an account claim");
+    assert_eq!(
+        updated.tokens.as_ref().and_then(|t| t.account_id.as_deref()),
+        Some("acct-new"),
+        "a refresh carrying an account id updates the stored one"
+    );
+}

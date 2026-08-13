@@ -76,6 +76,46 @@ struct IdClaims {
     profile: Option<ProfileClaims>,
     #[serde(rename = "https://api.openai.com/auth", default)]
     auth: Option<AuthClaims>,
+    #[serde(default)]
+    chatgpt_account_id: Option<String>,
+    #[serde(default)]
+    organizations: Vec<OrganizationClaims>,
+}
+
+#[derive(Deserialize)]
+struct OrganizationClaims {
+    #[serde(default)]
+    id: Option<String>,
+}
+
+/// The account-id fallback CHAIN, ported from opencode (vendor openai.ts `claim()`): the flat
+/// `chatgpt_account_id` claim, then the namespaced `https://api.openai.com/auth` claim's
+/// account id, then `organizations[0].id`.
+fn account_id_from_claims(
+    flat: Option<&String>,
+    auth: Option<&AuthClaims>,
+    organizations: &[OrganizationClaims],
+) -> Option<String> {
+    flat.cloned()
+        .or_else(|| auth.and_then(|auth| auth.chatgpt_account_id.clone()))
+        .or_else(|| organizations.first().and_then(|org| org.id.clone()))
+}
+
+/// The account id one JWT carries, or `None` — an unparseable token yields None, never an
+/// error.
+pub fn account_id_from_jwt(jwt: &str) -> Option<String> {
+    let claims: IdClaims = decode_jwt_payload(jwt).ok()?;
+    account_id_from_claims(
+        claims.chatgpt_account_id.as_ref(),
+        claims.auth.as_ref(),
+        &claims.organizations,
+    )
+}
+
+/// The account id for a token pair, checked on the id_token FIRST, then the access token
+/// (opencode's `extractAccountID`).
+pub fn account_id_from_tokens(id_token: &str, access_token: &str) -> Option<String> {
+    account_id_from_jwt(id_token).or_else(|| account_id_from_jwt(access_token))
 }
 
 #[derive(Deserialize)]
@@ -138,7 +178,15 @@ pub fn parse_chatgpt_jwt_claims(jwt: &str) -> Result<IdTokenInfo, IdTokenInfoErr
     let claims: IdClaims = decode_jwt_payload(jwt)?;
     let email = claims
         .email
+        .clone()
         .or_else(|| claims.profile.and_then(|profile| profile.email));
+    // The full fallback chain, not just the namespaced claim: a token whose only account id
+    // lives in organizations[0].id still yields it.
+    let account_id = account_id_from_claims(
+        claims.chatgpt_account_id.as_ref(),
+        claims.auth.as_ref(),
+        &claims.organizations,
+    );
 
     match claims.auth {
         Some(auth) => Ok(IdTokenInfo {
@@ -146,7 +194,7 @@ pub fn parse_chatgpt_jwt_claims(jwt: &str) -> Result<IdTokenInfo, IdTokenInfoErr
             raw_jwt: jwt.to_string(),
             chatgpt_plan_type: auth.chatgpt_plan_type,
             chatgpt_user_id: auth.chatgpt_user_id.or(auth.user_id),
-            chatgpt_account_id: auth.chatgpt_account_id,
+            chatgpt_account_id: account_id,
             chatgpt_account_is_fedramp: auth.chatgpt_account_is_fedramp,
         }),
         None => Ok(IdTokenInfo {
@@ -154,7 +202,7 @@ pub fn parse_chatgpt_jwt_claims(jwt: &str) -> Result<IdTokenInfo, IdTokenInfoErr
             raw_jwt: jwt.to_string(),
             chatgpt_plan_type: None,
             chatgpt_user_id: None,
-            chatgpt_account_id: None,
+            chatgpt_account_id: account_id,
             chatgpt_account_is_fedramp: false,
         }),
     }

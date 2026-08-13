@@ -872,18 +872,13 @@ pub(crate) async fn persist_tokens_async(
     // Reuse existing synchronous logic but run it off the async runtime.
     let codex_home = codex_home.to_path_buf();
     tokio::task::spawn_blocking(move || {
-        let mut tokens = TokenData {
+        let account_id = crate::token_data::account_id_from_tokens(&id_token, &access_token);
+        let tokens = TokenData {
             id_token: parse_chatgpt_jwt_claims(&id_token).map_err(io::Error::other)?,
             access_token,
             refresh_token,
-            account_id: None,
+            account_id,
         };
-        if let Some(acc) = jwt_auth_claims(&id_token)
-            .get("chatgpt_account_id")
-            .and_then(|v| v.as_str())
-        {
-            tokens.account_id = Some(acc.to_string());
-        }
         let auth = AuthDotJson {
             auth_mode: Some(AuthMode::Chatgpt),
             openai_api_key: api_key,
