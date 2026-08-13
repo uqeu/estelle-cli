@@ -2,6 +2,8 @@
 
 #![deny(clippy::print_stderr, clippy::print_stdout)]
 
+mod engine;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -12,23 +14,32 @@ use agent_client_protocol::schema::v1::{
     TextContent,
 };
 use agent_client_protocol::{Agent, Client as AcpClient, ConnectionTo, Dispatch, Stdio};
-use estelle_client::{Client, DeepSearchRequest, DeepSearchResponse, Repo, RepoResolver, Source};
+use estelle_client::{Client, DeepSearchResponse, Repo, RepoResolver, Source};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub const ADAPTER_NAME: &str = "estelle";
 
+/// One ACP session: its repo, and — on the local engine — the model chosen at session start.
+#[derive(Clone)]
+struct Session {
+    repo: Repo,
+    model: Option<engine::ModelSelection>,
+}
+
 #[derive(Clone)]
 struct State {
     http: Client,
-    sessions: Arc<Mutex<HashMap<SessionId, Repo>>>,
+    engine: Arc<engine::Engine>,
+    sessions: Arc<Mutex<HashMap<SessionId, Session>>>,
     active: Arc<Mutex<HashMap<SessionId, CancellationToken>>>,
 }
 
 impl State {
-    fn new(http: Client) -> Self {
+    fn new(http: Client, engine: engine::Engine) -> Self {
         Self {
             http,
+            engine: Arc::new(engine),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             active: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -43,7 +54,10 @@ fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 /// Serve Estelle as an ACP agent over stdin/stdout.
 pub async fn run_stdio(http: Client) -> Result<(), agent_client_protocol::Error> {
-    let state = State::new(http);
+    // The engine decision is made once, up front: a loadable ChatGPT credential means the
+    // user's own plan does the thinking; anything else keeps the server path unchanged.
+    let engine = engine::Engine::resolve(engine::chatgpt_home(), engine::CHATGPT_BACKEND_BASE).await;
+    let state = State::new(http, engine);
     let new_session_state = state.clone();
     let prompt_state = state.clone();
     let cancel_state = state;
@@ -69,8 +83,15 @@ pub async fn run_stdio(http: Client) -> Result<(), agent_client_protocol::Error>
                         "the ACP working directory does not resolve to a repository",
                     ));
                 };
+                // The model slug is chosen at SESSION START: the backend's own /models list
+                // with the user's credential, falling back to the bundled catalog.
+                let model = match &*new_session_state.engine {
+                    engine::Engine::Local(local) => Some(engine::select_model(local).await),
+                    engine::Engine::Server => None,
+                };
                 let session_id = SessionId::new(Uuid::new_v4().to_string());
-                lock_recover(&new_session_state.sessions).insert(session_id.clone(), repo);
+                lock_recover(&new_session_state.sessions)
+                    .insert(session_id.clone(), Session { repo, model });
                 responder.respond(NewSessionResponse::new(session_id))
             },
             agent_client_protocol::on_receive_request!(),
@@ -78,7 +99,7 @@ pub async fn run_stdio(http: Client) -> Result<(), agent_client_protocol::Error>
         .on_receive_request(
             async move |request: PromptRequest, responder, connection: ConnectionTo<AcpClient>| {
                 let session_id = request.session_id.clone();
-                let Some(repo) = lock_recover(&prompt_state.sessions).get(&session_id).cloned()
+                let Some(session) = lock_recover(&prompt_state.sessions).get(&session_id).cloned()
                 else {
                     return responder.respond_with_error(agent_client_protocol::util::internal_error(
                         "unknown Estelle ACP session",
@@ -98,31 +119,52 @@ pub async fn run_stdio(http: Client) -> Result<(), agent_client_protocol::Error>
                 let task_connection = connection.clone();
                 let task_state = prompt_state.clone();
                 connection.spawn(async move {
-                    let request = DeepSearchRequest::new(question);
-                    let result = tokio::select! {
-                        _ = request_cancel.cancelled() => {
-                            cancel.cancel();
-                            None
+                    let mut send_error: Option<String> = None;
+                    let notification_session = session_id.clone();
+                    let outcome = {
+                        let mut emit = |content: ContentBlock| {
+                            if send_error.is_none()
+                                && let Err(error) =
+                                    task_connection.send_notification(SessionNotification::new(
+                                        notification_session.clone(),
+                                        SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                                            content,
+                                        )),
+                                    ))
+                            {
+                                send_error = Some(error.to_string());
+                            }
+                        };
+                        tokio::select! {
+                            _ = request_cancel.cancelled() => {
+                                cancel.cancel();
+                                engine::PromptAnswer::Cancelled
+                            }
+                            outcome = engine::answer_prompt(
+                                &task_state.engine,
+                                &task_state.http,
+                                &session.repo,
+                                session.model.as_ref(),
+                                &question,
+                                &cancel,
+                                &mut emit,
+                            ) => outcome,
                         }
-                        result = task_state.http.deep_search(&repo, &request, &cancel) => Some(result),
                     };
                     lock_recover(&task_state.active).remove(&session_id);
+                    if let Some(error) = send_error {
+                        return Err(agent_client_protocol::util::internal_error(error));
+                    }
 
-                    match result {
-                        Some(Ok(answer)) => {
-                            for content in answer_content(&answer) {
-                                task_connection.send_notification(SessionNotification::new(
-                                    session_id.clone(),
-                                    SessionUpdate::AgentMessageChunk(ContentChunk::new(content)),
-                                ))?;
-                            }
+                    match outcome {
+                        engine::PromptAnswer::Answered => {
                             responder.respond(PromptResponse::new(StopReason::EndTurn))
                         }
-                        None | Some(Err(estelle_client::Error::Cancelled)) => {
+                        engine::PromptAnswer::Cancelled => {
                             responder.respond(PromptResponse::new(StopReason::Cancelled))
                         }
-                        Some(Err(error)) => responder.respond_with_error(
-                            agent_client_protocol::util::internal_error(error.to_string()),
+                        engine::PromptAnswer::Failed(error) => responder.respond_with_error(
+                            agent_client_protocol::util::internal_error(error),
                         ),
                     }
                 })?;
