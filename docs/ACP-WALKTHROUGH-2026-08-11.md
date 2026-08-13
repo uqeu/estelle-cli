@@ -20,6 +20,13 @@ cd cli-rs && cargo build --release --bin estelle
 ./target/release/estelle --version
 ```
 
+Before trusting ANY prod answer in these steps, establish which build is serving — on 2026-08-13 prod
+served ~1137 commits behind for 33 minutes because a dashboard variable change is an unguarded deploy.
+Do not argue with the version field: make two sibling routes registered in one code block contradict each
+other (a 200 beside a 404 is something no single build can do), and read a 404's BODY — the router's
+generic not-found means the route is absent; a handler's own refusal means the route exists and is
+declining. If a Railway variable was just changed, re-probe immediately and redeploy from HEAD.
+
 ## 1. Give the CLI its Estelle key (the fuel line — memory, graph, gate)
 
 ```
