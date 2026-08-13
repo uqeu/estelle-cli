@@ -386,7 +386,12 @@ fn transcript_messages(text: &str) -> Vec<Value> {
             .to_string();
         out.push(json!({
             "role": role,
-            "content": content.chars().take(CHECKPOINT_MAX_CHARS).collect::<String>(),
+            // F-2: redact BEFORE the cap — this wire uploads the conversation, and a credential
+            // must survive neither whole nor as a truncated fragment.
+            "content": estelle_client::redact_secrets(&content)
+                .chars()
+                .take(CHECKPOINT_MAX_CHARS)
+                .collect::<String>(),
         }));
     }
     if out.len() > CHECKPOINT_MAX_MESSAGES {
@@ -3744,6 +3749,22 @@ mod tests {
         for message in &messages {
             assert!(message["content"].as_str().expect("content").chars().count() <= CHECKPOINT_MAX_CHARS);
         }
+    }
+
+    #[test]
+    fn checkpoint_redacts_credential_shapes_before_the_wire() {
+        // F-2: the file wire and the prompt wire both filtered; this one uploaded the conversation
+        // verbatim. A pasted key in a transcript must reach POST /checkpoint as a named marker, never
+        // as the value.
+        let token = format!("ghp_{}", "A".repeat(36));
+        let record = json!({"type": "user", "message": {"role": "user", "content":
+            format!("here is my token {token} — why is auth failing?")}});
+        let messages = transcript_messages(&serde_json::to_string(&record).expect("record"));
+        let wire = serde_json::to_string(&messages).expect("wire");
+        assert!(!wire.contains(&token), "the value must never reach the wire");
+        let content = messages[0]["content"].as_str().expect("content");
+        assert!(content.contains("[redacted: a GitHub token]"), "the marker names the shape: {content}");
+        assert!(content.contains("why is auth failing?"), "the message survives — only the value is lost");
     }
 
     #[test]

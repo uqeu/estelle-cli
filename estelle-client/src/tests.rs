@@ -142,6 +142,20 @@ fn secret_shapes_drive_input_rejection_while_prefixes_are_always_masked_for_disp
 }
 
 #[test]
+fn redact_secrets_replaces_the_value_with_a_named_marker_and_leaves_prose_alone() {
+    // F-2: the checkpoint wire's rule. The value never survives; the shape is named; the sentence lives.
+    let token = format!("ghp_{}", "A".repeat(36));
+    let redacted = crate::redact_secrets(&format!("here is my token {token} — why is auth failing?"));
+    assert!(!redacted.contains(&token));
+    assert!(redacted.contains("[redacted: a GitHub token]"));
+    assert!(redacted.contains("why is auth failing?"));
+    // clean prose is byte-identical, and the marker is idempotent (already-redacted text stays put)
+    let plain = "an ordinary sentence about auth";
+    assert_eq!(crate::redact_secrets(plain), plain);
+    assert_eq!(crate::redact_secrets(&redacted), redacted);
+}
+
+#[test]
 fn repo_resolver_prefers_override_and_parses_remote_shapes() {
     let override_repo = Repo::new("chosen/repo").expect("repo");
     let resolver = RepoResolver::new(Some(override_repo.clone()), "/definitely/not/a/repo");

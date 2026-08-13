@@ -58,6 +58,19 @@ pub fn find_secret_shape(value: &str) -> Option<(&'static str, usize)> {
     })
 }
 
+/// Redact every credential-shaped value, in place, as `[redacted: <shape>]`. THE CHECKPOINT WIRE'S
+/// RULE (finding F-2, 2026-08-13): a transcript is not a reviewed diff, so no exemptions exist here —
+/// the shape is named so the loss is visible downstream; the VALUE never survives. NOT the same job as
+/// `mask_secret`: that masks a whole credential-bearing FIELD for display; this redacts a value embedded
+/// in prose.
+pub fn redact_secrets(value: &str) -> String {
+    let mut out = value.to_string();
+    for (name, re) in SECRET_SHAPE_RES.iter() {
+        out = re.replace_all(&out, format!("[redacted: {name}]")).into_owned();
+    }
+    out
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CredentialSource {
     Environment,
