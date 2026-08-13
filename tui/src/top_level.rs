@@ -60,7 +60,7 @@ enum Contract {
 #[cfg(test)]
 fn contract(command: &Command) -> Contract {
     match command {
-        Command::Login
+        Command::Login { .. }
         | Command::Connect { .. }
         | Command::Remove
         | Command::Hook { .. }
@@ -85,7 +85,7 @@ fn contract(command: &Command) -> Contract {
 
 pub(crate) async fn run(command: Command, repo: Repo, root: &Path) -> Result<Vec<String>, String> {
     match command {
-        Command::Login => Err("login is handled by the credential reader".to_string()),
+        Command::Login { .. } => Err("login is handled by the credential reader".to_string()),
         Command::Connect { client } => Ok(connect_lines(client.as_deref().unwrap_or("cursor"))),
         Command::Remove => remove_editor_configs(root),
         Command::Hook { mode } => run_hook(mode.as_deref().unwrap_or("ground"), &repo, root).await,
@@ -1258,7 +1258,7 @@ async fn run_authenticated(
         Command::Recall { query } => recall(api, &repo, &query).await,
         Command::Verify { file } => verify(api, &repo, file.as_deref()).await,
         Command::Gate { base } => gate(api, &repo, root, base.as_deref()).await,
-        Command::Login
+        Command::Login { .. }
         | Command::Connect { .. }
         | Command::Remove
         | Command::Hook { .. }

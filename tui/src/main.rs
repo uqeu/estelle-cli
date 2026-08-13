@@ -184,8 +184,12 @@ struct Args {
 
 #[derive(Clone, Debug, Subcommand)]
 enum Command {
-    /// Store and verify an Estelle API credential.
-    Login,
+    /// Store and verify an Estelle API credential; --chatgpt signs in with a ChatGPT plan.
+    Login {
+        /// Device-code sign-in with a ChatGPT account (headless-safe; no browser needed).
+        #[arg(long)]
+        chatgpt: bool,
+    },
     /// Configure Estelle for the current repository.
     Init {
         #[arg(long)]
@@ -5458,7 +5462,13 @@ async fn run(args: Args) -> io::Result<()> {
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = Args::parse();
-    if matches!(args.command, Some(Command::Login)) {
+    if let Some(Command::Login { chatgpt }) = &args.command {
+        if *chatgpt {
+            return match login::run_chatgpt().await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(_) => ExitCode::FAILURE,
+            };
+        }
         return match login::run().await {
             Ok(login::LoginOutcome::Rejected) | Err(_) => ExitCode::FAILURE,
             Ok(_) => ExitCode::SUCCESS,
