@@ -142,8 +142,9 @@ async fn welcome_context_from(
     build_context(checkpoint, last_seen, now, gap_seconds, evidence)
 }
 
-async fn record_checkpoint_to(
-    cwd: PathBuf,
+/// The injectable half of `record_checkpoint` — the hook's checkpoint mode calls this with the
+/// default state path, tests call it with a temporary one.
+pub async fn record_checkpoint_to(    cwd: PathBuf,
     files: Vec<PathBuf>,
     now: DateTime<Utc>,
     state_path: PathBuf,

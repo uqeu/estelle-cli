@@ -108,6 +108,7 @@ endpoints! {
     (VendorDrift, "vendor-drift", [Post], false),
     (VendorDriftWatchlist, "vendor-drift/watchlist", [Get, Put], false),
     (VendorDriftRepair, "vendor-drift/repair", [Post], false),
+    (Checkpoint, "checkpoint", [Post], false),
 }
 
 impl Endpoint {

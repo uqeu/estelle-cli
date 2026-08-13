@@ -1,6 +1,8 @@
 #![deny(clippy::print_stderr, clippy::print_stdout)]
 
 mod commands;
+mod hook_distil;
+mod hook_guard;
 mod login;
 #[cfg(test)]
 mod test_gallery;
