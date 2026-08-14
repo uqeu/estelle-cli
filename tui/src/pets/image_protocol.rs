@@ -43,13 +43,6 @@ impl PetImageSupport {
             Self::Unsupported(_) => None,
         }
     }
-
-    pub(crate) fn unsupported_message(self) -> Option<&'static str> {
-        match self {
-            Self::Supported(_) => None,
-            Self::Unsupported(reason) => Some(reason.message()),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,25 +51,6 @@ pub(crate) enum PetImageUnsupportedReason {
     Zellij,
     Iterm2TooOld,
     Terminal,
-}
-
-impl PetImageUnsupportedReason {
-    fn message(self) -> &'static str {
-        match self {
-            Self::Tmux => {
-                "Pets are disabled in tmux. Terminal images don’t stay pane-local in tmux and can corrupt scrollback or move between panes. Run Codex outside tmux to use pets."
-            }
-            Self::Zellij => {
-                "Pets are disabled in Zellij. Terminal images don’t stay reliably pane-local in Zellij. Run Codex outside Zellij to use pets."
-            }
-            Self::Iterm2TooOld => {
-                "Pets require iTerm2 3.6 or newer. Upgrade iTerm2 to use terminal pets."
-            }
-            Self::Terminal => {
-                "Pets aren’t available in this terminal. Terminal pets need image support, and this terminal environment doesn’t expose a supported image protocol. Try a terminal with Kitty graphics or Sixel support, or run Codex outside tmux."
-            }
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -487,17 +461,6 @@ mod tests {
                 PetImageSupport::Unsupported(PetImageUnsupportedReason::Iterm2TooOld)
             );
         }
-    }
-
-    #[test]
-    fn pet_image_support_old_iterm2_message_mentions_upgrade() {
-        let message = PetImageSupport::Unsupported(PetImageUnsupportedReason::Iterm2TooOld)
-            .unsupported_message();
-
-        assert_eq!(
-            message,
-            Some("Pets require iTerm2 3.6 or newer. Upgrade iTerm2 to use terminal pets.")
-        );
     }
 
     #[test]

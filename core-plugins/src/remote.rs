@@ -69,7 +69,6 @@ pub use share::RemotePluginShareDiscoverability;
 pub use share::RemotePluginSharePrincipal;
 pub use share::RemotePluginSharePrincipalRole;
 pub use share::RemotePluginSharePrincipalType;
-pub use share::RemotePluginShareSaveResult;
 pub use share::RemotePluginShareTarget;
 pub use share::RemotePluginShareTargetRole;
 pub use share::RemotePluginShareUpdateDiscoverability;
@@ -78,7 +77,6 @@ pub use share::checkout_remote_plugin_share;
 pub use share::delete_remote_plugin_share;
 pub use share::list_remote_plugin_shares;
 pub use share::load_plugin_share_remote_ids_by_local_path;
-pub use share::save_remote_plugin_share;
 pub use share::update_remote_plugin_share_targets;
 
 pub const REMOTE_GLOBAL_MARKETPLACE_NAME: &str = "openai-curated-remote";

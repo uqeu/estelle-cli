@@ -60,8 +60,6 @@ impl Animation {
 #[derive(Debug, Clone)]
 pub struct Pet {
     pub id: String,
-    pub display_name: String,
-    pub description: String,
     pub spritesheet_path: PathBuf,
     pub frame_width: u32,
     pub frame_height: u32,
@@ -112,14 +110,19 @@ impl Pet {
 
 pub(super) const CUSTOM_PET_PREFIX: &str = "custom:";
 
+/// Build the `custom:` id for a user-supplied pet directory (test helper; the picker that used
+/// it in production is deleted).
+#[cfg(test)]
+pub(super) fn custom_pet_selector(id: &str) -> String {
+    format!("{CUSTOM_PET_PREFIX}{id}")
+}
+
 #[derive(Debug, Deserialize)]
 struct PetFile {
     #[serde(default)]
     id: Option<String>,
-    #[serde(default, rename = "displayName")]
-    display_name: Option<String>,
-    #[serde(default)]
-    description: Option<String>,
+    // displayName/description in pet.json are accepted and ignored (the picker that rendered
+    // them is deleted).
     #[serde(default, rename = "spritesheetPath")]
     spritesheet_path: Option<String>,
     frame: Option<FrameSpec>,
@@ -146,10 +149,6 @@ impl Default for FrameSpec {
     }
 }
 
-pub(super) fn custom_pet_selector(id: &str) -> String {
-    format!("{CUSTOM_PET_PREFIX}{id}")
-}
-
 #[derive(Debug, Deserialize)]
 struct AnimationSpec {
     #[serde(default)]
@@ -170,8 +169,6 @@ fn load_builtin_pet(pet: catalog::BuiltinPet, codex_home: Option<&Path>) -> Resu
 
     Ok(Pet {
         id: pet.id.to_string(),
-        display_name: pet.display_name.to_string(),
-        description: pet.description.to_string(),
         spritesheet_path,
         frame_width: catalog::DEFAULT_FRAME_WIDTH,
         frame_height: catalog::DEFAULT_FRAME_HEIGHT,
@@ -246,23 +243,13 @@ fn load_pet_manifest(
         .as_deref()
         .map(str::trim)
         .filter(|id| !id.is_empty());
-    let display_name = file
-        .display_name
-        .as_deref()
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .or(manifest_id)
-        .unwrap_or(fallback_id)
-        .to_string();
+    // The manifest's display_name/description are parsed (PetManifestFile keeps them) but no
+    // longer stored on Pet — the picker that showed them is deleted.
     let pet_id = if cache_id == fallback_id {
         manifest_id.unwrap_or(fallback_id).to_string()
     } else {
         cache_id.to_string()
     };
-    let description = file
-        .description
-        .map(|description| description.trim().to_string())
-        .unwrap_or_default();
     let spritesheet_path = resolve_spritesheet_path(
         pet_dir,
         file.spritesheet_path
@@ -281,8 +268,6 @@ fn load_pet_manifest(
     let frame_count = validate_frame_spec(&frame, spritesheet_width, spritesheet_height)?;
     Ok(Pet {
         id: pet_id,
-        display_name,
-        description,
         spritesheet_path,
         frame_width: frame.width,
         frame_height: frame.height,
@@ -665,8 +650,6 @@ mod tests {
             Pet::load_with_codex_home("dewey", /*codex_home*/ Some(codex_home.path())).unwrap();
 
         assert_eq!(pet.id, "dewey");
-        assert_eq!(pet.display_name, "Dewey");
-        assert_eq!(pet.description, "A tidy duck for calm workspace days");
         assert_eq!(
             pet.spritesheet_path,
             super::super::builtin_spritesheet_path(codex_home.path(), "dewey-spritesheet-v4.webp")
@@ -755,7 +738,6 @@ mod tests {
         let pet = load_pet_from_dir(&dir);
 
         assert_eq!(pet.id, "chefito");
-        assert_eq!(pet.display_name, "Chefito");
         assert_eq!(pet.frame_width, 192);
         assert_eq!(pet.frame_height, 208);
         assert_eq!(pet.columns, 8);
@@ -858,7 +840,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(pet.id, "custom-legacy");
-        assert_eq!(pet.display_name, "Chefito");
     }
 
     #[test]

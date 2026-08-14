@@ -1115,7 +1115,11 @@ pub const FEATURES: &[FeatureSpec] = &[
         id: Feature::Apps,
         key: "apps",
         stage: Stage::Stable,
-        default_enabled: true,
+        // ESTELLE (attack-11 egress audit, 2026-08-13): default OFF. When enabled and
+        // ChatGPT-authed, the apps feature auto-registers the local MCP runtime with
+        // chatgpt.com/backend-api/ps/mcp — a hosted-runtime registration the customer never
+        // asked for. Opt-in stays available via the `apps` feature flag.
+        default_enabled: false,
     },
     FeatureSpec {
         id: Feature::EnableMcpApps,

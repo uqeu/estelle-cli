@@ -573,7 +573,6 @@ pub struct Tui {
     pending_history_lines: Vec<PendingHistoryLines>,
     screen_size: ScreenSizePolicy,
     ambient_pet_image_state: crate::pets::PetImageRenderState,
-    pet_picker_preview_image_state: crate::pets::PetImageRenderState,
     alt_saved_viewport: Option<ratatui::layout::Rect>,
     #[cfg(unix)]
     suspend_context: SuspendContext,
@@ -631,7 +630,6 @@ impl Tui {
             pending_history_lines: vec![],
             screen_size: ScreenSizePolicy::default(),
             ambient_pet_image_state: crate::pets::PetImageRenderState::default(),
-            pet_picker_preview_image_state: crate::pets::PetImageRenderState::default(),
             alt_saved_viewport: None,
             #[cfg(unix)]
             suspend_context: SuspendContext::new(),
@@ -1008,29 +1006,6 @@ impl Tui {
         let state = &mut self.ambient_pet_image_state;
         stdout().sync_update(|_| {
             match crate::pets::render_ambient_pet_image(terminal.backend_mut(), state, request) {
-                Ok(()) => Ok(Ok(())),
-                Err(crate::pets::PetImageRenderError::Terminal(err)) => Err(err),
-                Err(err @ crate::pets::PetImageRenderError::Asset(_)) => Ok(Err(err)),
-            }
-        })??
-    }
-
-    pub fn draw_pet_picker_preview_image(
-        &mut self,
-        request: Option<crate::pets::AmbientPetDraw>,
-    ) -> std::result::Result<(), crate::pets::PetImageRenderError> {
-        if let Err(err) = ensure_virtual_terminal_processing() {
-            return Err(crate::pets::PetImageRenderError::Terminal(err));
-        }
-
-        let terminal = &mut self.terminal;
-        let state = &mut self.pet_picker_preview_image_state;
-        stdout().sync_update(|_| {
-            match crate::pets::render_pet_picker_preview_image(
-                terminal.backend_mut(),
-                state,
-                request,
-            ) {
                 Ok(()) => Ok(Ok(())),
                 Err(crate::pets::PetImageRenderError::Terminal(err)) => Err(err),
                 Err(err @ crate::pets::PetImageRenderError::Asset(_)) => Ok(Err(err)),

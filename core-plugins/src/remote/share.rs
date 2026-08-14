@@ -1,6 +1,4 @@
 use super::*;
-use crate::plugin_bundle_archive::PluginBundlePackError;
-use crate::plugin_bundle_archive::pack_plugin_bundle_tar_gz;
 use codex_http_client::RouteAwareRequestBuilder;
 use codex_login::CodexAuth;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -17,16 +15,7 @@ use url::Url;
 mod checkout;
 mod local_paths;
 
-const REMOTE_PLUGIN_SHARE_MAX_ARCHIVE_BYTES: usize = 50 * 1024 * 1024;
-
 pub use checkout::checkout_remote_plugin_share;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RemotePluginShareSaveResult {
-    pub remote_plugin_id: String,
-    pub share_url: Option<String>,
-    pub can_publish_to_workspace: Option<bool>,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RemotePluginShareAccessPolicy {
@@ -95,40 +84,6 @@ pub struct RemotePluginShareUpdateTargetsResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-struct RemoteWorkspacePluginUploadUrlRequest<'a> {
-    filename: &'a str,
-    mime_type: &'a str,
-    size_bytes: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    plugin_id: Option<&'a str>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-struct RemoteWorkspacePluginUploadUrlResponse {
-    file_id: String,
-    upload_url: String,
-    etag: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-struct RemoteWorkspacePluginCreateRequest {
-    file_id: String,
-    etag: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    discoverability: Option<RemotePluginShareDiscoverability>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    share_targets: Option<Vec<RemotePluginShareTarget>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-struct RemoteWorkspacePluginCreateResponse {
-    plugin_id: String,
-    share_url: Option<String>,
-    #[serde(default)]
-    can_publish_to_workspace: Option<bool>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct RemotePluginShareUpdateTargetsRequest {
     discoverability: RemotePluginShareUpdateDiscoverability,
     targets: Vec<RemotePluginShareTarget>,
@@ -138,74 +93,6 @@ struct RemotePluginShareUpdateTargetsRequest {
 struct RemotePluginShareUpdateTargetsResponse {
     principals: Vec<RemotePluginSharePrincipal>,
     discoverability: RemotePluginShareDiscoverability,
-}
-
-pub async fn save_remote_plugin_share(
-    config: &RemotePluginServiceConfig,
-    auth: Option<&CodexAuth>,
-    codex_home: &Path,
-    plugin_path: &AbsolutePathBuf,
-    remote_plugin_id: Option<&str>,
-    access_policy: RemotePluginShareAccessPolicy,
-) -> Result<RemotePluginShareSaveResult, RemotePluginCatalogError> {
-    let auth = ensure_chatgpt_auth(auth)?;
-    let plugin_path_for_archive = plugin_path.as_path().to_path_buf();
-    let (filename, archive_bytes) = tokio::task::spawn_blocking(move || {
-        let filename = archive_filename(&plugin_path_for_archive)?;
-        let archive_bytes = archive_plugin_for_upload(&plugin_path_for_archive)?;
-        Ok::<_, RemotePluginCatalogError>((filename, archive_bytes))
-    })
-    .await
-    .map_err(RemotePluginCatalogError::ArchiveJoin)??;
-    let upload = create_workspace_plugin_upload(
-        config,
-        auth,
-        &filename,
-        archive_bytes.len(),
-        remote_plugin_id,
-    )
-    .await?;
-    let etag = upload
-        .etag
-        .ok_or(RemotePluginCatalogError::MissingUploadEtag)?;
-    put_workspace_plugin_upload(config, &upload.upload_url, archive_bytes).await?;
-    let share_targets = access_policy.share_targets;
-    let share_targets =
-        ensure_unlisted_workspace_target(auth, access_policy.discoverability, share_targets)?;
-    let response = finalize_workspace_plugin_upload(
-        config,
-        auth,
-        remote_plugin_id,
-        RemoteWorkspacePluginCreateRequest {
-            file_id: upload.file_id,
-            etag,
-            discoverability: access_policy.discoverability,
-            share_targets,
-        },
-    )
-    .await?;
-    if response.plugin_id.is_empty() {
-        return Err(RemotePluginCatalogError::UnexpectedResponse(
-            "workspace plugin create response did not include a plugin id".to_string(),
-        ));
-    }
-
-    if let Err(err) = local_paths::record_plugin_share_local_path(
-        codex_home,
-        &response.plugin_id,
-        plugin_path.clone(),
-    ) {
-        warn!(
-            remote_plugin_id = %response.plugin_id,
-            "failed to record plugin share local path mapping: {err}"
-        );
-    }
-
-    Ok(RemotePluginShareSaveResult {
-        remote_plugin_id: response.plugin_id,
-        share_url: response.share_url,
-        can_publish_to_workspace: response.can_publish_to_workspace,
-    })
 }
 
 pub async fn list_remote_plugin_shares(
@@ -392,105 +279,6 @@ async fn get_created_workspace_plugins_page(
     let url = url.to_string();
     let request = authenticated_request(config.http_request(Method::GET, &url), auth);
     send_and_decode(request, &url).await
-}
-
-async fn create_workspace_plugin_upload(
-    config: &RemotePluginServiceConfig,
-    auth: &CodexAuth,
-    filename: &str,
-    size_bytes: usize,
-    remote_plugin_id: Option<&str>,
-) -> Result<RemoteWorkspacePluginUploadUrlResponse, RemotePluginCatalogError> {
-    let base_url = config.chatgpt_base_url.trim_end_matches('/');
-    let url = format!("{base_url}/public/plugins/workspace/upload-url");
-    let request = authenticated_request(config.http_request(Method::POST, &url), auth).json(
-        &RemoteWorkspacePluginUploadUrlRequest {
-            filename,
-            mime_type: "application/gzip",
-            size_bytes,
-            plugin_id: remote_plugin_id,
-        },
-    );
-    send_and_decode(request, &url).await
-}
-
-async fn put_workspace_plugin_upload(
-    config: &RemotePluginServiceConfig,
-    upload_url: &str,
-    archive_bytes: Vec<u8>,
-) -> Result<(), RemotePluginCatalogError> {
-    let request = config
-        .http_request(Method::PUT, upload_url)
-        .timeout(REMOTE_PLUGIN_CATALOG_TIMEOUT)
-        .header("x-ms-blob-type", "BlockBlob")
-        .header("Content-Type", "application/gzip")
-        .body(archive_bytes);
-    let response = request
-        .send()
-        .await
-        .map_err(|source| RemotePluginCatalogError::Request {
-            url: "workspace plugin upload URL".to_string(),
-            source,
-        })?;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    if ![StatusCode::OK, StatusCode::CREATED].contains(&status) {
-        return Err(RemotePluginCatalogError::UnexpectedStatus {
-            url: "workspace plugin upload URL".to_string(),
-            status,
-            body,
-        });
-    }
-    Ok(())
-}
-
-async fn finalize_workspace_plugin_upload(
-    config: &RemotePluginServiceConfig,
-    auth: &CodexAuth,
-    remote_plugin_id: Option<&str>,
-    body: RemoteWorkspacePluginCreateRequest,
-) -> Result<RemoteWorkspacePluginCreateResponse, RemotePluginCatalogError> {
-    let base_url = config.chatgpt_base_url.trim_end_matches('/');
-    let url = if let Some(remote_plugin_id) = remote_plugin_id {
-        format!("{base_url}/public/plugins/workspace/{remote_plugin_id}")
-    } else {
-        format!("{base_url}/public/plugins/workspace")
-    };
-    let request = authenticated_request(config.http_request(Method::POST, &url), auth).json(&body);
-    send_and_decode(request, &url).await
-}
-
-fn archive_filename(plugin_path: &Path) -> Result<String, RemotePluginCatalogError> {
-    let plugin_name = plugin_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| RemotePluginCatalogError::InvalidPluginPath {
-            path: plugin_path.to_path_buf(),
-            reason: "plugin path must end in a valid UTF-8 directory name".to_string(),
-        })?;
-    Ok(format!("{plugin_name}.tar.gz"))
-}
-
-fn archive_plugin_for_upload(plugin_path: &Path) -> Result<Vec<u8>, RemotePluginCatalogError> {
-    archive_plugin_for_upload_with_limit(plugin_path, REMOTE_PLUGIN_SHARE_MAX_ARCHIVE_BYTES)
-}
-
-fn archive_plugin_for_upload_with_limit(
-    plugin_path: &Path,
-    max_bytes: usize,
-) -> Result<Vec<u8>, RemotePluginCatalogError> {
-    pack_plugin_bundle_tar_gz(plugin_path, max_bytes).map_err(|err| match err {
-        PluginBundlePackError::InvalidPluginPath { path, reason } => {
-            RemotePluginCatalogError::InvalidPluginPath { path, reason }
-        }
-        PluginBundlePackError::ArchiveTooLarge { bytes, max_bytes } => {
-            RemotePluginCatalogError::ArchiveTooLarge { bytes, max_bytes }
-        }
-        PluginBundlePackError::Io { source } => RemotePluginCatalogError::Archive {
-            path: plugin_path.to_path_buf(),
-            source,
-        },
-    })
 }
 
 async fn send_and_expect_status(

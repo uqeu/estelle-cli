@@ -261,22 +261,6 @@ fn installed_plugin_names(plugins: &[PluginSummary]) -> HashSet<String> {
         .collect()
 }
 
-fn remote_plugin_share_discoverability(
-    discoverability: PluginShareDiscoverability,
-) -> codex_core_plugins::remote::RemotePluginShareDiscoverability {
-    match discoverability {
-        PluginShareDiscoverability::Listed => {
-            codex_core_plugins::remote::RemotePluginShareDiscoverability::Listed
-        }
-        PluginShareDiscoverability::Unlisted => {
-            codex_core_plugins::remote::RemotePluginShareDiscoverability::Unlisted
-        }
-        PluginShareDiscoverability::Private => {
-            codex_core_plugins::remote::RemotePluginShareDiscoverability::Private
-        }
-    }
-}
-
 fn remote_plugin_share_update_discoverability(
     discoverability: PluginShareUpdateDiscoverability,
 ) -> codex_core_plugins::remote::RemotePluginShareUpdateDiscoverability {
@@ -1251,65 +1235,15 @@ impl PluginRequestProcessor {
 
     async fn plugin_share_save_response(
         &self,
-        params: PluginShareSaveParams,
+        _params: PluginShareSaveParams,
     ) -> Result<PluginShareSaveResponse, JSONRPCErrorError> {
-        let (config, auth) = self.load_plugin_share_config_and_auth().await?;
-        if !config.features.enabled(Feature::PluginSharing) {
-            return Err(invalid_request("plugin sharing is disabled"));
-        }
-        let PluginShareSaveParams {
-            plugin_path,
-            remote_plugin_id,
-            discoverability,
-            share_targets,
-        } = params;
-        if let Some(remote_plugin_id) = remote_plugin_id.as_ref()
-            && (remote_plugin_id.is_empty() || !is_valid_remote_plugin_id(remote_plugin_id))
-        {
-            return Err(invalid_request("invalid remote plugin id"));
-        }
-        if remote_plugin_id.is_some() && (discoverability.is_some() || share_targets.is_some()) {
-            return Err(invalid_request(
-                "discoverability and shareTargets are only supported when creating a plugin share; use plugin/share/updateTargets to update share settings",
-            ));
-        }
-        if discoverability == Some(PluginShareDiscoverability::Listed) {
-            return Err(invalid_request(
-                "discoverability LISTED is not supported for plugin/share/save; use UNLISTED or PRIVATE",
-            ));
-        }
-        if let Some(share_targets) = share_targets.as_ref() {
-            validate_client_plugin_share_targets(share_targets)?;
-        }
-
-        let remote_plugin_service_config = remote_plugin_service_config(&config);
-        let access_policy = codex_core_plugins::remote::RemotePluginShareAccessPolicy {
-            discoverability: discoverability.map(remote_plugin_share_discoverability),
-            share_targets: share_targets.map(remote_plugin_share_targets),
-        };
-        let result = codex_core_plugins::remote::save_remote_plugin_share(
-            &remote_plugin_service_config,
-            auth.as_ref(),
-            config.codex_home.as_path(),
-            &plugin_path,
-            remote_plugin_id.as_deref(),
-            access_policy,
-        )
-        .await
-        .map_err(|err| remote_plugin_catalog_error_to_jsonrpc(err, "save remote plugin share"))?;
-        codex_core_plugins::remote::invalidate_cached_remote_plugin_catalog_scopes(
-            config.codex_home.as_path(),
-            &remote_plugin_service_config,
-            auth.as_ref(),
-            &[RemotePluginScope::User, RemotePluginScope::Workspace],
-        );
-        let remote_plugin_id = result.remote_plugin_id;
-        self.clear_plugin_related_caches();
-        Ok(PluginShareSaveResponse {
-            remote_plugin_id,
-            share_url: result.share_url.unwrap_or_default(),
-            can_publish_to_workspace: result.can_publish_to_workspace,
-        })
+        // DELETED in the Estelle build (attack-11 egress audit, 2026-08-13): this handler used
+        // to tar.gz the customer's plugin directory and upload it to a backend-issued Azure
+        // blob URL. Code-bearing upload to a third party is exactly what the public promise
+        // forbids, so the save path is gone — not gated — and the method answers honestly.
+        Err(invalid_request(
+            "plugin sharing upload is not available in this build",
+        ))
     }
 
     async fn plugin_share_update_targets_response(

@@ -45,8 +45,6 @@ use crate::external_editor;
 use crate::file_search::FileSearchManager;
 use crate::history_cell;
 use crate::history_cell::HistoryCell;
-#[cfg(not(debug_assertions))]
-use crate::history_cell::UpdateAvailableHistoryCell;
 use crate::hooks_rpc::HookTrustUpdate;
 use crate::key_hint::KeyBindingListExt;
 use crate::keymap::KeyChordMatcher;
@@ -1029,8 +1027,6 @@ Fix the config and retry.\n\
 See the Codex keymap documentation for supported actions and examples."
             )
         })?;
-        #[cfg(not(debug_assertions))]
-        let upgrade_version = crate::updates::get_upgrade_version(&config);
 
         let mut app = Self {
             model_catalog,
@@ -1166,31 +1162,7 @@ See the Codex keymap documentation for supported actions and examples."
         let mut listen_for_app_server_events = true;
         let mut waiting_for_initial_session_configured = wait_for_initial_session_configured;
 
-        #[cfg(not(debug_assertions))]
-        let pre_loop_exit_reason = if let Some(latest_version) = upgrade_version {
-            let control = Box::pin(app.handle_event(
-                tui,
-                &mut app_server,
-                AppEvent::InsertHistoryCell(Box::new(UpdateAvailableHistoryCell::new(
-                    latest_version,
-                    crate::update_action::get_update_action(),
-                ))),
-            ))
-            .await?;
-            match control {
-                AppRunControl::Continue => None,
-                AppRunControl::Exit(exit_reason) => Some(exit_reason),
-            }
-        } else {
-            None
-        };
-        #[cfg(debug_assertions)]
-        let pre_loop_exit_reason: Option<ExitReason> = None;
-
-        let exit_reason_result = if let Some(exit_reason) = pre_loop_exit_reason {
-            Ok(exit_reason)
-        } else {
-            loop {
+        let exit_reason_result = loop {
                 let control = select! {
                     Some(event) = app_event_rx.recv() => {
                         match Box::pin(app.handle_event(tui, &mut app_server, event)).await {
@@ -1249,7 +1221,6 @@ See the Codex keymap documentation for supported actions and examples."
                     AppRunControl::Continue => {}
                     AppRunControl::Exit(reason) => break Ok(reason),
                 }
-            }
         };
         if let Err(err) = app_server.shutdown().await {
             tracing::warn!(error = %err, "failed to shut down embedded app server");
@@ -1352,15 +1323,6 @@ See the Codex keymap documentation for supported actions and examples."
                         ) {
                             self.handle_ambient_pet_image_render_error(tui, err)?;
                         }
-                    }
-                    if let Some(request) = self.chat_widget.pet_picker_preview_draw() {
-                        if let Err(err) = tui.draw_pet_picker_preview_image(Some(request)) {
-                            self.handle_pet_picker_preview_image_render_error(tui, err)?;
-                        }
-                    } else if self.chat_widget.should_clear_pet_picker_preview_image()
-                        && let Err(err) = tui.draw_pet_picker_preview_image(/*request*/ None)
-                    {
-                        self.handle_pet_picker_preview_image_render_error(tui, err)?;
                     }
                     if self.chat_widget.external_editor_state() == ExternalEditorState::Requested {
                         self.chat_widget

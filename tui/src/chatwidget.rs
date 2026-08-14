@@ -198,7 +198,6 @@ const PLAN_MODE_REASONING_SCOPE_TITLE: &str = "Apply reasoning change";
 const PLAN_MODE_REASONING_SCOPE_PLAN_ONLY: &str = "Apply to Plan mode override";
 const PLAN_MODE_REASONING_SCOPE_ALL_MODES: &str = "Apply to global default and Plan mode override";
 const CONNECTORS_SELECTION_VIEW_ID: &str = "connectors-selection";
-const PET_SELECTION_LOADING_VIEW_ID: &str = "pet-selection-loading";
 const AMBIENT_PET_WRAP_GAP_COLUMNS: u16 = 2;
 const TUI_STUB_MESSAGE: &str = "Not available in TUI yet.";
 const PARENT_OWNED_INPUT_MESSAGE: &str =
@@ -648,14 +647,8 @@ pub(crate) struct ChatWidget {
     // Active hook runs render in a dedicated live cell so they can run alongside tools.
     active_hook_cell: Option<HookCell>,
     // Reused for built-in pet CDN requests so redirects remain route-aware.
-    pub(crate) pet_http_client: codex_http_client::RouteAwareClientPool,
     // Ambient companion rendered over the transcript area, never inside the footer rows.
     ambient_pet: Option<crate::pets::AmbientPet>,
-    pet_picker_preview_state: crate::pets::PetPickerPreviewState,
-    pet_picker_preview_pet: Option<crate::pets::AmbientPet>,
-    pet_picker_preview_request_id: u64,
-    pet_picker_preview_image_visible: std::cell::Cell<bool>,
-    pet_selection_load_request_id: u64,
     #[cfg(test)]
     pet_image_support_override: Option<crate::pets::PetImageSupport>,
     thread_id: Option<ThreadId>,

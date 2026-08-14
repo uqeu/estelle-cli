@@ -21,8 +21,6 @@ mod catalog;
 mod frames;
 mod image_protocol;
 mod model;
-mod picker;
-mod preview;
 mod sixel;
 
 use anyhow::Context;
@@ -42,14 +40,8 @@ pub(crate) use asset_pack::builtin_spritesheet_path;
 pub(crate) use asset_pack::write_test_pack;
 #[cfg(test)]
 pub(crate) use image_protocol::ImageProtocol;
-pub(crate) use image_protocol::PetImageSupport;
 #[cfg(test)]
-pub(crate) use image_protocol::PetImageUnsupportedReason;
-#[cfg(not(test))]
-pub(crate) use image_protocol::detect_pet_image_support;
-pub(crate) use picker::PET_PICKER_VIEW_ID;
-pub(crate) use picker::build_pet_picker_params;
-pub(crate) use preview::PetPickerPreviewState;
+pub(crate) use image_protocol::PetImageSupport;
 
 pub(crate) const DEFAULT_PET_ID: &str = "codex";
 pub(crate) const DISABLED_PET_ID: &str = "disabled";
@@ -128,14 +120,6 @@ pub(crate) fn render_ambient_pet_image(
     request: Option<AmbientPetDraw>,
 ) -> std::result::Result<(), PetImageRenderError> {
     render_pet_image(writer, state, /*image_id*/ 0xC0DE, request)
-}
-
-pub(crate) fn render_pet_picker_preview_image(
-    writer: &mut impl Write,
-    state: &mut PetImageRenderState,
-    request: Option<AmbientPetDraw>,
-) -> std::result::Result<(), PetImageRenderError> {
-    render_pet_image(writer, state, /*image_id*/ 0xC0DF, request)
 }
 
 #[derive(Debug, Default)]

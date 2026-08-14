@@ -1,4 +1,6 @@
 use super::*;
+use crate::loader::configured_curated_plugin_ids_from_codex_home;
+use crate::loader::refresh_curated_plugin_cache;
 use crate::LoadedPlugin;
 use crate::OPENAI_API_CURATED_MARKETPLACE_NAME;
 use crate::OPENAI_CURATED_MARKETPLACE_NAME;
@@ -136,31 +138,6 @@ fn plugins_manager_tracks_auth_mode() {
         Some(AuthMode::Chatgpt),
     );
     assert_eq!(manager_with_auth.auth_mode(), Some(AuthMode::Chatgpt));
-}
-
-#[test]
-fn curated_repo_sync_stays_deferred_for_remote_chatgpt_catalog() {
-    CURATED_REPO_SYNC_STARTED.store(false, std::sync::atomic::Ordering::SeqCst);
-    let tmp = TempDir::new().unwrap();
-    let config = PluginsConfigInput::new(
-        unrestricted_config_layer_stack(),
-        "openai".to_string(),
-        /*plugins_enabled*/ true,
-        /*remote_plugin_enabled*/ true,
-        "https://chatgpt.com".to_string(),
-        test_http_client_factory(),
-    );
-    let manager = Arc::new(PluginsManager::new_with_options(
-        tmp.path().to_path_buf(),
-        Some(Product::Codex),
-        Some(AuthMode::Chatgpt),
-    ));
-
-    manager.maybe_start_curated_repo_sync_for_config(
-        &config, /*on_effective_plugins_changed*/ None,
-    );
-
-    assert!(!CURATED_REPO_SYNC_STARTED.load(std::sync::atomic::Ordering::SeqCst));
 }
 
 #[test]

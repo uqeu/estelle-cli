@@ -94,7 +94,7 @@ impl ChatWidget {
             /*ambient_pet_missing*/ true,
             frame_requester.clone(),
             app_event_tx.clone(),
-            pet_http_client.clone(),
+            pet_http_client,
         );
         let mut widget = Self {
             app_event_tx: app_event_tx.clone(),
@@ -189,13 +189,7 @@ impl ChatWidget {
             status_state: StatusState::default(),
             review: ReviewState::default(),
             active_hook_cell: None,
-            pet_http_client,
             ambient_pet: None,
-            pet_picker_preview_state: crate::pets::PetPickerPreviewState::default(),
-            pet_picker_preview_pet: None,
-            pet_picker_preview_request_id: 0,
-            pet_picker_preview_image_visible: std::cell::Cell::new(/*value*/ false),
-            pet_selection_load_request_id: 0,
             #[cfg(test)]
             pet_image_support_override: None,
             thread_id: None,

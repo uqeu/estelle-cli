@@ -248,31 +248,6 @@ impl AmbientPet {
         })
     }
 
-    /// Build a centered preview draw request for the `/pets` picker side pane.
-    ///
-    /// The picker preview intentionally uses the first idle frame rather than
-    /// the live animation state so selection browsing stays stable and does not
-    /// require the full ambient animation lifecycle.
-    pub(crate) fn preview_draw_request(&self, area: Rect) -> Option<AmbientPetDraw> {
-        let protocol = self.support.protocol()?;
-        let size = self.image_size();
-        if area.width < size.columns || area.height < size.rows {
-            return None;
-        }
-
-        let y = area.y + area.height.saturating_sub(size.rows) / 2;
-        Some(AmbientPetDraw {
-            frame: self.first_idle_frame_path()?,
-            protocol,
-            x: area.x + area.width.saturating_sub(size.columns) / 2,
-            y,
-            clear_top_y: y,
-            columns: size.columns,
-            rows: size.rows,
-            height_px: size.height_px,
-            sixel_dir: self.sixel_dir.clone(),
-        })
-    }
 
     fn visible_notification(&self, now: Instant) -> Option<&PetNotification> {
         self.notification
@@ -312,16 +287,6 @@ impl AmbientPet {
                 }
             })
             .unwrap_or(0);
-        self.frame_path_for_sprite_index(sprite_index)
-    }
-
-    fn first_idle_frame_path(&self) -> Option<PathBuf> {
-        let sprite_index = self
-            .pet
-            .animations
-            .get("idle")
-            .and_then(|animation| animation.frames.first())
-            .map_or(0, |frame| frame.sprite_index);
         self.frame_path_for_sprite_index(sprite_index)
     }
 
@@ -450,8 +415,6 @@ pub(crate) fn test_ambient_pet(
     AmbientPet {
         pet: Pet {
             id: "test".to_string(),
-            display_name: "Test".to_string(),
-            description: String::new(),
             spritesheet_path: PathBuf::from("spritesheet.webp"),
             frame_width: 192,
             frame_height: 208,

@@ -95,8 +95,6 @@ mod tests {
         let frames = prepare_png_frames(
             &Pet {
                 id: "tiny".to_string(),
-                display_name: "Tiny".to_string(),
-                description: String::new(),
                 spritesheet_path,
                 frame_width: 1,
                 frame_height: 1,

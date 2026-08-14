@@ -150,8 +150,6 @@ mod model_migration;
 mod motion;
 mod multi_agents;
 mod notifications;
-#[cfg(any(not(debug_assertions), test))]
-mod npm_registry;
 pub(crate) mod onboarding;
 mod oss_selection;
 mod pager_overlay;
@@ -193,12 +191,6 @@ pub(crate) mod update_action;
 pub use update_action::UpdateAction;
 #[cfg(not(debug_assertions))]
 pub use update_action::get_update_action;
-mod update_prompt;
-#[cfg(any(not(debug_assertions), test))]
-mod update_versions;
-mod updates;
-#[cfg(any(not(debug_assertions), test))]
-mod updates_cache;
 mod version;
 mod width;
 #[cfg(any(target_os = "windows", test))]
@@ -1159,7 +1151,9 @@ pub async fn run_main(
             &config,
             env!("CARGO_PKG_VERSION"),
             /*service_name_override*/ None,
-            /*default_analytics_enabled*/ true,
+            // ESTELLE: analytics defaults OFF in this binary (telemetry we did not write and
+            // the customer never asked for); `analytics.enabled = true` opts in.
+            /*default_analytics_enabled*/ false,
         )
     })) {
         Ok(Ok(otel)) => otel,
@@ -1342,7 +1336,6 @@ async fn run_ratatui_app(
     let uses_remote_workspace = app_server_target.uses_remote_workspace();
     color_eyre::install()?;
 
-    tooltips::announcement::prewarm(initial_config.http_client_factory());
 
     // Forward panic reports through tracing so they appear in the UI status
     // line, but do not swallow the default/color-eyre panic handler.
@@ -1362,28 +1355,6 @@ async fn run_ratatui_app(
         initialized_terminal.stderr_guard,
     );
     let mut terminal_restore_guard = TerminalRestoreGuard::new();
-
-    #[cfg(not(debug_assertions))]
-    {
-        use crate::update_prompt::UpdatePromptOutcome;
-
-        let skip_update_prompt = cli.prompt.as_ref().is_some_and(|prompt| !prompt.is_empty());
-        if !skip_update_prompt {
-            match update_prompt::run_update_prompt_if_needed(&mut tui, &initial_config).await? {
-                UpdatePromptOutcome::Continue => {}
-                UpdatePromptOutcome::RunUpdate(action) => {
-                    terminal_restore_guard.restore()?;
-                    return Ok(AppExitInfo {
-                        token_usage: crate::token_usage::TokenUsage::default(),
-                        thread_id: None,
-                        resume_hint: None,
-                        update_action: Some(action),
-                        exit_reason: ExitReason::UserRequested,
-                    });
-                }
-            }
-        }
-    }
 
     // Initialize high-fidelity session event logging if enabled.
     session_log::maybe_init(&initial_config);
@@ -1861,15 +1832,6 @@ struct TerminalRestoreGuard {
 impl TerminalRestoreGuard {
     fn new() -> Self {
         Self { active: true }
-    }
-
-    #[cfg_attr(debug_assertions, allow(dead_code))]
-    fn restore(&mut self) -> color_eyre::Result<()> {
-        if self.active {
-            crate::tui::restore_after_exit()?;
-            self.active = false;
-        }
-        Ok(())
     }
 
     fn restore_silently(&mut self) {

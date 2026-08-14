@@ -4184,7 +4184,10 @@ impl Config {
             notices,
             check_for_update_on_startup,
             disable_paste_burst: cfg.disable_paste_burst.unwrap_or(false),
-            analytics_enabled: cfg.analytics.as_ref().and_then(|a| a.enabled),
+            // ESTELLE (attack-11 egress audit, 2026-08-13): analytics telemetry
+            // (codex/analytics-events — repo hashes, tool names, script paths) is OPT-IN.
+            // Absent config means explicitly off; only `analytics.enabled = true` turns it on.
+            analytics_enabled: Some(cfg.analytics.as_ref().and_then(|a| a.enabled).unwrap_or(false)),
             feedback_enabled: cfg
                 .feedback
                 .as_ref()

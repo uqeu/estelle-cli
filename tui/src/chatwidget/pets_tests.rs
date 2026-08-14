@@ -32,12 +32,18 @@ async fn shared_pet_load_uses_cached_builtin_assets() {
     let codex_home = tempfile::tempdir().unwrap();
     crate::pets::write_test_pack(codex_home.path());
 
+    let pet_http_client = codex_http_client::RouteAwareClientPool::new(
+        codex_http_client::HttpClientFactory::new(
+            codex_http_client::OutboundProxyPolicy::ReqwestDefault,
+        ),
+        codex_http_client::ClientRouteClass::Other,
+    );
     crate::pets::load_pet_with_assets(
         crate::pets::DEFAULT_PET_ID.to_string(),
         AbsolutePathBuf::from_absolute_path(codex_home.path()).expect("absolute temporary path"),
         chat.frame_requester.clone(),
         /*animations_enabled*/ false,
-        &chat.pet_http_client,
+        &pet_http_client,
     )
     .await
     .expect("load cached built-in pet");
@@ -51,36 +57,4 @@ async fn shared_pet_load_uses_cached_builtin_assets() {
             .join(crate::pets::DEFAULT_PET_ID)
             .is_dir()
     );
-}
-
-#[tokio::test]
-async fn stale_pet_preview_completion_keeps_current_preview() {
-    let (mut chat, _tx, _rx, _op_rx) =
-        crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
-    chat.pet_picker_preview_request_id = 2;
-    chat.pet_picker_preview_pet = Some(crate::pets::test_ambient_pet(
-        chat.frame_requester.clone(),
-        /*animations_enabled*/ false,
-    ));
-
-    chat.finish_pet_picker_preview_load(/*request_id*/ 1, Err("stale preview".to_string()));
-
-    assert!(chat.pet_picker_preview_pet.is_some());
-    assert_eq!(chat.pet_picker_preview_request_id, 2);
-}
-
-#[tokio::test]
-async fn stale_pet_selection_completion_keeps_current_loading_popup() {
-    let (mut chat, _tx, _rx, _op_rx) =
-        crate::chatwidget::tests::make_chatwidget_manual_with_sender().await;
-    let current_request_id = chat.show_pet_selection_loading_popup();
-    let stale_request_id = current_request_id.wrapping_sub(/*rhs*/ 1);
-
-    assert!(!chat.finish_pet_selection_loading_popup(stale_request_id));
-    assert_eq!(
-        chat.bottom_pane.active_view_id(),
-        Some(crate::chatwidget::PET_SELECTION_LOADING_VIEW_ID)
-    );
-    assert!(chat.finish_pet_selection_loading_popup(current_request_id));
-    assert_eq!(chat.bottom_pane.active_view_id(), None);
 }
