@@ -703,4 +703,175 @@ mod tests {
         );
         assert_eq!(unknown.model_context, unknown.human_lines.join("\n"));
     }
+
+    /// THE RETIRING CONTRACT'S BRIEF FIXTURES (tests/test_hook_contract.py::TestTheReturningBrief,
+    /// verbatim) driven through BOTH renderers. The pinned invariant is the SHOW/SILENT decision on
+    /// every fixture — a threshold that diverges means one surface interrupts a customer the other
+    /// correctly left alone. The WORDING deliberately differs (this Rust renderer predates the JS
+    /// one and is not string-identical: it says "No committed changes were found…" where the Python
+    /// says "Nothing you track changed…", and it names an unverifiable git history where the Python
+    /// is silent) — do not force agreement on text, and do not weaken a fixture to pass.
+    #[test]
+    fn rust_brief_decision_matches_the_python_contract() {
+        let left = "2026-07-31T03:05:00+00:00";
+        let now = "2026-07-31T11:12:00+00:00";
+        let mine = serde_json::json!(["src/estelle/serve/memory_facade.py", "cli/bin/hook.js"]);
+        let changes = serde_json::json!([
+            {"at": "2026-07-31T08:00:00+00:00", "actor": "dana",
+             "path": "src/estelle/serve/memory_facade.py", "what": "batch the per-file reads"},
+            {"at": "2026-07-31T05:00:00+00:00", "actor": "estelle auto-repair",
+             "path": "cli/bin/hook.js", "what": "repair PR #212"},
+            {"at": "2026-07-31T07:00:00+00:00", "actor": "sam", "path": "web/app/page.tsx",
+             "what": "home hero"},
+            {"at": "2026-07-31T06:00:00+00:00", "actor": "", "path": "docs/x.md", "what": ""},
+            {"at": "", "actor": "ghost", "path": "never.py", "what": "untimed"},
+            {"at": "2026-07-30T09:00:00+00:00", "actor": "old", "path": mine[0], "what": "before I left"},
+        ]);
+        let five_files: Vec<String> = (0..5).map(|i| format!("f{i}.py")).collect();
+        let five_changes: Vec<serde_json::Value> = (0..5)
+            .map(|i| {
+                serde_json::json!({"at": "2026-07-31T08:00:00+00:00", "actor": "dana",
+                    "path": format!("f{i}.py"), "what": ""})
+            })
+            .collect();
+        let author_changes: Vec<serde_json::Value> = ["a", "b", "c", "d", "e"]
+            .iter()
+            .map(|name| {
+                serde_json::json!({"at": "2026-07-31T08:00:00+00:00", "actor": name,
+                    "path": format!("{name}.py"), "what": ""})
+            })
+            .collect();
+        let long_subject = "feat: 4,586 findings -> 18, /work stops lying about doing nothing, and the CLI can finally carry a session";
+        let fixtures = serde_json::json!([
+            {"now": now, "last_seen": left, "my_files": mine, "changes": changes, "tz": "America/Toronto"},
+            {"now": now, "last_seen": left, "my_files": mine, "changes": changes, "tz": ""},
+            {"now": now, "last_seen": left, "my_files": mine, "changes": changes, "tz": "Mars/Olympus"},
+            {"now": now, "last_seen": left, "my_files": mine, "changes": changes, "tz": "Asia/Kolkata"},
+            {"now": now, "last_seen": "", "my_files": mine, "changes": changes, "tz": "UTC"},
+            {"now": "2026-07-31T11:12:30+00:00", "last_seen": now, "my_files": mine, "changes": changes, "tz": "UTC"},
+            {"now": "2026-07-31T11:41:00+00:00", "last_seen": "2026-07-31T11:12:00+00:00",
+             "my_files": mine, "changes": changes, "tz": "UTC"},
+            {"now": now, "last_seen": "corrupt", "my_files": mine, "changes": changes, "tz": "UTC"},
+            {"now": "2026-07-31T11:52:00+00:00", "last_seen": "2026-07-31T11:12:00+00:00",
+             "my_files": [], "changes": [], "tz": "UTC"},
+            {"now": "2026-07-31T11:52:00+00:00", "last_seen": "2026-07-31T11:12:00+00:00",
+             "my_files": ["a.py"],
+             "changes": [{"at": "2026-07-31T11:30:00+00:00", "actor": "dana", "path": "a.py",
+                          "what": "hotfix"}],
+             "tz": "UTC"},
+            {"now": now, "last_seen": left, "my_files": mine, "changes": [], "tz": "UTC"},
+            {"now": now, "last_seen": left, "my_files": mine, "changes": null, "tz": "UTC"},
+            {"now": now, "last_seen": left, "my_files": five_files, "changes": five_changes, "tz": "UTC"},
+            {"now": now, "last_seen": left, "my_files": [], "changes": author_changes, "tz": "UTC"},
+            {"now": now, "last_seen": left, "my_files": ["a.py"],
+             "changes": [{"at": "2026-07-31T08:00:00+00:00", "actor": "dana", "path": "a.py",
+                          "what": long_subject}],
+             "tz": "UTC"},
+            {"now": now, "last_seen": "2026-07-20T11:00:00+00:00", "my_files": [], "changes": [],
+             "tz": "UTC"},
+            {"now": "2026-11-01T12:00:00+00:00", "last_seen": "2026-11-01T03:00:00+00:00",
+             "my_files": [], "changes": [], "tz": "America/Toronto"},
+            {"now": "2026-03-08T11:00:00+00:00", "last_seen": "2026-03-08T04:00:00+00:00",
+             "my_files": [], "changes": [], "tz": "America/Toronto"},
+            {"now": "2026-07-31T11:00:00+00:00", "last_seen": "2026-07-31T03:00:00+00:00",
+             "my_files": [], "changes": [], "tz": "America/Toronto"},
+        ]);
+
+        let expected = python_brief_decisions(&fixtures);
+        for (index, (fixture, expected_show)) in
+            fixtures.as_array().expect("fixtures").iter().zip(expected).enumerate()
+        {
+            assert_eq!(
+                rust_brief_shows(fixture),
+                expected_show,
+                "fixture {index} disagrees: {fixture}"
+            );
+        }
+    }
+
+    /// The Python renderer's show/silent decision for each fixture, via the repo's own
+    /// session_gap module (the same entry point the retiring pytest drives).
+    fn python_brief_decisions(fixtures: &serde_json::Value) -> Vec<bool> {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../src")
+            .canonicalize()
+            .expect("python package root");
+        let script = format!(
+            "import json,sys\nsys.path.insert(0,{src:?})\nfrom estelle.serve.session_gap import Change, returning_brief\nfs=json.load(sys.stdin)\nout=[]\nfor f in fs:\n    raw=f['changes']\n    changes=None if raw is None else [Change(**i) for i in raw]\n    b=returning_brief(f['now'],f['last_seen'],my_files=f['my_files'],changes=changes,tz_name=f['tz'])\n    out.append(b.show)\nprint(json.dumps(out))"
+        );
+        let mut child = Command::new("python3")
+            .args(["-c", &script])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("python3 is required for the brief contract");
+        child
+            .stdin
+            .as_mut()
+            .expect("Python stdin")
+            .write_all(serde_json::to_string(fixtures).expect("fixture JSON").as_bytes())
+            .expect("write fixture");
+        let output = child.wait_with_output().expect("Python brief result");
+        assert!(
+            output.status.success(),
+            "Python brief failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).expect("Python brief JSON")
+    }
+
+    /// The Rust renderer's show/silent decision for one fixture, expressed in build_context's
+    /// own inputs — the checkpoint, the parsed gap, and the git evidence. The collector layer
+    /// (parse_log) drops a change whose timestamp will not parse, so this adapter drops it too:
+    /// untimed is not evidence in either implementation.
+    fn rust_brief_shows(fixture: &serde_json::Value) -> bool {
+        let now = DateTime::parse_from_rfc3339(fixture["now"].as_str().expect("now"))
+            .expect("fixture now parses")
+            .with_timezone(&Utc);
+        let last_seen_raw = fixture["last_seen"].as_str().expect("last_seen");
+        if last_seen_raw.is_empty() {
+            return false; // a first session has no checkpoint at all
+        }
+        let Ok(last_seen) = DateTime::parse_from_rfc3339(last_seen_raw) else {
+            return false; // the gap is unknown
+        };
+        let last_seen = last_seen.with_timezone(&Utc);
+        let gap = now.signed_duration_since(last_seen).num_seconds();
+        if gap < MIN_GAP_SECONDS {
+            return false;
+        }
+        let evidence = match &fixture["changes"] {
+            serde_json::Value::Null => GitEvidence::Unknown,
+            serde_json::Value::Array(items) => GitEvidence::Known(
+                items
+                    .iter()
+                    .filter_map(|item| {
+                        let at = DateTime::parse_from_rfc3339(item["at"].as_str()?)
+                            .ok()?
+                            .with_timezone(&Utc);
+                        Some(GitChange {
+                            at,
+                            actor: item["actor"].as_str().unwrap_or_default().to_string(),
+                            path: item["path"].as_str().unwrap_or_default().to_string(),
+                            what: item["what"].as_str().unwrap_or_default().to_string(),
+                        })
+                    })
+                    .collect(),
+            ),
+            other => panic!("fixture changes must be null or a list: {other}"),
+        };
+        let checkpoint = SessionCheckpoint {
+            cwd: String::new(),
+            at: last_seen_raw.to_string(),
+            head: String::new(),
+            files: fixture["my_files"]
+                .as_array()
+                .expect("my_files")
+                .iter()
+                .filter_map(|file| file.as_str().map(str::to_string))
+                .collect(),
+        };
+        !build_context(checkpoint, last_seen, now, gap, evidence).is_empty()
+    }
 }
