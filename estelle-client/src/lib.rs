@@ -28,6 +28,11 @@ use zeroize::Zeroizing;
 pub const DEFAULT_BASE_URL: &str = "https://api.fatelabs.ca/";
 pub const MINIMUM_TIMEOUT: Duration = Duration::from_secs(120);
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);
+/// Runtime contract understood by this client. The server advertises its accepted minimum/current range
+/// on every response; enforcement deliberately waits for the product's compatibility policy decision.
+pub const CLIENT_PROTOCOL_VERSION: u64 = 1;
+/// Cross-repo Python↔Rust hook fixture/schema contract understood by this binary.
+pub const HOOK_CONTRACT_VERSION: u64 = 1;
 
 #[derive(Clone)]
 pub struct ApiKey(Zeroizing<String>);
@@ -315,7 +320,13 @@ impl Client {
         let mut request = self
             .http
             .request(method, url)
-            .bearer_auth(self.api_key.expose());
+            .bearer_auth(self.api_key.expose())
+            .header(
+                "X-Estelle-Client-Protocol",
+                CLIENT_PROTOCOL_VERSION.to_string(),
+            )
+            .header("X-Estelle-Hook-Contract", HOOK_CONTRACT_VERSION.to_string())
+            .header("X-Estelle-Client-Version", env!("CARGO_PKG_VERSION"));
         if let Some(query) = query {
             let pairs = query_pairs(query)?;
             request = request.query(&pairs);

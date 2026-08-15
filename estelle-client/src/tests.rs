@@ -283,6 +283,12 @@ async fn chat_is_openai_shaped_and_repo_is_only_in_the_header() {
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
         .and(header("authorization", "Bearer estelle_live_test-only"))
+        .and(header("x-estelle-client-protocol", "1"))
+        .and(header("x-estelle-hook-contract", "1"))
+        .and(header(
+            "x-estelle-client-version",
+            env!("CARGO_PKG_VERSION"),
+        ))
         .and(header("x-estelle-repo", "fatelabs/estelle"))
         .and(body_json(serde_json::json!({
             "model": "estelle",
@@ -312,6 +318,16 @@ async fn chat_is_openai_shaped_and_repo_is_only_in_the_header() {
         .await
         .expect("chat response");
     assert_eq!(response.answer(), Some("in auth.rs"));
+}
+
+#[test]
+fn compatibility_versions_are_positive_and_independent_of_the_release_semver() {
+    assert!(CLIENT_PROTOCOL_VERSION > 0);
+    assert!(HOOK_CONTRACT_VERSION > 0);
+    assert_ne!(
+        CLIENT_PROTOCOL_VERSION.to_string(),
+        env!("CARGO_PKG_VERSION")
+    );
 }
 
 #[tokio::test]
