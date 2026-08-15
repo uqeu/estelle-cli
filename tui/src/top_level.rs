@@ -2225,8 +2225,8 @@ async fn github_link(api: &Api) -> Result<Vec<String>, String> {
         .get("authorize_url")
         .and_then(Value::as_str)
         .filter(|url| !url.trim().is_empty())
-        .ok_or_else(|| "the server returned no GitHub authorization URL".to_string())?
-        .to_string();
+        .ok_or_else(|| "the server returned no GitHub authorization URL".to_string())?;
+    let authorize_url = validated_github_authorize_url(authorize_url, &redirect_uri)?;
 
     emit_lines(&[
         "Authorize Estelle on GitHub (opening your browser).".to_string(),
@@ -2260,6 +2260,47 @@ async fn github_link(api: &Api) -> Result<Vec<String>, String> {
 
 fn github_redirect_uri(port: u16) -> String {
     format!("http://127.0.0.1:{port}{GITHUB_CALLBACK_PATH}")
+}
+
+fn validated_github_authorize_url(raw: &str, expected_redirect: &str) -> Result<String, String> {
+    let parsed = url::Url::parse(raw.trim())
+        .map_err(|_| "the server returned an invalid GitHub authorization URL".to_string())?;
+    if parsed.scheme() != "https"
+        || parsed.host_str() != Some("github.com")
+        || parsed.port().is_some()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.path() != "/login/oauth/authorize"
+        || parsed.fragment().is_some()
+    {
+        return Err(
+            "refusing to open a GitHub authorization URL outside https://github.com/login/oauth/authorize"
+                .to_string(),
+        );
+    }
+    let mut client_ids = Vec::new();
+    let mut redirects = Vec::new();
+    let mut states = Vec::new();
+    for (key, value) in parsed.query_pairs() {
+        match key.as_ref() {
+            "client_id" => client_ids.push(value.into_owned()),
+            "redirect_uri" => redirects.push(value.into_owned()),
+            "state" => states.push(value.into_owned()),
+            _ => {}
+        }
+    }
+    if client_ids.len() != 1 || client_ids[0].trim().is_empty() {
+        return Err("the GitHub authorization URL needs exactly one client_id".to_string());
+    }
+    if states.len() != 1 || states[0].trim().is_empty() {
+        return Err("the GitHub authorization URL needs exactly one state".to_string());
+    }
+    if redirects.as_slice() != [expected_redirect] {
+        return Err(
+            "the GitHub authorization URL changed the requested loopback redirect".to_string(),
+        );
+    }
+    Ok(parsed.to_string())
 }
 
 fn bind_github_listener(port: u16) -> Result<TcpListener, String> {
@@ -4342,6 +4383,43 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn github_authorize_url_is_exactly_github_and_keeps_the_requested_redirect() {
+        let redirect = github_redirect_uri(GITHUB_LOOPBACK_PORT);
+        let good = format!(
+            "https://github.com/login/oauth/authorize?client_id=iv1.test&redirect_uri={}&state=signed",
+            urlencoding::encode(&redirect)
+        );
+        assert_eq!(
+            validated_github_authorize_url(&good, &redirect),
+            Ok(good.clone())
+        );
+
+        for hostile in [
+            good.replacen("https://", "http://", 1),
+            good.replacen("github.com", "github.com.attacker.invalid", 1),
+            good.replacen("github.com", "user@github.com", 1),
+            good.replacen("github.com", "github.com:444", 1),
+            good.replacen("/login/oauth/authorize", "/attacker", 1),
+            format!("{good}#redirect=https://attacker.invalid"),
+            good.replacen("state=signed", "state=", 1),
+            good.replacen("state=signed", "state=%20", 1),
+            good.replacen("client_id=iv1.test&", "", 1),
+            good.replacen("client_id=iv1.test", "client_id=%20", 1),
+            good.replacen("state=signed", "state=signed&state=other", 1),
+            good.replacen(
+                urlencoding::encode(&redirect).as_ref(),
+                "http%3A%2F%2F127.0.0.1%3A9999%2Fgithub%2Fcallback",
+                1,
+            ),
+        ] {
+            assert!(
+                validated_github_authorize_url(&hostile, &redirect).is_err(),
+                "hostile browser destination passed: {hostile}"
+            );
+        }
     }
 
     #[test]
