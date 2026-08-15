@@ -3193,10 +3193,17 @@ mod tests {
     use super::*;
     use clap::Parser;
 
-    /// The shared driver: run `script` under python3 with `payload` on stdin, return its stdout
-    /// as JSON. Every contract test below feeds the SAME fixture to the Python hook and to the
-    /// Rust port and fails on any divergence — this is what keeps the contract alive after the
-    /// JS CLI retires and the pair becomes Python ↔ Rust.
+    /// The public CLI repository deliberately does not contain the separate server repository.
+    /// Every parity test below therefore carries a Python-produced oracle and always checks Rust
+    /// against it. In the source-of-truth parent checkout, the live Python hook must additionally
+    /// reproduce the recorded value; absence is allowed, divergence is not.
+    fn parent_python_hook() -> Option<PathBuf> {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../scripts/hooks/estelle_hook.py")
+            .canonicalize()
+            .ok()
+    }
+
     fn python_script(script: String, payload: &Value) -> Value {
         let mut child = ProcessCommand::new("python3")
             .args(["-c", &script])
@@ -3224,15 +3231,18 @@ mod tests {
         serde_json::from_slice(&output.stdout).expect("Python hook JSON")
     }
 
-    fn python_hook(function: &str, payload: &Value) -> Value {
-        let hook = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../scripts/hooks/estelle_hook.py")
-            .canonicalize()
-            .expect("Python hook source");
+    fn live_python_hook(function: &str, payload: &Value) -> Option<Value> {
+        let hook = parent_python_hook()?;
         let script = format!(
             "import importlib.util,json,sys\np={hook:?}\ns=importlib.util.spec_from_file_location('estelle_hook_contract',p)\nm=importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\nv=json.load(sys.stdin)\nprint(json.dumps(m.{function}(*v) if isinstance(v,list) else m.{function}(v),separators=(',',':')))"
         );
-        python_script(script, payload)
+        Some(python_script(script, payload))
+    }
+
+    fn assert_live_python_hook(function: &str, payload: &Value, recorded: &Value) {
+        if let Some(live) = live_python_hook(function, payload) {
+            assert_eq!(live, *recorded, "recorded {function} oracle drifted");
+        }
     }
 
     #[test]
@@ -3253,18 +3263,41 @@ mod tests {
             json!({"ungrounded": [null, "Foo"]}),
             json!({"unverified_reason": "surface too thin", "ungrounded": ["x"]}),
         ];
-        for report in reports {
+        let recorded = [
+            ("unreachable", "unreachable"),
+            ("unreachable", "could not verify (no provider key)"),
+            ("unreachable", "could not verify (refused)"),
+            ("unreachable", "could not verify (refused)"),
+            ("unverified", "the gate did not certify and gave no reason"),
+            ("unverified", "grounding surface too thin"),
+            ("clean", ""),
+            (
+                "unverified",
+                "the gate did not certify — this repo has not been swept",
+            ),
+            ("unverified", "the gate did not certify and gave no reason"),
+            ("flagged", "not defined in this repo: frobnicate, widgetise"),
+            ("flagged", "not defined in this repo: frobnicate"),
+            ("flagged", "not defined in this repo: 5"),
+            ("flagged", "not defined in this repo: null, Foo"),
+            ("unverified", "surface too thin"),
+        ];
+        assert_eq!(reports.len(), recorded.len());
+        for (report, (expected_kind, expected_detail)) in reports.into_iter().zip(recorded) {
             let actual = ground_verdict((report != Value::Null).then_some(&report));
-            let expected = python_hook("ground_verdict", &report);
-            let expected = expected.as_array().expect("Python verdict tuple");
             let kind = match actual.kind {
                 GroundKind::Unreachable => "unreachable",
                 GroundKind::Unverified => "unverified",
                 GroundKind::Flagged => "flagged",
                 GroundKind::Clean => "clean",
             };
-            assert_eq!(Value::String(kind.to_string()), expected[0], "{report}");
-            assert_eq!(Value::String(actual.detail), expected[1], "{report}");
+            assert_eq!(kind, expected_kind, "{report}");
+            assert_eq!(actual.detail, expected_detail, "{report}");
+            assert_live_python_hook(
+                "ground_verdict",
+                &report,
+                &json!([expected_kind, expected_detail]),
+            );
         }
     }
 
@@ -3309,14 +3342,43 @@ mod tests {
 
     #[test]
     fn rust_guard_matches_the_python_hook_contract() {
-        for command in GUARD_COMMANDS {
-            let expected = python_hook("dangerous_command", &json!(command));
+        let recorded = [
+            "recursive force-delete of a critical path",
+            "recursive force-delete of a critical path",
+            "recursive force-delete of a critical path",
+            "recursive force-delete of a critical path",
+            "recursive force-delete of a critical path",
+            "recursive force-delete of a critical path",
+            "recursive force-delete of a critical path",
+            "a fork bomb",
+            "piping a download straight into a shell",
+            "piping a download straight into a shell",
+            "piping a download straight into a shell",
+            "writing directly to a disk device",
+            "overwriting a disk device",
+            "a force-push to the main branch",
+            "making a broad path world-writable",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+        ];
+        assert_eq!(GUARD_COMMANDS.len(), recorded.len());
+        for (command, expected) in GUARD_COMMANDS.iter().zip(recorded) {
             let actual = crate::hook_guard::dangerous_command(command).unwrap_or_default();
-            assert_eq!(
-                Value::String(actual.to_string()),
-                expected,
-                "the hooks disagree on {command:?}"
-            );
+            assert_eq!(actual, expected, "the hooks disagree on {command:?}");
+            assert_live_python_hook("dangerous_command", &json!(command), &json!(expected));
         }
         // The paired positive: agreement on "" for every input would be perfect agreement and a
         // completely broken guard.
@@ -3363,38 +3425,73 @@ mod tests {
             json!({"tool_name": "Bash", "tool_response": {"stdout": "ok 1 - fine\n".repeat(5)}}),
             json!({"tool_name": "Bash", "tool_response": run}),
         ];
-        for payload in payloads {
-            let expected = python_hook("distil_output", &payload);
+        let first_text = "============================= test session starts ==============================\n\
+collected 401 items\n\
+tests/test_serve.py::test_upload_batches FAILED                          [100%]\n\
+=================================== FAILURES ===================================\n\
+>       assert resp.status == 200\n\
+E       AssertionError: assert 413 == 200\n\
+tests/test_serve.py:88: AssertionError\n\
+=========================== 1 failed, 400 passed ===============================";
+        let repeated_text = "retrying connection\nretrying connection\nretrying connection\n    ... (previous line repeated 397 more times)\n";
+        let recorded = [
+            Some((first_text, 400_u64, 0_u64, 0.9798118125193268_f64)),
+            Some((repeated_text, 0, 397, 0.9865)),
+            None,
+            None,
+            None,
+            Some((first_text, 400, 0, 0.9798118125193268)),
+        ];
+        assert_eq!(payloads.len(), recorded.len());
+        for (payload, expected) in payloads.into_iter().zip(recorded) {
             let actual = crate::hook_distil::distil(
                 payload["tool_name"].as_str().expect("tool name"),
                 &payload["tool_response"],
             );
-            if expected.is_null() {
-                assert!(
-                    actual.is_none(),
-                    "Python refused; Rust distilled: {payload}"
-                );
-                continue;
+            let recorded_value = match expected {
+                Some((text, dropped, collapsed, saving)) => json!({
+                    "text": text,
+                    "dropped": dropped,
+                    "collapsed": collapsed,
+                    "saving": saving,
+                }),
+                None => Value::Null,
+            };
+            if let Some(live) = live_python_hook("distil_output", &payload) {
+                let live = if live.is_null() {
+                    Value::Null
+                } else {
+                    json!({
+                        "text": live["text"],
+                        "dropped": live["dropped"],
+                        "collapsed": live["collapsed"],
+                        "saving": live["saving"],
+                    })
+                };
+                assert_eq!(live, recorded_value, "recorded distil oracle drifted");
             }
-            let actual =
-                actual.unwrap_or_else(|| panic!("Python distilled; Rust refused: {payload}"));
-            assert_eq!(actual.text, expected["text"].as_str().expect("text"));
-            assert_eq!(
-                actual.dropped as u64,
-                expected["dropped"].as_u64().expect("dropped")
-            );
-            assert_eq!(
-                actual.collapsed as u64,
-                expected["collapsed"].as_u64().expect("collapsed")
-            );
-            assert_eq!(
-                (actual.saving * 1e6).round() / 1e6,
-                (expected["saving"].as_f64().expect("saving") * 1e6).round() / 1e6
-            );
+            match expected {
+                Some((text, dropped, collapsed, saving)) => {
+                    let actual = actual.unwrap_or_else(|| {
+                        panic!("recorded oracle distilled; Rust refused: {payload}")
+                    });
+                    assert_eq!(actual.text, text);
+                    assert_eq!(actual.dropped as u64, dropped);
+                    assert_eq!(actual.collapsed as u64, collapsed);
+                    assert_eq!(
+                        (actual.saving * 1e6).round() / 1e6,
+                        (saving * 1e6).round() / 1e6
+                    );
+                }
+                None => assert!(
+                    actual.is_none(),
+                    "recorded oracle refused; Rust distilled: {payload}"
+                ),
+            }
         }
 
         // The parametrized line-classification list from TestDistilAgrees, verbatim.
-        for line in [
+        let lines = [
             "tests/x.py::test_y PASSED",
             "ok 12 - uploads a batch",
             "--- PASS: TestUpload (0.10s)",
@@ -3407,22 +3504,42 @@ mod tests {
             "ok 12 - the retry failed and was not caught",
             "an ordinary line",
             "",
-        ] {
-            let expected = python_hook("noise_kind", &json!(line));
+        ];
+        let recorded_noise = [
+            "pytest pass",
+            "tap pass",
+            "go pass",
+            "cargo pass",
+            "pip already satisfied",
+            "step progress",
+            "jest pass",
+            "",
+            "",
+            "",
+            "",
+            "",
+        ];
+        assert_eq!(lines.len(), recorded_noise.len());
+        for (line, expected) in lines.into_iter().zip(recorded_noise) {
             let actual = crate::hook_distil::noise_kind(line).unwrap_or_default();
-            assert_eq!(
-                Value::String(actual.to_string()),
-                expected,
-                "disagree on {line:?}"
-            );
+            assert_eq!(actual, expected, "disagree on {line:?}");
+            assert_live_python_hook("noise_kind", &json!(line), &json!(expected));
         }
 
         // The receipt text is identical, with and without a spill path.
-        for spill in ["/tmp/x.log", ""] {
-            let expected = python_hook(
-                "distil_receipt",
-                &json!([{"dropped": 400, "collapsed": 2, "saving": 0.93}, spill]),
-            );
+        let receipt_cases = [
+            (
+                "/tmp/x.log",
+                "[Estelle curated this tool output: 400 noise lines removed, 2 repeated lines collapsed, 93% smaller. Nothing matching an error, failure, warning or traceback was removed. Full untouched output: /tmp/x.log]",
+            ),
+            (
+                "",
+                "[Estelle curated this tool output: 400 noise lines removed, 2 repeated lines collapsed, 93% smaller. Nothing matching an error, failure, warning or traceback was removed.]",
+            ),
+        ];
+        for (spill, expected) in receipt_cases {
+            let payload = json!([{"dropped": 400, "collapsed": 2, "saving": 0.93}, spill]);
+            assert_live_python_hook("distil_receipt", &payload, &json!(expected));
             let result = crate::hook_distil::Distilled {
                 text: String::new(),
                 original: String::new(),
@@ -3431,7 +3548,7 @@ mod tests {
                 saving: 0.93,
             };
             let actual = crate::hook_distil::receipt(&result, (!spill.is_empty()).then_some(spill));
-            assert_eq!(Value::String(actual), expected);
+            assert_eq!(actual, expected);
         }
     }
 
@@ -3455,16 +3572,27 @@ mod tests {
 
     #[test]
     fn rust_repo_name_matches_the_python_hook_contract() {
-        for url in REMOTE_URLS {
-            let expected = python_hook("repo_from_remote_url", &json!(url));
+        let recorded = [
+            "uqeu/estelle",
+            "uqeu/estelle",
+            "uqeu/estelle",
+            "uqeu/estelle",
+            "uqeu/estelle",
+            "sub/name",
+            "team/repo",
+            "uqeu/estelle",
+            "",
+            "",
+            "",
+            "github.com/onlyowner",
+        ];
+        assert_eq!(REMOTE_URLS.len(), recorded.len());
+        for (url, expected) in REMOTE_URLS.iter().zip(recorded) {
             let actual = estelle_client::repo_from_remote_url(url)
                 .map(|repo| repo.as_str().to_string())
                 .unwrap_or_default();
-            assert_eq!(
-                Value::String(actual),
-                expected,
-                "the hooks disagree on {url:?}"
-            );
+            assert_eq!(actual, expected, "the hooks disagree on {url:?}");
+            assert_live_python_hook("repo_from_remote_url", &json!(url), &json!(expected));
         }
         // The paired positive: both must derive a real name, not agree on "".
         assert_eq!(
@@ -3476,12 +3604,15 @@ mod tests {
         let checkout = tempfile::tempdir().expect("checkout");
         let root = checkout.path().join("my-project");
         fs::create_dir_all(&root).expect("checkout dir");
-        let expected = python_hook("repo_name_for", &json!(root.to_string_lossy()));
+        assert_live_python_hook(
+            "repo_name_for",
+            &json!(root.to_string_lossy()),
+            &json!("my-project"),
+        );
         let actual = estelle_client::RepoResolver::new(None, &root)
             .resolve()
             .map(|repo| repo.as_str().to_string())
             .unwrap_or_default();
-        assert_eq!(Value::String(actual.clone()), expected);
         assert_eq!(actual, "my-project");
     }
 
@@ -3493,24 +3624,24 @@ mod tests {
     #[tokio::test]
     async fn rust_ground_request_matches_the_python_hook_contract() {
         let code = "svc.ghost_api()\n";
-        let hook = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../scripts/hooks/estelle_hook.py")
-            .canonicalize()
-            .expect("Python hook source");
-        let seen = python_script(
-            format!(
-                "import importlib.util,json,sys\np={hook:?}\ns=importlib.util.spec_from_file_location('estelle_hook_contract',p)\nm=importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\ncode=json.load(sys.stdin)\nseen={{}}\ndef capture(path,payload):\n    seen['path']=path\n    seen['payload']=payload\n    return {{'grounded': True}}\nm._post=capture\nm.ground({{'tool_input': {{'file_path': 'x.py', 'content': code}}}})\nprint(json.dumps(seen))"
-            ),
-            &json!(code),
-        );
-        assert_eq!(seen["path"], json!("/verify"));
-        assert_eq!(seen["payload"]["answer"], json!(code));
-        assert!(
-            seen["payload"]["repo"]
-                .as_str()
-                .is_some_and(|repo| !repo.is_empty()),
-            "the PYTHON hook sent no repo — the gate cannot be scoped"
-        );
+        let live_seen = parent_python_hook().map(|hook| {
+            python_script(
+                format!(
+                    "import importlib.util,json,sys\np={hook:?}\ns=importlib.util.spec_from_file_location('estelle_hook_contract',p)\nm=importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\ncode=json.load(sys.stdin)\nseen={{}}\ndef capture(path,payload):\n    seen['path']=path\n    seen['payload']=payload\n    return {{'grounded': True}}\nm._post=capture\nm.ground({{'tool_input': {{'file_path': 'x.py', 'content': code}}}})\nprint(json.dumps(seen))"
+                ),
+                &json!(code),
+            )
+        });
+        if let Some(seen) = &live_seen {
+            assert_eq!(seen["path"], json!("/verify"));
+            assert_eq!(seen["payload"]["answer"], json!(code));
+            assert!(
+                seen["payload"]["repo"]
+                    .as_str()
+                    .is_some_and(|repo| !repo.is_empty()),
+                "the PYTHON hook sent no repo — the gate cannot be scoped"
+            );
+        }
 
         let server = wiremock::MockServer::start().await;
         wiremock::Mock::given(wiremock::matchers::method("POST"))
@@ -3553,11 +3684,20 @@ mod tests {
             "the RUST hook sent no repo — E-043's defect"
         );
         assert_eq!(body["answer"], json!(code));
-        assert_eq!(
-            body, seen["payload"],
-            "the hooks ask different questions: python={} rust={body}",
-            seen["payload"]
-        );
+        let fields: BTreeSet<&str> = body
+            .as_object()
+            .expect("verify body")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(fields, BTreeSet::from(["answer", "repo"]));
+        if let Some(seen) = live_seen {
+            assert_eq!(
+                body, seen["payload"],
+                "the hooks ask different questions: python={} rust={body}",
+                seen["payload"]
+            );
+        }
     }
 
     #[test]
@@ -3582,10 +3722,24 @@ mod tests {
             (".py", "print(1)".to_string()),
             ("dir/a.py", "print(1)".to_string()),
         ];
-        for (path, content) in fixtures {
+        let recorded = [
+            "",
+            "",
+            "not an indexable file type",
+            "not an indexable file type",
+            "contains something shaped like a live credential (an sk- API key at line 1)",
+            "contains something shaped like a live credential (a Stripe live key at line 1)",
+            "contains something shaped like a live credential (an AWS access key at line 1)",
+            "contains something shaped like a live credential (a private key block at line 1)",
+            "",
+            "not an indexable file type",
+            "",
+        ];
+        assert_eq!(fixtures.len(), recorded.len());
+        for ((path, content), expected) in fixtures.into_iter().zip(recorded) {
             let actual = hook_sync_refusal(path, &content).unwrap_or_default();
-            let expected = python_hook("may_sync", &json!([path, content]));
-            assert_eq!(Value::String(actual.to_string()), expected, "{path}");
+            assert_eq!(actual, expected, "{path}");
+            assert_live_python_hook("may_sync", &json!([path, content]), &json!(expected));
         }
     }
 

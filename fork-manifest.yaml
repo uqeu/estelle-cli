@@ -50,8 +50,8 @@
   "reviewed_changes_after_audited_commit": [
     {
       "path": "tui/src/top_level.rs",
-      "blob": "b037e217276418f3c48fe8c364d40665449ae62e",
-      "reason": "N-01 GitHub browser handoff now enforces exact provider origin, path, client, state, and loopback redirect"
+      "blob": "6557dc459f460ab6bf8da4ef6ec0a3ef09ab4b65",
+      "reason": "N-01 GitHub handoff remains origin-bound; hook parity now carries Python-produced standalone release oracles with live parent comparison"
     },
     {
       "path": ".github/workflows/release.yml",

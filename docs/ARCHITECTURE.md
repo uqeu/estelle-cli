@@ -6,11 +6,11 @@ copy: a behaviour change and its architecture record must be reviewable in one C
 
 **TODAY — source probe, 2026-08-15:** `cargo build --locked --release --package estelle-tui --bin
 estelle` produced `estelle 0.2.4` on macOS arm64; the locked client/TUI suite passed locally with an
-8 MiB test-thread stack. Public workflow run `31911232894` then refused the release because a parity test
-required the parent Python checkout. The parity repair recorded with this marker replaced that environment
-dependency with a Python-produced release oracle while retaining the live comparison when the parent source
-exists. This is
-source and gate evidence, not a claim that a public artifact exists. Public-artifact evidence belongs in
+8 MiB test-thread stack. Public workflow runs `31911232894` and `31912554854` then refused the release
+because seven parity tests required the parent Python checkout. The repairs recorded with this marker make
+every cross-repository contract carry a Python-produced release oracle while retaining live comparison when
+the parent source exists. This is source and gate evidence, not a claim that a public artifact exists.
+Public-artifact evidence belongs in
 [`SCORECARD.md`](SCORECARD.md) only after the customer URL can be read back.
 
 ## System boundary
@@ -97,11 +97,12 @@ not permission to destroy a stored credential.
 ## Cross-repository contracts
 
 The Rust hook implementation must agree with the parent Python implementation on guard, distil, returning
-brief, repository naming, and verify-request behavior. Most contracts run live against the parent source in
-the source-of-truth checkout. A GitHub release checkout intentionally lacks that separate repository, so the
-returning-brief test carries the 19 Python-produced SHOW/SILENT decisions as a non-optional oracle and also
-runs the live Python comparison whenever that source is present. A missing parent checkout can no longer
-turn a release test into an environment failure or a vacuous pass.
+brief, repository naming, sync refusal, grounding verdict, and verify-request behavior. A GitHub release
+checkout intentionally lacks that separate repository, so each contract carries explicit Python-produced
+outputs as a non-optional oracle. The returning brief records 19 SHOW/SILENT decisions; the remaining tests
+record every named fixture's typed result, exact text, request field set, or refusal. In the source-of-truth
+checkout the live Python implementation must also reproduce those recorded outputs. A missing parent checkout
+can no longer turn a release test into an environment failure or a vacuous pass.
 
 The server owns memory, graph, gate, entitlement, and account facts. The CLI renders typed responses and
 must preserve absent/unknown states; it does not infer a clean verdict from a missing field, elapsed time, or
