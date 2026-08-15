@@ -2529,7 +2529,10 @@ async fn answer_question(
         && (!working_files.is_empty() || session_context.is_some());
     let (request, working_paths) = if attach_context {
         let (payload, paths) = working_memory_payload(&working_files, session_context.as_deref());
-        (DeepSearchRequest::new(&question).with_working_memory(payload), paths)
+        (
+            DeepSearchRequest::new(&question).with_working_memory(payload),
+            paths,
+        )
     } else {
         (DeepSearchRequest::new(&question), Vec::new())
     };
@@ -2550,14 +2553,80 @@ async fn answer_question(
 fn is_conversational_turn(message: &str) -> bool {
     const MAX_SOCIAL_TOKENS: usize = 8;
     const SOCIAL_TOKENS: &[&str] = &[
-        "hi", "hii", "hey", "heya", "hello", "yo", "gm", "morning", "afternoon", "evening",
-        "good", "thanks", "thank", "thx", "ty", "tysm", "cheers", "appreciated", "appreciate",
-        "much", "ok", "okay", "k", "kk", "cool", "nice", "great", "perfect", "awesome",
-        "excellent", "lovely", "got", "it", "makes", "sense", "understood", "gotcha", "right",
-        "sweet", "brilliant", "helpful", "that", "thats", "very", "yes", "yep", "yeah", "yup",
-        "no", "nope", "nah", "sure", "please", "bye", "goodbye", "see", "you", "later", "cya",
-        "night", "sorry", "apologies", "my", "bad", "oops", "i", "im", "am", "is", "was", "and",
-        "a", "the", "to",
+        "hi",
+        "hii",
+        "hey",
+        "heya",
+        "hello",
+        "yo",
+        "gm",
+        "morning",
+        "afternoon",
+        "evening",
+        "good",
+        "thanks",
+        "thank",
+        "thx",
+        "ty",
+        "tysm",
+        "cheers",
+        "appreciated",
+        "appreciate",
+        "much",
+        "ok",
+        "okay",
+        "k",
+        "kk",
+        "cool",
+        "nice",
+        "great",
+        "perfect",
+        "awesome",
+        "excellent",
+        "lovely",
+        "got",
+        "it",
+        "makes",
+        "sense",
+        "understood",
+        "gotcha",
+        "right",
+        "sweet",
+        "brilliant",
+        "helpful",
+        "that",
+        "thats",
+        "very",
+        "yes",
+        "yep",
+        "yeah",
+        "yup",
+        "no",
+        "nope",
+        "nah",
+        "sure",
+        "please",
+        "bye",
+        "goodbye",
+        "see",
+        "you",
+        "later",
+        "cya",
+        "night",
+        "sorry",
+        "apologies",
+        "my",
+        "bad",
+        "oops",
+        "i",
+        "im",
+        "am",
+        "is",
+        "was",
+        "and",
+        "a",
+        "the",
+        "to",
     ];
     if message.chars().any(|c| c.is_ascii_digit()) {
         return false;
@@ -2650,7 +2719,10 @@ async fn execute_remote_command(
     // An interactive skill continues over "messages" (skill_run.py conversation_messages):
     // the prior thread plus the new turn. Without it every follow-up restarts single-turn.
     if pending.name == "skill:"
-        && let Some(thread) = pending.skill_thread.as_ref().filter(|thread| !thread.is_empty())
+        && let Some(thread) = pending
+            .skill_thread
+            .as_ref()
+            .filter(|thread| !thread.is_empty())
         && let Some(body) = request.body.as_mut()
     {
         let mut messages = thread
@@ -7258,7 +7330,10 @@ mod tests {
             rendered.contains("1m 33s"),
             "the wait did not render as compact elapsed time\n{rendered}"
         );
-        assert!(!rendered.contains("93s"), "raw seconds survived\n{rendered}");
+        assert!(
+            !rendered.contains("93s"),
+            "raw seconds survived\n{rendered}"
+        );
     }
 
     #[test]
@@ -7731,10 +7806,7 @@ mod tests {
         // the client never authors instructions. `question` is BYTE-IDENTICAL to what the user
         // typed — a contains-check would pass on a wrapper, so this is equality — and working
         // memory rides a separate top-level key as data, never smuggled through prose.
-        let requests = server
-            .received_requests()
-            .await
-            .expect("request recording");
+        let requests = server.received_requests().await.expect("request recording");
         assert_eq!(
             requests.len(),
             1,
@@ -7759,8 +7831,7 @@ mod tests {
             "working memory must still reach the server as data"
         );
         assert!(
-            working_memory.get("instruction").is_none()
-                && working_memory.get("prompt").is_none(),
+            working_memory.get("instruction").is_none() && working_memory.get("prompt").is_none(),
             "the working-memory payload carries data, never instructions"
         );
 
@@ -7773,7 +7844,13 @@ mod tests {
             cancel: CancellationToken::new(),
         });
         let (tx, _rx) = mpsc::unbounded_channel();
-        app.handle_ui_event(UiEvent::Answer { id: 9, result: Ok(reply) }, &tx);
+        app.handle_ui_event(
+            UiEvent::Answer {
+                id: 9,
+                result: Ok(reply),
+            },
+            &tx,
+        );
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 30);
         assert!(rendered.contains("TEAM SENTINEL ANSWER"));
         assert!(!rendered.contains("Working memory ("));
@@ -7854,10 +7931,7 @@ mod tests {
         .await
         .expect("second run");
 
-        let requests = server
-            .received_requests()
-            .await
-            .expect("request recording");
+        let requests = server.received_requests().await.expect("request recording");
         assert_eq!(requests.len(), 2);
         let first_body: Value = serde_json::from_slice(&requests[0].body).expect("first body");
         assert!(
@@ -7937,10 +8011,7 @@ mod tests {
         assert!(reply.working_paths.is_empty());
         // A conversational turn uploads the question ALONE, so the server's is_conversational
         // fast path can fire; 80 KB of working memory would defeat it. One request, no chat leg.
-        let requests = server
-            .received_requests()
-            .await
-            .expect("request recording");
+        let requests = server.received_requests().await.expect("request recording");
         assert_eq!(
             requests.len(),
             1,
@@ -7964,7 +8035,9 @@ mod tests {
         assert!(!is_conversational_turn("how does the auth flow work"));
         assert!(!is_conversational_turn("ok 500"));
         assert!(!is_conversational_turn("hi what does charge_card do"));
-        assert!(!is_conversational_turn("yes yes yes yes yes yes yes yes yes"));
+        assert!(!is_conversational_turn(
+            "yes yes yes yes yes yes yes yes yes"
+        ));
     }
 
     #[tokio::test]
@@ -8686,10 +8759,7 @@ mod tests {
         .await
         .expect("answer");
 
-        let requests = server
-            .received_requests()
-            .await
-            .expect("request recording");
+        let requests = server.received_requests().await.expect("request recording");
         assert_eq!(requests.len(), 1);
         let body: Value = serde_json::from_slice(&requests[0].body).expect("json body");
         assert_eq!(
@@ -8698,15 +8768,14 @@ mod tests {
             "the pasted path text must go verbatim, nothing more"
         );
         let raw = String::from_utf8_lossy(&requests[0].body);
-        let keys = body
+        let key_count = body
             .as_object()
             .expect("body object")
             .keys()
             .map(String::as_str)
-            .collect::<Vec<_>>();
+            .count();
         assert_eq!(
-            keys.len(),
-            2,
+            key_count, 2,
             "only question and repo may ride the request: {raw}"
         );
         assert!(body.get("repo").is_some());

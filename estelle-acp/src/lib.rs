@@ -56,7 +56,8 @@ fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 pub async fn run_stdio(http: Client) -> Result<(), agent_client_protocol::Error> {
     // The engine decision is made once, up front: a loadable ChatGPT credential means the
     // user's own plan does the thinking; anything else keeps the server path unchanged.
-    let engine = engine::Engine::resolve(engine::chatgpt_home(), engine::CHATGPT_BACKEND_BASE).await;
+    let engine =
+        engine::Engine::resolve(engine::chatgpt_home(), engine::CHATGPT_BACKEND_BASE).await;
     let state = State::new(http, engine);
     let new_session_state = state.clone();
     let prompt_state = state.clone();

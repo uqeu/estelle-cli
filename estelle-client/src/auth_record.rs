@@ -33,11 +33,7 @@ pub enum AuthRecord {
         refresh: String,
         access: String,
         expires: i64,
-        #[serde(
-            default,
-            rename = "accountId",
-            skip_serializing_if = "Option::is_none"
-        )]
+        #[serde(default, rename = "accountId", skip_serializing_if = "Option::is_none")]
         account_id: Option<String>,
         /// Self-hosted/enterprise issuer seam. No estelle deployment uses one today — the
         /// field exists so the MCP lane's discovery half has somewhere to put it.
@@ -75,9 +71,7 @@ impl TryFrom<&codex_login::AuthDotJson> for AuthRecord {
         let expires = codex_login::token_data::parse_jwt_expiration(&tokens.access_token)
             .ok()
             .flatten()
-            .ok_or_else(|| {
-                "the access token carries no parseable exp claim".to_string()
-            })?
+            .ok_or_else(|| "the access token carries no parseable exp claim".to_string())?
             .timestamp_millis();
         let account_id = tokens.account_id.clone().or_else(|| {
             codex_login::token_data::account_id_from_tokens(

@@ -1268,7 +1268,6 @@ impl BottomPane {
             .and_then(|view| view.active_tab_id())
     }
 
-
     /// Dismiss the newest matching view without disturbing views stacked above it.
     pub(crate) fn dismiss_view_by_id(&mut self, view_id: &'static str) -> bool {
         let Some(index) = self

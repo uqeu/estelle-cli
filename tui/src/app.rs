@@ -1163,64 +1163,64 @@ See the Codex keymap documentation for supported actions and examples."
         let mut waiting_for_initial_session_configured = wait_for_initial_session_configured;
 
         let exit_reason_result = loop {
-                let control = select! {
-                    Some(event) = app_event_rx.recv() => {
-                        match Box::pin(app.handle_event(tui, &mut app_server, event)).await {
+            let control = select! {
+                Some(event) = app_event_rx.recv() => {
+                    match Box::pin(app.handle_event(tui, &mut app_server, event)).await {
+                        Ok(control) => control,
+                        Err(err) => break Err(err),
+                    }
+                }
+                active = async {
+                    if let Some(rx) = app.active_thread_rx.as_mut() {
+                        rx.recv().await
+                    } else {
+                        None
+                    }
+                }, if App::should_handle_active_thread_events(
+                    waiting_for_initial_session_configured,
+                    app.active_thread_rx.is_some()
+                ) => {
+                    if let Some(event) = active {
+                        if let Err(err) = app.handle_active_thread_event(tui, &mut app_server, event).await {
+                            break Err(err);
+                        }
+                    } else {
+                        app.clear_active_thread().await;
+                    }
+                    AppRunControl::Continue
+                }
+                event = tui_events.next() => {
+                    if let Some(event) = event {
+                        match app.handle_tui_event(tui, &mut app_server, event).await {
                             Ok(control) => control,
                             Err(err) => break Err(err),
                         }
+                    } else {
+                        tracing::warn!("terminal input stream closed; shutting down active thread");
+                        app.handle_exit_mode(&mut app_server, ExitMode::ShutdownFirst).await
                     }
-                    active = async {
-                        if let Some(rx) = app.active_thread_rx.as_mut() {
-                            rx.recv().await
-                        } else {
-                            None
-                        }
-                    }, if App::should_handle_active_thread_events(
-                        waiting_for_initial_session_configured,
-                        app.active_thread_rx.is_some()
-                    ) => {
-                        if let Some(event) = active {
-                            if let Err(err) = app.handle_active_thread_event(tui, &mut app_server, event).await {
-                                break Err(err);
-                            }
-                        } else {
-                            app.clear_active_thread().await;
-                        }
-                        AppRunControl::Continue
-                    }
-                    event = tui_events.next() => {
-                        if let Some(event) = event {
-                            match app.handle_tui_event(tui, &mut app_server, event).await {
-                                Ok(control) => control,
-                                Err(err) => break Err(err),
-                            }
-                        } else {
-                            tracing::warn!("terminal input stream closed; shutting down active thread");
-                            app.handle_exit_mode(&mut app_server, ExitMode::ShutdownFirst).await
-                        }
-                    }
-                    app_server_event = app_server.next_event(), if listen_for_app_server_events => {
-                        match app_server_event {
-                            Some(event) => app.handle_app_server_event(&app_server, event).await,
-                            None => {
-                                listen_for_app_server_events = false;
-                                tracing::warn!("app-server event stream closed");
-                            }
-                        }
-                        AppRunControl::Continue
-                    }
-                };
-                if App::should_stop_waiting_for_initial_session(
-                    waiting_for_initial_session_configured,
-                    app.primary_thread_id,
-                ) {
-                    waiting_for_initial_session_configured = false;
                 }
-                match control {
-                    AppRunControl::Continue => {}
-                    AppRunControl::Exit(reason) => break Ok(reason),
+                app_server_event = app_server.next_event(), if listen_for_app_server_events => {
+                    match app_server_event {
+                        Some(event) => app.handle_app_server_event(&app_server, event).await,
+                        None => {
+                            listen_for_app_server_events = false;
+                            tracing::warn!("app-server event stream closed");
+                        }
+                    }
+                    AppRunControl::Continue
                 }
+            };
+            if App::should_stop_waiting_for_initial_session(
+                waiting_for_initial_session_configured,
+                app.primary_thread_id,
+            ) {
+                waiting_for_initial_session_configured = false;
+            }
+            match control {
+                AppRunControl::Continue => {}
+                AppRunControl::Exit(reason) => break Ok(reason),
+            }
         };
         if let Err(err) = app_server.shutdown().await {
             tracing::warn!(error = %err, "failed to shut down embedded app server");

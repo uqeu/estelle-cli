@@ -50,26 +50,68 @@ pub(crate) const SESSION_COMMANDS: [&str; 42] = [
 const SESSION_HELP: [(&str, &str); 42] = [
     ("help", "what you can do here"),
     ("init", "a grounded brief of this repo"),
-    ("graph", "the swept code graph; /graph nodes draws the dependency view"),
-    ("me", "your account: plan, balance, budget, provider, invites"),
-    ("keys", "your API keys — prefixes and expiry state, never raw keys"),
-    ("team", "your team: role, seats, members, invites; /team board ranks members"),
-    ("cards", "learned-knowledge cards with folder counts and provenance"),
-    ("entities", "every symbol the swept repo defines, with defining files"),
+    (
+        "graph",
+        "the swept code graph; /graph nodes draws the dependency view",
+    ),
+    (
+        "me",
+        "your account: plan, balance, budget, provider, invites",
+    ),
+    (
+        "keys",
+        "your API keys — prefixes and expiry state, never raw keys",
+    ),
+    (
+        "team",
+        "your team: role, seats, members, invites; /team board ranks members",
+    ),
+    (
+        "cards",
+        "learned-knowledge cards with folder counts and provenance",
+    ),
+    (
+        "entities",
+        "every symbol the swept repo defines, with defining files",
+    ),
     ("usage", "requests and tokens by day"),
-    ("activity", "calls and tokens by endpoint, with serving models"),
+    (
+        "activity",
+        "calls and tokens by endpoint, with serving models",
+    ),
     ("runs", "the team's agent-run history with grounding flags"),
-    ("outcomes", "how the team's applied changes fared: accept/revert/reject"),
+    (
+        "outcomes",
+        "how the team's applied changes fared: accept/revert/reject",
+    ),
     ("analytics", "your usage analytics derived from run history"),
-    ("audit", "the tamper-evident trail of privileged actions on your account"),
-    ("requests", "the billable engine-call stream with the log total"),
-    ("presence", "who's active, files in flight, pending handoffs"),
+    (
+        "audit",
+        "the tamper-evident trail of privileged actions on your account",
+    ),
+    (
+        "requests",
+        "the billable engine-call stream with the log total",
+    ),
+    (
+        "presence",
+        "who's active, files in flight, pending handoffs",
+    ),
     ("leaderboard", "skills ranked by verified grounded outcome"),
-    ("billing", "settings catalog with monthly pricing and current choices"),
+    (
+        "billing",
+        "settings catalog with monthly pricing and current choices",
+    ),
     ("marketplace", "the team's published plugins"),
-    ("automations", "stored gated agents — with their live/firing state"),
+    (
+        "automations",
+        "stored gated agents — with their live/firing state",
+    ),
     ("suites", "your custom suites with draft/active status"),
-    ("memory", "an answered question: what Estelle knows about this repo"),
+    (
+        "memory",
+        "an answered question: what Estelle knows about this repo",
+    ),
     ("sweep", "index this repo into memory"),
     ("sessions", "your recent sessions"),
     ("resume", "pick a past session back up"),
@@ -112,7 +154,10 @@ const GRAFT_HELP: &[(&str, &str)] = &[
     ("archive", "archive ownership status"),
     ("delete", "delete-session ownership status"),
     ("fork", "fork-session ownership status"),
-    ("compact", "LOCAL-ONLY, inert — removed the day Guardian's server compaction ships"),
+    (
+        "compact",
+        "LOCAL-ONLY, inert — removed the day Guardian's server compaction ships",
+    ),
     ("goal", "long-running goal ownership status"),
     ("side", "ephemeral side-question ownership status"),
     ("btw", "ephemeral side-question ownership status"),
@@ -820,15 +865,12 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
             match reply.extra.get("has_provider_key").and_then(Value::as_bool) {
                 Some(true) => lines.push(format!(
                     "provider {}  |  {}",
-                    reply
-                        .provider
-                        .as_deref()
-                        .unwrap_or("not returned"),
+                    reply.provider.as_deref().unwrap_or("not returned"),
                     scalar("provider_model")
                 )),
-                Some(false) => lines.push(
-                    "no provider key — set one (BYOK) before grounded calls".to_string(),
-                ),
+                Some(false) => {
+                    lines.push("no provider key — set one (BYOK) before grounded calls".to_string())
+                }
                 None => lines.push("provider state not returned".to_string()),
             }
             if let Some(invites) = reply
@@ -843,8 +885,7 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                     if invites.len() == 1 { "invite" } else { "invites" }
                 ));
             }
-            if let Some(entitlements) = reply.extra.get("entitlements").and_then(Value::as_object)
-            {
+            if let Some(entitlements) = reply.extra.get("entitlements").and_then(Value::as_object) {
                 let toggle = |key: &str| {
                     entitlements
                         .get(key)
@@ -1100,12 +1141,7 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                 let files = row
                     .get("files")
                     .and_then(Value::as_array)
-                    .map(|files| {
-                        files
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .collect::<Vec<_>>()
-                    })
+                    .map(|files| files.iter().filter_map(Value::as_str).collect::<Vec<_>>())
                     .unwrap_or_default();
                 lines.push(format!(
                     "{}{}",
@@ -1427,7 +1463,10 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                 lines.push(format!(
                     "{}  {}  |  {} tokens{}",
                     record.ts.as_deref().unwrap_or("ts not returned"),
-                    record.endpoint.as_deref().unwrap_or("endpoint not returned"),
+                    record
+                        .endpoint
+                        .as_deref()
+                        .unwrap_or("endpoint not returned"),
                     record
                         .tokens
                         .map(|tokens| tokens.to_string())
@@ -1440,7 +1479,10 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                 ));
             }
             if reply.request_records.len() > 12 {
-                lines.push(format!("… {} more in this page", reply.request_records.len() - 12));
+                lines.push(format!(
+                    "… {} more in this page",
+                    reply.request_records.len() - 12
+                ));
             }
             lines
         }
@@ -1639,9 +1681,7 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                             .and_then(Value::as_str)
                             .unwrap_or("value not returned");
                         if row.get("included").and_then(Value::as_bool) == Some(true) {
-                            lines.push(format!(
-                                "  {label} = {value}  |  included in plan"
-                            ));
+                            lines.push(format!("  {label} = {value}  |  included in plan"));
                         } else {
                             lines.push(format!(
                                 "  {label} = {value}  |  +{}/month",
@@ -1656,7 +1696,10 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                 None => lines.push("pricing not returned".to_string()),
             }
             if let Some(catalog) = reply.extra.get("catalog").and_then(Value::as_array) {
-                lines.push(format!("{} configurable settings in the catalog", catalog.len()));
+                lines.push(format!(
+                    "{} configurable settings in the catalog",
+                    catalog.len()
+                ));
             }
             lines
         }
@@ -2835,11 +2878,26 @@ mod tests {
         .expect("typed graph reply");
         let rendered = render_remote_reply("graph", &reply).join("\n");
 
-        assert!(rendered.contains("fatelabs/estelle"), "scope missing\n{rendered}");
-        assert!(rendered.contains("42 files"), "files count missing\n{rendered}");
-        assert!(rendered.contains("517 entities"), "entities count missing\n{rendered}");
-        assert!(rendered.contains("6 subsystems"), "subsystems count missing\n{rendered}");
-        assert!(rendered.contains("2 import cycles"), "cycles count missing\n{rendered}");
+        assert!(
+            rendered.contains("fatelabs/estelle"),
+            "scope missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("42 files"),
+            "files count missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("517 entities"),
+            "entities count missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("6 subsystems"),
+            "subsystems count missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("2 import cycles"),
+            "cycles count missing\n{rendered}"
+        );
         assert!(rendered.contains("src"), "roots missing\n{rendered}");
     }
 
@@ -2851,7 +2909,10 @@ mod tests {
         }))
         .expect("building reply");
         let rendered = render_remote_reply("graph", &building).join("\n");
-        assert!(rendered.contains("being built"), "cold graph not disclosed\n{rendered}");
+        assert!(
+            rendered.contains("being built"),
+            "cold graph not disclosed\n{rendered}"
+        );
         assert!(
             !rendered.contains("0 files"),
             "a warming graph rendered as a zero count\n{rendered}"
@@ -2899,16 +2960,34 @@ mod tests {
         .expect("typed nodes reply");
         let rendered = render_remote_reply("graph", &reply).join("\n");
 
-        assert!(rendered.contains("fatelabs/estelle"), "scope missing\n{rendered}");
-        assert!(rendered.contains("2 nodes"), "node count missing\n{rendered}");
-        assert!(rendered.contains("2 edges"), "edge count missing\n{rendered}");
-        assert!(rendered.contains("57 files"), "total files missing\n{rendered}");
+        assert!(
+            rendered.contains("fatelabs/estelle"),
+            "scope missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("2 nodes"),
+            "node count missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("2 edges"),
+            "edge count missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("57 files"),
+            "total files missing\n{rendered}"
+        );
         assert!(
             rendered.contains("truncated"),
             "a cut graph did not say so — a silently capped graph lies about the codebase\n{rendered}"
         );
-        assert!(rendered.contains("src/main.rs"), "top node missing\n{rendered}");
-        assert!(rendered.contains("cycle"), "cycle edge kind invisible\n{rendered}");
+        assert!(
+            rendered.contains("src/main.rs"),
+            "top node missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("cycle"),
+            "cycle edge kind invisible\n{rendered}"
+        );
     }
 
     #[test]
@@ -2919,7 +2998,10 @@ mod tests {
         }))
         .expect("building reply");
         let rendered = render_remote_reply("graph", &reply).join("\n");
-        assert!(rendered.contains("being built"), "cold graph not disclosed\n{rendered}");
+        assert!(
+            rendered.contains("being built"),
+            "cold graph not disclosed\n{rendered}"
+        );
         assert!(
             !rendered.contains("0 nodes"),
             "a warming graph rendered as zero nodes\n{rendered}"
@@ -2939,11 +3021,17 @@ mod tests {
         .expect("typed me reply");
         let rendered = render_remote_reply("me", &reply).join("\n");
 
-        assert!(rendered.contains("dev@example.com"), "identity missing\n{rendered}");
+        assert!(
+            rendered.contains("dev@example.com"),
+            "identity missing\n{rendered}"
+        );
         assert!(rendered.contains("pro"), "plan missing\n{rendered}");
         assert!(rendered.contains("12.5"), "balance missing\n{rendered}");
         assert!(rendered.contains("50"), "budget missing\n{rendered}");
-        assert!(rendered.contains("anthropic"), "provider missing\n{rendered}");
+        assert!(
+            rendered.contains("anthropic"),
+            "provider missing\n{rendered}"
+        );
         assert!(
             rendered.contains("1 pending team invite"),
             "a pending invite was not surfaced — joining must be visible and explicit\n{rendered}"
@@ -2955,8 +3043,14 @@ mod tests {
         let reply: estelle_client::CommandReply =
             serde_json::from_value(json!({"email": "dev@example.com"})).expect("sparse reply");
         let rendered = render_remote_reply("me", &reply).join("\n");
-        assert!(rendered.contains("not returned"), "absent state invented\n{rendered}");
-        assert!(!rendered.contains("$0"), "absent balance rendered as zero\n{rendered}");
+        assert!(
+            rendered.contains("not returned"),
+            "absent state invented\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("$0"),
+            "absent balance rendered as zero\n{rendered}"
+        );
     }
 
     #[test]
@@ -2976,9 +3070,18 @@ mod tests {
 
         assert!(rendered.contains("3 keys"), "count missing\n{rendered}");
         assert!(rendered.contains("laptop"), "label missing\n{rendered}");
-        assert!(rendered.contains("estelle_live_ab"), "prefix missing\n{rendered}");
-        assert!(rendered.contains("expired"), "expired flag missing\n{rendered}");
-        assert!(rendered.contains("revoked"), "revoked flag missing\n{rendered}");
+        assert!(
+            rendered.contains("estelle_live_ab"),
+            "prefix missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("expired"),
+            "expired flag missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("revoked"),
+            "revoked flag missing\n{rendered}"
+        );
         assert!(
             !rendered.contains("estelle_live_abcdef"),
             "a raw key appeared — the server sends prefixes only"
@@ -2990,7 +3093,10 @@ mod tests {
         let reply: estelle_client::CommandReply =
             serde_json::from_value(json!({"keys": []})).expect("empty keys");
         let rendered = render_remote_reply("keys", &reply).join("\n");
-        assert!(rendered.contains("No keys"), "empty state missing\n{rendered}");
+        assert!(
+            rendered.contains("No keys"),
+            "empty state missing\n{rendered}"
+        );
     }
 
     #[test]
@@ -3012,11 +3118,23 @@ mod tests {
         .expect("typed team reply");
         let rendered = render_remote_reply("team", &reply).join("\n");
 
-        assert!(rendered.contains("Fate Labs"), "team name missing\n{rendered}");
+        assert!(
+            rendered.contains("Fate Labs"),
+            "team name missing\n{rendered}"
+        );
         assert!(rendered.contains("admin"), "role missing\n{rendered}");
-        assert!(rendered.contains("3 of 4 seats used"), "seat ledger missing\n{rendered}");
-        assert!(rendered.contains("full"), "a full ledger did not say so\n{rendered}");
-        assert!(rendered.contains("founder@example.com"), "member missing\n{rendered}");
+        assert!(
+            rendered.contains("3 of 4 seats used"),
+            "seat ledger missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("full"),
+            "a full ledger did not say so\n{rendered}"
+        );
+        assert!(
+            rendered.contains("founder@example.com"),
+            "member missing\n{rendered}"
+        );
         assert!(rendered.contains("owner"), "owner not marked\n{rendered}");
         assert!(
             rendered.contains("1 pending invite"),
@@ -3056,7 +3174,10 @@ mod tests {
         let rendered = render_remote_reply("cards", &reply).join("\n");
 
         assert!(rendered.contains("2 cards"), "count missing\n{rendered}");
-        assert!(rendered.contains("decisions: 1"), "folder count missing\n{rendered}");
+        assert!(
+            rendered.contains("decisions: 1"),
+            "folder count missing\n{rendered}"
+        );
         assert!(
             !rendered.contains("episodic: 0"),
             "empty folders rendered as noise\n{rendered}"
@@ -3065,8 +3186,14 @@ mod tests {
             rendered.contains("Chose Postgres for memory"),
             "card title missing\n{rendered}"
         );
-        assert!(rendered.contains("edited"), "edited flag missing\n{rendered}");
-        assert!(rendered.contains("session 2026-08-01"), "provenance missing\n{rendered}");
+        assert!(
+            rendered.contains("edited"),
+            "edited flag missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("session 2026-08-01"),
+            "provenance missing\n{rendered}"
+        );
     }
 
     #[test]
@@ -3081,7 +3208,10 @@ mod tests {
             rendered.contains("No learned knowledge"),
             "empty state missing\n{rendered}"
         );
-        assert!(!rendered.contains("0 cards"), "absence rendered as zero\n{rendered}");
+        assert!(
+            !rendered.contains("0 cards"),
+            "absence rendered as zero\n{rendered}"
+        );
     }
 
     #[test]
@@ -3096,10 +3226,19 @@ mod tests {
         .expect("typed entities reply");
         let rendered = render_remote_reply("entities", &reply).join("\n");
 
-        assert!(rendered.contains("fatelabs/estelle"), "scope missing\n{rendered}");
+        assert!(
+            rendered.contains("fatelabs/estelle"),
+            "scope missing\n{rendered}"
+        );
         assert!(rendered.contains("2 entities"), "count missing\n{rendered}");
-        assert!(rendered.contains("charge_card"), "symbol missing\n{rendered}");
-        assert!(rendered.contains("billing/charge.rs"), "defining file missing\n{rendered}");
+        assert!(
+            rendered.contains("charge_card"),
+            "symbol missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("billing/charge.rs"),
+            "defining file missing\n{rendered}"
+        );
     }
 
     #[test]
@@ -3109,8 +3248,14 @@ mod tests {
         }))
         .expect("empty entities");
         let rendered = render_remote_reply("entities", &reply).join("\n");
-        assert!(rendered.contains("estelle sweep"), "remedy missing\n{rendered}");
-        assert!(!rendered.contains("0 entities"), "absence rendered as zero\n{rendered}");
+        assert!(
+            rendered.contains("estelle sweep"),
+            "remedy missing\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("0 entities"),
+            "absence rendered as zero\n{rendered}"
+        );
     }
 
     #[test]
@@ -3125,9 +3270,15 @@ mod tests {
         let rendered = render_remote_reply("usage", &reply).join("\n");
 
         assert!(rendered.contains("2026-08-06"), "day missing\n{rendered}");
-        assert!(rendered.contains("30 requests"), "requests missing\n{rendered}");
+        assert!(
+            rendered.contains("30 requests"),
+            "requests missing\n{rendered}"
+        );
         assert!(rendered.contains("120500"), "tokens missing\n{rendered}");
-        assert!(rendered.contains("42 requests"), "total wrong or missing\n{rendered}");
+        assert!(
+            rendered.contains("42 requests"),
+            "total wrong or missing\n{rendered}"
+        );
     }
 
     #[test]
@@ -3135,8 +3286,14 @@ mod tests {
         let reply: estelle_client::CommandReply =
             serde_json::from_value(json!({"series": []})).expect("empty usage");
         let rendered = render_remote_reply("usage", &reply).join("\n");
-        assert!(rendered.contains("No usage"), "empty state missing\n{rendered}");
-        assert!(!rendered.contains("0 requests"), "absence rendered as zero\n{rendered}");
+        assert!(
+            rendered.contains("No usage"),
+            "empty state missing\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("0 requests"),
+            "absence rendered as zero\n{rendered}"
+        );
     }
 
     #[test]
@@ -3151,8 +3308,14 @@ mod tests {
         .expect("typed activity reply");
         let rendered = render_remote_reply("activity", &reply).join("\n");
 
-        assert!(rendered.contains("deep-search"), "endpoint missing\n{rendered}");
-        assert!(rendered.contains("14 calls"), "call count missing\n{rendered}");
+        assert!(
+            rendered.contains("deep-search"),
+            "endpoint missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("14 calls"),
+            "call count missing\n{rendered}"
+        );
         assert!(rendered.contains("90210"), "tokens missing\n{rendered}");
         assert!(
             rendered.contains("kimi-k2.7"),
@@ -3165,8 +3328,14 @@ mod tests {
         let reply: estelle_client::CommandReply =
             serde_json::from_value(json!({"by_endpoint": []})).expect("empty activity");
         let rendered = render_remote_reply("activity", &reply).join("\n");
-        assert!(rendered.contains("No activity"), "empty state missing\n{rendered}");
-        assert!(!rendered.contains("0 calls"), "absence rendered as zero\n{rendered}");
+        assert!(
+            rendered.contains("No activity"),
+            "empty state missing\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("0 calls"),
+            "absence rendered as zero\n{rendered}"
+        );
     }
 
     #[test]
@@ -3184,7 +3353,10 @@ mod tests {
 
         assert!(rendered.contains("2 runs"), "count missing\n{rendered}");
         assert!(rendered.contains("trace auth"), "task missing\n{rendered}");
-        assert!(rendered.contains("claude-opus-4-8"), "model missing\n{rendered}");
+        assert!(
+            rendered.contains("claude-opus-4-8"),
+            "model missing\n{rendered}"
+        );
         assert!(
             rendered.contains("not grounded"),
             "an ungrounded run was not flagged\n{rendered}"
@@ -3201,8 +3373,14 @@ mod tests {
             serde_json::from_value(json!({"runs": [], "count": 0, "report": ""}))
                 .expect("empty runs");
         let rendered = render_remote_reply("runs", &reply).join("\n");
-        assert!(rendered.contains("No agent runs"), "empty state missing\n{rendered}");
-        assert!(!rendered.contains("0 runs"), "absence rendered as zero\n{rendered}");
+        assert!(
+            rendered.contains("No agent runs"),
+            "empty state missing\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("0 runs"),
+            "absence rendered as zero\n{rendered}"
+        );
     }
 
     #[test]
@@ -3214,11 +3392,26 @@ mod tests {
         .expect("typed outcomes reply");
         let rendered = render_remote_reply("outcomes", &reply).join("\n");
 
-        assert!(rendered.contains("12 outcomes"), "total missing\n{rendered}");
-        assert!(rendered.contains("8 accepted"), "accepted missing\n{rendered}");
-        assert!(rendered.contains("3 reverted"), "reverted missing\n{rendered}");
-        assert!(rendered.contains("1 rejected"), "rejected missing\n{rendered}");
-        assert!(rendered.contains("0.667"), "accept rate missing\n{rendered}");
+        assert!(
+            rendered.contains("12 outcomes"),
+            "total missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("8 accepted"),
+            "accepted missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("3 reverted"),
+            "reverted missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("1 rejected"),
+            "rejected missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("0.667"),
+            "accept rate missing\n{rendered}"
+        );
         assert!(rendered.contains("0.25"), "revert rate missing\n{rendered}");
     }
 
@@ -3234,7 +3427,10 @@ mod tests {
             rendered.contains("No outcomes"),
             "empty state missing\n{rendered}"
         );
-        assert!(!rendered.contains("0.0"), "no signal rendered as a zero rate\n{rendered}");
+        assert!(
+            !rendered.contains("0.0"),
+            "no signal rendered as a zero rate\n{rendered}"
+        );
     }
 
     #[test]
@@ -3252,14 +3448,23 @@ mod tests {
         .expect("typed memories reply");
         let rendered = render_remote_reply("memories", &reply).join("\n");
 
-        assert!(rendered.contains("fatelabs/estelle"), "scope missing\n{rendered}");
+        assert!(
+            rendered.contains("fatelabs/estelle"),
+            "scope missing\n{rendered}"
+        );
         assert!(rendered.contains("2 memories"), "count missing\n{rendered}");
-        assert!(rendered.contains("billing/charge.rs"), "source missing\n{rendered}");
+        assert!(
+            rendered.contains("billing/charge.rs"),
+            "source missing\n{rendered}"
+        );
         assert!(
             rendered.contains("grounded"),
             "the trust tier is invisible — which held items may certify is the first fact\n{rendered}"
         );
-        assert!(rendered.contains("acquired"), "acquired tier missing\n{rendered}");
+        assert!(
+            rendered.contains("acquired"),
+            "acquired tier missing\n{rendered}"
+        );
         assert!(
             rendered.contains("externally authored"),
             "an attacker-reachable source was not marked\n{rendered}"
@@ -3278,8 +3483,14 @@ mod tests {
         }))
         .expect("empty memories");
         let rendered = render_remote_reply("memories", &reply).join("\n");
-        assert!(rendered.contains("estelle sweep"), "remedy missing\n{rendered}");
-        assert!(!rendered.contains("0 memories"), "absence rendered as zero\n{rendered}");
+        assert!(
+            rendered.contains("estelle sweep"),
+            "remedy missing\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("0 memories"),
+            "absence rendered as zero\n{rendered}"
+        );
     }
 
     #[test]
@@ -3298,14 +3509,26 @@ mod tests {
         .expect("typed analytics reply");
         let rendered = render_remote_reply("analytics", &reply).join("\n");
 
-        assert!(rendered.contains("12 runs"), "run count missing\n{rendered}");
-        assert!(rendered.contains("5 sessions"), "session count missing\n{rendered}");
-        assert!(rendered.contains("31 turns"), "turn count missing\n{rendered}");
+        assert!(
+            rendered.contains("12 runs"),
+            "run count missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("5 sessions"),
+            "session count missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("31 turns"),
+            "turn count missing\n{rendered}"
+        );
         assert!(
             rendered.contains("fatelabs/estelle"),
             "repo tally missing\n{rendered}"
         );
-        assert!(rendered.contains("accepted"), "outcome tally missing\n{rendered}");
+        assert!(
+            rendered.contains("accepted"),
+            "outcome tally missing\n{rendered}"
+        );
     }
 
     #[test]
@@ -3320,7 +3543,10 @@ mod tests {
             rendered.contains("No usage analytics"),
             "empty state missing\n{rendered}"
         );
-        assert!(!rendered.contains("0 sessions"), "absence rendered as zero\n{rendered}");
+        assert!(
+            !rendered.contains("0 sessions"),
+            "absence rendered as zero\n{rendered}"
+        );
     }
 
     #[test]
@@ -3343,7 +3569,10 @@ mod tests {
             rendered.contains("verified"),
             "the integrity badge is invisible on an integrity surface\n{rendered}"
         );
-        assert!(rendered.contains("chain intact"), "the reason was dropped\n{rendered}");
+        assert!(
+            rendered.contains("chain intact"),
+            "the reason was dropped\n{rendered}"
+        );
     }
 
     #[test]
@@ -3355,7 +3584,10 @@ mod tests {
         }))
         .expect("broken audit");
         let rendered = render_remote_reply("audit", &reply).join("\n");
-        assert!(rendered.contains("broken"), "broken state hidden\n{rendered}");
+        assert!(
+            rendered.contains("broken"),
+            "broken state hidden\n{rendered}"
+        );
         assert!(
             rendered.contains("segment written under a retired key"),
             "a bare negative shipped without the reason\n{rendered}"
@@ -3370,7 +3602,10 @@ mod tests {
         }))
         .expect("empty audit");
         let rendered = render_remote_reply("audit", &reply).join("\n");
-        assert!(rendered.contains("No audit entries"), "empty state missing\n{rendered}");
+        assert!(
+            rendered.contains("No audit entries"),
+            "empty state missing\n{rendered}"
+        );
     }
 
     #[test]
@@ -3389,9 +3624,15 @@ mod tests {
             rendered.contains("2 of 47"),
             "the page was implied to be the whole log — count is the total, not the page\n{rendered}"
         );
-        assert!(rendered.contains("deep-search"), "endpoint missing\n{rendered}");
+        assert!(
+            rendered.contains("deep-search"),
+            "endpoint missing\n{rendered}"
+        );
         assert!(rendered.contains("8100"), "tokens missing\n{rendered}");
-        assert!(rendered.contains("claude-opus-4-8"), "serving model missing\n{rendered}");
+        assert!(
+            rendered.contains("claude-opus-4-8"),
+            "serving model missing\n{rendered}"
+        );
     }
 
     #[test]
@@ -3399,8 +3640,14 @@ mod tests {
         let reply: estelle_client::CommandReply =
             serde_json::from_value(json!({"requests": [], "count": 0})).expect("empty requests");
         let rendered = render_remote_reply("requests", &reply).join("\n");
-        assert!(rendered.contains("No requests"), "empty state missing\n{rendered}");
-        assert!(!rendered.contains("0 of 0"), "absence rendered as a zero fraction\n{rendered}");
+        assert!(
+            rendered.contains("No requests"),
+            "empty state missing\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("0 of 0"),
+            "absence rendered as a zero fraction\n{rendered}"
+        );
     }
 
     #[test]
@@ -3416,9 +3663,18 @@ mod tests {
         .expect("typed presence reply");
         let rendered = render_remote_reply("presence", &reply).join("\n");
 
-        assert!(rendered.contains("1 active"), "active count missing\n{rendered}");
-        assert!(rendered.contains("dana@example.com"), "member missing\n{rendered}");
-        assert!(rendered.contains("1 overnight"), "overnight count missing\n{rendered}");
+        assert!(
+            rendered.contains("1 active"),
+            "active count missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("dana@example.com"),
+            "member missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("1 overnight"),
+            "overnight count missing\n{rendered}"
+        );
         assert!(
             rendered.contains("billing/charge.rs"),
             "file in flight missing — the collision guard is invisible\n{rendered}"
@@ -3436,8 +3692,14 @@ mod tests {
         }))
         .expect("empty presence");
         let rendered = render_remote_reply("presence", &reply).join("\n");
-        assert!(rendered.contains("No team presence"), "empty state missing\n{rendered}");
-        assert!(!rendered.contains("0 active"), "absence rendered as zero\n{rendered}");
+        assert!(
+            rendered.contains("No team presence"),
+            "empty state missing\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("0 active"),
+            "absence rendered as zero\n{rendered}"
+        );
     }
 
     #[test]
@@ -3455,7 +3717,10 @@ mod tests {
 
         assert!(rendered.contains("review"), "skill missing\n{rendered}");
         assert!(rendered.contains("9 uses"), "uses missing\n{rendered}");
-        assert!(rendered.contains("8 verified"), "successes missing\n{rendered}");
+        assert!(
+            rendered.contains("8 verified"),
+            "successes missing\n{rendered}"
+        );
         assert!(rendered.contains("0.889"), "rate missing\n{rendered}");
         assert!(
             rendered.contains("claude-opus-4-8"),
@@ -3476,7 +3741,10 @@ mod tests {
             rendered.contains("No verified skill outcomes"),
             "empty state missing\n{rendered}"
         );
-        assert!(!rendered.contains("0 uses"), "absence rendered as zero\n{rendered}");
+        assert!(
+            !rendered.contains("0 uses"),
+            "absence rendered as zero\n{rendered}"
+        );
     }
 
     #[test]
@@ -3495,8 +3763,14 @@ mod tests {
         .expect("typed billing reply");
         let rendered = render_remote_reply("billing", &reply).join("\n");
 
-        assert!(rendered.contains("propose"), "current setting missing\n{rendered}");
-        assert!(rendered.contains("best"), "rerank choice missing\n{rendered}");
+        assert!(
+            rendered.contains("propose"),
+            "current setting missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("best"),
+            "rerank choice missing\n{rendered}"
+        );
         assert!(rendered.contains("$0.00"), "total missing\n{rendered}");
         assert!(
             rendered.contains("included in plan"),
@@ -3509,8 +3783,14 @@ mod tests {
         let reply: estelle_client::CommandReply =
             serde_json::from_value(json!({})).expect("sparse billing reply");
         let rendered = render_remote_reply("billing", &reply).join("\n");
-        assert!(rendered.contains("not returned"), "absent state invented\n{rendered}");
-        assert!(!rendered.contains("$0.00"), "absent pricing rendered as zero\n{rendered}");
+        assert!(
+            rendered.contains("not returned"),
+            "absent state invented\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("$0.00"),
+            "absent pricing rendered as zero\n{rendered}"
+        );
     }
 
     #[test]
@@ -3518,14 +3798,35 @@ mod tests {
         // The DROP list (founder, 2026-08-07): Codex-only or wrong-branded names must not exist
         // on the Estelle surface at all — an unknown name sends zero requests.
         for dropped in [
-            "pet", "vim", "theme", "statusline", "title", "raw", "copy", "mention", "ide",
-            "apps", "plugins", "experimental", "app", "import", "logout", "rollout",
-            "debug-config", "test-approval", "debug-m-drop", "debug-m-update",
-            "setup-default-sandbox", "sandbox-add-read-dir",
+            "pet",
+            "vim",
+            "theme",
+            "statusline",
+            "title",
+            "raw",
+            "copy",
+            "mention",
+            "ide",
+            "apps",
+            "plugins",
+            "experimental",
+            "app",
+            "import",
+            "logout",
+            "rollout",
+            "debug-config",
+            "test-approval",
+            "debug-m-drop",
+            "debug-m-update",
+            "setup-default-sandbox",
+            "sandbox-add-read-dir",
             // COLLIDES deletions (founder, 2026-08-07): a toggleable trust layer is broken by
             // design; style comes from the repo, not a picker; agent surfaces re-add WITH the
             // Orchestra client surface, not before.
-            "hooks", "personality", "agent", "subagents",
+            "hooks",
+            "personality",
+            "agent",
+            "subagents",
         ] {
             assert!(
                 resolve_session_name(dropped).is_none(),
@@ -3545,8 +3846,24 @@ mod tests {
         );
         // The KEEP list still resolves.
         for kept in [
-            "new", "clear", "resume", "fork", "rename", "archive", "delete", "diff", "status",
-            "keymap", "permissions", "ps", "stop", "goal", "side", "btw", "quit", "exit",
+            "new",
+            "clear",
+            "resume",
+            "fork",
+            "rename",
+            "archive",
+            "delete",
+            "diff",
+            "status",
+            "keymap",
+            "permissions",
+            "ps",
+            "stop",
+            "goal",
+            "side",
+            "btw",
+            "quit",
+            "exit",
         ] {
             assert!(
                 resolve_session_name(kept).is_some(),
@@ -3652,7 +3969,10 @@ mod tests {
             rendered.contains("deep review changed the outcome"),
             "a model-authored block must say it is not the deterministic gate's\n{rendered}"
         );
-        assert!(rendered.contains("merge"), "the pre-deep verdict was dropped\n{rendered}");
+        assert!(
+            rendered.contains("merge"),
+            "the pre-deep verdict was dropped\n{rendered}"
+        );
         assert!(
             rendered.contains("retry loop drops the error"),
             "the deep finding is invisible\n{rendered}"
@@ -3668,7 +3988,8 @@ mod tests {
         )
         .expect("lockfile");
         let touching = "diff --git a/Cargo.lock b/Cargo.lock\n--- a/Cargo.lock\n+++ b/Cargo.lock\n@@\n+openssl\n";
-        let not_touching = "diff --git a/src/main.rs b/src/main.rs\n+++ b/src/main.rs\n@@\n+fn main() {}\n";
+        let not_touching =
+            "diff --git a/src/main.rs b/src/main.rs\n+++ b/src/main.rs\n@@\n+fn main() {}\n";
 
         let attachments = scan_lockfile_attachments(root.path(), touching);
         assert_eq!(attachments.len(), 1, "a touched lockfile was not attached");
@@ -3722,7 +4043,10 @@ mod tests {
         assert!(rendered.contains("runs"), "metric missing\n{rendered}");
         assert!(rendered.contains("Dana"), "member missing\n{rendered}");
         assert!(rendered.contains("12"), "value missing\n{rendered}");
-        assert!(rendered.contains("kai@example.com"), "email fallback missing\n{rendered}");
+        assert!(
+            rendered.contains("kai@example.com"),
+            "email fallback missing\n{rendered}"
+        );
     }
 
     #[test]
@@ -3730,7 +4054,10 @@ mod tests {
         let reply: estelle_client::CommandReply =
             serde_json::from_value(json!({"team": null, "leaderboard": []})).expect("no team");
         let rendered = render_remote_reply("team", &reply).join("\n");
-        assert!(rendered.contains("not on a team"), "absent state missing\n{rendered}");
+        assert!(
+            rendered.contains("not on a team"),
+            "absent state missing\n{rendered}"
+        );
     }
 
     #[test]
@@ -3745,9 +4072,15 @@ mod tests {
         .expect("typed marketplace reply");
         let rendered = render_remote_reply("marketplace", &reply).join("\n");
 
-        assert!(rendered.contains("fatelabs/core"), "plugin name missing\n{rendered}");
+        assert!(
+            rendered.contains("fatelabs/core"),
+            "plugin name missing\n{rendered}"
+        );
         assert!(rendered.contains("curated"), "mode missing\n{rendered}");
-        assert!(rendered.contains("review"), "skill list missing\n{rendered}");
+        assert!(
+            rendered.contains("review"),
+            "skill list missing\n{rendered}"
+        );
     }
 
     #[test]
@@ -3775,8 +4108,14 @@ mod tests {
         .expect("typed automations reply");
         let rendered = render_remote_reply("automations", &reply).join("\n");
 
-        assert!(rendered.contains("nightly triage"), "name missing\n{rendered}");
-        assert!(rendered.contains("claude-opus-4-8"), "model missing\n{rendered}");
+        assert!(
+            rendered.contains("nightly triage"),
+            "name missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("claude-opus-4-8"),
+            "model missing\n{rendered}"
+        );
         assert!(
             rendered.contains("nothing fires it yet"),
             "a stored-but-never-fires automation rendered as live — the server's reason must lead\n{rendered}"
@@ -3809,13 +4148,19 @@ mod tests {
         .expect("typed suites reply");
         let rendered = render_remote_reply("suites", &reply).join("\n");
 
-        assert!(rendered.contains("Estelle Billing"), "name missing\n{rendered}");
+        assert!(
+            rendered.contains("Estelle Billing"),
+            "name missing\n{rendered}"
+        );
         assert!(
             rendered.contains("draft"),
             "a DRAFT suite did not say so — proposals are never auto-applied\n{rendered}"
         );
         assert!(rendered.contains("v2"), "version missing\n{rendered}");
-        assert!(rendered.contains("1 playbooks"), "playbook count missing\n{rendered}");
+        assert!(
+            rendered.contains("1 playbooks"),
+            "playbook count missing\n{rendered}"
+        );
     }
 
     #[test]
@@ -3823,7 +4168,10 @@ mod tests {
         let reply: estelle_client::CommandReply =
             serde_json::from_value(json!({"suites": [], "count": 0})).expect("empty suites");
         let rendered = render_remote_reply("suites", &reply).join("\n");
-        assert!(rendered.contains("No custom suites"), "empty state missing\n{rendered}");
+        assert!(
+            rendered.contains("No custom suites"),
+            "empty state missing\n{rendered}"
+        );
     }
 
     #[test]

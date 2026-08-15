@@ -37,7 +37,14 @@ pub const REPEAT_RUN: usize = 3;
 pub const SPILL_KEEP: usize = 200;
 
 /// Tools whose output IS the thing the model asked for. Never touched.
-const NEVER_DISTIL: &[&str] = &["Read", "Grep", "Glob", "NotebookRead", "WebFetch", "WebSearch"];
+const NEVER_DISTIL: &[&str] = &[
+    "Read",
+    "Grep",
+    "Glob",
+    "NotebookRead",
+    "WebFetch",
+    "WebSearch",
+];
 
 fn compile(pattern: &str) -> Regex {
     match Regex::new(pattern) {
@@ -70,7 +77,10 @@ static NOISE: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
         (r"^\s*\S+::\S+\s+PASSED", "pytest pass"),
         // node:test / TAP — an ok line is a passing assertion; "not ok" is SIGNAL
         (r"^\s*ok\s+\d+\s", "tap pass"),
-        (r"^\s*#\s*(pass|duration_ms|todo|skip|subtests)\b", "tap summary noise"),
+        (
+            r"^\s*#\s*(pass|duration_ms|todo|skip|subtests)\b",
+            "tap summary noise",
+        ),
         // jest / vitest / mocha
         (r"^\s*(?:[✓√]|PASS)\s", "jest pass"),
         // go test
@@ -80,11 +90,23 @@ static NOISE: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
         // cargo / rust
         (r"^test\s+.+\s\.\.\.\sok$", "cargo pass"),
         // package managers and downloaders
-        (r"^\s*Requirement already satisfied:", "pip already satisfied"),
-        (r"^\s*(?:Downloading|Collecting|Using cached|Installing collected packages:)\s", "pip progress"),
+        (
+            r"^\s*Requirement already satisfied:",
+            "pip already satisfied",
+        ),
+        (
+            r"^\s*(?:Downloading|Collecting|Using cached|Installing collected packages:)\s",
+            "pip progress",
+        ),
         (r"^\s*\[\d+/\d+\]\s", "step progress"),
-        (r"^\s*(?:npm|yarn|pnpm)\s+(?:http|timing|info)\s", "npm chatter"),
-        (r"^\s*\d+(?:\.\d+)?%\s*(?:\||\[|complete)", "percent progress"),
+        (
+            r"^\s*(?:npm|yarn|pnpm)\s+(?:http|timing|info)\s",
+            "npm chatter",
+        ),
+        (
+            r"^\s*\d+(?:\.\d+)?%\s*(?:\||\[|complete)",
+            "percent progress",
+        ),
     ]
     .iter()
     .map(|(pattern, kind)| (compile(pattern), *kind))

@@ -2370,7 +2370,10 @@ async fn refresh_persist_preserves_or_updates_the_account_id_like_opencode() {
     )
     .expect("persist without an account claim");
     assert_eq!(
-        updated.tokens.as_ref().and_then(|t| t.account_id.as_deref()),
+        updated
+            .tokens
+            .as_ref()
+            .and_then(|t| t.account_id.as_deref()),
         Some("acct-kept"),
         "a refresh that cannot be re-parsed for an account id must not drop the stored one"
     );
@@ -2404,7 +2407,10 @@ async fn refresh_persist_preserves_or_updates_the_account_id_like_opencode() {
     )
     .expect("persist with an account claim");
     assert_eq!(
-        updated.tokens.as_ref().and_then(|t| t.account_id.as_deref()),
+        updated
+            .tokens
+            .as_ref()
+            .and_then(|t| t.account_id.as_deref()),
         Some("acct-new"),
         "a refresh carrying an account id updates the stored one"
     );

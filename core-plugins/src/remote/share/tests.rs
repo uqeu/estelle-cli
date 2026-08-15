@@ -8,9 +8,7 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Read;
 use std::path::Path;
-use std::path::PathBuf;
 use tempfile::TempDir;
 use wiremock::Mock;
 use wiremock::MockServer;
@@ -38,19 +36,6 @@ fn write_file(path: &Path, contents: &str) {
     fs::write(path, contents).unwrap();
 }
 
-fn write_test_plugin(root: &Path, plugin_name: &str) -> PathBuf {
-    let plugin_path = root.join(plugin_name);
-    write_file(
-        &plugin_path.join(".codex-plugin/plugin.json"),
-        &format!(r#"{{"name":"{plugin_name}"}}"#),
-    );
-    write_file(
-        &plugin_path.join("skills/example/SKILL.md"),
-        "# Example\n\nA test skill.\n",
-    );
-    plugin_path
-}
-
 fn write_plugin_share_local_path_mapping(
     codex_home: &Path,
     remote_plugin_id: &str,
@@ -68,25 +53,6 @@ fn write_plugin_share_local_path_mapping(
             .unwrap()
         ),
     );
-}
-
-fn archive_file_entries(archive_bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
-    let decoder = flate2::read::GzDecoder::new(archive_bytes);
-    let mut archive = tar::Archive::new(decoder);
-    archive
-        .entries()
-        .unwrap()
-        .filter_map(|entry| {
-            let mut entry = entry.unwrap();
-            if !entry.header().entry_type().is_file() {
-                return None;
-            }
-            let path = entry.path().unwrap().to_string_lossy().into_owned();
-            let mut contents = Vec::new();
-            entry.read_to_end(&mut contents).unwrap();
-            Some((path, contents))
-        })
-        .collect()
 }
 
 fn remote_plugin_json(plugin_id: &str) -> serde_json::Value {

@@ -144,7 +144,8 @@ async fn welcome_context_from(
 
 /// The injectable half of `record_checkpoint` — the hook's checkpoint mode calls this with the
 /// default state path, tests call it with a temporary one.
-pub async fn record_checkpoint_to(    cwd: PathBuf,
+pub async fn record_checkpoint_to(
+    cwd: PathBuf,
     files: Vec<PathBuf>,
     now: DateTime<Utc>,
     state_path: PathBuf,
@@ -778,8 +779,12 @@ mod tests {
         ]);
 
         let expected = python_brief_decisions(&fixtures);
-        for (index, (fixture, expected_show)) in
-            fixtures.as_array().expect("fixtures").iter().zip(expected).enumerate()
+        for (index, (fixture, expected_show)) in fixtures
+            .as_array()
+            .expect("fixtures")
+            .iter()
+            .zip(expected)
+            .enumerate()
         {
             assert_eq!(
                 rust_brief_shows(fixture),
@@ -810,7 +815,11 @@ mod tests {
             .stdin
             .as_mut()
             .expect("Python stdin")
-            .write_all(serde_json::to_string(fixtures).expect("fixture JSON").as_bytes())
+            .write_all(
+                serde_json::to_string(fixtures)
+                    .expect("fixture JSON")
+                    .as_bytes(),
+            )
             .expect("write fixture");
         let output = child.wait_with_output().expect("Python brief result");
         assert!(

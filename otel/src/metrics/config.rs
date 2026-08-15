@@ -6,7 +6,6 @@ use opentelemetry_sdk::metrics::InMemoryMetricExporter;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-
 #[derive(Clone, Debug)]
 pub enum MetricsExporter {
     Otlp(OtelExporter),

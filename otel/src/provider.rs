@@ -453,10 +453,6 @@ mod shutdown_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metrics::MetricsExporter;
-    use crate::metrics::TOOL_CALL_COUNT_METRIC;
-    use crate::metrics::TOOL_CALL_DURATION_METRIC;
-    use opentelemetry_sdk::metrics::InMemoryMetricExporter;
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;
 

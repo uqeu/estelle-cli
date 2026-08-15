@@ -248,7 +248,6 @@ impl AmbientPet {
         })
     }
 
-
     fn visible_notification(&self, now: Instant) -> Option<&PetNotification> {
         self.notification
             .as_ref()

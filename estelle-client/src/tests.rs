@@ -145,7 +145,8 @@ fn secret_shapes_drive_input_rejection_while_prefixes_are_always_masked_for_disp
 fn redact_secrets_replaces_the_value_with_a_named_marker_and_leaves_prose_alone() {
     // F-2: the checkpoint wire's rule. The value never survives; the shape is named; the sentence lives.
     let token = format!("ghp_{}", "A".repeat(36));
-    let redacted = crate::redact_secrets(&format!("here is my token {token} — why is auth failing?"));
+    let redacted =
+        crate::redact_secrets(&format!("here is my token {token} — why is auth failing?"));
     assert!(!redacted.contains(&token));
     assert!(redacted.contains("[redacted: a GitHub token]"));
     assert!(redacted.contains("why is auth failing?"));
@@ -442,7 +443,10 @@ fn multi_shape_envelope_keys_fail_loudly_on_the_wrong_shape() {
     .expect("skill board");
     let rows = skill_board.skill_leaderboard_rows();
     assert_eq!(rows.len(), 1, "right shape must parse");
-    assert_eq!(rows[0].skill, "review", "shape assertion, not a vacuity guard");
+    assert_eq!(
+        rows[0].skill, "review",
+        "shape assertion, not a vacuity guard"
+    );
     let member_board: CommandReply = serde_json::from_value(json!({
         "leaderboard": [{"email": "dana@example.com", "metric_key": "runs", "value": 12, "rank": 1}]
     }))
@@ -477,11 +481,23 @@ fn multi_shape_envelope_keys_fail_loudly_on_the_wrong_shape() {
         graph.graph_entities.as_ref().and_then(Value::as_u64),
         Some(42)
     );
-    assert!(graph.graph_entities.as_ref().and_then(Value::as_array).is_none());
+    assert!(
+        graph
+            .graph_entities
+            .as_ref()
+            .and_then(Value::as_array)
+            .is_none()
+    );
     let entity_rows: CommandReply =
         serde_json::from_value(json!({"entities": [{"symbol": "s", "files": []}]}))
             .expect("entity rows");
-    assert!(entity_rows.graph_entities.as_ref().and_then(Value::as_u64).is_none());
+    assert!(
+        entity_rows
+            .graph_entities
+            .as_ref()
+            .and_then(Value::as_u64)
+            .is_none()
+    );
     assert_eq!(
         entity_rows
             .graph_entities

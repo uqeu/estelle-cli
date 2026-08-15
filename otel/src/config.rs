@@ -60,4 +60,3 @@ pub enum OtelExporter {
         tls: Option<OtelTlsConfig>,
     },
 }
-

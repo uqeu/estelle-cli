@@ -215,11 +215,11 @@ use crate::tui::Tui;
 pub use cli::Cli;
 use codex_arg0::Arg0DispatchPaths;
 pub use markdown_render::render_markdown_text;
+pub use public_widgets::composer_input::ComposerAction;
+pub use public_widgets::composer_input::ComposerInput;
 pub use status_indicator_widget::fmt_elapsed_compact;
 pub use style::user_message_style_for;
 pub use terminal_palette::default_bg;
-pub use public_widgets::composer_input::ComposerAction;
-pub use public_widgets::composer_input::ComposerInput;
 // (tests access modules directly within the crate)
 
 const TUI_LOG_FILE_NAME: &str = "codex-tui.log";
@@ -1153,7 +1153,8 @@ pub async fn run_main(
             /*service_name_override*/ None,
             // ESTELLE: analytics defaults OFF in this binary (telemetry we did not write and
             // the customer never asked for); `analytics.enabled = true` opts in.
-            /*default_analytics_enabled*/ false,
+            /*default_analytics_enabled*/
+            false,
         )
     })) {
         Ok(Ok(otel)) => otel,
@@ -1335,7 +1336,6 @@ async fn run_ratatui_app(
 ) -> color_eyre::Result<AppExitInfo> {
     let uses_remote_workspace = app_server_target.uses_remote_workspace();
     color_eyre::install()?;
-
 
     // Forward panic reports through tracing so they appear in the UI status
     // line, but do not swallow the default/color-eyre panic handler.

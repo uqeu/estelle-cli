@@ -1,6 +1,4 @@
 use super::*;
-use crate::loader::configured_curated_plugin_ids_from_codex_home;
-use crate::loader::refresh_curated_plugin_cache;
 use crate::LoadedPlugin;
 use crate::OPENAI_API_CURATED_MARKETPLACE_NAME;
 use crate::OPENAI_CURATED_MARKETPLACE_NAME;
@@ -8,8 +6,10 @@ use crate::PluginLoadOutcome;
 use crate::ToolSuggestDiscoverablePlugin;
 use crate::ToolSuggestPluginDiscoveryInput;
 use crate::installed_marketplaces::marketplace_install_root;
+use crate::loader::configured_curated_plugin_ids_from_codex_home;
 use crate::loader::load_plugin_skills;
 use crate::loader::load_plugins_from_layer_stack;
+use crate::loader::refresh_curated_plugin_cache;
 use crate::loader::refresh_non_curated_plugin_cache;
 use crate::loader::refresh_non_curated_plugin_cache_force_reinstall;
 use crate::marketplace::MarketplacePluginInstallPolicy;

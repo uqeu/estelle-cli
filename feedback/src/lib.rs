@@ -482,5 +482,4 @@ mod tests {
         pretty_assertions::assert_eq!(tags.get("model").map(String::as_str), Some("gpt-5"));
         pretty_assertions::assert_eq!(tags.get("cached").map(String::as_str), Some("true"));
     }
-
 }

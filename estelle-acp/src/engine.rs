@@ -155,10 +155,9 @@ impl ChatGptEngine {
 
     /// GET {base}/models?client_version=… with the user's credential.
     async fn fetch_models(&self) -> Result<Vec<ModelInfo>, ApiError> {
-        let auth = self
-            .plan_auth()
-            .await
-            .ok_or_else(|| ApiError::Stream("the ChatGPT credential is not loadable".to_string()))?;
+        let auth = self.plan_auth().await.ok_or_else(|| {
+            ApiError::Stream("the ChatGPT credential is not loadable".to_string())
+        })?;
         let client = ModelsClient::new(
             ReqwestTransport::new(reqwest::Client::new()),
             backend_provider(&self.base_url),
@@ -281,7 +280,12 @@ async fn gather_recall(
     cancel: &CancellationToken,
 ) -> Option<String> {
     let result: Result<Value, estelle_client::Error> = http
-        .post_scoped(Endpoint::Search, repo, &serde_json::json!({"query": question}), cancel)
+        .post_scoped(
+            Endpoint::Search,
+            repo,
+            &serde_json::json!({"query": question}),
+            cancel,
+        )
         .await;
     result.ok().and_then(|value| {
         value
@@ -587,9 +591,10 @@ mod tests {
             .await;
         Mock::given(method("POST"))
             .and(path("/deep-search"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(
-                json!({"answer": "server answer", "sources": []}),
-            ))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"answer": "server answer", "sources": []})),
+            )
             .mount(server)
             .await;
     }
@@ -654,7 +659,11 @@ mod tests {
         assert!(texts.contains(&"server answer".to_string()), "{texts:?}");
         assert_eq!(texts.last(), Some(&SERVER_RECEIPT.to_string()));
         assert!(
-            backend.received_requests().await.expect("requests").is_empty(),
+            backend
+                .received_requests()
+                .await
+                .expect("requests")
+                .is_empty(),
             "the server path must not touch the ChatGPT backend"
         );
     }
@@ -698,12 +707,19 @@ mod tests {
             .find(|request| request.url.path() == "/models")
             .expect("the model catalog was fetched");
         assert!(
-            models_request.url.query().unwrap_or_default().contains("client_version="),
+            models_request
+                .url
+                .query()
+                .unwrap_or_default()
+                .contains("client_version="),
             "client_version query: {}",
             models_request.url
         );
         assert_eq!(
-            models_request.headers.get("authorization").expect("auth header"),
+            models_request
+                .headers
+                .get("authorization")
+                .expect("auth header"),
             &format!("Bearer {}", write_chatgpt_auth_token(home.path()))
         );
         let request = requests
@@ -722,7 +738,10 @@ mod tests {
             "acct-1"
         );
         assert_eq!(
-            request.headers.get("originator").expect("originator header"),
+            request
+                .headers
+                .get("originator")
+                .expect("originator header"),
             "codex_cli_rs"
         );
         assert!(
@@ -760,11 +779,18 @@ mod tests {
             serde_json::to_value(ReasoningEffort::Low).expect("effort json")
         );
         let input = &body["input"];
-        assert_eq!(input.as_array().expect("input").len(), 1, "ONE user message");
+        assert_eq!(
+            input.as_array().expect("input").len(),
+            1,
+            "ONE user message"
+        );
         assert_eq!(input[0]["role"], json!("user"));
         let text = input[0]["content"][0]["text"].as_str().expect("text");
         assert!(text.contains(MEMORY_LABEL), "{text}");
-        assert!(text.contains("the retry policy lives in retry.rs"), "{text}");
+        assert!(
+            text.contains("the retry policy lives in retry.rs"),
+            "{text}"
+        );
         assert!(text.contains("what retries?"), "{text}");
         assert!(
             text.find(MEMORY_LABEL) < text.find("what retries?"),
@@ -837,7 +863,10 @@ mod tests {
 
         let engine = Engine::resolve(Some(home.path().to_path_buf()), "http://127.0.0.1:1").await;
 
-        assert!(matches!(engine, Engine::Local(_)), "the refreshed credential loads");
+        assert!(
+            matches!(engine, Engine::Local(_)),
+            "the refreshed credential loads"
+        );
         let stored = write_chatgpt_auth_token(home.path());
         assert_ne!(stored, access_token_expiring_at(1_000_000));
         let refresh = codex_login::load_auth_dot_json(
@@ -849,7 +878,10 @@ mod tests {
         .and_then(|auth| auth.tokens)
         .expect("tokens")
         .refresh_token;
-        assert_eq!(refresh, "refresh-NEW", "the rotated refresh token is persisted");
+        assert_eq!(
+            refresh, "refresh-NEW",
+            "the rotated refresh token is persisted"
+        );
         let refresh_calls = authority
             .received_requests()
             .await
@@ -865,8 +897,11 @@ mod tests {
         let home = tempdir().expect("home");
         write_chatgpt_auth(home.path(), &valid_access_token(), "refresh-1");
         let backend = MockServer::start().await;
-        mock_backend_models(&backend, vec![model_fixture("mock-best", 1, ModelVisibility::List)])
-            .await;
+        mock_backend_models(
+            &backend,
+            vec![model_fixture("mock-best", 1, ModelVisibility::List)],
+        )
+        .await;
         Mock::given(method("POST"))
             .and(path("/responses"))
             .respond_with(ResponseTemplate::new(401).set_body_json(json!({"error": "bad token"})))
@@ -890,8 +925,11 @@ mod tests {
         let home = tempdir().expect("home");
         write_chatgpt_auth(home.path(), &valid_access_token(), "refresh-1");
         let backend = MockServer::start().await;
-        mock_backend_models(&backend, vec![model_fixture("mock-best", 1, ModelVisibility::List)])
-            .await;
+        mock_backend_models(
+            &backend,
+            vec![model_fixture("mock-best", 1, ModelVisibility::List)],
+        )
+        .await;
         mock_backend_responses(&backend).await;
         let estelle = MockServer::start().await;
         mock_estelle(&estelle, 500).await;

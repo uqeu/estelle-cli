@@ -37,7 +37,12 @@ pub(crate) async fn ensure_builtin_pet(
     tokio::task::spawn_blocking(move || validate_cached_spritesheet(&destination))
         .await
         .context("join pet spritesheet cache validation task")?
-        .with_context(|| format!("pet asset {} is not available locally", pet.spritesheet_file))
+        .with_context(|| {
+            format!(
+                "pet asset {} is not available locally",
+                pet.spritesheet_file
+            )
+        })
 }
 
 fn pack_dir(codex_home: &Path) -> PathBuf {

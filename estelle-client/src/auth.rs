@@ -66,7 +66,9 @@ pub fn find_secret_shape(value: &str) -> Option<(&'static str, usize)> {
 pub fn redact_secrets(value: &str) -> String {
     let mut out = value.to_string();
     for (name, re) in SECRET_SHAPE_RES.iter() {
-        out = re.replace_all(&out, format!("[redacted: {name}]")).into_owned();
+        out = re
+            .replace_all(&out, format!("[redacted: {name}]"))
+            .into_owned();
     }
     out
 }

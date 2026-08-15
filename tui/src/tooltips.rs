@@ -113,7 +113,6 @@ fn pick_tooltip<R: Rng + ?Sized>(rng: &mut R) -> Option<&'static str> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,12 +162,4 @@ mod tests {
         assert_eq!(seen, expected);
         assert!(!seen.contains(&Some(FAST_TOOLTIP)));
     }
-
-
-
-
-
-
-
-
 }

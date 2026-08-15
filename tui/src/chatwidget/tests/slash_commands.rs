@@ -2378,7 +2378,6 @@ async fn slash_resume_with_arg_requests_named_session_while_mcp_startup_is_runni
     assert_matches!(op_rx.try_recv(), Err(TryRecvError::Empty));
 }
 
-
 #[tokio::test]
 async fn slash_fork_requests_current_fork() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;

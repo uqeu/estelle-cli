@@ -275,7 +275,6 @@ pub(crate) async fn run_chatgpt() -> io::Result<()> {
 }
 
 pub(crate) async fn run() -> io::Result<LoginOutcome> {
-
     let Some(key) = read_secret()? else {
         io::stdout().write_all(b"Login cancelled. Nothing was stored.\n")?;
         return Err(io::Error::new(
@@ -437,7 +436,10 @@ mod tests {
         }
 
         let printed = String::from_utf8(out).expect("output text");
-        assert!(printed.contains("/codex/device"), "verification URL: {printed}");
+        assert!(
+            printed.contains("/codex/device"),
+            "verification URL: {printed}"
+        );
         assert!(printed.contains("CODE-12345"), "user code: {printed}");
         assert!(printed.contains("ChatGPT"), "auth method named: {printed}");
         assert!(
@@ -453,17 +455,25 @@ mod tests {
         mock_device_usercode(&first).await;
         mock_device_poll(&first).await;
         mock_oauth_token(&first, "account-1", "access-token-OLD").await;
-        run_chatgpt_with(first.uri().as_str(), home.path().to_path_buf(), &mut Vec::new())
-            .await
-            .expect("first login");
+        run_chatgpt_with(
+            first.uri().as_str(),
+            home.path().to_path_buf(),
+            &mut Vec::new(),
+        )
+        .await
+        .expect("first login");
 
         let second = MockServer::start().await;
         mock_device_usercode(&second).await;
         mock_device_poll(&second).await;
         mock_oauth_token(&second, "account-2", "access-token-NEW").await;
-        run_chatgpt_with(second.uri().as_str(), home.path().to_path_buf(), &mut Vec::new())
-            .await
-            .expect("second login");
+        run_chatgpt_with(
+            second.uri().as_str(),
+            home.path().to_path_buf(),
+            &mut Vec::new(),
+        )
+        .await
+        .expect("second login");
 
         let auth = codex_login::load_auth_dot_json(
             home.path(),
@@ -487,9 +497,13 @@ mod tests {
             .await;
         let home = tempdir().expect("home");
 
-        let error = run_chatgpt_with(server.uri().as_str(), home.path().to_path_buf(), &mut Vec::new())
-            .await
-            .expect_err("a failed device-code request must fail the login");
+        let error = run_chatgpt_with(
+            server.uri().as_str(),
+            home.path().to_path_buf(),
+            &mut Vec::new(),
+        )
+        .await
+        .expect_err("a failed device-code request must fail the login");
 
         assert!(error.to_string().contains("device code"), "{error}");
         assert!(!home.path().join("auth.json").exists());

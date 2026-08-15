@@ -260,7 +260,10 @@ fn account_id_prefers_the_flat_claim_then_the_namespaced_one() {
         "https://api.openai.com/auth": {"chatgpt_account_id": "namespaced-id"},
         "organizations": [{"id": "org-id"}]
     }));
-    assert_eq!(account_id_from_jwt(&namespaced).as_deref(), Some("namespaced-id"));
+    assert_eq!(
+        account_id_from_jwt(&namespaced).as_deref(),
+        Some("namespaced-id")
+    );
 }
 
 #[test]
