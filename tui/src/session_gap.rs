@@ -705,13 +705,15 @@ mod tests {
         assert_eq!(unknown.model_context, unknown.human_lines.join("\n"));
     }
 
-    /// THE RETIRING CONTRACT'S BRIEF FIXTURES (tests/test_hook_contract.py::TestTheReturningBrief,
-    /// verbatim) driven through BOTH renderers. The pinned invariant is the SHOW/SILENT decision on
-    /// every fixture — a threshold that diverges means one surface interrupts a customer the other
-    /// correctly left alone. The WORDING deliberately differs (this Rust renderer predates the JS
-    /// one and is not string-identical: it says "No committed changes were found…" where the Python
-    /// says "Nothing you track changed…", and it names an unverifiable git history where the Python
-    /// is silent) — do not force agreement on text, and do not weaken a fixture to pass.
+    /// THE PYTHON CONTRACT'S BRIEF FIXTURES (tests/test_hook_contract.py::TestTheReturningBrief,
+    /// verbatim) driven through the Rust renderer. The pinned invariant is the SHOW/SILENT decision
+    /// on every fixture — a threshold that diverges means one surface interrupts a customer the other
+    /// correctly left alone. A public `estelle-cli` checkout does not contain the separate Estelle
+    /// server repository, so the Python-produced decisions are recorded here as the release oracle.
+    /// In the source-of-truth parent checkout the live Python renderer must still reproduce that oracle.
+    /// The WORDING deliberately differs (this Rust renderer says "No committed changes were found…"
+    /// where the Python says "Nothing you track changed…", and it names an unverifiable git history
+    /// where the Python is silent) — do not force agreement on text, and do not weaken a fixture to pass.
     #[test]
     fn rust_brief_decision_matches_the_python_contract() {
         let left = "2026-07-31T03:05:00+00:00";
@@ -778,29 +780,38 @@ mod tests {
              "my_files": [], "changes": [], "tz": "America/Toronto"},
         ]);
 
-        let expected = python_brief_decisions(&fixtures);
-        for (index, (fixture, expected_show)) in fixtures
+        let expected = [
+            true, true, true, true, false, false, false, false, false, true, true, true, true,
+            true, true, true, true, true, true,
+        ];
+        assert_eq!(fixtures.as_array().expect("fixtures").len(), expected.len());
+        let actual: Vec<bool> = fixtures
             .as_array()
             .expect("fixtures")
             .iter()
-            .zip(expected)
-            .enumerate()
-        {
+            .map(rust_brief_shows)
+            .collect();
+        assert_eq!(actual, expected, "Rust SHOW/SILENT decisions drifted");
+
+        if let Some(python) = python_brief_decisions(&fixtures) {
             assert_eq!(
-                rust_brief_shows(fixture),
-                expected_show,
-                "fixture {index} disagrees: {fixture}"
+                python, expected,
+                "the live Python source drifted from the recorded release oracle"
             );
         }
     }
 
-    /// The Python renderer's show/silent decision for each fixture, via the repo's own
-    /// session_gap module (the same entry point the retiring pytest drives).
-    fn python_brief_decisions(fixtures: &serde_json::Value) -> Vec<bool> {
-        let src = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../src")
+    /// The Python renderer's live decisions when this separate repository is nested in the Estelle
+    /// source-of-truth checkout. A standalone public checkout has no Python source; its non-optional
+    /// assertion above uses the decisions produced by that exact source at the contract checkpoint.
+    fn python_brief_decisions(fixtures: &serde_json::Value) -> Option<Vec<bool>> {
+        let candidate = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src");
+        if !candidate.join("estelle/serve/session_gap.py").is_file() {
+            return None;
+        }
+        let src = candidate
             .canonicalize()
-            .expect("python package root");
+            .expect("Python package root resolves");
         let script = format!(
             "import json,sys\nsys.path.insert(0,{src:?})\nfrom estelle.serve.session_gap import Change, returning_brief\nfs=json.load(sys.stdin)\nout=[]\nfor f in fs:\n    raw=f['changes']\n    changes=None if raw is None else [Change(**i) for i in raw]\n    b=returning_brief(f['now'],f['last_seen'],my_files=f['my_files'],changes=changes,tz_name=f['tz'])\n    out.append(b.show)\nprint(json.dumps(out))"
         );
@@ -827,7 +838,7 @@ mod tests {
             "Python brief failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        serde_json::from_slice(&output.stdout).expect("Python brief JSON")
+        Some(serde_json::from_slice(&output.stdout).expect("Python brief JSON"))
     }
 
     /// The Rust renderer's show/silent decision for one fixture, expressed in build_context's
