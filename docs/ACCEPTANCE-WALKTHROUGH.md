@@ -113,7 +113,7 @@ ACP is a stdio protocol server, so use an ACP host and configure this command:
 The accepted live ACP surface is protocol-v1 initialize plus `session/new`. Unsupported capabilities must
 be advertised false. ACP does not resolve Estelle BYOK credentials.
 
-To expose Estelle's eleven MCP tools to an MCP host:
+To expose Estelle's production-advertised MCP tools to an MCP host (28 on Free; 37 on Ultra):
 
 ```sh
 ./target/release/estelle mcp-server --repo uqeu/estelle
@@ -138,7 +138,7 @@ the contracts in `SERVER-CONTRACTS-NEEDED.md`:
 - account-wide PR feed;
 - account-wide model mutation;
 - ACP lifecycle beyond initialize and `session/new`;
-- MCP capabilities beyond the eleven tools;
+- MCP capabilities beyond the catalogue exposed by the authenticated entitlement tier;
 - live sandbox output streaming.
 
 The acceptance condition is not that these look populated. It is that each one says exactly what is absent
