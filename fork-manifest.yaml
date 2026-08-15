@@ -57,6 +57,11 @@
       "path": ".github/workflows/release.yml",
       "blob": "2a6bbecd55c4f201d68bd512c217c1f31ba05072",
       "reason": "release validation gates the pinned fork audit, four native builds, signed artifacts, and the verified npm retirement shim"
+    },
+    {
+      "path": "tui/src/session_gap.rs",
+      "blob": "07229a7a9ddb1241aad3f5c8259d7870569e01eb",
+      "reason": "the Rust brief contract carries a Python-produced release oracle while retaining live cross-repo parity when the server source is present"
     }
   ],
   "owners": ["CLI", "SECURITY"],
