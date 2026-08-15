@@ -1469,7 +1469,28 @@ pub fn oauth_client_id() -> String {
 
 fn refresh_token_endpoint() -> String {
     std::env::var(REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR)
-        .unwrap_or_else(|_| REFRESH_TOKEN_URL.to_string())
+        .ok()
+        .and_then(|value| validated_loopback_override(&value))
+        .unwrap_or_else(|| REFRESH_TOKEN_URL.to_string())
+}
+
+/// Test servers may redirect OAuth token traffic to loopback; production credentials must never follow
+/// an inherited environment variable to an arbitrary host. Environment control is not authority to
+/// export a refresh token.
+pub(crate) fn validated_loopback_override(value: &str) -> Option<String> {
+    let parsed = url::Url::parse(value).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return None;
+    }
+    let loopback = match parsed.host()? {
+        url::Host::Domain(host) => host.eq_ignore_ascii_case("localhost"),
+        url::Host::Ipv4(ip) => ip.is_loopback(),
+        url::Host::Ipv6(ip) => ip.is_loopback(),
+    };
+    loopback.then(|| parsed.to_string())
 }
 
 impl AuthDotJson {

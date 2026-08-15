@@ -5551,7 +5551,8 @@ async fn main() -> ExitCode {
             let store = CredentialStore::default_location()?;
             let credential = store.resolve()?;
             let client = Client::production(credential.api_key)?;
-            estelle_acp::run_stdio(client)
+            let repo_override = args.repo.as_deref().and_then(Repo::new);
+            estelle_acp::run_stdio(client, repo_override)
                 .await
                 .map_err(|error| Error::CredentialStore(error.to_string()))
         }

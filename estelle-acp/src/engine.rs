@@ -378,7 +378,12 @@ async fn answer_via_plan(
         };
         match event {
             Some(Ok(ResponseEvent::OutputTextDelta(delta))) => emit(text(&delta)),
-            Some(Ok(ResponseEvent::Completed { .. })) | None => return PlanOutcome::Answered,
+            Some(Ok(ResponseEvent::Completed { .. })) => return PlanOutcome::Answered,
+            None => {
+                return PlanOutcome::Failed(
+                    "ChatGPT response stream ended before response.completed".to_string(),
+                );
+            }
             Some(Ok(_)) => {}
             Some(Err(error)) if is_credential_rejection(&error) => return PlanOutcome::Rejected,
             Some(Err(error)) => return PlanOutcome::Failed(error.to_string()),
@@ -796,6 +801,39 @@ mod tests {
             text.find(MEMORY_LABEL) < text.find("what retries?"),
             "the context block rides above the prompt: {text}"
         );
+    }
+
+    #[tokio::test]
+    async fn stream_eof_without_response_completed_is_a_failure_never_end_turn() {
+        let home = tempdir().expect("home");
+        write_chatgpt_auth(home.path(), &valid_access_token(), "refresh-1");
+        let backend = MockServer::start().await;
+        mock_backend_models(
+            &backend,
+            vec![model_fixture("mock-best", 1, ModelVisibility::List)],
+        )
+        .await;
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(sse_body(&[
+                        json!({"type": "response.created", "response": {"id": "resp-1"}}),
+                        json!({"type": "response.output_text.delta", "delta": "partial"}),
+                    ])),
+            )
+            .mount(&backend)
+            .await;
+        let estelle = MockServer::start().await;
+        mock_estelle(&estelle, 200).await;
+
+        let engine = Engine::resolve(Some(home.path().to_path_buf()), &backend.uri()).await;
+        let (outcome, blocks) = answer(&engine, &estelle, "what retries?").await;
+
+        assert!(matches!(outcome, PromptAnswer::Failed(ref error)
+            if error.contains("before response.completed")));
+        assert!(!emitted_texts(&blocks).contains(&LOCAL_RECEIPT.to_string()));
     }
 
     fn write_chatgpt_auth_token(home: &Path) -> String {

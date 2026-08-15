@@ -31,15 +31,17 @@ struct Session {
 struct State {
     http: Client,
     engine: Arc<engine::Engine>,
+    repo_override: Option<Repo>,
     sessions: Arc<Mutex<HashMap<SessionId, Session>>>,
     active: Arc<Mutex<HashMap<SessionId, CancellationToken>>>,
 }
 
 impl State {
-    fn new(http: Client, engine: engine::Engine) -> Self {
+    fn new(http: Client, engine: engine::Engine, repo_override: Option<Repo>) -> Self {
         Self {
             http,
             engine: Arc::new(engine),
+            repo_override,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             active: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -53,12 +55,15 @@ fn lock_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// Serve Estelle as an ACP agent over stdin/stdout.
-pub async fn run_stdio(http: Client) -> Result<(), agent_client_protocol::Error> {
+pub async fn run_stdio(
+    http: Client,
+    repo_override: Option<Repo>,
+) -> Result<(), agent_client_protocol::Error> {
     // The engine decision is made once, up front: a loadable ChatGPT credential means the
     // user's own plan does the thinking; anything else keeps the server path unchanged.
     let engine =
         engine::Engine::resolve(engine::chatgpt_home(), engine::CHATGPT_BACKEND_BASE).await;
-    let state = State::new(http, engine);
+    let state = State::new(http, engine, repo_override);
     let new_session_state = state.clone();
     let prompt_state = state.clone();
     let cancel_state = state;
@@ -79,7 +84,8 @@ pub async fn run_stdio(http: Client) -> Result<(), agent_client_protocol::Error>
                         "Estelle ACP does not advertise client-provided MCP servers or additional directories",
                     ));
                 }
-                let Some(repo) = RepoResolver::new(None, request.cwd).resolve() else {
+                let Some(repo) = resolve_session_repo(&new_session_state.repo_override, request.cwd)
+                else {
                     return responder.respond_with_error(agent_client_protocol::util::internal_error(
                         "the ACP working directory does not resolve to a repository",
                     ));
@@ -114,8 +120,11 @@ pub async fn run_stdio(http: Client) -> Result<(), agent_client_protocol::Error>
                         );
                     }
                 };
-                let cancel = CancellationToken::new();
-                lock_recover(&prompt_state.active).insert(session_id.clone(), cancel.clone());
+                let Some(cancel) = begin_prompt(&prompt_state.active, &session_id) else {
+                    return responder.respond_with_error(agent_client_protocol::util::internal_error(
+                        "an Estelle ACP prompt is already active for this session",
+                    ));
+                };
                 let request_cancel = responder.cancellation();
                 let task_connection = connection.clone();
                 let task_state = prompt_state.clone();
@@ -198,6 +207,26 @@ pub async fn run_stdio(http: Client) -> Result<(), agent_client_protocol::Error>
         )
         .connect_to(Stdio::new())
         .await
+}
+
+fn resolve_session_repo(
+    override_repo: &Option<Repo>,
+    cwd: impl Into<std::path::PathBuf>,
+) -> Option<Repo> {
+    RepoResolver::new(override_repo.clone(), cwd).resolve()
+}
+
+fn begin_prompt(
+    active: &Mutex<HashMap<SessionId, CancellationToken>>,
+    session_id: &SessionId,
+) -> Option<CancellationToken> {
+    let mut active = lock_recover(active);
+    if active.contains_key(session_id) {
+        return None;
+    }
+    let cancel = CancellationToken::new();
+    active.insert(session_id.clone(), cancel.clone());
+    Some(cancel)
 }
 
 fn initialize_response(request: InitializeRequest) -> InitializeResponse {
@@ -316,5 +345,28 @@ mod tests {
         assert_eq!(source.name, "api/charge.ts");
         assert_eq!(source.title.as_deref(), Some("api/charge.ts:52"));
         assert_eq!(source.uri, "estelle://repo/api/charge.ts?line=52");
+    }
+
+    #[test]
+    fn a_session_can_have_only_one_live_prompt_and_cancel_tracks_that_prompt() {
+        let active = Mutex::new(HashMap::new());
+        let session_id = SessionId::new("session-1".to_string());
+        let first = begin_prompt(&active, &session_id).expect("first prompt starts");
+
+        assert!(begin_prompt(&active, &session_id).is_none());
+        lock_recover(&active)
+            .get(&session_id)
+            .expect("original prompt remains registered")
+            .cancel();
+        assert!(first.is_cancelled());
+    }
+
+    #[test]
+    fn an_explicit_repo_overrides_even_an_invalid_client_cwd() {
+        let expected = Repo::new("owner/repo").expect("repo");
+        assert_eq!(
+            resolve_session_repo(&Some(expected.clone()), "/definitely/not/a/repo"),
+            Some(expected)
+        );
     }
 }

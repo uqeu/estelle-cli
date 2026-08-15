@@ -175,6 +175,14 @@ fn repo_resolver_prefers_override_and_parses_remote_shapes() {
     );
 }
 
+#[test]
+fn repo_resolver_refuses_a_nonexistent_path_instead_of_inventing_its_basename() {
+    assert_eq!(
+        RepoResolver::new(None, "/definitely/not/a/repo").resolve(),
+        None
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn credential_file_is_created_with_mode_0600_and_secret_is_masked() {
@@ -322,8 +330,10 @@ async fn chat_is_openai_shaped_and_repo_is_only_in_the_header() {
 
 #[test]
 fn compatibility_versions_are_positive_and_independent_of_the_release_semver() {
-    assert!(CLIENT_PROTOCOL_VERSION > 0);
-    assert!(HOOK_CONTRACT_VERSION > 0);
+    const {
+        assert!(CLIENT_PROTOCOL_VERSION > 0);
+        assert!(HOOK_CONTRACT_VERSION > 0);
+    }
     assert_ne!(
         CLIENT_PROTOCOL_VERSION.to_string(),
         env!("CARGO_PKG_VERSION")

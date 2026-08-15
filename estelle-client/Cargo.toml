@@ -12,6 +12,7 @@ codex-keyring-store = { workspace = true }
 codex-login = { workspace = true }
 codex-secrets = { workspace = true }
 dirs = { workspace = true }
+gix = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 regex = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

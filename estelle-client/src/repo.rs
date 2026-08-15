@@ -1,7 +1,6 @@
 use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::Command;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Repo(String);
@@ -50,19 +49,22 @@ impl RepoResolver {
 }
 
 fn repo_for(root: &Path) -> Option<Repo> {
-    let remote = Command::new("git")
-        .args(["-C"])
-        .arg(root)
-        .args(["remote", "get-url", "origin"])
-        .output()
+    // Resolve an existing path before repository discovery. The old fallback accepted the basename of a
+    // nonexistent client-supplied ACP cwd, turning a typo into an authoritative repository identity.
+    let root = root.canonicalize().ok()?;
+    // Use the library parser rather than executing `git` through inherited PATH. ACP's cwd is client
+    // supplied; letting that request choose which executable resolves its repository is code execution.
+    let remote = gix::discover(&root)
         .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|repo| {
+            let remote = repo.find_remote("origin").ok()?;
+            remote
+                .url(gix::remote::Direction::Fetch)
+                .map(ToString::to_string)
+        })
         .and_then(|url| repo_from_remote_url(&url));
     remote.or_else(|| {
-        root.canonicalize()
-            .unwrap_or_else(|_| root.to_path_buf())
-            .file_name()
+        root.file_name()
             .and_then(|name| name.to_str())
             .and_then(Repo::new)
     })

@@ -14,6 +14,7 @@ use super::manager::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
 use super::manager::REVOKE_TOKEN_URL;
 use super::manager::REVOKE_TOKEN_URL_OVERRIDE_ENV_VAR;
 use super::manager::oauth_client_id;
+use super::manager::validated_loopback_override;
 use super::storage::AuthDotJson;
 use super::util::try_parse_error_message;
 use crate::default_client::create_default_auth_client;
@@ -132,12 +133,16 @@ async fn revoke_oauth_token(
 }
 
 fn revoke_token_endpoint() -> String {
-    if let Ok(endpoint) = std::env::var(REVOKE_TOKEN_URL_OVERRIDE_ENV_VAR) {
+    if let Some(endpoint) = std::env::var(REVOKE_TOKEN_URL_OVERRIDE_ENV_VAR)
+        .ok()
+        .and_then(|value| validated_loopback_override(&value))
+    {
         return endpoint;
     }
 
     if let Ok(refresh_endpoint) = std::env::var(REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR)
-        && let Some(endpoint) = derive_revoke_token_endpoint(&refresh_endpoint)
+        && let Some(loopback) = validated_loopback_override(&refresh_endpoint)
+        && let Some(endpoint) = derive_revoke_token_endpoint(&loopback)
     {
         return endpoint;
     }
@@ -170,6 +175,26 @@ mod tests {
         assert_eq!(
             derive_revoke_token_endpoint("http://127.0.0.1:1234/oauth/token?unified=true"),
             Some("http://127.0.0.1:1234/oauth/revoke".to_string())
+        );
+    }
+
+    #[test]
+    fn token_endpoint_overrides_are_loopback_only() {
+        for refused in [
+            "https://evil.example/oauth/token",
+            "https://localhost.evil.example/oauth/token",
+            "https://user:pass@localhost/oauth/token",
+            "file:///tmp/token",
+        ] {
+            assert_eq!(validated_loopback_override(refused), None, "{refused}");
+        }
+        assert_eq!(
+            validated_loopback_override("http://127.0.0.1:4321/oauth/token"),
+            Some("http://127.0.0.1:4321/oauth/token".to_string())
+        );
+        assert_eq!(
+            validated_loopback_override("http://[::1]:4321/oauth/token"),
+            Some("http://[::1]:4321/oauth/token".to_string())
         );
     }
 
