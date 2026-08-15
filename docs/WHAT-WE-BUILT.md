@@ -6,7 +6,8 @@ its row. A status changes only from a probe, never from recollection.
 
 **Status:** ✅ built + wired + public-artifact/prod-proven · 🟡 built, but no public customer artifact proves
 the path · ⬜ decided, not built. **TODAY — 2026-08-15:** local release gates pass; clean workflow run
-`31911232894` correctly refused a parent-repository test dependency; no Rust GitHub Release exists yet.
+`31912554854` correctly refused six remaining parent-repository parity dependencies after 217 binary tests
+passed; no Rust GitHub Release exists yet.
 
 ## PORTED — mechanism, source, and licence
 
@@ -24,7 +25,7 @@ the path · ⬜ decided, not built. **TODAY — 2026-08-15:** local release gate
 |---|---|---|---|
 | Typed Estelle transport with one endpoint inventory, boundary validation, secret-safe rendering, and fail-loud envelope collisions | Fate Labs · Apache-2.0 repository | `estelle-client/src/endpoint.rs`, `estelle-client/src/lib.rs`, `estelle-client/src/tests.rs` | 🟡 |
 | One Rust hook owner that generates Claude Code and Codex host tables and pins five Python/Rust decisions | Fate Labs · Apache-2.0 repository | `tui/src/top_level.rs`, `tui/src/hook_distil.rs`, `tui/src/session_gap.rs` | 🟡 |
-| The 19-decision returning-brief release oracle: standalone public checkout proof plus live Python comparison when the server source exists | Fate Labs · Apache-2.0 repository; fixtures originate in parent `tests/test_hook_contract.py::TestTheReturningBrief` | `tui/src/session_gap.rs:708` | 🟡 |
+| Standalone Python/Rust release oracles: 19 returning-brief decisions plus exact guard, distil, repository, sync-refusal, grounding-verdict, and verify-request fixtures; live Python comparison when the server source exists | Fate Labs · Apache-2.0 repository; fixtures originate in parent `tests/test_hook_contract.py` | `tui/src/session_gap.rs:708`, `tui/src/top_level.rs:3196` | 🟡 |
 | Finite fork/egress audit: pinned upstream/import trees, reviewed risky blobs, named sinks, and primitive census | Fate Labs · Apache-2.0 repository | `fork-manifest.yaml`, `docs/egress-sinks.toml`, `scripts/check-fork-audit.py` | 🟡 |
 | Native retirement of the abandoned JavaScript package through an exact-version, checksum-first npm launcher | Fate Labs · Apache-2.0 repository | `npm-shim/install.js`, `npm-shim/bin/estelle.js` | 🟡 |
 
@@ -44,4 +45,3 @@ the path · ⬜ decided, not built. **TODAY — 2026-08-15:** local release gate
 | Any-mode question picker using the inherited renderer | OpenAI Codex request-user-input renderer · Apache-2.0 | `tui/src/bottom_pane/request_user_input/` | ⬜ |
 | PLAN / ACCEPT-EDITS / AUTO with ACCEPT-EDITS as the everyday default and persistent visible mode | Fate Labs product decision · repository licence when implemented | TUI collaboration-mode state | ⬜ |
 | Mermaid diagrams rendered in the terminal | jcode renderer precedent · MIT | TUI markdown/render pipeline | ⬜ |
-
