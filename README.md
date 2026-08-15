@@ -6,6 +6,8 @@ Rust port of the Estelle CLI, forked from OpenAI Codex at commit
 The current tree includes the Estelle server transport and TUI. Public releases are tag-triggered from the
 separate `uqeu/estelle-cli` repository and contain four checksummed binaries: macOS/Linux on arm64/x86_64.
 The release workflow requests GitHub-signed build provenance for every release artifact.
+The component boundaries, trust model, release path, measurements, and named limits live in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/SCORECARD.md`](docs/SCORECARD.md).
 
 Once the first Rust release is published, the clean-machine install command is:
 
