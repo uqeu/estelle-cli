@@ -173,6 +173,10 @@ Not verified. this repo has not been swept, so there is nothing to ground agains
 `npx @fatelabs/estelle sweep` first. Refusing rather than passing.
 ```
 
+That block is retained as a production receipt, not current installation guidance. Its `npx` instruction was
+retracted on 2026-08-15 with the JavaScript CLI. The Rust release uses the checksummed installer documented in
+the repository README; until that artifact is published, no replacement install command is claimed live.
+
 A real `ask` stayed alive for about 103 seconds and returned a bounded answer saying the requested module
 was not present in repo memory. The TUI renders the elapsed timer throughout that wait; the top-level
 wrapper prints the completed answer.

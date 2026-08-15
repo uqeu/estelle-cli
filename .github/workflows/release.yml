@@ -1,0 +1,138 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Require an exact Cargo SemVer tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=${GITHUB_REF_NAME}
+          grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$' <<<"$tag"
+          version=$(awk '
+            /^\[workspace.package\]$/ { in_package=1; next }
+            /^\[/ { in_package=0 }
+            in_package && /^version = / { gsub(/[" ]/, "", $3); print $3; exit }
+          ' Cargo.toml)
+          test "$tag" = "v$version"
+      - name: Prove checksum-first installer behavior
+        run: ./scripts/test-installer.sh
+      - name: Prove release archives are byte-reproducible
+        run: ./scripts/test-release-package.sh
+      - name: Gate the shipped Rust surfaces
+        env:
+          # libtest workers default to 2 MiB; the largest measured full-App fixture needs between 5 and
+          # 6 MiB. Keep an explicit bounded 8 MiB test stack, matching a conventional process main stack.
+          RUST_MIN_STACK: "8388608"
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo clippy --locked -p estelle-client -p estelle-tui --all-targets -- -D warnings
+          cargo test --locked -p estelle-client -p estelle-tui
+
+  build:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            file_marker: "Mach-O 64-bit executable arm64"
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            file_marker: "Mach-O 64-bit executable x86_64"
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            file_marker: "x86-64"
+          # GitHub's standard ARM runner keeps target-native OpenSSL and other C dependencies native too.
+          # https://docs.github.com/en/actions/reference/runners/github-hosted-runners
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            file_marker: "ARM aarch64"
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install Rust target
+        run: rustup target add "${{ matrix.target }}"
+      - name: Build locked release binary
+        shell: bash
+        env:
+          RUSTFLAGS: -D warnings
+        run: |
+          set -euo pipefail
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          test "$host" = "${{ matrix.target }}"
+          cargo build --locked --release --package estelle-tui --bin estelle --target "${{ matrix.target }}"
+          binary="target/${{ matrix.target }}/release/estelle"
+          test -x "$binary"
+          description=$(file "$binary")
+          grep -F -- "${{ matrix.file_marker }}" <<<"$description"
+          test "$("$binary" --version)" = "estelle ${GITHUB_REF_NAME#v}"
+          ESTELLE_TEST_BINARY="$binary" \
+            ESTELLE_TEST_TARGET="${{ matrix.target }}" \
+            ESTELLE_TEST_EXPECTED_OUTPUT="estelle ${GITHUB_REF_NAME#v}" \
+            ./scripts/test-installer.sh
+          mkdir dist
+          install -m 0755 "$binary" "dist/estelle-${{ matrix.target }}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: estelle-${{ matrix.target }}
+          path: dist/estelle-${{ matrix.target }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Build reproducible archives and checksum manifest
+        run: |
+          set -euo pipefail
+          test "$(find dist -maxdepth 1 -type f -name 'estelle-*' | wc -l)" -eq 4
+          ./scripts/package-release.sh dist release
+          cp install.sh release/install.sh
+      - name: Sign build provenance for every downloadable artifact
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: release/*
+      - name: Publish versioned release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<EOF
+          Estelle CLI ${GITHUB_REF_NAME}
+
+          Install the latest release:
+
+              curl --proto '=https' --tlsv1.2 -fsSL \
+                https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/install.sh | sh
+
+          The installer verifies SHA256SUMS before installing. Verify GitHub's signed provenance separately:
+
+              gh attestation verify estelle-<target>.tar.gz --repo ${GITHUB_REPOSITORY}
+          EOF
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --verify-tag --title "Estelle CLI $GITHUB_REF_NAME" --notes-file release-notes.md
