@@ -1,0 +1,42 @@
+ ESTELLE   SESSION  fatelabs/estelle  ·  main  ·  repo graph current
+ DESIGN FIXTURE · NOT LIVE DATA · deterministic Ratatui TestBackend render
+┌ Todo · Ctrl+T expand ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┌ TODO CONTRACT ────────────────────────────────────
+│                                                                                                                                                   │
+│                                                                                                                                                   │ Binding
+│  ✓ 2 completed  ·  ● 1 in progress  ·  ○ 2 queued                                                                                                 │ Toggle           Ctrl+T
+│                                                                                                                                                   │ State            collapsed
+│  Completed results retained                                                                                                                       │
+│  ✓ Ground checkout failures  result: 7 files · 12 symbols resolved                                                                                │ States
+│  ✓ Compare working memory  result: local disagreement disclosed                                                                                   │ ✓ completed
+│                                                                                                                                                   │ ● in progress
+│  Current                                                                                                                                          │ ○ not started
+│  ● Run Estelle Orchestra  3/8 measured · observed 12s ago                                                                                         │
+│                                                                                                                                                   │ Invariant
+│  Ctrl+T expands queued work without discarding completed evidence.                                                                                │ Collapse changes density,
+│                                                                                                                                                   │ never recorded results.
+│                                                                                                                                                   │
+│                                                                                                                                                   │ Source
+│                                                                                                                                                   │ Session task state
+│                                                                                                                                                   │ Fixture values only
+│                                                                                                                                                   │
+│                                                                                                                                                   │
+│                                                                                                                                                   │
+│                                                                                                                                                   │
+│                                                                                                                                                   │
+│                                                                                                                                                   │
+│                                                                                                                                                   │
+│                                                                                                                                                   │
+│                                                                                                                                                   │
+│                                                                                                                                                   │
+│                                                                                                                                                   │
+│                                                                                                                                                   │
+│                                                                                                                                                   │
+│                                                                                                                                                   │
+│                                                                                                                                                   │
+│                                                                                                                                                   │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+› Ask Estelle…
+
+
+ todo GPT-5 · auto route   ~/Desktop/estelle   main                                                   context: 18%
+

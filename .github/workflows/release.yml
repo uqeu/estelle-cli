@@ -1,85 +1,181 @@
-# Publish @fatelabs/estelle to npm with provenance.
-#
-# Human-gated: fires only when a maintainer publishes a GitHub release — never on push or a schedule.
-# `--provenance` needs `id-token: write` (OIDC) and a PUBLIC repo; it emits a sigstore attestation linking
-# the published bytes to this commit, so anyone installing can verify that what runs on their machine is
-# what they can read here. Fail closed: no token, no publish — there is no unsigned fallback.
-#
-# Hardened 2026-07-31 (security review): this is the repository npm's trusted-publishing config actually
-# points at (repository uqeu/estelle-cli, workflow release.yml) — the reviewed, hardened workflow that lives
-# in the private fatelabs/estelle repo's .github/workflows/release.yml is a DIFFERENT file that never runs
-# for a real publish. Reconciled to match it: no floating `npm@latest` (a same-day-compromised npm release
-# would be pulled straight into the signing job — pinned to a specific, months-aged release instead),
-# `--ignore-scripts` on every install (the CLI has zero runtime dependencies, so this only removes npm's own
-# postinstall surface), a CycloneDX SBOM, and a GitHub SLSA build-provenance attestation on the exact tarball
-# in addition to npm's own `--provenance` attestation.
 name: release
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - "v*"
 
 permissions:
   contents: read
 
 jobs:
-  publish:
-    name: Build, attest + publish @fatelabs/estelle
-    runs-on: ubuntu-latest
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # The audit proves that its recorded checkpoint is an ancestor of the release tag.
+          fetch-depth: 0
+      - name: Require an exact Cargo SemVer tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=${GITHUB_REF_NAME}
+          grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$' <<<"$tag"
+          version=$(awk '
+            /^\[workspace.package\]$/ { in_package=1; next }
+            /^\[/ { in_package=0 }
+            in_package && /^version = / { gsub(/[" ]/, "", $3); print $3; exit }
+          ' Cargo.toml)
+          test "$tag" = "v$version"
+          shim_version=$(node -p "require('./npm-shim/package.json').version")
+          test "$tag" = "v$shim_version"
+      - name: Prove checksum-first installer behavior
+        run: ./scripts/test-installer.sh
+      - name: Prove release archives are byte-reproducible
+        run: ./scripts/test-release-package.sh
+      - name: Verify fork provenance and egress census
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=582569998181aad08a88bacc151a94b2048a5d1f
+          git fetch --no-tags --depth=1 https://github.com/openai/codex.git "$base"
+          python3 scripts/check-fork-audit.py
+      - name: Gate the shipped Rust surfaces
+        env:
+          # libtest workers default to 2 MiB; the largest measured full-App fixture needs between 5 and
+          # 6 MiB. Keep an explicit bounded 8 MiB test stack, matching a conventional process main stack.
+          RUST_MIN_STACK: "8388608"
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo clippy --locked -p estelle-client -p estelle-tui --all-targets -- -D warnings
+          cargo test --locked -p estelle-client -p estelle-tui
+
+  build:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            file_marker: "Mach-O 64-bit executable arm64"
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            file_marker: "Mach-O 64-bit executable x86_64"
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            file_marker: "x86-64"
+          # GitHub's standard ARM runner keeps target-native OpenSSL and other C dependencies native too.
+          # https://docs.github.com/en/actions/reference/runners/github-hosted-runners
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            file_marker: "ARM aarch64"
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install Rust target
+        run: rustup target add "${{ matrix.target }}"
+      - name: Build locked release binary
+        shell: bash
+        env:
+          RUSTFLAGS: -D warnings
+        run: |
+          set -euo pipefail
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          test "$host" = "${{ matrix.target }}"
+          cargo build --locked --release --package estelle-tui --bin estelle --target "${{ matrix.target }}"
+          binary="target/${{ matrix.target }}/release/estelle"
+          test -x "$binary"
+          description=$(file "$binary")
+          grep -F -- "${{ matrix.file_marker }}" <<<"$description"
+          test "$("$binary" --version)" = "estelle ${GITHUB_REF_NAME#v}"
+          ESTELLE_TEST_BINARY="$binary" \
+            ESTELLE_TEST_TARGET="${{ matrix.target }}" \
+            ESTELLE_TEST_EXPECTED_OUTPUT="estelle ${GITHUB_REF_NAME#v}" \
+            ./scripts/test-installer.sh
+          mkdir dist
+          install -m 0755 "$binary" "dist/estelle-${{ matrix.target }}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: estelle-${{ matrix.target }}
+          path: dist/estelle-${{ matrix.target }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Build reproducible archives and checksum manifest
+        run: |
+          set -euo pipefail
+          test "$(find dist -maxdepth 1 -type f -name 'estelle-*' | wc -l)" -eq 4
+          ./scripts/package-release.sh dist release
+          cp install.sh release/install.sh
+          cp fork-manifest.yaml docs/egress-sinks.toml release/
+          sha256sum fork-manifest.yaml > release/FORK-MANIFEST.sha256
+      - name: Sign build provenance for every downloadable artifact
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: release/*
+      - name: Publish versioned release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<EOF
+          Estelle CLI ${GITHUB_REF_NAME}
+
+          Install the latest release:
+
+              curl --proto '=https' --tlsv1.2 -fsSL \
+                https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/install.sh | sh
+
+          The installer verifies SHA256SUMS before installing. Verify GitHub's signed provenance separately:
+
+              gh attestation verify estelle-<target>.tar.gz --repo ${GITHUB_REPOSITORY}
+          EOF
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --verify-tag --title "Estelle CLI $GITHUB_REF_NAME" --notes-file release-notes.md
+
+  publish-npm-shim:
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
-      id-token: write        # OIDC — npm trusted publishing + sigstore provenance
-      attestations: write     # GitHub SLSA build-provenance attestation
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
-
-      # npm trusted publishing (OIDC) needs npm >= 11.5.1; the version bundled with the runner's Node
-      # predates it, which otherwise surfaces as a bare `404 Not Found - PUT` on a package that plainly
-      # exists. Pinned to a specific, several-months-aged release — never `@latest` — so this job installs a
-      # release the community has had time to find problems with, and a same-day-compromised npm publish
-      # cannot reach the signing job just by npm cutting a new version.
-      - name: Use a pinned npm that supports trusted publishing
-        run: npm install -g npm@11.9.0 --ignore-scripts
-
-      # Locked, script-free install — the CLI has no runtime deps, so this only pins the tree the SBOM
-      # describes and removes npm's dependency-postinstall surface from the signing job.
-      - name: Install (lockfile-exact, no scripts)
-        run: npm ci --ignore-scripts
-
-      - name: Test
-        run: npm test
-
-      # SBOM for the artifact being published, kept alongside the tarball.
-      - name: Emit SBOM (CycloneDX)
-        run: npm sbom --sbom-format cyclonedx > sbom.cdx.json
-
-      # Build the EXACT tarball that gets attested and published.
-      - name: Pack the release tarball
-        run: npm pack
-
-      - name: Upload tarball + SBOM
-        uses: actions/upload-artifact@v4
+      - name: Use a pinned npm with trusted-publishing support
+        run: npm install --global npm@11.9.0 --ignore-scripts
+      - name: Prove the compatibility launcher
+        run: npm test --prefix npm-shim
+      - name: Pack the exact npm artifact
+        working-directory: npm-shim
+        run: npm pack --ignore-scripts
+      - name: Sign the npm artifact provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
-          name: npm-release-artifacts
-          path: |
-            *.tgz
-            sbom.cdx.json
-
-      # SLSA build provenance: proves these bytes came from this workflow run at this commit — independent
-      # of, and in addition to, npm's own `--provenance` sigstore attestation below.
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-path: "*.tgz"
-
-      # Auth is npm TRUSTED PUBLISHING (OIDC) — no token. npm now restricts tokens from bypassing 2FA for
-      # direct publishing, so a token in CI fails with EOTP no matter how it is scoped. OIDC has nothing to
-      # steal, nothing to expire, and nothing to prompt. Configure the trusted publisher on npmjs.com for
-      # @fatelabs/estelle: repository uqeu/estelle-cli, workflow release.yml.
-      - name: Publish
+          subject-path: npm-shim/fatelabs-estelle-*.tgz
+      - name: Publish the native compatibility launcher
+        working-directory: npm-shim
         run: npm publish --provenance --access public

@@ -1,0 +1,38 @@
+ESTELLE  ·  uqeu/estelle  ·  Fate Labs · owner
+
+┌ CONVERSATION  Tab · Ctrl+←/→ focus ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│Since your last session                                                                                                                                       │
+│Welcome back - you were last here about 3 hours ago.                                                                                                          │
+│Code you touched has changed since:                                                                                                                           │
+│- billing/charge.rs - by Dana, about 2 hours ago - bound retry telemetry                                                                                      │
+│Signed in · khai@fatelabs.ca · team                                                                                                                           │
+│Team · Fate Labs · owner                                                                                                                                      │
+│                                                                                                                                                              │
+│you  What changed while I was away?                                                                                                                           │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ ASK ESTELLE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                                              │
+│› Ask Estelle                                                                                                                                                 │
+│                                                                                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+still waiting for Estelle  83s  |  Esc cancels  |  no response received yet

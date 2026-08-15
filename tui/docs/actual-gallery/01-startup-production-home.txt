@@ -1,0 +1,38 @@
+ESTELLE  ·  uqeu/estelle
+
+┌ CONVERSATION  Tab · Ctrl+←/→ focus ────────────────────────────────────────────────────────────────────────────────┐┌ LIVE PRODUCTION ───────────────────────┐
+│                                                                                                                    ││APP HEALTH                              │
+│                                                                                                                    ││error counts · ▂▅▃█  14                 │
+│                                                                                                                    ││measured · 14/3292 requests             │
+│                                                                                                                    ││uptime checks · 4/4 up                  │
+│                                                                                                                    ││                                        │
+│                                                                                                                    ││AGENT HEALTH                            │
+│                                                                                                                    ││State unavailable · no read contract.   │
+│                                                                                                                    ││Send telemetry to POST /agent/events.   │
+│                                                                                                                    ││                                        │
+│                                                                                                                    ││WHAT ESTELLE CAUGHT                     │
+│                                                                                                                    ││No errors have reached Estelle yet.     │
+│                                                                                                                    ││Point OTLP or Sentry at                 │
+│                                                                                                                    ││api.fatelabs.ca/monitor/ingest.         │
+│                                                                                                                    ││                                        │
+│                                                                                                                    ││WHAT ESTELLE DID                        │
+│                                                                                                                    ││Nothing to repair in the current feed.  │
+│                                                                                                                    ││                                        │
+│                                                                                                                    ││GITHUB                                  │
+│                                                                                                                    ││Connection state not loaded in this     │
+│                                                                                                                    ││pane.                                   │
+│                                                                                                                    ││Run estelle github status.              │
+│                                                                                                                    ││                                        │
+│                                                                                                                    ││                                        │
+│                                                                                                                    ││                                        │
+│                                                                                                                    ││                                        │
+│                                                                                                                    ││                                        │
+│                                                                                                                    ││                                        │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘└────────────────────────────────────────┘
+input · plan  |  routing · auto  |  memory unavailable  |  server connecting
+┌ ASK ESTELLE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                                              │
+│› Ask Estelle                                                                                                                                                 │
+│                                                                                                                                                              │
+│   enter ask    shift+enter newline    ? shortcuts                                                                                                            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

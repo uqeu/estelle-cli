@@ -1,0 +1,232 @@
+schema_version = 1
+audit_date = "2026-08-15"
+audit_state = "source census recorded; call-site exhaustion and process-tree runtime canary remain open"
+released_sink_count = 14
+latent_sink_count = 5
+
+[[sink]]
+id = "estelle-startup-reads"
+reachability = "released"
+source_file = "tui/src/main.rs"
+source_symbol = "spawn_header_requests"
+trigger = "automatic after a stored Estelle credential is available"
+confirmation = "credential/login; no per-start confirmation"
+destination = "https://api.fatelabs.ca"
+data = "account, overview, repositories, settings, and autonomy metadata"
+disposition = "keep; runtime canary still required"
+
+[[sink]]
+id = "estelle-deep-search-working-memory"
+reachability = "released"
+source_file = "tui/src/main.rs"
+source_symbol = "DeepSearchRequest::new"
+trigger = "ordinary customer question"
+confirmation = "the prompt is explicit; dirty working-memory attachment is automatic"
+destination = "https://api.fatelabs.ca/deep-search"
+data = "prompt and up to the bounded dirty working-memory excerpt"
+disposition = "keep; ignored/secret-file canary remains open"
+
+[[sink]]
+id = "hook-context"
+reachability = "released"
+source_file = "tui/src/top_level.rs"
+source_symbol = "context_hook"
+trigger = "automatic after explicit install-hooks"
+confirmation = "no per-event confirmation"
+destination = "https://api.fatelabs.ca/search"
+data = "bounded hook context query"
+disposition = "keep; kill-switch and no-credential zero-traffic tests remain open"
+
+[[sink]]
+id = "hook-checkpoint"
+reachability = "released"
+source_file = "tui/src/top_level.rs"
+source_symbol = "checkpoint_hook"
+trigger = "automatic after explicit install-hooks"
+confirmation = "no per-event confirmation"
+destination = "https://api.fatelabs.ca/checkpoint"
+data = "redacted conversation text"
+disposition = "keep; runtime secret canary exists separately"
+
+[[sink]]
+id = "hook-ground"
+reachability = "released"
+source_file = "tui/src/top_level.rs"
+source_symbol = "ground_hook"
+trigger = "automatic after explicit install-hooks"
+confirmation = "no per-event confirmation"
+destination = "https://api.fatelabs.ca/verify"
+data = "candidate code or answer claims"
+disposition = "keep"
+
+[[sink]]
+id = "hook-sync"
+reachability = "released"
+source_file = "tui/src/top_level.rs"
+source_symbol = "sync_hook"
+trigger = "automatic after explicit install-hooks"
+confirmation = "no per-event confirmation"
+destination = "https://api.fatelabs.ca/reindex"
+data = "eligible repository file paths and bytes"
+disposition = "keep; ignored/secret-file process canary remains open"
+
+[[sink]]
+id = "chatgpt-device-auth"
+reachability = "released"
+source_file = "tui/src/onboarding/auth.rs"
+source_symbol = "webbrowser::open"
+trigger = "explicit ChatGPT login"
+confirmation = "command plus displayed provider URL"
+destination = "https://auth.openai.com"
+data = "OAuth device/login request"
+disposition = "keep"
+
+[[sink]]
+id = "acp-chatgpt-provider"
+reachability = "released"
+source_file = "estelle-acp/src/engine.rs"
+source_symbol = "CHATGPT_BACKEND_BASE"
+trigger = "explicit estelle acp followed by a prompt"
+confirmation = "no per-prompt destination confirmation"
+destination = "https://chatgpt.com/backend-api/codex"
+data = "prompt plus Estelle recall; model catalogue request"
+disposition = "keep; disclosure and real-host proof remain open"
+
+[[sink]]
+id = "chatgpt-token-endpoint-test-override"
+reachability = "released"
+source_file = "login/src/auth/manager.rs"
+source_symbol = "validated_loopback_override"
+trigger = "token refresh/revoke when the environment override is set"
+confirmation = "none"
+destination = "exact HTTP(S) loopback only after 3ea4936"
+data = "refresh or revoke credential"
+disposition = "keep for isolated tests; arbitrary remote hosts are refused"
+
+[[sink]]
+id = "github-browser-handoff"
+reachability = "released"
+source_file = "tui/src/top_level.rs"
+source_symbol = "validated_github_authorize_url"
+trigger = "explicit estelle github link"
+confirmation = "command plus displayed URL"
+destination = "https://github.com/login/oauth/authorize only"
+data = "client id, signed state, and exact loopback redirect"
+disposition = "origin/path/query boundary enforced; real browser receipt remains open"
+
+[[sink]]
+id = "citation-browser-handoff"
+reachability = "released"
+source_file = "tui/src/app/history_ui.rs"
+source_symbol = "webbrowser::open"
+trigger = "explicit click on a rendered citation"
+confirmation = "the user selects the exact link"
+destination = "the cited URL"
+data = "browser GET controlled by the selected citation"
+disposition = "keep as user-directed egress; URI-scheme census remains open"
+
+[[sink]]
+id = "shell-escape"
+reachability = "released"
+source_file = "tui/src/main.rs"
+source_symbol = "execute_shell"
+trigger = "explicit leading exclamation mark"
+confirmation = "the command itself is the confirmation; no second prompt"
+destination = "arbitrary through the user's shell and installed programs"
+data = "whatever the explicit command reads or sends"
+disposition = "documented trust boundary; explicit-only mutant remains required"
+
+[[sink]]
+id = "external-mcp-child"
+reachability = "released"
+source_file = "estelle-mcp/src/lib.rs"
+source_symbol = "inspect_stdio"
+trigger = "explicit estelle mcp -- <program>"
+confirmation = "the supplied program and arguments"
+destination = "arbitrary through the unsandboxed child"
+data = "caller-selected MCP requests and child process data"
+disposition = "documented trust boundary; explicit-only mutant remains required"
+
+[[sink]]
+id = "estelle-mcp-server"
+reachability = "released"
+source_file = "estelle-mcp/src/lib.rs"
+source_symbol = "serve_stdio"
+trigger = "explicit estelle mcp-server then a host tool call"
+confirmation = "host tool request"
+destination = "https://api.fatelabs.ca"
+data = "tool name and caller arguments"
+disposition = "keep"
+
+[[sink]]
+id = "openai-update-check"
+reachability = "latent"
+source_file = "cli/src/doctor/updates.rs"
+source_symbol = "GITHUB_LATEST_RELEASE_URL"
+trigger = "inherited codex-cli doctor path; not initialized by the Estelle entrypoint"
+confirmation = "not applicable to current Estelle entrypoint"
+destination = "GitHub releases and Homebrew APIs"
+data = "version/update request metadata"
+disposition = "forbidden from released Estelle; artifact-symbol proof remains open"
+
+[[sink]]
+id = "openai-update-execution"
+reachability = "latent"
+source_file = "tui/src/update_action.rs"
+source_symbol = "UpdateAction"
+trigger = "inherited Codex update action; not referenced by the Estelle entrypoint"
+confirmation = "upstream UI action"
+destination = "npm, bun, pnpm, brew, or OpenAI install script"
+data = "package/update traffic and installer execution"
+disposition = "forbidden from released Estelle; linked-code proof remains open"
+
+[[sink]]
+id = "openai-analytics"
+reachability = "latent"
+source_file = "analytics/src/client.rs"
+source_symbol = "analytics-events"
+trigger = "opt-in inherited analytics configuration"
+confirmation = "configuration; default is false"
+destination = "OpenAI analytics endpoint"
+data = "analytics events"
+disposition = "forbidden from released Estelle; runtime canary remains open"
+
+[[sink]]
+id = "otlp-export"
+reachability = "latent"
+source_file = "otel/src/config.rs"
+source_symbol = "endpoint"
+trigger = "explicit OTLP endpoint configuration"
+confirmation = "configuration; defaults are absent"
+destination = "configured OTLP endpoint"
+data = "logs, traces, or metrics"
+disposition = "latent workspace capability; not initialized by current Estelle entrypoint"
+
+[[sink]]
+id = "plugin-marketplace-and-remote-bundles"
+reachability = "latent"
+source_file = "core-plugins/src/remote.rs"
+source_symbol = "download"
+trigger = "inherited plugin manager/catalog path; not initialized by the Estelle entrypoint"
+confirmation = "plugin install action"
+destination = "Git, npm registry, or ChatGPT remote catalogue"
+data = "plugin metadata and downloaded bundle bytes"
+disposition = "latent whole-workspace sink; Sites absent locally, remote-catalog exclusion unproven"
+
+[[primitive_census]]
+id = "released-tui-browser-open"
+path = "tui/src"
+needle = "webbrowser::open("
+expected_occurrences = 3
+
+[[primitive_census]]
+id = "token-url-overrides"
+path = "login/src/auth/manager.rs"
+needle = "URL_OVERRIDE_ENV_VAR"
+expected_occurrences = 3
+
+[[primitive_census]]
+id = "latent-marketplace-git-spawn"
+path = "core-plugins/src"
+needle = "Command::new(\"git\")"
+expected_occurrences = 3

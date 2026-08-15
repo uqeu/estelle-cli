@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "upstream": {
+    "repository": "https://github.com/openai/codex.git",
+    "base_commit": "582569998181aad08a88bacc151a94b2048a5d1f",
+    "base_tree": "d766eaa8b35c98c879da6c99ef8aac81cfed5752",
+    "source_subtree": "codex-rs",
+    "source_subtree_tree": "e299e81a692a6dcc2d14898b0fef30445b5a00b6"
+  },
+  "import": {
+    "commit": "50edb00a709fd678875b9c65ef81f844ebf737cd",
+    "tree": "c0ce9c7d21ae63ecf8cd6675983b84221e2fcc2e",
+    "method": "root snapshot of upstream codex-rs plus deliberate Estelle changes in the import commit",
+    "upstream_subtree_to_import": {
+      "added": 124,
+      "deleted": 110,
+      "modified": 13
+    }
+  },
+  "policy": {
+    "sync": "manual semantic re-audit; no blind merge, subtree pull, or squashed replacement",
+    "base_object_required_in_ci": true,
+    "release_attests_this_manifest": true,
+    "audited_through_commit": "3ea4936a74e9345e3f1f8331bdb012a4688088bc"
+  },
+  "allowed_inherited_capabilities": [
+    "ChatGPT device authentication for an explicit user login",
+    "local Git inspection with fixed non-network arguments",
+    "ACP provider transport selected by the user",
+    "plugin and marketplace code retained as latent workspace code, not initialized by the Estelle entrypoint"
+  ],
+  "explicitly_removed_or_disabled": [
+    "curated startup network sync",
+    "feedback upload",
+    "plugin code upload",
+    "legacy JavaScript CLI execution path"
+  ],
+  "high_risk_paths": [
+    ".github/workflows/**",
+    "analytics/**",
+    "cli/src/doctor/**",
+    "core-plugins/**",
+    "estelle-acp/**",
+    "estelle-client/**",
+    "login/**",
+    "network-proxy/**",
+    "otel/**",
+    "tui/src/**"
+  ],
+  "reviewed_changes_after_audited_commit": [
+    {
+      "path": "tui/src/top_level.rs",
+      "blob": "b037e217276418f3c48fe8c364d40665449ae62e",
+      "reason": "N-01 GitHub browser handoff now enforces exact provider origin, path, client, state, and loopback redirect"
+    },
+    {
+      "path": ".github/workflows/release.yml",
+      "blob": "076b0e8a25996e9062f982ce7da08a7e1d9fa543",
+      "reason": "release validation fetches and verifies the pinned upstream object and attests the fork manifest"
+    }
+  ],
+  "owners": ["CLI", "SECURITY"],
+  "last_semantic_audit": "2026-08-15"
+}

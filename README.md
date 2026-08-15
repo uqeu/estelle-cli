@@ -1,52 +1,21 @@
-# Estelle
+# Estelle CLI
 
-Your coding agent forgets your codebase every time you open a new session. Estelle is the memory it should
-have had, plus a gate that checks the agent's claims against your real code before it tells you something
-confidently wrong.
+Rust port of the Estelle CLI, forked from OpenAI Codex at commit
+`582569998181aad08a88bacc151a94b2048a5d1f`.
 
-You keep your own model and your own plan. Estelle rides alongside.
+The current tree includes the Estelle server transport and TUI. Public releases are tag-triggered from the
+separate `uqeu/estelle-cli` repository and contain four checksummed binaries: macOS/Linux on arm64/x86_64.
+The release workflow requests GitHub-signed build provenance for every release artifact.
 
-## Install
+Once the first Rust release is published, the clean-machine install command is:
 
-```
-npx @fatelabs/estelle init
-```
-
-Detects the editors you have installed and writes Estelle's MCP server into each config, leaving your other
-servers alone. Restart your editor and your agent has the new tools.
-
-## You need a key
-
-Estelle is an account, not a local tool. Get one free at **[fatelabs.ca](https://fatelabs.ca)** — no card.
-`init` will ask for it.
-
-## Keeping it current
-
-`sweep` is a **fresh start**: it rebuilds your memory from the whole tree. Use it once per repo.
-
-`reindex` is the **daily one**: it updates only what changed and leaves the rest of the graph alone.
-
-```
-npx @fatelabs/estelle reindex          # whatever git says you changed
-npx @fatelabs/estelle reindex src/a.py
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/uqeu/estelle-cli/releases/latest/download/install.sh | sh
 ```
 
-Don't reach for `sweep` to catch up. It rebuilds from exactly the files you hand it, so a partial sweep
-throws the rest away and the gate starts calling real code hallucinated.
-
-In Claude Code, `install-hooks` does the reindex for you on every edit.
-
-## Everything else
-
-Commands, editor setup, the API, how memory and the grounding gate work:
-**[fatelabs.ca/docs](https://fatelabs.ca/docs)**
-
-## About this package
-
-Zero dependencies, Node 18 or newer. Published from CI with npm provenance, so every version is
-cryptographically attested to the commit it was built from.
-
-This repository is the client only. The Estelle server is closed source and none of it is here.
-Source-available, not open source: read it, audit it, verify it. All rights reserved. See LICENSE.
-
-khai@fatelabs.ca
+The installer detects the platform, downloads from the Estelle-owned release repository by default, verifies
+the archive against `SHA256SUMS`, rejects archives with unexpected members, and atomically installs `estelle`
+to `~/.local/bin`. `ESTELLE_RELEASE_REPOSITORY` is an explicit operator/test override that changes that trust
+root; normal installs must leave it unset. Until a release containing `install.sh` exists, this is a release
+contract—not a claim that the command is live.

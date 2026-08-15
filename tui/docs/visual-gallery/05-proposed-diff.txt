@@ -1,0 +1,42 @@
+ ESTELLE   REVIEW  fatelabs/estelle  ·  main  ·  repo graph current
+ DESIGN FIXTURE · NOT LIVE DATA · deterministic Ratatui TestBackend render
+                                                                                                                                                ┌ REVIEW ───────────────────────────────────────────────
+   Proposed repair  ·  api/charge.ts  ·  PR #184                                                                                                │
+   @@ chargeCustomer(request) @@                                                                                                                │ Evidence
+     const account = request.account                                                                                                            │ Signal           E-104
+   - return gateway.charge(account)                                                                                                             │ Symbol           api/charge.ts:52
+   + if (!account.billingEnabled) {                                                                                                             │ Sandbox          passed
+   +   return { status: 'declined', reason: 'billing disabled' }                                                                                │ Gate             FLAGGED
+   + }                                                                                                                                          │
+   + return gateway.charge(account)                                                                                                             │ Decision
+                                                                                                                                                │ [a] Approve
+   Tests                                                                                                                                        │ [e] Edit
+   ✓ declines when billing is disabled                                                                                                          │ [r] Reject
+   ✓ retains grounded repo on scoped call                                                                                                       │
+                                                                                                                                                │ No automatic merge
+   Red before green: assertion failed at charge.test.ts:117                                                                                     │
+                                                                                                                                                │
+                                                                                                                                                │
+                                                                                                                                                │
+                                                                                                                                                │
+                                                                                                                                                │
+                                                                                                                                                │
+                                                                                                                                                │
+                                                                                                                                                │
+                                                                                                                                                │
+                                                                                                                                                │
+                                                                                                                                                │
+                                                                                                                                                │
+                                                                                                                                                │
+                                                                                                                                                │
+                                                                                                                                                │
+                                                                                                                                                │
+                                                                                                                                                │
+                                                                                                                                                │
+                                                                                                                                                │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+› Ask Estelle…
+
+
+ review GPT-5 · auto route   ~/Desktop/estelle   main                                                   context: 18%
+

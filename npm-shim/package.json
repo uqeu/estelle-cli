@@ -1,0 +1,30 @@
+{
+  "name": "@fatelabs/estelle",
+  "version": "0.2.4",
+  "description": "Compatibility launcher for the native Estelle CLI",
+  "bin": {
+    "estelle": "bin/estelle.js"
+  },
+  "files": [
+    "bin",
+    "install.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://fatelabs.ca/docs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/uqeu/estelle-cli.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "postinstall": "node install.js",
+    "test": "node --test test/*.test.js"
+  }
+}

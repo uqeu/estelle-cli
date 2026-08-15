@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1832" height="788" viewBox="0 0 1832 788">
+<rect width="100%" height="100%" fill="#101010"/>
+<g font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="14" xml:space="preserve">
+<rect x="16" y="10" width="81" height="18" fill="#E9E6DC"/>
+<text x="16" y="24" fill="#101010" font-weight="700"> ESTELLE </text>
+<text x="97" y="24" fill="#65A8FF" font-weight="700">  SESSION  </text>
+<text x="196" y="24" fill="#E9E6DC" font-weight="400">fatelabs/estelle</text>
+<text x="340" y="24" fill="#707478" font-weight="400">  ·  main  ·  repo graph current</text>
+<text x="16" y="42" fill="#E4BC5D" font-weight="400"> DESIGN FIXTURE · NOT LIVE DATA · deterministic Ratatui TestBackend render</text>
+<text x="43" y="78" fill="#3A3C3D" font-weight="400">You  Trace the checkout failures to the code that can fix them.                                                                                                                                   </text>
+<text x="43" y="114" fill="#3A3C3D" font-weight="400">Estelle  The production signal binds to api/charge.ts:52.                                                                                                                                         </text>
+<text x="43" y="132" fill="#3A3C3D" font-weight="400">         The proposed repair is ready for review, with two citations retained.                                                                                                                    </text>
+<text x="43" y="168" fill="#343738" font-weight="400">┌</text>
+<text x="52" y="168" fill="#70C6CC" font-weight="700"> Settings </text>
+<text x="142" y="168" fill="#343738" font-weight="400">───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+<text x="43" y="186" fill="#343738" font-weight="400">│</text>
+<text x="43" y="204" fill="#343738" font-weight="400">│</text>
+<text x="61" y="204" fill="#707478" font-weight="400">↑↓ navigate  ·  Enter select  ·  Esc cancel</text>
+<text x="43" y="222" fill="#343738" font-weight="400">│</text>
+<text x="43" y="240" fill="#343738" font-weight="400">│</text>
+<text x="61" y="240" fill="#E9E6DC" font-weight="700">  Model                   </text>
+<text x="295" y="240" fill="#707478" font-weight="400">Automatic · strongest available</text>
+<text x="43" y="258" fill="#343738" font-weight="400">│</text>
+<text x="61" y="258" fill="#65A8FF" font-weight="700">› Permission              </text>
+<text x="295" y="258" fill="#E9E6DC" font-weight="400">Ask before tools change customer state</text>
+<text x="43" y="276" fill="#343738" font-weight="400">│</text>
+<text x="61" y="276" fill="#E9E6DC" font-weight="700">  Theme                   </text>
+<text x="295" y="276" fill="#707478" font-weight="400">Estelle dark · cream ink</text>
+<text x="43" y="294" fill="#343738" font-weight="400">│</text>
+<text x="61" y="294" fill="#E9E6DC" font-weight="700">  Editor                  </text>
+<text x="295" y="294" fill="#707478" font-weight="400">$EDITOR</text>
+<text x="43" y="312" fill="#343738" font-weight="400">│</text>
+<text x="61" y="312" fill="#E9E6DC" font-weight="700">  Effects                 </text>
+<text x="295" y="312" fill="#707478" font-weight="400">Subtle · reduced motion respected</text>
+<text x="43" y="330" fill="#343738" font-weight="400">│</text>
+<text x="61" y="330" fill="#E9E6DC" font-weight="700">  Automatic updates       </text>
+<text x="295" y="330" fill="#707478" font-weight="400">On</text>
+<text x="43" y="348" fill="#343738" font-weight="400">│</text>
+<text x="61" y="348" fill="#E9E6DC" font-weight="700">  Usage                   </text>
+<text x="295" y="348" fill="#707478" font-weight="400">Session tokens and context window</text>
+<text x="43" y="366" fill="#343738" font-weight="400">│</text>
+<text x="61" y="366" fill="#E9E6DC" font-weight="700">  Providers               </text>
+<text x="295" y="366" fill="#707478" font-weight="400">3 connected · BYOK</text>
+<text x="43" y="384" fill="#343738" font-weight="400">│</text>
+<text x="61" y="384" fill="#E9E6DC" font-weight="700">  MCP                     </text>
+<text x="295" y="384" fill="#707478" font-weight="400">11 tools discovered</text>
+<text x="43" y="402" fill="#343738" font-weight="400">│</text>
+<text x="61" y="402" fill="#E9E6DC" font-weight="700">  ACP                     </text>
+<text x="295" y="402" fill="#707478" font-weight="400">protocol-v1 · session/new available</text>
+<text x="43" y="420" fill="#343738" font-weight="400">│</text>
+<text x="43" y="438" fill="#343738" font-weight="400">│</text>
+<text x="43" y="456" fill="#343738" font-weight="400">│</text>
+<text x="43" y="474" fill="#343738" font-weight="400">│</text>
+<text x="43" y="492" fill="#343738" font-weight="400">│</text>
+<text x="43" y="510" fill="#343738" font-weight="400">│</text>
+<text x="43" y="528" fill="#343738" font-weight="400">│</text>
+<text x="43" y="546" fill="#343738" font-weight="400">│</text>
+<text x="43" y="564" fill="#343738" font-weight="400">│</text>
+<text x="16" y="672" fill="#333536" font-weight="400">────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+<text x="16" y="690" fill="#70C6CC" font-weight="700">› </text>
+<rect x="16" y="730" width="81" height="18" fill="#121212"/>
+<text x="16" y="744" fill="#70C6CC" font-weight="700"> session </text>
+<rect x="97" y="730" width="162" height="18" fill="#121212"/>
+<text x="97" y="744" fill="#E9E6DC" font-weight="400">GPT-5 · auto route</text>
+<rect x="259" y="730" width="243" height="18" fill="#121212"/>
+<text x="259" y="744" fill="#707478" font-weight="400">   ~/Desktop/estelle   main</text>
+<rect x="502" y="730" width="1314" height="18" fill="#121212"/>
+<text x="502" y="744" fill="#E9E6DC" font-weight="400">                                                   context: 18%                                                                                   </text>
+<rect x="16" y="748" width="1800" height="18" fill="#121212"/>
+</g>
+</svg>

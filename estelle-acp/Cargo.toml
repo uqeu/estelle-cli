@@ -1,0 +1,32 @@
+[package]
+name = "estelle-acp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+agent-client-protocol = { version = "1.0", default-features = false, features = ["unstable"] }
+codex-api = { workspace = true }
+codex-http-client = { workspace = true }
+codex-login = { workspace = true }
+codex-models-manager = { workspace = true }
+codex-protocol = { workspace = true }
+dirs = { workspace = true }
+estelle-client = { workspace = true }
+http = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["io-std", "macros", "rt-multi-thread"] }
+tokio-util = { workspace = true, features = ["rt"] }
+url = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+base64 = { workspace = true }
+chrono = { workspace = true }
+serial_test = { workspace = true }
+tempfile = { workspace = true }
+wiremock = { workspace = true }
