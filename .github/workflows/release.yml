@@ -29,6 +29,8 @@ jobs:
             in_package && /^version = / { gsub(/[" ]/, "", $3); print $3; exit }
           ' Cargo.toml)
           test "$tag" = "v$version"
+          shim_version=$(node -p "require('./npm-shim/package.json').version")
+          test "$tag" = "v$shim_version"
       - name: Prove checksum-first installer behavior
         run: ./scripts/test-installer.sh
       - name: Prove release archives are byte-reproducible
@@ -148,3 +150,32 @@ jobs:
           EOF
           gh release create "$GITHUB_REF_NAME" release/* \
             --verify-tag --title "Estelle CLI $GITHUB_REF_NAME" --notes-file release-notes.md
+
+  publish-npm-shim:
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: Use a pinned npm with trusted-publishing support
+        run: npm install --global npm@11.9.0 --ignore-scripts
+      - name: Prove the compatibility launcher
+        run: npm test --prefix npm-shim
+      - name: Pack the exact npm artifact
+        working-directory: npm-shim
+        run: npm pack --ignore-scripts
+      - name: Sign the npm artifact provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: npm-shim/fatelabs-estelle-*.tgz
+      - name: Publish the native compatibility launcher
+        working-directory: npm-shim
+        run: npm publish --provenance --access public
