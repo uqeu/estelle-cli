@@ -55,8 +55,8 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "blob": "076b0e8a25996e9062f982ce7da08a7e1d9fa543",
-      "reason": "release validation fetches and verifies the pinned upstream object and attests the fork manifest"
+      "blob": "2a6bbecd55c4f201d68bd512c217c1f31ba05072",
+      "reason": "release validation gates the pinned fork audit, four native builds, signed artifacts, and the verified npm retirement shim"
     }
   ],
   "owners": ["CLI", "SECURITY"],
