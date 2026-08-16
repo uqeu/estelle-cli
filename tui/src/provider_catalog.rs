@@ -226,10 +226,6 @@ const PROVIDERS: &[ProviderDescriptor] = &[
     },
 ];
 
-pub(crate) fn catalog() -> &'static [ProviderDescriptor] {
-    PROVIDERS
-}
-
 pub(crate) fn on_surface(surface: Surface) -> impl Iterator<Item = &'static ProviderDescriptor> {
     PROVIDERS
         .iter()
@@ -374,7 +370,7 @@ mod tests {
             "openai-compatible",
         ];
         let mut names = HashSet::new();
-        for provider in catalog() {
+        for provider in PROVIDERS {
             assert!(names.insert(provider.id), "duplicate id {}", provider.id);
             for alias in provider.aliases {
                 assert!(names.insert(alias), "duplicate alias {alias}");

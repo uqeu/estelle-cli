@@ -10,6 +10,7 @@ mod local_provider;
 mod login;
 mod provider_catalog;
 mod provider_keys;
+mod provider_store;
 mod session_server;
 #[cfg(test)]
 mod test_gallery;

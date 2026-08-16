@@ -1,5 +1,4 @@
 use std::fs;
-use std::fs::OpenOptions;
 use std::io;
 use std::io::Write;
 use std::path::Path;
@@ -12,6 +11,8 @@ use std::process::Stdio;
 use serde::Deserialize;
 use serde::Serialize;
 use zeroize::Zeroizing;
+
+use crate::provider_store;
 
 const CLAUDE_CODE_TOKEN_ENV: &str = "CLAUDE_CODE_OAUTH_TOKEN";
 #[cfg(target_os = "macos")]
@@ -64,29 +65,7 @@ fn store_path() -> io::Result<PathBuf> {
 }
 
 fn persist(credential: &ClaudeCredential, destination: &Path) -> io::Result<()> {
-    let parent = destination
-        .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Claude store has no parent"))?;
-    fs::create_dir_all(parent)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
-    }
-    let temporary = parent.join(format!(".claude.json.tmp-{}", std::process::id()));
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(&temporary)?;
-    let encoded = Zeroizing::new(serde_json::to_vec_pretty(credential).map_err(io::Error::other)?);
-    file.write_all(&encoded)?;
-    file.write_all(b"\n")?;
-    file.sync_all()?;
-    fs::rename(temporary, destination)
+    provider_store::write_private_json(credential, destination, "claude.json")
 }
 
 fn source_blob() -> io::Result<(Zeroizing<String>, &'static str)> {

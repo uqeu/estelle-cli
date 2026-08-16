@@ -1,7 +1,6 @@
 //! GitHub Copilot device login adapted from jcode's Copilot auth flow (MIT).
 
 use std::fs;
-use std::fs::OpenOptions;
 use std::io;
 use std::io::Write;
 use std::path::Path;
@@ -12,6 +11,8 @@ use std::time::Instant;
 use serde::Deserialize;
 use serde::Serialize;
 use zeroize::Zeroizing;
+
+use crate::provider_store;
 
 const GITHUB_COPILOT_CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
 const GITHUB_DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
@@ -144,99 +145,84 @@ async fn poll_for_token(
     let deadline = Instant::now() + Duration::from_secs(expires_in.clamp(1, 1_800));
     let mut interval = initial_interval;
     loop {
-        if Instant::now() >= deadline {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "GitHub device code expired; run login again",
-            ));
-        }
+        ensure_not_expired(deadline)?;
         tokio::time::sleep(Duration::from_secs(interval)).await;
-        if Instant::now() >= deadline {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "GitHub device code expired; run login again",
-            ));
-        }
-        let response = client
-            .post(&endpoints.token)
-            .header("Accept", "application/json")
-            .form(&[
-                ("client_id", GITHUB_COPILOT_CLIENT_ID),
-                ("device_code", device_code),
-                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-            ])
-            .send()
-            .await
-            .map_err(io::Error::other)?;
-        let token: AccessTokenResponse = response.json().await.map_err(io::Error::other)?;
-        if let Some(access_token) = token.access_token {
-            return Ok(Zeroizing::new(access_token));
-        }
-        match token.error.as_deref() {
-            Some("authorization_pending") => {}
-            Some("slow_down") => interval = interval.saturating_add(5).min(30),
-            Some("expired_token") => {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "GitHub device code expired; run login again",
-                ));
-            }
-            Some("access_denied") => {
-                return Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "GitHub authorization was denied; nothing was stored",
-                ));
-            }
-            Some(error) => {
-                return Err(io::Error::other(format!(
-                    "GitHub authorization failed with status {error}"
-                )));
-            }
-            None => {
-                return Err(io::Error::other(
-                    "GitHub returned no access token or status",
-                ));
-            }
+        ensure_not_expired(deadline)?;
+        let token = poll_once(client, endpoints, device_code).await?;
+        if let Some(access_token) = interpret_token_response(token, &mut interval)? {
+            return Ok(access_token);
         }
     }
 }
 
-fn persist_token(token: &str, destination: &Path) -> io::Result<()> {
-    let parent = destination.parent().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "Copilot store has no parent")
-    })?;
-    fs::create_dir_all(parent)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+fn ensure_not_expired(deadline: Instant) -> io::Result<()> {
+    if Instant::now() < deadline {
+        return Ok(());
     }
-    let temporary = parent.join(format!(".copilot.json.tmp-{}", std::process::id()));
-    let encoded = Zeroizing::new(
-        serde_json::to_vec_pretty(&CopilotSnapshot {
+    Err(io::Error::new(
+        io::ErrorKind::TimedOut,
+        "GitHub device code expired; run login again",
+    ))
+}
+
+async fn poll_once(
+    client: &reqwest::Client,
+    endpoints: &Endpoints,
+    device_code: &str,
+) -> io::Result<AccessTokenResponse> {
+    let response = client
+        .post(&endpoints.token)
+        .header("Accept", "application/json")
+        .form(&[
+            ("client_id", GITHUB_COPILOT_CLIENT_ID),
+            ("device_code", device_code),
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+        ])
+        .send()
+        .await
+        .map_err(io::Error::other)?;
+    response.json().await.map_err(io::Error::other)
+}
+
+fn interpret_token_response(
+    token: AccessTokenResponse,
+    interval: &mut u64,
+) -> io::Result<Option<Zeroizing<String>>> {
+    if let Some(access_token) = token.access_token {
+        return Ok(Some(Zeroizing::new(access_token)));
+    }
+    match token.error.as_deref() {
+        Some("authorization_pending") => Ok(None),
+        Some("slow_down") => {
+            *interval = interval.saturating_add(5).min(30);
+            Ok(None)
+        }
+        Some("expired_token") => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "GitHub device code expired; run login again",
+        )),
+        Some("access_denied") => Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "GitHub authorization was denied; nothing was stored",
+        )),
+        Some(error) => Err(io::Error::other(format!(
+            "GitHub authorization failed with status {error}"
+        ))),
+        None => Err(io::Error::other(
+            "GitHub returned no access token or status",
+        )),
+    }
+}
+
+fn persist_token(token: &str, destination: &Path) -> io::Result<()> {
+    provider_store::write_private_json(
+        &CopilotSnapshot {
             provider: "copilot",
             oauth_token: token,
-        })
-        .map_err(io::Error::other)?,
-    );
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let write_result = (|| {
-        let mut file = options.open(&temporary)?;
-        file.write_all(&encoded)?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
-        fs::rename(&temporary, destination)
-    })();
-    if write_result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    write_result
+        },
+        destination,
+        "copilot.json",
+    )
 }
 
 #[cfg(test)]

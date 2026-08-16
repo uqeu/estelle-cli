@@ -75,8 +75,8 @@
     },
     {
       "path": "tui/src/claude_import.rs",
-      "blob": "c462745c2e945eb1843147f9e6dfa912eaae5a71",
-      "reason": "Claude Code credential access is consent-triggered, read-only at the source, privately snapshotted, and never reported runtime-ready"
+      "blob": "a09793e5c279b1c23eb41847e5597a8909e713c1",
+      "reason": "Claude Code credential access is consent-triggered, read-only at the source, snapshotted through the shared private provider-store transaction, and never reported runtime-ready"
     },
     {
       "path": "tui/src/commands.rs",
@@ -95,23 +95,28 @@
     },
     {
       "path": "tui/src/main.rs",
-      "blob": "a03fccc10bc70b69196dddb021e966adeb6f9833",
+      "blob": "0d8b3a9ffe1345b7a9f594dfa4f307b5881eeac5",
       "reason": "shell, slash, and picker login surfaces share the reviewed provider catalog and one acquisition dispatcher; the first-run menu explains the two-credential boundary before any prompt"
     },
     {
       "path": "tui/src/copilot_login.rs",
-      "blob": "a2cbe6fed3150f4eaf1dfa77b295c9584ba13d9b",
+      "blob": "2199731c763e068604ce32445b7776a7d8c2fbd0",
       "reason": "explicit GitHub Copilot device login has request and issued-expiry bounds, persists the access token in a mode-0600 Estelle-owned file, and never renders tokens, provider error bodies, or runtime-entitlement claims"
     },
     {
       "path": "tui/src/local_provider.rs",
-      "blob": "1a0ff08ffedbfd13e63ba42fd4dc96b31255a1cd",
+      "blob": "ae99e8cd6a8f0c7bf9fe2e02e6a45c955501577b",
       "reason": "explicit local/custom endpoint acquisition persists a mode-0600 snapshot, omits keys only for catalog-approved local hosts, and renders no submitted key or connection claim"
     },
     {
       "path": "tui/src/provider_catalog.rs",
-      "blob": "f5f9f26ad105a21590f99fb61fc39ecbe9190a8d",
+      "blob": "4813c6d95ac1cb40a30b7d2c4ef4e1b56d25fb9c",
       "reason": "one static provider catalog owns canonical ids, globally unique aliases, acquisition kinds, UI surfaces, server identities, base defaults, and fail-closed HTTP endpoint policy"
+    },
+    {
+      "path": "tui/src/provider_store.rs",
+      "blob": "449e8da0ce6014680bf24bb938c22d8d88fda555",
+      "reason": "Claude, Copilot, and local-provider snapshots share one collision-resistant atomic JSON transaction with a mode-0700 parent, mode-0600 file, zeroized encoded buffer, sync-before-rename, and failed-temporary cleanup"
     },
     {
       "path": "estelle-client/src/types.rs",
