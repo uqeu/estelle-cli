@@ -247,6 +247,9 @@ enum Command {
         /// Override the owner-only local session socket.
         #[arg(long, value_name = "PATH")]
         socket: Option<PathBuf>,
+        /// Named server-owned session to create or attach.
+        #[arg(long, default_value = "main", value_name = "NAME")]
+        session: String,
     },
     /// Remove Estelle from local editor configurations.
     #[command(visible_aliases = ["disconnect", "off"])]
@@ -1296,6 +1299,9 @@ struct App {
     repo: Repo,
     client: Option<Client>,
     session: Option<session_server::SessionHandle>,
+    session_id: String,
+    session_tabs: Vec<session_server::SessionSummary>,
+    hidden_session_tabs: BTreeSet<String>,
     session_questions: BTreeSet<u64>,
     session_completed: BTreeSet<u64>,
     auth: Option<AuthContext>,
@@ -1460,6 +1466,9 @@ impl App {
             repo,
             client: None,
             session: None,
+            session_id: "main".to_string(),
+            session_tabs: Vec::new(),
+            hidden_session_tabs: BTreeSet::new(),
             session_questions: BTreeSet::new(),
             session_completed: BTreeSet::new(),
             auth: None,
@@ -2622,7 +2631,18 @@ impl App {
         tx: &mpsc::UnboundedSender<UiEvent>,
     ) {
         match message {
-            session_server::ServerMessage::Snapshot { turns, active } => {
+            session_server::ServerMessage::Snapshot {
+                session_id,
+                sessions,
+                turns,
+                active,
+            } => {
+                if self.session_id != session_id {
+                    self.clear_session_surface();
+                }
+                self.session_id = session_id;
+                self.session_tabs = sessions;
+                self.hidden_session_tabs.remove(&self.session_id);
                 for turn in turns {
                     self.record_session_turn(turn);
                 }
@@ -2642,6 +2662,13 @@ impl App {
                 }
             }
             session_server::ServerMessage::Started { active } => {
+                if let Some(tab) = self
+                    .session_tabs
+                    .iter_mut()
+                    .find(|tab| tab.id == self.session_id)
+                {
+                    tab.active = true;
+                }
                 let label = match &active.input {
                     session_server::SessionInput::Question { .. } => "thinking".to_string(),
                     session_server::SessionInput::Command { name, .. } => format!("/{name}"),
@@ -2656,6 +2683,14 @@ impl App {
                 });
             }
             session_server::ServerMessage::Completed { turn } => {
+                if let Some(tab) = self
+                    .session_tabs
+                    .iter_mut()
+                    .find(|tab| tab.id == self.session_id)
+                {
+                    tab.active = false;
+                    tab.turn_count = tab.turn_count.saturating_add(1);
+                }
                 let was_current = self
                     .active
                     .as_ref()
@@ -2669,6 +2704,13 @@ impl App {
                 }
             }
             session_server::ServerMessage::Cancelled { id } => {
+                if let Some(tab) = self
+                    .session_tabs
+                    .iter_mut()
+                    .find(|tab| tab.id == self.session_id)
+                {
+                    tab.active = false;
+                }
                 if self.active.as_ref().is_some_and(|active| active.id == id) {
                     self.active = None;
                 }
@@ -2690,6 +2732,82 @@ impl App {
                 self.start_next(tx);
             }
         }
+    }
+
+    fn clear_session_surface(&mut self) {
+        self.transcript.clear();
+        self.queue.clear();
+        self.active = None;
+        self.session_questions.clear();
+        self.session_completed.clear();
+        self.skill_threads.clear();
+        self.pending_skill = None;
+        self.last_question = None;
+        self.last_diff = None;
+        self.citations.clear();
+        self.sweep_progress = None;
+        self.fleet = None;
+        self.todo = None;
+        self.transcript_scroll = 0;
+    }
+
+    fn visible_session_ids(&self) -> Vec<String> {
+        self.session_tabs
+            .iter()
+            .filter(|session| !self.hidden_session_tabs.contains(&session.id))
+            .map(|session| session.id.clone())
+            .collect()
+    }
+
+    fn switch_to_session(&mut self, session_id: String) {
+        if session_id == self.session_id {
+            return;
+        }
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        match session.switch(session_id.clone()) {
+            Ok(()) => {
+                self.clear_session_surface();
+                self.session_id = session_id;
+            }
+            Err(error) => self.transcript.push(TranscriptEntry::Failure([
+                "The terminal could not switch sessions.".to_string(),
+                error.to_string(),
+                "Reconnect to the session server and try again.".to_string(),
+            ])),
+        }
+    }
+
+    fn cycle_session(&mut self, reverse: bool) {
+        let ids = self.visible_session_ids();
+        if ids.len() < 2 {
+            return;
+        }
+        let current = ids
+            .iter()
+            .position(|id| id == &self.session_id)
+            .unwrap_or(0);
+        let next = if reverse {
+            current.checked_sub(1).unwrap_or(ids.len() - 1)
+        } else {
+            (current + 1) % ids.len()
+        };
+        self.switch_to_session(ids[next].clone());
+    }
+
+    fn close_session_tab(&mut self) {
+        let ids = self.visible_session_ids();
+        if ids.len() <= 1 {
+            self.should_exit = true;
+            return;
+        }
+        let current = ids
+            .iter()
+            .position(|id| id == &self.session_id)
+            .unwrap_or(0);
+        self.hidden_session_tabs.insert(self.session_id.clone());
+        self.switch_to_session(ids[(current + 1) % ids.len()].clone());
     }
 
     fn handle_ui_event(&mut self, event: UiEvent, tx: &mpsc::UnboundedSender<UiEvent>) {
@@ -4135,6 +4253,40 @@ fn header_line(app: &App, _width: u16) -> Line<'static> {
     Line::from(spans)
 }
 
+fn session_tabs_line(app: &App) -> Line<'static> {
+    if app.session_tabs.is_empty() {
+        return Line::default();
+    }
+    let mut spans = vec![Span::styled(
+        "SESSIONS  ",
+        Style::default()
+            .fg(app.theme.ghost())
+            .add_modifier(Modifier::BOLD),
+    )];
+    for session in &app.session_tabs {
+        if app.hidden_session_tabs.contains(&session.id) {
+            continue;
+        }
+        let marker = if session.active { "+" } else { "·" };
+        let label = format!(" {marker} {} ", session.id);
+        let style = if session.id == app.session_id {
+            Style::default()
+                .fg(app.theme.background())
+                .bg(app.theme.primary())
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(app.theme.ghost())
+        };
+        spans.push(Span::styled(label, style));
+        spans.push(Span::raw(" "));
+    }
+    spans.push(Span::styled(
+        "Alt+Left/Right switch · Ctrl+W close view",
+        Style::default().fg(app.theme.ghost()),
+    ));
+    Line::from(spans)
+}
+
 fn value_style(resolved: bool) -> Style {
     Style::default().fg(if resolved {
         Color::Gray
@@ -5475,7 +5627,13 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         ])
         .split(content_area);
 
-    frame.render_widget(Paragraph::new(header_line(app, area.width)), rows[0]);
+    frame.render_widget(
+        Paragraph::new(Text::from(vec![
+            header_line(app, area.width),
+            session_tabs_line(app),
+        ])),
+        rows[0],
+    );
     let palette = commands::palette_rows(&app.composer.text());
     let palette_open = !palette.is_empty();
     let surface_rows = if !palette_open {
@@ -5969,6 +6127,23 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
         }
         return false;
     }
+    if key.code == KeyCode::Tab && key.modifiers.contains(KeyModifiers::CONTROL) {
+        app.cycle_session(key.modifiers.contains(KeyModifiers::SHIFT));
+        return false;
+    }
+    if key.modifiers.contains(KeyModifiers::ALT)
+        && matches!(key.code, KeyCode::Left | KeyCode::Right)
+    {
+        app.cycle_session(key.code == KeyCode::Left);
+        return false;
+    }
+    if key.code == KeyCode::Char('w')
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+        && app.session.is_some()
+    {
+        app.close_session_tab();
+        return app.should_exit;
+    }
     if key.code == KeyCode::Esc && app.active.is_some() {
         app.cancel_active();
         app.start_next(tx);
@@ -6067,7 +6242,11 @@ async fn record_session_checkpoint(root: PathBuf) {
     let _ = session_gap::record_checkpoint(&root, &files, chrono::Utc::now()).await;
 }
 
-async fn run(args: Args, session_socket: Option<PathBuf>) -> io::Result<()> {
+async fn run(
+    args: Args,
+    session_socket: Option<PathBuf>,
+    session_id: Option<String>,
+) -> io::Result<()> {
     let connected = session_socket.is_some();
     // The attached terminal is a transport/rendering client. It neither resolves nor owns the
     // Estelle credential; only `serve` does. This also keeps keychain prompts out of reconnects.
@@ -6075,17 +6254,22 @@ async fn run(args: Args, session_socket: Option<PathBuf>) -> io::Result<()> {
     let mut app = App::new(args);
     let session_connection = match session_socket {
         Some(socket) => Some(
-            session_server::SessionConnection::connect(&socket, app.repo.clone(), app.root.clone())
-                .await
-                .map_err(|error| {
-                    io::Error::new(
-                        error.kind(),
-                        format!(
-                            "cannot connect to Estelle session server at {}: {error}",
-                            socket.display()
-                        ),
-                    )
-                })?,
+            session_server::SessionConnection::connect_named(
+                &socket,
+                app.repo.clone(),
+                app.root.clone(),
+                session_id.as_deref().unwrap_or("main"),
+            )
+            .await
+            .map_err(|error| {
+                io::Error::new(
+                    error.kind(),
+                    format!(
+                        "cannot connect to Estelle session server at {}: {error}",
+                        socket.display()
+                    ),
+                )
+            })?,
         ),
         None => None,
     };
@@ -6355,6 +6539,7 @@ async fn main() -> ExitCode {
     if let Some(Command::Connect {
         client: None,
         socket,
+        session,
     }) = args.command.clone()
     {
         let socket = match socket
@@ -6366,7 +6551,7 @@ async fn main() -> ExitCode {
         };
         let mut tui_args = args;
         tui_args.command = None;
-        return match run(tui_args, Some(socket)).await {
+        return match run(tui_args, Some(socket), Some(session)).await {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => command_failure(error).await,
         };
@@ -6477,7 +6662,7 @@ async fn main() -> ExitCode {
             ExitCode::FAILURE
         };
     }
-    match run(args, None).await {
+    match run(args, None, None).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(_) => ExitCode::FAILURE,
     }
@@ -6515,13 +6700,16 @@ mod tests {
                 if path.as_path() == std::path::Path::new("/tmp/estelle-session.sock")
         ));
 
-        let connected = Args::try_parse_from(["estelle", "connect"]).expect("connect command");
+        let connected = Args::try_parse_from(["estelle", "connect", "--session", "payments"])
+            .expect("connect command");
         assert!(matches!(
             connected.command,
             Some(Command::Connect {
                 client: None,
                 socket: None,
+                session,
             })
+            if session == "payments"
         ));
     }
 
@@ -6531,6 +6719,19 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
         app.handle_ui_event(
             UiEvent::Session(session_server::ServerMessage::Snapshot {
+                session_id: "main".to_string(),
+                sessions: vec![
+                    session_server::SessionSummary {
+                        id: "main".to_string(),
+                        active: true,
+                        turn_count: 1,
+                    },
+                    session_server::SessionSummary {
+                        id: "retries".to_string(),
+                        active: false,
+                        turn_count: 4,
+                    },
+                ],
                 turns: vec![session_server::SessionTurn {
                     id: 41,
                     input: session_server::SessionInput::Question {
@@ -6565,6 +6766,10 @@ mod tests {
         assert!(rendered.contains("The retry loop has no ceiling."));
         assert!(rendered.contains("api/charge.ts:52"));
         assert!(rendered.contains("verify the retry fix"));
+        assert!(rendered.contains("SESSIONS"));
+        assert!(rendered.contains("main"));
+        assert!(rendered.contains("retries"));
+        assert!(rendered.contains("Alt+Left/Right switch"));
         assert_eq!(app.active.as_ref().map(|active| active.id), Some(42));
     }
 

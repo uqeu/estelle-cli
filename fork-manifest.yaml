@@ -95,8 +95,8 @@
     },
     {
       "path": "tui/src/main.rs",
-      "blob": "b997f8d7bd0329315808ede9bb28f098c4925d14",
-      "reason": "connected terminals resolve no credential and send questions, remote commands, and sweeps to the long-lived session owner; standalone provider routes remain allowlisted before prompts"
+      "blob": "c02ae7013dfc26432beb52399e19cf92910d26a9",
+      "reason": "connected terminals resolve no credential and send questions, remote commands, and sweeps to named long-lived sessions; catalog tabs switch and close only the local view while standalone provider routes remain allowlisted before prompts"
     },
     {
       "path": "estelle-client/src/types.rs",
@@ -105,8 +105,8 @@
     },
     {
       "path": "tui/src/session_server.rs",
-      "blob": "b7c2365a127e90e7b3028f2ede411af3e782377b",
-      "reason": "the jcode-inspired local session owner uses a 0700 directory, 0600 socket and startup lock; only the server holds the Estelle credential and in-flight remote work survives client disconnect"
+      "blob": "a80ad0244d34cd41afad803c251a73bfb05f648b",
+      "reason": "the jcode-inspired local session owner uses a 0700 directory, 0600 socket and startup lock; only the server holds the Estelle credential, named same-repository sessions run independently, and switching or disconnecting a client never cancels work"
     },
     {
       "path": "tui/src/provider_keys.rs",

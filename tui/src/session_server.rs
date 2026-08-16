@@ -35,8 +35,17 @@ const SESSION_SOCKET_MODE: u32 = 0o600;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ClientFrame {
-    Attach { repo: String, root: PathBuf },
-    Request { request: ClientRequest },
+    Attach {
+        repo: String,
+        root: PathBuf,
+        session_id: String,
+    },
+    Switch {
+        session_id: String,
+    },
+    Request {
+        request: ClientRequest,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -66,6 +75,8 @@ pub(crate) enum ClientRequest {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum ServerMessage {
     Snapshot {
+        session_id: String,
+        sessions: Vec<SessionSummary>,
         turns: Vec<SessionTurn>,
         active: Option<ActiveTurn>,
     },
@@ -86,6 +97,13 @@ pub(crate) enum ServerMessage {
         id: u64,
         message: String,
     },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct SessionSummary {
+    pub(crate) id: String,
+    pub(crate) active: bool,
+    pub(crate) turn_count: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -186,6 +204,7 @@ impl From<WireAnswer> for AnswerReply {
 struct SessionKey {
     repo: String,
     root: PathBuf,
+    id: String,
 }
 
 struct ActiveWork {
@@ -194,6 +213,7 @@ struct ActiveWork {
 }
 
 struct SessionState {
+    id: String,
     repo: Repo,
     root: PathBuf,
     turns: Vec<SessionTurn>,
@@ -202,9 +222,10 @@ struct SessionState {
 }
 
 impl SessionState {
-    fn new(repo: Repo, root: PathBuf) -> Self {
+    fn new(id: String, repo: Repo, root: PathBuf) -> Self {
         let (events, _) = broadcast::channel(64);
         Self {
+            id,
             repo,
             root,
             turns: Vec::new(),
@@ -264,19 +285,30 @@ pub(crate) struct SessionConnection {
 
 #[derive(Clone)]
 pub(crate) struct SessionHandle {
-    requests: mpsc::UnboundedSender<ClientRequest>,
+    frames: mpsc::UnboundedSender<ClientFrame>,
 }
 
 impl SessionHandle {
     pub(crate) fn send(&self, request: ClientRequest) -> io::Result<()> {
-        self.requests
-            .send(request)
+        self.frames
+            .send(ClientFrame::Request { request })
+            .map_err(|_| io::Error::new(ErrorKind::BrokenPipe, "Estelle session connection closed"))
+    }
+
+    pub(crate) fn switch(&self, session_id: String) -> io::Result<()> {
+        self.frames
+            .send(ClientFrame::Switch { session_id })
             .map_err(|_| io::Error::new(ErrorKind::BrokenPipe, "Estelle session connection closed"))
     }
 }
 
 impl SessionConnection {
-    pub(crate) async fn connect(socket_path: &Path, repo: Repo, root: PathBuf) -> io::Result<Self> {
+    pub(crate) async fn connect_named(
+        socket_path: &Path,
+        repo: Repo,
+        root: PathBuf,
+        session_id: &str,
+    ) -> io::Result<Self> {
         let stream = UnixStream::connect(socket_path).await?;
         let (reader, writer) = tokio::io::split(stream);
         let mut connection = Self {
@@ -287,6 +319,7 @@ impl SessionConnection {
             .write_frame(&ClientFrame::Attach {
                 repo: repo.as_str().to_string(),
                 root,
+                session_id: session_id.to_string(),
             })
             .await?;
         Ok(connection)
@@ -295,6 +328,14 @@ impl SessionConnection {
     #[cfg(test)]
     pub(crate) async fn send(&mut self, request: ClientRequest) -> io::Result<()> {
         self.write_frame(&ClientFrame::Request { request }).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn switch(&mut self, session_id: &str) -> io::Result<()> {
+        self.write_frame(&ClientFrame::Switch {
+            session_id: session_id.to_string(),
+        })
+        .await
     }
 
     #[cfg(test)]
@@ -312,7 +353,7 @@ impl SessionConnection {
         SessionHandle,
         mpsc::UnboundedReceiver<Result<ServerMessage, String>>,
     ) {
-        let (requests_tx, mut requests_rx) = mpsc::unbounded_channel();
+        let (frames_tx, mut frames_rx) = mpsc::unbounded_channel();
         let (events_tx, events_rx) = mpsc::unbounded_channel();
         let Self {
             mut reader,
@@ -321,16 +362,11 @@ impl SessionConnection {
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    request = requests_rx.recv() => {
-                        let Some(request) = request else {
+                    frame = frames_rx.recv() => {
+                        let Some(frame) = frame else {
                             return;
                         };
-                        if let Err(error) = write_json_line(
-                            &mut writer,
-                            &ClientFrame::Request { request },
-                        )
-                        .await
-                        {
+                        if let Err(error) = write_json_line(&mut writer, &frame).await {
                             let _ = events_tx.send(Err(error.to_string()));
                             return;
                         }
@@ -351,12 +387,7 @@ impl SessionConnection {
                 }
             }
         });
-        (
-            SessionHandle {
-                requests: requests_tx,
-            },
-            events_rx,
-        )
+        (SessionHandle { frames: frames_tx }, events_rx)
     }
 }
 
@@ -419,7 +450,12 @@ async fn handle_connection(
     let (reader, writer) = tokio::io::split(stream);
     let mut reader = BufReader::new(reader);
     let mut writer = BufWriter::new(writer);
-    let ClientFrame::Attach { repo, root } = read_json_line(&mut reader).await? else {
+    let ClientFrame::Attach {
+        repo,
+        root,
+        session_id,
+    } = read_json_line(&mut reader).await?
+    else {
         return Err(io::Error::new(
             ErrorKind::InvalidData,
             "first session frame must attach",
@@ -427,28 +463,21 @@ async fn handle_connection(
     };
     let repo = Repo::new(&repo)
         .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "invalid repository name"))?;
+    validate_session_id(&session_id)?;
     let root = tokio::fs::canonicalize(&root).await.unwrap_or(root);
     let key = SessionKey {
         repo: repo.as_str().to_string(),
         root: root.clone(),
+        id: session_id.clone(),
     };
-    let session = {
-        let mut sessions = sessions.lock().await;
-        sessions
-            .entry(key)
-            .or_insert_with(|| Arc::new(Mutex::new(SessionState::new(repo, root))))
-            .clone()
-    };
-    let (snapshot, mut events) = {
+    let repo_name = repo.as_str().to_string();
+    let mut session =
+        get_or_create_session(&sessions, key, session_id, repo.clone(), root.clone()).await;
+    let mut events = {
         let state = session.lock().await;
-        (
-            ServerMessage::Snapshot {
-                turns: state.turns.clone(),
-                active: state.active.as_ref().map(|work| work.turn.clone()),
-            },
-            state.events.subscribe(),
-        )
+        state.events.subscribe()
     };
+    let snapshot = session_snapshot(&session, &sessions).await;
     write_json_line(&mut writer, &snapshot).await?;
 
     loop {
@@ -459,28 +488,115 @@ async fn handle_connection(
                     Err(error) if error.kind() == ErrorKind::UnexpectedEof => return Ok(()),
                     Err(error) => return Err(error),
                 };
-                let ClientFrame::Request { request } = frame else {
-                    return Err(io::Error::new(ErrorKind::InvalidData, "client attached twice"));
-                };
-                handle_request(request, session.clone(), client.clone()).await;
+                match frame {
+                    ClientFrame::Request { request } => {
+                        handle_request(request, session.clone(), client.clone()).await;
+                    }
+                    ClientFrame::Switch { session_id } => {
+                        validate_session_id(&session_id)?;
+                        let key = SessionKey {
+                            repo: repo_name.clone(),
+                            root: root.clone(),
+                            id: session_id.clone(),
+                        };
+                        session = get_or_create_session(
+                            &sessions,
+                            key,
+                            session_id,
+                            repo.clone(),
+                            root.clone(),
+                        )
+                        .await;
+                        events = {
+                            let state = session.lock().await;
+                            state.events.subscribe()
+                        };
+                        let snapshot = session_snapshot(&session, &sessions).await;
+                        write_json_line(&mut writer, &snapshot).await?;
+                    }
+                    ClientFrame::Attach { .. } => {
+                        return Err(io::Error::new(ErrorKind::InvalidData, "client attached twice"));
+                    }
+                }
             }
             message = events.recv() => {
                 match message {
                     Ok(message) => write_json_line(&mut writer, &message).await?,
                     Err(broadcast::error::RecvError::Lagged(_)) => {
-                        let snapshot = {
-                            let state = session.lock().await;
-                            ServerMessage::Snapshot {
-                                turns: state.turns.clone(),
-                                active: state.active.as_ref().map(|work| work.turn.clone()),
-                            }
-                        };
+                        let snapshot = session_snapshot(&session, &sessions).await;
                         write_json_line(&mut writer, &snapshot).await?;
                     }
                     Err(broadcast::error::RecvError::Closed) => return Ok(()),
                 }
             }
         }
+    }
+}
+
+async fn get_or_create_session(
+    sessions: &Sessions,
+    key: SessionKey,
+    session_id: String,
+    repo: Repo,
+    root: PathBuf,
+) -> SharedSession {
+    let mut sessions = sessions.lock().await;
+    sessions
+        .entry(key)
+        .or_insert_with(|| Arc::new(Mutex::new(SessionState::new(session_id, repo, root))))
+        .clone()
+}
+
+fn validate_session_id(session_id: &str) -> io::Result<()> {
+    let mut chars = session_id.chars();
+    let first = chars.next();
+    let valid = session_id.len() <= 48
+        && first.is_some_and(|ch| ch.is_ascii_alphanumeric())
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'));
+    if valid {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            ErrorKind::InvalidInput,
+            "session name must be 1-48 ASCII letters, digits, '.', '_' or '-' and start with a letter or digit",
+        ))
+    }
+}
+
+async fn session_snapshot(session: &SharedSession, sessions: &Sessions) -> ServerMessage {
+    let (session_id, repo, root, turns, active) = {
+        let state = session.lock().await;
+        (
+            state.id.clone(),
+            state.repo.as_str().to_string(),
+            state.root.clone(),
+            state.turns.clone(),
+            state.active.as_ref().map(|work| work.turn.clone()),
+        )
+    };
+    let matching = {
+        let sessions = sessions.lock().await;
+        sessions
+            .iter()
+            .filter(|(key, _)| key.repo == repo && key.root == root)
+            .map(|(_, session)| session.clone())
+            .collect::<Vec<_>>()
+    };
+    let mut summaries = Vec::with_capacity(matching.len());
+    for session in matching {
+        let state = session.lock().await;
+        summaries.push(SessionSummary {
+            id: state.id.clone(),
+            active: state.active.is_some(),
+            turn_count: state.turns.len(),
+        });
+    }
+    summaries.sort_by(|left, right| left.id.cmp(&right.id));
+    ServerMessage::Snapshot {
+        session_id,
+        sessions: summaries,
+        turns,
+        active,
     }
 }
 
@@ -848,10 +964,11 @@ mod tests {
         );
         let server_task = tokio::spawn(server.run(shutdown.clone()));
 
-        let mut first = SessionConnection::connect(
+        let mut first = SessionConnection::connect_named(
             &socket,
             Repo::new("fatelabs/estelle").expect("repo"),
             root.path().to_path_buf(),
+            "main",
         )
         .await
         .expect("first client");
@@ -867,15 +984,16 @@ mod tests {
         drop(first);
 
         tokio::time::sleep(Duration::from_millis(200)).await;
-        let mut second = SessionConnection::connect(
+        let mut second = SessionConnection::connect_named(
             &socket,
             Repo::new("fatelabs/estelle").expect("repo"),
             root.path().to_path_buf(),
+            "main",
         )
         .await
         .expect("second client");
 
-        let ServerMessage::Snapshot { turns, active } =
+        let ServerMessage::Snapshot { turns, active, .. } =
             second.next().await.expect("reconnect snapshot")
         else {
             panic!("first reconnect event was not a snapshot");
@@ -901,14 +1019,15 @@ mod tests {
             .expect("submit command");
         drop(second);
         tokio::time::sleep(Duration::from_millis(200)).await;
-        let mut third = SessionConnection::connect(
+        let mut third = SessionConnection::connect_named(
             &socket,
             Repo::new("fatelabs/estelle").expect("repo"),
             root.path().to_path_buf(),
+            "main",
         )
         .await
         .expect("third client");
-        let ServerMessage::Snapshot { turns, active } =
+        let ServerMessage::Snapshot { turns, active, .. } =
             third.next().await.expect("command reconnect snapshot")
         else {
             panic!("first command reconnect event was not a snapshot");
@@ -920,6 +1039,164 @@ mod tests {
             SessionOutcome::Command { reply }
                 if reply.reply.extra.get("plan").and_then(serde_json::Value::as_str)
                     == Some("founder")
+        ));
+
+        shutdown.cancel();
+        server_task
+            .await
+            .expect("server task")
+            .expect("server exit");
+    }
+
+    #[tokio::test]
+    async fn named_sessions_in_one_repository_are_independent_and_discoverable() {
+        let api = MockServer::start().await;
+        for (question, answer) in [
+            ("inspect payments", "payments are isolated"),
+            ("inspect retries", "retries are isolated"),
+        ] {
+            Mock::given(method("POST"))
+                .and(path("/deep-search"))
+                .and(body_json(serde_json::json!({
+                    "repo": "fatelabs/estelle",
+                    "question": question,
+                })))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_delay(Duration::from_millis(100))
+                        .set_body_json(serde_json::json!({
+                            "answer": answer,
+                            "grounded": true,
+                            "sources": [],
+                        })),
+                )
+                .expect(1)
+                .mount(&api)
+                .await;
+        }
+        let client = Client::new(
+            &format!("{}/", api.uri()),
+            ApiKey::new("test-key").expect("key"),
+            Duration::from_secs(120),
+        )
+        .expect("client");
+        let runtime = tempfile::tempdir().expect("runtime directory");
+        let root = tempfile::tempdir().expect("working tree");
+        let socket = runtime.path().join("session.sock");
+        let shutdown = CancellationToken::new();
+        let server = SessionServer::bind(socket.clone(), client)
+            .await
+            .expect("bind session server");
+        let server_task = tokio::spawn(server.run(shutdown.clone()));
+
+        let mut payments = SessionConnection::connect_named(
+            &socket,
+            Repo::new("fatelabs/estelle").expect("repo"),
+            root.path().to_path_buf(),
+            "payments",
+        )
+        .await
+        .expect("payments session");
+        let ServerMessage::Snapshot {
+            session_id,
+            sessions,
+            ..
+        } = payments.next().await.expect("payments snapshot")
+        else {
+            panic!("payments did not receive a snapshot");
+        };
+        assert_eq!(session_id, "payments");
+        assert_eq!(
+            sessions
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["payments"]
+        );
+        payments
+            .send(ClientRequest::Ask {
+                id: 51,
+                question: "inspect payments".to_string(),
+                session_context: None,
+            })
+            .await
+            .expect("submit payments work");
+
+        let mut retries = SessionConnection::connect_named(
+            &socket,
+            Repo::new("fatelabs/estelle").expect("repo"),
+            root.path().to_path_buf(),
+            "retries",
+        )
+        .await
+        .expect("retries session");
+        let ServerMessage::Snapshot {
+            session_id,
+            sessions,
+            ..
+        } = retries.next().await.expect("retries snapshot")
+        else {
+            panic!("retries did not receive a snapshot");
+        };
+        assert_eq!(session_id, "retries");
+        assert_eq!(
+            sessions
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["payments", "retries"]
+        );
+        retries
+            .send(ClientRequest::Ask {
+                id: 52,
+                question: "inspect retries".to_string(),
+                session_context: None,
+            })
+            .await
+            .expect("submit retries work while payments is active");
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let mut payments_replay = SessionConnection::connect_named(
+            &socket,
+            Repo::new("fatelabs/estelle").expect("repo"),
+            root.path().to_path_buf(),
+            "payments",
+        )
+        .await
+        .expect("payments replay");
+        let ServerMessage::Snapshot { turns, .. } = payments_replay
+            .next()
+            .await
+            .expect("payments replay snapshot")
+        else {
+            panic!("payments replay did not receive a snapshot");
+        };
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].id, 51);
+        assert!(matches!(
+            &turns[0].outcome,
+            SessionOutcome::Answer { answer } if answer.text == "payments are isolated"
+        ));
+
+        payments_replay
+            .switch("retries")
+            .await
+            .expect("switch watched session");
+        let ServerMessage::Snapshot {
+            session_id, turns, ..
+        } = payments_replay
+            .next()
+            .await
+            .expect("retries switch snapshot")
+        else {
+            panic!("switch did not receive a snapshot");
+        };
+        assert_eq!(session_id, "retries");
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].id, 52);
+        assert!(matches!(
+            &turns[0].outcome,
+            SessionOutcome::Answer { answer } if answer.text == "retries are isolated"
         ));
 
         shutdown.cancel();
