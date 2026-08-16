@@ -225,10 +225,17 @@ def first_run_picker_receipt(timeout: float = 10) -> dict[str, object]:
     os.kill(pid, signal.SIGWINCH)
     observed = bytearray()
     try:
-        visible = _read_until(
-            fd, observed, ("CONNECT ESTELLE",), time.monotonic() + timeout
+        deadline = time.monotonic() + timeout
+        visible = _read_until(fd, observed, ("CONNECT ESTELLE",), deadline)
+        if "CONNECT ESTELLE" in visible:
+            os.write(fd, b"1")
+            visible = _read_until(fd, observed, ("Estelle key:",), deadline)
+        required = (
+            "CONNECT ESTELLE",
+            "1 Estelle account",
+            "2 Claude subscription",
+            "Estelle key:",
         )
-        required = ("CONNECT ESTELLE", "1 Estelle account", "2 Claude subscription")
         return {
             "sent": "estelle (without a credential)",
             "came_back": visible.strip(),

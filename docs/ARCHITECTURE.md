@@ -172,7 +172,9 @@ public release and linked from its release notes. This 24-read slice is wired fo
 not a shipped claim until that public job passes.
 
 The same report removes the receipt credential from one child process and requires the first-run
-`CONNECT ESTELLE` picker to render numbered Estelle-account and Claude-subscription choices. It also runs
+`CONNECT ESTELLE` picker to render numbered Estelle-account and Claude-subscription choices. The receipt
+then presses `1` and passes only when that digit directly activates the `Estelle key:` prompt, proving the
+advertised no-arrows/no-Enter path rather than treating visible badges as wiring. It also runs
 `estelle memory forget receipt-sentinel` without `--yes` and passes only when the installed binary names
 the account-wide erasure radius, gives the explicit confirmation remedy, and says that nothing was sent.
 The cloned repository carries one harmless whitespace change to its smallest tracked `package-lock.json`;

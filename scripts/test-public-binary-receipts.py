@@ -181,7 +181,9 @@ def test_complete_harness_writes_every_receipt() -> None:
             "if [ \"$1\" = install-hooks ]; then printf 'full session lifecycle\\n'; exit 0; fi\n"
             "if [ \"$1\" = hook ]; then printf '{\"mode\":\"%s\"}\\n' \"$2\"; exit 0; fi\n"
             "if [ -z \"${ESTELLE_API_KEY:-}\" ]; then\n"
-            "  printf 'CONNECT ESTELLE\\n1 Estelle account\\n2 Claude subscription\\n'; exit 0\n"
+            "  printf 'CONNECT ESTELLE\\n1 Estelle account\\n2 Claude subscription\\n'\n"
+            "  stty raw -echo; dd bs=1 count=1 >/dev/null 2>&1\n"
+            "  printf 'Estelle key: '; exit 0\n"
             "fi\n"
             "printf 'Ask Estelle\\n'\n"
             "IFS= read -r command\n"
@@ -267,7 +269,10 @@ def test_first_run_picker_receipt() -> None:
         fake_estelle = fake_bin / "estelle"
         fake_estelle.write_text(
             "#!/bin/sh\nprintf 'CONNECT ESTELLE\\n'\n"
-            "printf '1 Estelle account\\n2 Claude subscription\\n'\n",
+            "printf '1 Estelle account\\n2 Claude subscription\\n'\n"
+            "stty raw -echo\n"
+            "dd bs=1 count=1 >/dev/null 2>&1\n"
+            "printf 'Estelle key: '\n",
             encoding="utf-8",
         )
         fake_estelle.chmod(0o755)
@@ -280,6 +285,7 @@ def test_first_run_picker_receipt() -> None:
         assert receipt["pass"] is True
         assert "1 Estelle account" in receipt["came_back"]
         assert "2 Claude subscription" in receipt["came_back"]
+        assert "Estelle key:" in receipt["came_back"]
 
 
 def test_http_contract_receipt_proves_hidden_fields() -> None:
