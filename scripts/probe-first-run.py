@@ -11,71 +11,8 @@ import sys
 import termios
 import time
 
-
-def rendered_screen(data: bytes, rows: int = 30, columns: int = 120) -> str:
-    """Apply the small ANSI cursor subset Ratatui uses and return visible screen text."""
-    screen = [[" "] * columns for _ in range(rows)]
-    row = 0
-    column = 0
-    text = data.decode("utf-8", errors="ignore")
-    index = 0
-    while index < len(text):
-        character = text[index]
-        if character == "\x1b":
-            if index + 1 < len(text) and text[index + 1] == "[":
-                end = index + 2
-                while end < len(text) and not ("@" <= text[end] <= "~"):
-                    end += 1
-                if end >= len(text):
-                    break
-                raw = text[index + 2 : end]
-                final = text[end]
-                params = raw.lstrip("?<>!")
-                values = [int(value) if value.isdigit() else 1 for value in params.split(";")]
-                if final in ("H", "f"):
-                    row = max(0, min(rows - 1, (values[0] if values else 1) - 1))
-                    column = max(0, min(columns - 1, (values[1] if len(values) > 1 else 1) - 1))
-                elif final == "G":
-                    column = max(0, min(columns - 1, (values[0] if values else 1) - 1))
-                elif final == "A":
-                    row = max(0, row - (values[0] if values else 1))
-                elif final == "B":
-                    row = min(rows - 1, row + (values[0] if values else 1))
-                elif final == "C":
-                    column = min(columns - 1, column + (values[0] if values else 1))
-                elif final == "D":
-                    column = max(0, column - (values[0] if values else 1))
-                elif final == "J" and raw == "2":
-                    screen = [[" "] * columns for _ in range(rows)]
-                elif final == "K":
-                    screen[row][column:] = [" "] * (columns - column)
-                index = end + 1
-                continue
-            if index + 1 < len(text) and text[index + 1] == "]":
-                end = index + 2
-                while end < len(text):
-                    if text[end] == "\a":
-                        end += 1
-                        break
-                    if text[end : end + 2] == "\x1b\\":
-                        end += 2
-                        break
-                    end += 1
-                index = end
-                continue
-            index += 2
-            continue
-        if character == "\r":
-            column = 0
-        elif character == "\n":
-            row = min(rows - 1, row + 1)
-        elif character == "\b":
-            column = max(0, column - 1)
-        elif character >= " ":
-            screen[row][column] = character
-            column = min(columns - 1, column + 1)
-        index += 1
-    return "\n".join("".join(line).rstrip() for line in screen)
+sys.dont_write_bytecode = True
+from terminal_screen import rendered_screen
 
 
 def main() -> int:

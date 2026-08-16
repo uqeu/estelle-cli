@@ -158,6 +158,17 @@ category, proves each is rejected, and proves an incidental dependency suffix re
 bytes passed the original prefix gate again. The expanded gate applies to the next release. This proves the
 named package and implementation boundaries, not the absence of every conceivable proprietary byte pattern.
 
+The release workflow's public receipt job starts only after GitHub has published the release. On a fresh
+runner it fetches `install.sh` from that release's public URL, requires bare `estelle` to resolve to the
+new native binary, checks the exact SemVer, and clones `Shubhamsaboo/awesome-llm-apps` rather than using a
+fixture repository. `scripts/public-binary-receipts.py` then opens the installed TUI in a real
+pseudo-terminal once per audited read surface: the 22 route-coverage additions plus the pre-existing
+`/init` and `/sessions` paths. Every receipt records what was typed and the rendered server result. An
+unreached surface, auth rejection, HTTP error, timeout, network failure, or client decode failure fails the
+whole job; no surface can be recorded as skipped. The exact JSON is attached to the public release and
+linked from its release notes. This 24-read slice is wired for the next release; it is not a shipped claim
+until that public job passes.
+
 Secrets are refused or redacted before Estelle request construction. Stored ChatGPT OAuth material and
 Estelle API credentials have separate typed records and stores. A single remote auth rejection is evidence,
 not permission to destroy a stored credential.

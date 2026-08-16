@@ -37,6 +37,8 @@ jobs:
         run: ./scripts/test-release-package.sh
       - name: Prove the shipped IP-boundary guard
         run: python3 scripts/test-ip-boundary.py
+      - name: Prove the public-binary receipt harness
+        run: python3 scripts/test-public-binary-receipts.py
       - name: Verify fork provenance and egress census
         shell: bash
         run: |
@@ -150,9 +152,62 @@ jobs:
           The installer verifies SHA256SUMS before installing. Verify GitHub's signed provenance separately:
 
               gh attestation verify estelle-<target>.tar.gz --repo ${GITHUB_REPOSITORY}
+
+          Public-binary surface receipts (published after a fresh-runner install and production probe):
+
+              https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/public-binary-receipts.json
           EOF
           gh release create "$GITHUB_REF_NAME" release/* \
             --verify-tag --title "Estelle CLI $GITHUB_REF_NAME" --notes-file release-notes.md
+
+  public-binary-receipts:
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install the exact release from its public URL
+        env:
+          ESTELLE_VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/install.sh" | sh
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+      - name: Clone a real public repository
+        run: |
+          set -euo pipefail
+          git clone --depth=1 https://github.com/Shubhamsaboo/awesome-llm-apps.git \
+            "${RUNNER_TEMP}/awesome-llm-apps"
+      - name: Drive all 24 read surfaces through bare estelle
+        working-directory: ${{ runner.temp }}/awesome-llm-apps
+        env:
+          ESTELLE_API_KEY: ${{ secrets.ESTELLE_RECEIPT_API_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${ESTELLE_API_KEY:-}" || {
+            echo "public receipt: ESTELLE_RECEIPT_API_KEY is not configured" >&2
+            exit 1
+          }
+          test "$(command -v estelle)" = "${HOME}/.local/bin/estelle"
+          python3 "${GITHUB_WORKSPACE}/scripts/public-binary-receipts.py" \
+            --expected-version "${GITHUB_REF_NAME}" \
+            --repo Shubhamsaboo/awesome-llm-apps \
+            --output "${RUNNER_TEMP}/public-binary-receipts.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: public-binary-receipts-${{ github.ref_name }}
+          path: ${{ runner.temp }}/public-binary-receipts.json
+          if-no-files-found: error
+      - name: Attach the exact receipt to the public release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "$GITHUB_REF_NAME" \
+            "${RUNNER_TEMP}/public-binary-receipts.json" --clobber
 
   publish-npm-shim:
     needs: release
