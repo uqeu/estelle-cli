@@ -4,14 +4,16 @@
 `uqeu/estelle-cli` repository. The parent repository may index or summarize it, but cannot be the only
 copy: a behaviour change and its architecture record must be reviewable in one CLI commit.
 
-**TODAY — source probe, 2026-08-15:** `cargo build --locked --release --package estelle-tui --bin
-estelle` produced `estelle 0.2.4` on macOS arm64; the locked client/TUI suite passed locally with an
-8 MiB test-thread stack. Public workflow runs `31911232894` and `31912554854` then refused the release
-because seven parity tests required the parent Python checkout. The repairs recorded with this marker make
-every cross-repository contract carry a Python-produced release oracle while retaining live comparison when
-the parent source exists. This is source and gate evidence, not a claim that a public artifact exists.
-Public-artifact evidence belongs in
-[`SCORECARD.md`](SCORECARD.md) only after the customer URL can be read back.
+**TODAY — source + public probes, 2026-08-15:** clean workflow run `31913589144` passed the standalone
+locked suite and four target-native builds, published non-draft release `v0.2.4` at
+`2026-08-16T00:25:28Z`, attested the downloadable archives, and published npm shim `0.2.4`. A fresh public
+download verified all four `SHA256SUMS` rows; the macOS arm64 archive contained exactly one native
+`estelle` and printed `estelle 0.2.4`; `gh attestation verify` accepted its provenance. Both the release
+installer and the raw-`main` latest command installed one file into empty destinations and printed the same
+version. The public npm pack contained exactly four shim files, advertised SLSA v1 provenance, and a clean
+postinstall launched the same native version. These are acquisition and identity proofs, not interactive,
+auth, hook, or server-path production proofs; those limits remain explicit below and in
+[`SCORECARD.md`](SCORECARD.md).
 
 ## System boundary
 
@@ -67,8 +69,7 @@ entry, hashes the archive, rejects any member set other than one regular `estell
 installs it. The public command is:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL \
-  https://github.com/uqeu/estelle-cli/releases/latest/download/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/uqeu/estelle-cli/main/install.sh | sh
 ```
 
 The legacy npm package is not allowed to keep executing abandoned JavaScript. Version `0.2.4` is a small
@@ -111,8 +112,9 @@ on uncommitted sweep contents. That client-side-only boundary is design limit #6
 
 ## Current limits
 
-- A locally green release pipeline is not a public release. Completion requires downloading the customer
-  artifact, verifying it against the published checksum, running `--version`, and verifying provenance.
+- The v0.2.4 public distribution gate is proven through customer URLs, checksums, one-member archive
+  inspection, native execution, provenance verification, raw-`main` installation, and npm postinstall. This
+  proves acquisition and identity, not interactive product behavior.
 - The founder's clean-machine install and ChatGPT device-flow walkthrough remain human/device-bound proofs.
 - Client-provided MCP servers remain deliberately rejected.
 - Runtime process-tree egress proof, live terminal coverage, production settings/autonomy writes, and the
