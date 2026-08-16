@@ -46,7 +46,7 @@ The CLI must not silently introduce a third destination.
 | Headless commands | `tui/src/top_level.rs` | Login, sweep, hooks, MCP, ACP, settings, and explicit one-shot operations |
 | Typed Estelle transport | `estelle-client/` | Endpoint inventory, request/response types, auth store, cancellation, bounded timeouts, and redaction |
 | ChatGPT plan login | `login/`, `estelle-client/src/auth_record.rs` | Device flow and refresh rotation; ChatGPT credentials do not enter the Estelle credential store |
-| Credential onboarding | `tui/src/main.rs`, `tui/src/login.rs`, `tui/src/claude_import.rs`, `tui/src/provider_keys.rs`, `tui/src/doctor.rs` | First-run picker, masked input, provider routing, presence-only diagnostics, and separate logout radii |
+| Credential onboarding | `tui/src/provider_catalog.rs`, `tui/src/provider_store.rs`, `tui/src/main.rs`, `tui/src/login.rs`, `tui/src/claude_import.rs`, `tui/src/copilot_login.rs`, `tui/src/local_provider.rs`, `tui/src/provider_keys.rs`, `tui/src/doctor.rs` | One provider-data catalogue drives first-run/shell/slash routing, masked input, shared private local-store transactions, presence-only diagnostics, and separate logout radii |
 | ACP adapter | `estelle-acp/` | Editor session protocol backed by the user's selected model credentials |
 | MCP adapter | `estelle-mcp/` | MCP-facing Estelle catalogue; client-provided MCP servers are deliberately rejected |
 | Always-on hooks | `tui/src/top_level.rs`, generated host configuration | One Rust owner generates Claude Code and Codex hook tables; PostToolUse read/edit activity feeds file-shift tracking while Python/Rust decisions remain contract-pinned |
@@ -165,7 +165,8 @@ Credential absence is resolved before the first interactive frame. With no Estel
 opens the existing bottom-pane picker instead of accepting questions that must fail. `/login` reopens the
 same surface. The five top-level choices name what they buy: Estelle grounding, Claude subscription import,
 ChatGPT plan, provider API key, or local model. A failed inline flow returns to that picker and points to
-`/doctor`; shell failures point to `estelle doctor`.
+`/doctor`; shell failures point to `estelle doctor`. Before those choices, the picker states that Estelle
+uses the customer's existing model plan or key and never bills for model tokens.
 
 The stores and runtimes are deliberately distinct:
 
@@ -174,17 +175,29 @@ The stores and runtimes are deliberately distinct:
 - Claude import occurs only after the user selects it. It reads `CLAUDE_CODE_OAUTH_TOKEN` or the macOS
   `Claude Code-credentials` Keychain item, copies a refreshable snapshot to a mode-0600 Estelle file, and
   never moves, deletes, or modifies Claude Code's source credential.
-- API-key routes are allowlisted before prompting. `openai` means the ChatGPT plan; `openai-api` is the
-  explicit OpenAI API-key spelling. Unknown, Copilot, Azure, Bedrock, and unconfigured local routes fail
+- `tui/src/provider_catalog.rs` is the single owner of canonical ids, globally unique aliases, acquisition
+  kinds, picker surfaces, server identities, endpoint defaults, and base-URL requirements. Shell and slash
+  commands and both provider sub-pickers resolve through that same table.
+- `claude` means the consent-gated Claude Code import and `anthropic`/`anthropic-api` mean an Anthropic API
+  key. `openai` means the ChatGPT device flow and `openai-api` means an OpenAI API key. This keeps plan OAuth
+  distinct from API-key wire identity before a credential is requested.
+- Gemini, Azure, Bedrock, OpenRouter, DeepSeek, Fireworks, and MiniMax use the one masked provider-key path.
+  Azure prompts for its non-secret API base first. Unknown providers and unsafe public HTTP bases fail
   before a secret prompt or network request.
+- Copilot uses an explicit GitHub device flow with bounded requests/polling and a mode-0600 Estelle-owned
+  token snapshot. Presence does not prove Copilot entitlement or model-runtime acceptance.
+- LM Studio and Ollama supply their local defaults; a custom OpenAI-compatible provider prompts for its API
+  base. HTTP is accepted only for loopback, private, link-local, CGNAT, or `.local` hosts. Those hosts may
+  omit a key; a remote HTTPS endpoint may not. Endpoint/key metadata stays client-side in a mode-0600 file.
 - `/whoami` renders only credential presence and server-returned provider names. `/logout` removes local
-  Estelle/plan stores but never silently deletes server-owned provider keys.
+  Estelle/plan/Copilot/endpoint stores but never silently deletes server-owned provider keys.
 
 This is onboarding and storage, not a completed provider runtime. Claude subscription tokens require the
 Anthropic OAuth wire/tool schema, while the custom Estelle conversation currently uses the server answer
-path. LM Studio, Ollama, and no-key localhost endpoints likewise have no binding into that path. The missing
-contract and acceptance proof are recorded in `docs/SERVER-CONTRACTS-NEEDED.md`; neither import nor storage
-is styled as “connected.”
+path. The jcode Anthropic adapter was read through its OAuth identity blocks, tool-name remapping, curated
+tool schemas, and cache placement; none is claimed wired merely because an import exists. LM Studio, Ollama,
+and no-key localhost endpoints likewise have no binding into that path. The missing contract and acceptance
+proof are recorded in `docs/SERVER-CONTRACTS-NEEDED.md`; neither import nor storage is styled as “connected.”
 
 ## Cross-repository contracts
 
