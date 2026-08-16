@@ -4,7 +4,9 @@ set -eu
 
 REPOSITORY=${ESTELLE_RELEASE_REPOSITORY:-uqeu/estelle-cli}
 VERSION=${ESTELLE_VERSION:-latest}
-INSTALL_DIR=${ESTELLE_INSTALL_DIR:-"${HOME}/.local/bin"}
+DEFAULT_INSTALL_DIR="${HOME}/.local/bin"
+INSTALL_DIR=${ESTELLE_INSTALL_DIR:-"$DEFAULT_INSTALL_DIR"}
+REQUESTED_INSTALL_DIR=$INSTALL_DIR
 
 REPOSITORY_OWNER=${REPOSITORY%%/*}
 REPOSITORY_NAME=${REPOSITORY#*/}
@@ -82,14 +84,43 @@ tar -xzf "$TMP_DIR/$ARCHIVE" -C "$TMP_DIR/unpack"
 }
 
 mkdir -p "$INSTALL_DIR"
+INSTALL_DIR=$(CDPATH= cd -- "$INSTALL_DIR" && pwd -P)
 DEST_TMP=$(mktemp "$INSTALL_DIR/.estelle.XXXXXX")
 trap 'rm -rf "$TMP_DIR"; rm -f "$DEST_TMP"' EXIT HUP INT TERM
 install -m 0755 "$TMP_DIR/unpack/estelle" "$DEST_TMP"
 mv -f "$DEST_TMP" "$INSTALL_DIR/estelle"
 trap 'rm -rf "$TMP_DIR"' EXIT HUP INT TERM
 
-echo "Installed Estelle to $INSTALL_DIR/estelle"
+printf 'Installed Estelle to %s/estelle\n' "$INSTALL_DIR"
 case ":${PATH}:" in
-  *:"$INSTALL_DIR":*) ;;
-  *) echo "Add $INSTALL_DIR to PATH to run: estelle" ;;
+  *:"$REQUESTED_INSTALL_DIR":*|*:"$INSTALL_DIR":*) ;;
+  *)
+    if [ "$REQUESTED_INSTALL_DIR" = "$DEFAULT_INSTALL_DIR" ]; then
+      PATH_EXPORT='export PATH="$HOME/.local/bin:$PATH"'
+    else
+      QUOTED_INSTALL_DIR=$(printf '%s' "$INSTALL_DIR" | sed "s/'/'\\\\''/g")
+      PATH_EXPORT="export PATH='$QUOTED_INSTALL_DIR':\"\$PATH\""
+    fi
+    case "${SHELL:-}" in
+      */zsh|zsh) SHELL_PROFILE="$HOME/.zshrc" ;;
+      */bash|bash) SHELL_PROFILE="$HOME/.bashrc" ;;
+      *) SHELL_PROFILE="$HOME/.profile" ;;
+    esac
+    printf '%s is not on PATH. Add this exact line to %s:\n' "$INSTALL_DIR" "$SHELL_PROFILE"
+    printf '%s\n' "$PATH_EXPORT"
+    printf 'Append it now? [y/N]\n'
+    ANSWER=
+    if [ -r /dev/tty ] && { IFS= read -r ANSWER </dev/tty; } 2>/dev/null; then
+      case "$ANSWER" in
+        y|Y|yes|YES|Yes)
+          if [ ! -f "$SHELL_PROFILE" ] || ! grep -Fx "$PATH_EXPORT" "$SHELL_PROFILE" >/dev/null; then
+            printf '\n%s\n' "$PATH_EXPORT" >> "$SHELL_PROFILE"
+          fi
+          printf 'Updated %s.\n' "$SHELL_PROFILE"
+          ;;
+      esac
+    fi
+    printf 'Open a new shell before running estelle.\n'
+    ;;
 esac
+"$INSTALL_DIR/estelle" --version

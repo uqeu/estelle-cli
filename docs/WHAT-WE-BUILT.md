@@ -5,11 +5,11 @@ Every row names a source, licence, implementation location, and measured status.
 its row. A status changes only from a probe, never from recollection.
 
 **Status:** ✅ built + wired + public-artifact/prod-proven · 🟡 built, but no public customer artifact proves
-the path · ⬜ decided, not built. **TODAY — 2026-08-15:** clean run `31913589144` passed the standalone
-suite and four native builds, published non-draft release `v0.2.4` with nine assets, verified all four public
-archive checksums plus arm64 member/version/provenance, and published npm `0.2.4`. Release-hosted,
-raw-`main` latest, and npm postinstall customer paths each installed native `estelle 0.2.4`; interactive
-product paths remain 🟡 until their own probes exist.
+the path · ⬜ decided, not built. **TODAY — 2026-08-15:** `v0.2.4` has nine public assets, four verified
+archive checksums, arm64 identity/provenance proof, and npm `0.2.4`. Its installer probes called the absolute
+destination, however, and a founder clean-machine install disproved bare command resolution. Source `v0.2.5`
+now emits exact zsh/bash PATH guidance, requires consent before profile edits, and passes a discriminating
+clean-PATH bare-command gate. That repair remains 🟡 until public `v0.2.5` and founder re-proof exist.
 
 ## PORTED — mechanism, source, and licence
 
@@ -38,6 +38,7 @@ product paths remain 🟡 until their own probes exist.
 | Reproducible tag-triggered release: exact version gate, target-native builds, normalized archives, checksum manifest, and no manual bypass | Reproducible Builds principles + GitHub Actions · workflow/configuration licences apply; repository code Apache-2.0 | `.github/workflows/release.yml`, `scripts/package-release.sh` | ✅ |
 | Build provenance tied to downloadable bytes through OIDC rather than a long-lived signing secret | SLSA provenance model + `actions/attest-build-provenance` · Apache-2.0 | `.github/workflows/release.yml:130`, `.github/workflows/release.yml:175` | ✅ |
 | Verify before install, one-member archive, bounded resources, and atomic destination replacement | Standard supply-chain and filesystem transaction pattern · repository code Apache-2.0 | `install.sh`, `npm-shim/install.js` | ✅ |
+| Consent-gated zsh/bash PATH setup with resolved-path output, final binary identity, and clean-shell bare-command release proof | Shell startup-file conventions + fail-closed release testing · repository code Apache-2.0 | `install.sh`, `scripts/test-installer.sh` | 🟡 |
 | Separate credential domains for Estelle API access and a user's model-plan OAuth, with auth rejection treated as evidence rather than deletion permission | Least privilege + typed sum types · repository code Apache-2.0 | `estelle-client/src/auth.rs`, `estelle-client/src/auth_record.rs`, `tui/src/login.rs` | 🟡 |
 
 ## Decided, not built

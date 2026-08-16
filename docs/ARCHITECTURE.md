@@ -4,16 +4,15 @@
 `uqeu/estelle-cli` repository. The parent repository may index or summarize it, but cannot be the only
 copy: a behaviour change and its architecture record must be reviewable in one CLI commit.
 
-**TODAY — source + public probes, 2026-08-15:** clean workflow run `31913589144` passed the standalone
-locked suite and four target-native builds, published non-draft release `v0.2.4` at
-`2026-08-16T00:25:28Z`, attested the downloadable archives, and published npm shim `0.2.4`. A fresh public
-download verified all four `SHA256SUMS` rows; the macOS arm64 archive contained exactly one native
-`estelle` and printed `estelle 0.2.4`; `gh attestation verify` accepted its provenance. Both the release
-installer and the raw-`main` latest command installed one file into empty destinations and printed the same
-version. The public npm pack contained exactly four shim files, advertised SLSA v1 provenance, and a clean
-postinstall launched the same native version. These are acquisition and identity proofs, not interactive,
-auth, hook, or server-path production proofs; those limits remain explicit below and in
-[`SCORECARD.md`](SCORECARD.md).
+**TODAY — source + public probes, 2026-08-15:** clean workflow run `31913589144` published and attested
+`v0.2.4`, and public read-back proved its checksums, one-member archives, native identity, and npm shim.
+That proof invoked the installed binary by absolute path. A founder clean-machine probe then disproved the
+stronger customer claim: the default `${HOME}/.local/bin` was absent from macOS `PATH`, so bare `estelle`
+did not resolve. Source `v0.2.5` now prints the resolved binary path, an exact zsh/bash export when needed,
+asks before changing a profile, requires a new shell, and finishes with the installed version. Its local
+gate starts bash with a clean `PATH`, rejects a wrong export, applies only the printed export, and then
+requires bare `estelle --version` to pass. Profiles remain unchanged in the non-consenting probes. This fix
+is 🟡 until a new public release and founder-machine read-back prove the customer path.
 
 ## System boundary
 
@@ -52,8 +51,10 @@ The CLI must not silently introduce a third destination.
 The tag is the release input. The workflow rejects a tag unless it exactly equals both the Cargo workspace
 version and the npm shim version. Validation then runs four independent gates before any platform build:
 
-1. The shell installer must install all four declared target shapes and refuse malformed repository,
-   malformed version, checksum, and archive-member mutants.
+1. The shell installer must install all four declared target shapes; print resolved-path, final-version,
+   and exact zsh/bash PATH guidance without silent profile mutation; resolve a bare command from a clean
+   shell after that guidance is applied; and refuse malformed repository, malformed version, checksum,
+   archive-member, and wrong-PATH mutants.
 2. Release archives must reproduce byte-for-byte with normalized metadata.
 3. `fork-manifest.yaml` must prove the pinned upstream tree, the imported tree, audited ancestry, every
    high-risk blob since that audit, and the finite egress census.
@@ -66,13 +67,16 @@ and creates a versioned GitHub Release. There is no manual release path and no u
 
 The install script downloads the checksum manifest before the selected archive, validates an exact manifest
 entry, hashes the archive, rejects any member set other than one regular `estelle` file, and atomically
-installs it. The public command is:
+installs it. It then resolves the destination, runs the installed binary for the final version line, and
+checks the destination against `PATH`. If absent, it prints an exact export for `.zshrc` or `.bashrc`, offers
+an interactive append through the controlling terminal, never edits without a yes response, and says that a
+new shell is required. The public command is:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/uqeu/estelle-cli/main/install.sh | sh
 ```
 
-The legacy npm package is not allowed to keep executing abandoned JavaScript. Version `0.2.4` is a small
+The legacy npm package is not allowed to keep executing abandoned JavaScript. Version `0.2.5` is a small
 compatibility launcher: its postinstall downloads the same exact-version native archive, accepts only HTTPS
 GitHub/release-asset redirects, bounds manifest/archive/redirect resources, verifies the checksum and member
 set, and exposes only the verified binary. Its workflow publication is provenance-signed and runs only after
@@ -112,10 +116,11 @@ on uncommitted sweep contents. That client-side-only boundary is design limit #6
 
 ## Current limits
 
-- The v0.2.4 public distribution gate is proven through customer URLs, checksums, one-member archive
-  inspection, native execution, provenance verification, raw-`main` installation, and npm postinstall. This
-  proves acquisition and identity, not interactive product behavior.
-- The founder's clean-machine install and ChatGPT device-flow walkthrough remain human/device-bound proofs.
+- The v0.2.4 public distribution gate proves customer URLs, checksums, one-member archives, native identity,
+  provenance, absolute-path installation, and npm postinstall. It does not prove that bare `estelle`
+  resolves; the founder's clean macOS probe showed that claim false.
+- The v0.2.5 source fix has local clean-PATH proof but no public artifact or founder-machine re-proof yet.
+- The founder's clean-machine re-install and ChatGPT device-flow walkthrough remain human/device-bound.
 - Client-provided MCP servers remain deliberately rejected.
 - Runtime process-tree egress proof, live terminal coverage, production settings/autonomy writes, and the
   complete ACP lifecycle remain open measurements.
