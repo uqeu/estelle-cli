@@ -59,6 +59,7 @@ FAILURE_MARKERS = (
 )
 GROUNDING_QUESTION = "Which file defines an application entry point in this repository?"
 DIFF_SURFACES = ("/review", "/scan")
+SMALL_SWEEP_PATH = "rag_tutorials/multimodal_agentic_rag/frontend"
 
 
 def installed_version_receipt(expected_tag: str) -> dict[str, object]:
@@ -127,6 +128,40 @@ def erasure_gate_receipt() -> dict[str, object]:
         "came_back": output,
         "pass": result.returncode == 0 and all(marker in output for marker in required),
     }
+
+
+def command_receipt(
+    arguments: list[str], required: tuple[str, ...], timeout: float
+) -> dict[str, object]:
+    sent = " ".join(arguments)
+    try:
+        result = subprocess.run(
+            arguments,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return {"sent": sent, "came_back": f"timed out after {timeout}s", "pass": False}
+    output = "\n".join(
+        part.strip() for part in (result.stdout, result.stderr) if part.strip()
+    )
+    return {
+        "sent": sent,
+        "came_back": output,
+        "pass": result.returncode == 0 and all(marker in output for marker in required),
+    }
+
+
+def head_surface_receipts(timeout: float = 600) -> list[dict[str, object]]:
+    return [
+        command_receipt(
+            ["estelle", "sweep", "--path", SMALL_SWEEP_PATH], ("Repo swept",), timeout
+        ),
+        command_receipt(["estelle", "sweep"], ("Repo swept",), timeout),
+        command_receipt(["estelle", "reindex"], ("Memory current",), timeout),
+    ]
 
 
 def first_run_picker_receipt(timeout: float = 10) -> dict[str, object]:
@@ -264,12 +299,26 @@ def http_contract_receipt(path: Path) -> tuple[dict[str, object], list[object]]:
     separated = answer is not None and not any(
         key in answer.get("body", {}) for key in ("instruction", "prompt")
     )
-    proof = f"grounded question data-only={separated}; deep review={deep}; whole lockfile={whole_lockfile}"
+    head_routes = {
+        request.get("path")
+        for request in requests
+        if request.get("path") in ("/sync", "/ingest/start", "/reindex")
+        and len(request.get("body", {}).get("head", "")) == 40
+        and all(
+            character in "0123456789abcdef"
+            for character in request.get("body", {}).get("head", "")
+        )
+    }
+    three_heads = head_routes == {"/sync", "/ingest/start", "/reindex"}
+    proof = (
+        f"grounded question data-only={separated}; deep review={deep}; "
+        f"whole lockfile={whole_lockfile}; three head markers={three_heads}"
+    )
     return (
         {
             "sent": "inspect sanitized HTTP trace",
             "came_back": proof,
-            "pass": separated and deep and whole_lockfile,
+            "pass": separated and deep and whole_lockfile and three_heads,
         },
         records,
     )
@@ -291,6 +340,7 @@ def run_receipts(
     receipts.extend(
         tui_surface_receipt(surface, repo, timeout) for surface in DIFF_SURFACES
     )
+    receipts.extend(head_surface_receipts(max(timeout, 600)))
     http_records = None
     if raw_path := os.environ.get("ESTELLE_RECEIPT_PATH"):
         http_receipt, http_records = http_contract_receipt(Path(raw_path))

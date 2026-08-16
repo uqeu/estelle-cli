@@ -176,6 +176,8 @@ def test_complete_harness_writes_every_receipt() -> None:
             "if [ \"$1\" = memory ]; then\n"
             "  printf 'EVERY namespace; re-run with --yes. Nothing was sent.\\n'; exit 0\n"
             "fi\n"
+            "if [ \"$1\" = sweep ]; then printf 'Repo swept.\\n'; exit 0; fi\n"
+            "if [ \"$1\" = reindex ]; then printf 'Memory current.\\n'; exit 0; fi\n"
             "if [ -z \"${ESTELLE_API_KEY:-}\" ]; then\n"
             "  printf 'CONNECT ESTELLE\\n1 Estelle account\\n2 Claude subscription\\n'; exit 0\n"
             "fi\n"
@@ -214,10 +216,11 @@ def test_complete_harness_writes_every_receipt() -> None:
         )
         assert result.returncode == 0, result.stderr
         report = json.loads(output.read_text(encoding="utf-8"))
-        assert report["summary"] == {"passed": 31, "failed": 0}
+        assert report["summary"] == {"passed": 34, "failed": 0}
         assert [row["sent"] for row in report["receipts"][4:28]] == EXPECTED_READ_SURFACES
-        assert report["receipts"][-3]["sent"].startswith("Which file defines")
-        assert [row["sent"] for row in report["receipts"][-2:]] == ["/review", "/scan"]
+        assert report["receipts"][28]["sent"].startswith("Which file defines")
+        assert [row["sent"] for row in report["receipts"][29:31]] == ["/review", "/scan"]
+        assert report["receipts"][-1]["sent"] == "estelle reindex"
         assert all(row["pass"] for row in report["receipts"])
 
 
@@ -305,6 +308,17 @@ def test_http_contract_receipt_proves_hidden_fields() -> None:
                 },
                 "response": {"status": 200, "body": {"findings": []}},
             },
+            *[
+                {
+                    "request": {
+                        "method": "POST",
+                        "path": route,
+                        "body": {"head": "a" * 40},
+                    },
+                    "response": {"status": 200, "body": {"ok": True}},
+                }
+                for route in ("/sync", "/ingest/start", "/reindex")
+            ],
         ]
         path.write_text(
             "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
@@ -315,7 +329,31 @@ def test_http_contract_receipt_proves_hidden_fields() -> None:
         assert receipt["pass"] is True
         assert "deep review" in receipt["came_back"]
         assert "whole lockfile" in receipt["came_back"]
+        assert "three head markers=True" in receipt["came_back"]
         assert observed == records
+
+
+def test_head_surface_commands_run_through_bare_binary() -> None:
+    with tempfile.TemporaryDirectory(prefix="estelle-head-receipt-") as raw_dir:
+        fake_bin = Path(raw_dir) / "bin"
+        fake_bin.mkdir()
+        fake_estelle = fake_bin / "estelle"
+        fake_estelle.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = sweep ]; then printf 'Repo swept.\\n'; exit 0; fi\n"
+            "if [ \"$1\" = reindex ]; then printf 'Memory current.\\n'; exit 0; fi\n",
+            encoding="utf-8",
+        )
+        fake_estelle.chmod(0o755)
+        original_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{fake_bin}{os.pathsep}{original_path}"
+        try:
+            receipts = load_harness().head_surface_receipts(timeout=3)
+        finally:
+            os.environ["PATH"] = original_path
+        assert len(receipts) == 3
+        assert all(receipt["pass"] for receipt in receipts)
+        assert receipts[-1]["sent"] == "estelle reindex"
 
 
 def main() -> int:
@@ -329,6 +367,7 @@ def main() -> int:
     test_erasure_gate_receipt()
     test_first_run_picker_receipt()
     test_http_contract_receipt_proves_hidden_fields()
+    test_head_surface_commands_run_through_bare_binary()
 
     print("public receipt test: all 24 audited read surfaces are mandatory")
     return 0

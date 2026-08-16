@@ -188,6 +188,12 @@ those sanitized rows in the release receipt and requires the grounded question t
 with working memory as a separate data object, `/review` to send `deep: true`, and `/scan` to carry the
 full changed lockfile rather than only its diff hunk.
 
+Graph-currency receipts exercise all three transport branches from the same installed binary and clone:
+a bounded subdirectory sweep takes the synchronous `/sync` path, the full real-size repository sweep takes
+`/ingest/start`, and `estelle reindex` sends the measured lockfile change. The HTTP proof passes only when
+each request carries a 40-character hexadecimal `head`; a successful screen message without those three
+wire facts is a failure.
+
 Secrets are refused or redacted before Estelle request construction. Stored ChatGPT OAuth material and
 Estelle API credentials have separate typed records and stores. A single remote auth rejection is evidence,
 not permission to destroy a stored credential.
