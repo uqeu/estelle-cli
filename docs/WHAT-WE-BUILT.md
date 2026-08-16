@@ -5,14 +5,14 @@ Every row names a source, licence, implementation location, and measured status.
 its row. A status changes only from a probe, never from recollection.
 
 **Status:** ✅ built + wired + public-artifact/prod-proven · 🟡 built, but no public customer artifact proves
-the path · ⬜ decided, not built. **TODAY — 2026-08-16:** `v0.2.9` run `31949439211` completed successfully;
+the path · ⬜ decided, not built. **TODAY — 2026-08-16:** `v0.2.10` run `31954108595` completed successfully;
 the read-back verified nine public assets, four archive checksums/member sets, arm64 identity, public
-installer execution, a bare command against `awesome-llm-apps`, two independent named sessions, TUI
-switch/close behavior, and the public npm shim launching the byte-identical native `0.2.9` with SLSA
-metadata. Both detached requests replayed their expected typed auth failures because the public probe used
-an invalid placeholder credential;
-production-authenticated answer success is not claimed. Provider inference bindings are not built merely
-because credential acquisition exists; those rows remain separate and honest below.
+installer execution, bare-command resolution, and the public npm shim launching byte-identical native
+`0.2.10` bytes with SLSA metadata. Those installed bytes then served a fresh `awesome-llm-apps` clone and
+delivered a once-only file-shift warning after an actual peer edit. Public `v0.2.9` remains the independent
+named-session switch/close and detached typed-failure replay proof. Production-authenticated answer success
+is not claimed. Provider inference bindings are not built merely because credential acquisition exists;
+those rows remain separate and honest below.
 
 ## PORTED — mechanism, source, and licence
 
@@ -36,7 +36,7 @@ because credential acquisition exists; those rows remain separate and honest bel
 | Shipped-binary IP boundary rejecting server-owned `estelle.serve` and `estelle.agent` symbols on every native target | Fate Labs · Apache-2.0 repository | `scripts/check-ip-boundary.py`, `scripts/test-ip-boundary.py`, `.github/workflows/release.yml` | ✅ |
 | Server-owned detachable session: `estelle serve` + credential-free `estelle connect`, owner-only UDS, question/remote-command/sweep continuation and typed reconnect replay | jcode server/client architecture (MIT), adapted to Estelle's typed API boundary; Fate Labs implementation Apache-2.0 | `tui/src/session_server.rs`, `tui/src/main.rs` | ✅ public `v0.2.9`: detached typed replay on `awesome-llm-apps` |
 | Same-repository named sessions and tab view: concurrent isolated work, shared catalogue, Alt+Left/Right watch switching, and Ctrl+W client-only close | jcode multi-session picker/server boundary (MIT), adapted as an Estelle-owned compact tab surface; Fate Labs implementation Apache-2.0 | `tui/src/session_server.rs`, `tui/src/main.rs` | ✅ public `v0.2.9`: isolated `payments`/`retries` replay, switch, and client-only close on `awesome-llm-apps` |
-| Same-repository file-shift warning: installed Read/Write/Edit hooks record bounded reader sets; a peer edit is stored through detach, rendered in the TUI or returned as model context, and acknowledged once | jcode swarm behavior page, `jcode-swarm-core`, and `FileTouchService` architecture · MIT; requested reader invariant is stronger than the current vendored modification-only peer filter; Fate Labs implementation Apache-2.0 | `tui/src/session_server.rs`, `tui/src/top_level.rs`, `tui/src/main.rs` | 🟡 local `v0.2.10` candidate: release binary passed once-only `reader`/`writer` hook delivery on `awesome-llm-apps`; no public customer artifact yet |
+| Same-repository file-shift warning: installed Read/Write/Edit hooks record bounded reader sets; a peer edit is stored through detach, rendered in the TUI or returned as model context, and acknowledged once | jcode swarm behavior page, `jcode-swarm-core`, and `FileTouchService` architecture · MIT; requested reader invariant is stronger than the current vendored modification-only peer filter; Fate Labs implementation Apache-2.0 | `tui/src/session_server.rs`, `tui/src/top_level.rs`, `tui/src/main.rs` | ✅ public `v0.2.10`: URL-installed `reader`/`writer` hooks delivered one warning after an actual disposable-file edit in a fresh `awesome-llm-apps` clone; the next read was silent |
 | Native retirement of the abandoned JavaScript package through an exact-version, checksum-first npm launcher | Fate Labs · Apache-2.0 repository | `npm-shim/install.js`, `npm-shim/bin/estelle.js` | ✅ |
 | Credential-first launch and five-way `/login` picker, plus `/logout`, presence-only `/whoami`, and context-correct `/doctor` | Fate Labs · Apache-2.0 repository | `tui/src/main.rs:706`, `tui/src/main.rs:1362`, `tui/src/main.rs:1865`, `tui/src/doctor.rs:14` | 🟡 |
 | Allowlisted provider-key login with masked input, typed `/key` request, secret-free receipt, and explicit unsupported-route refusal | Fate Labs · Apache-2.0 repository | `tui/src/main.rs:427`, `tui/src/provider_keys.rs:15`, `estelle-client/src/endpoint.rs:60` | 🟡 |
