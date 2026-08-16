@@ -191,7 +191,12 @@ fn sanitize_directory(lines: Vec<String>) -> Vec<String> {
         .into_iter()
         .map(|line| {
             // Package versions change every release; snapshots measure layout/content, not the Cargo tag.
-            let line = line.replace(&format!("v{}", env!("CARGO_PKG_VERSION")), "v0.0.0");
+            let package_version = env!("CARGO_PKG_VERSION");
+            let stable_version = format!(
+                "(v0.0.0){}",
+                " ".repeat(package_version.len().saturating_sub("0.0.0".len()))
+            );
+            let line = line.replace(&format!("(v{package_version})"), &stable_version);
             if let (Some(frame_width), Some(dir_pos), Some(pipe_idx)) =
                 (frame_width, line.find("Directory: "), line.rfind('│'))
             {

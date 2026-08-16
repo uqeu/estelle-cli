@@ -50,8 +50,8 @@
   "reviewed_changes_after_audited_commit": [
     {
       "path": "tui/src/top_level.rs",
-      "blob": "5913cc9ed00a91864088ce9dd1c10d1fa5cf9357",
-      "reason": "N-01 GitHub handoff remains origin-bound; hook parity keeps standalone oracles, while sweep progress is serializable only across the owner-only local session transport"
+      "blob": "f0fba324737e9f7e5edc4d407afa911bcd3e1826",
+      "reason": "N-01 GitHub handoff remains origin-bound; hook parity keeps standalone oracles, while the installed PostToolUse shift hook reports bounded read/edit activity only to the owner-only local session transport"
     },
     {
       "path": ".github/workflows/release.yml",
@@ -95,8 +95,8 @@
     },
     {
       "path": "tui/src/main.rs",
-      "blob": "c02ae7013dfc26432beb52399e19cf92910d26a9",
-      "reason": "connected terminals resolve no credential and send questions, remote commands, and sweeps to named long-lived sessions; catalog tabs switch and close only the local view while standalone provider routes remain allowlisted before prompts"
+      "blob": "9c73abe6f3fe65d9513ed6ce577a29569a502074",
+      "reason": "connected terminals resolve no credential and render acknowledged file-shift warnings alongside named long-lived session transcripts; catalog tabs switch and close only the local view while standalone provider routes remain allowlisted before prompts"
     },
     {
       "path": "estelle-client/src/types.rs",
@@ -105,8 +105,18 @@
     },
     {
       "path": "tui/src/session_server.rs",
-      "blob": "a80ad0244d34cd41afad803c251a73bfb05f648b",
-      "reason": "the jcode-inspired local session owner uses a 0700 directory, 0600 socket and startup lock; only the server holds the Estelle credential, named same-repository sessions run independently, and switching or disconnecting a client never cancels work"
+      "blob": "c0dccef91facbb09b5bb1ca4147267acc120e2d2",
+      "reason": "the jcode-inspired local session owner uses a 0700 directory, 0600 socket and startup lock; it confines bounded read sets and file-shift notices to matching repository roots, while named sessions remain independent across client disconnects"
+    },
+    {
+      "path": "tui/src/status/tests.rs",
+      "blob": "fb0f2f4754ee53c87593688f0aa994dc5dc78e2a",
+      "reason": "release-version snapshot sanitization preserves rendered width when SemVer grows, keeping inherited status layout assertions stable without accepting changed snapshots"
+    },
+    {
+      "path": "tui/src/history_cell/tests.rs",
+      "blob": "5973e4a879ea32b651a8d6a964d818cfaf099e21",
+      "reason": "release-version snapshot sanitization preserves rendered width when SemVer grows, keeping inherited session-info layout assertions stable without accepting changed snapshots"
     },
     {
       "path": "tui/src/provider_keys.rs",

@@ -694,9 +694,14 @@ async fn session_info_availability_nux_tooltip_snapshot() {
         /*show_fast_status*/ false,
     );
 
+    let package_version = env!("CARGO_PKG_VERSION");
+    let stable_version = format!(
+        "(v0.0.0){}",
+        " ".repeat(package_version.len().saturating_sub("0.0.0".len()))
+    );
     let rendered = render_transcript(&cell)
         .join("\n")
-        .replace(&format!("v{}", env!("CARGO_PKG_VERSION")), "v0.0.0");
+        .replace(&format!("(v{package_version})"), &stable_version);
     insta::assert_snapshot!(rendered);
 }
 

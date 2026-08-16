@@ -2,6 +2,7 @@
 // server/client architecture; the implementation is original to Estelle's API contract.
 
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::io;
 use std::io::ErrorKind;
 use std::path::Path;
@@ -69,6 +70,16 @@ pub(crate) enum ClientRequest {
     Cancel {
         id: u64,
     },
+    FileRead {
+        path: PathBuf,
+    },
+    FileChanged {
+        path: PathBuf,
+        summary: Option<String>,
+    },
+    AcknowledgeFileShifts {
+        through: u64,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -79,6 +90,7 @@ pub(crate) enum ServerMessage {
         sessions: Vec<SessionSummary>,
         turns: Vec<SessionTurn>,
         active: Option<ActiveTurn>,
+        file_shifts: Vec<FileShiftNotice>,
     },
     Started {
         active: ActiveTurn,
@@ -97,6 +109,23 @@ pub(crate) enum ServerMessage {
         id: u64,
         message: String,
     },
+    FileShift {
+        notice: FileShiftNotice,
+    },
+    FileActivityRecorded {
+        path: PathBuf,
+    },
+    FileActivityRejected {
+        message: String,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct FileShiftNotice {
+    pub(crate) id: u64,
+    pub(crate) path: PathBuf,
+    pub(crate) changed_by: String,
+    pub(crate) summary: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -218,6 +247,9 @@ struct SessionState {
     root: PathBuf,
     turns: Vec<SessionTurn>,
     active: Option<ActiveWork>,
+    read_paths: VecDeque<PathBuf>,
+    file_shifts: Vec<FileShiftNotice>,
+    next_file_shift_id: u64,
     events: broadcast::Sender<ServerMessage>,
 }
 
@@ -230,6 +262,9 @@ impl SessionState {
             root,
             turns: Vec::new(),
             active: None,
+            read_paths: VecDeque::new(),
+            file_shifts: Vec::new(),
+            next_file_shift_id: 1,
             events,
         }
     }
@@ -325,7 +360,6 @@ impl SessionConnection {
         Ok(connection)
     }
 
-    #[cfg(test)]
     pub(crate) async fn send(&mut self, request: ClientRequest) -> io::Result<()> {
         self.write_frame(&ClientFrame::Request { request }).await
     }
@@ -338,7 +372,6 @@ impl SessionConnection {
         .await
     }
 
-    #[cfg(test)]
     pub(crate) async fn next(&mut self) -> io::Result<ServerMessage> {
         read_json_line(&mut self.reader).await
     }
@@ -388,6 +421,81 @@ impl SessionConnection {
             }
         });
         (SessionHandle { frames: frames_tx }, events_rx)
+    }
+}
+
+pub(crate) async fn record_hook_file_read(
+    socket_path: &Path,
+    repo: Repo,
+    root: PathBuf,
+    session_id: &str,
+    path: PathBuf,
+) -> io::Result<Vec<FileShiftNotice>> {
+    record_hook_file_activity(
+        socket_path,
+        repo,
+        root,
+        session_id,
+        ClientRequest::FileRead { path },
+    )
+    .await
+}
+
+pub(crate) async fn record_hook_file_change(
+    socket_path: &Path,
+    repo: Repo,
+    root: PathBuf,
+    session_id: &str,
+    path: PathBuf,
+    summary: Option<String>,
+) -> io::Result<Vec<FileShiftNotice>> {
+    record_hook_file_activity(
+        socket_path,
+        repo,
+        root,
+        session_id,
+        ClientRequest::FileChanged { path, summary },
+    )
+    .await
+}
+
+async fn record_hook_file_activity(
+    socket_path: &Path,
+    repo: Repo,
+    root: PathBuf,
+    session_id: &str,
+    request: ClientRequest,
+) -> io::Result<Vec<FileShiftNotice>> {
+    let mut connection =
+        SessionConnection::connect_named(socket_path, repo, root, session_id).await?;
+    let snapshot = tokio::time::timeout(std::time::Duration::from_secs(1), connection.next())
+        .await
+        .map_err(|_| io::Error::new(ErrorKind::TimedOut, "session snapshot timed out"))??;
+    let ServerMessage::Snapshot { file_shifts, .. } = snapshot else {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "session server did not send an initial snapshot",
+        ));
+    };
+    if let Some(last) = file_shifts.last() {
+        connection
+            .send(ClientRequest::AcknowledgeFileShifts { through: last.id })
+            .await?;
+    }
+    connection.send(request).await?;
+    loop {
+        let message = tokio::time::timeout(std::time::Duration::from_secs(1), connection.next())
+            .await
+            .map_err(|_| {
+                io::Error::new(ErrorKind::TimedOut, "file activity receipt timed out")
+            })??;
+        match message {
+            ServerMessage::FileActivityRecorded { .. } => return Ok(file_shifts),
+            ServerMessage::FileActivityRejected { message } => {
+                return Err(io::Error::new(ErrorKind::InvalidInput, message));
+            }
+            _ => {}
+        }
     }
 }
 
@@ -490,7 +598,13 @@ async fn handle_connection(
                 };
                 match frame {
                     ClientFrame::Request { request } => {
-                        handle_request(request, session.clone(), client.clone()).await;
+                        handle_request(
+                            request,
+                            session.clone(),
+                            sessions.clone(),
+                            client.clone(),
+                        )
+                        .await;
                     }
                     ClientFrame::Switch { session_id } => {
                         validate_session_id(&session_id)?;
@@ -564,7 +678,7 @@ fn validate_session_id(session_id: &str) -> io::Result<()> {
 }
 
 async fn session_snapshot(session: &SharedSession, sessions: &Sessions) -> ServerMessage {
-    let (session_id, repo, root, turns, active) = {
+    let (session_id, repo, root, turns, active, file_shifts) = {
         let state = session.lock().await;
         (
             state.id.clone(),
@@ -572,6 +686,7 @@ async fn session_snapshot(session: &SharedSession, sessions: &Sessions) -> Serve
             state.root.clone(),
             state.turns.clone(),
             state.active.as_ref().map(|work| work.turn.clone()),
+            state.file_shifts.clone(),
         )
     };
     let matching = {
@@ -597,10 +712,16 @@ async fn session_snapshot(session: &SharedSession, sessions: &Sessions) -> Serve
         sessions: summaries,
         turns,
         active,
+        file_shifts,
     }
 }
 
-async fn handle_request(request: ClientRequest, session: SharedSession, client: Client) {
+async fn handle_request(
+    request: ClientRequest,
+    session: SharedSession,
+    sessions: Sessions,
+    client: Client,
+) {
     match request {
         ClientRequest::Ask {
             id,
@@ -729,7 +850,105 @@ async fn handle_request(request: ClientRequest, session: SharedSession, client: 
             active.cancel.cancel();
             let _ = state.events.send(ServerMessage::Cancelled { id });
         }
+        ClientRequest::FileRead { path } => {
+            record_file_read(&session, path).await;
+        }
+        ClientRequest::FileChanged { path, summary } => {
+            record_file_change(&session, &sessions, path, summary).await;
+        }
+        ClientRequest::AcknowledgeFileShifts { through } => {
+            let mut state = session.lock().await;
+            state.file_shifts.retain(|notice| notice.id > through);
+        }
     }
+}
+
+fn normalize_session_path(root: &Path, path: &Path) -> Option<PathBuf> {
+    let relative = if path.is_absolute() {
+        path.strip_prefix(root).ok()?
+    } else {
+        path
+    };
+    let mut normalized = PathBuf::new();
+    for component in relative.components() {
+        match component {
+            std::path::Component::Normal(part) => normalized.push(part),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => return None,
+        }
+    }
+    (!normalized.as_os_str().is_empty()).then_some(normalized)
+}
+
+async fn record_file_read(session: &SharedSession, path: PathBuf) {
+    let mut state = session.lock().await;
+    let Some(path) = normalize_session_path(&state.root, &path) else {
+        let _ = state.events.send(ServerMessage::FileActivityRejected {
+            message: "file activity path must stay inside the session repository".to_string(),
+        });
+        return;
+    };
+    state.read_paths.retain(|seen| seen != &path);
+    state.read_paths.push_back(path.clone());
+    if state.read_paths.len() > 4096 {
+        state.read_paths.pop_front();
+    }
+    let _ = state
+        .events
+        .send(ServerMessage::FileActivityRecorded { path });
+}
+
+async fn record_file_change(
+    current: &SharedSession,
+    sessions: &Sessions,
+    path: PathBuf,
+    summary: Option<String>,
+) {
+    let (changed_by, repo, root, events, path) = {
+        let state = current.lock().await;
+        let Some(path) = normalize_session_path(&state.root, &path) else {
+            let _ = state.events.send(ServerMessage::FileActivityRejected {
+                message: "file activity path must stay inside the session repository".to_string(),
+            });
+            return;
+        };
+        (
+            state.id.clone(),
+            state.repo.as_str().to_string(),
+            state.root.clone(),
+            state.events.clone(),
+            path,
+        )
+    };
+    let peers = {
+        let sessions = sessions.lock().await;
+        sessions
+            .iter()
+            .filter(|(key, _)| key.repo == repo && key.root == root && key.id != changed_by)
+            .map(|(_, session)| session.clone())
+            .collect::<Vec<_>>()
+    };
+    for peer in peers {
+        let mut state = peer.lock().await;
+        if !state.read_paths.contains(&path) {
+            continue;
+        }
+        let notice = FileShiftNotice {
+            id: state.next_file_shift_id,
+            path: path.clone(),
+            changed_by: changed_by.clone(),
+            summary: summary.clone(),
+        };
+        state.next_file_shift_id = state.next_file_shift_id.saturating_add(1);
+        state.file_shifts.push(notice.clone());
+        if state.file_shifts.len() > 64 {
+            state.file_shifts.remove(0);
+        }
+        let _ = state.events.send(ServerMessage::FileShift { notice });
+    }
+    let _ = events.send(ServerMessage::FileActivityRecorded { path });
 }
 
 async fn begin_work(
@@ -891,6 +1110,8 @@ impl Drop for SocketGuard {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+    use std::path::PathBuf;
     use std::time::Duration;
 
     use estelle_client::ApiKey;
@@ -909,6 +1130,7 @@ mod tests {
     use super::SessionConnection;
     use super::SessionOutcome;
     use super::SessionServer;
+    use super::normalize_session_path;
 
     #[tokio::test]
     async fn work_survives_client_disconnect_and_is_replayed_on_reconnect() {
@@ -1198,6 +1420,133 @@ mod tests {
             &turns[0].outcome,
             SessionOutcome::Answer { answer } if answer.text == "retries are isolated"
         ));
+
+        shutdown.cancel();
+        server_task
+            .await
+            .expect("server task")
+            .expect("server exit");
+    }
+
+    #[test]
+    fn file_activity_paths_are_lexically_confined_to_the_session_root() {
+        let root = Path::new("/work/repository");
+
+        assert_eq!(
+            normalize_session_path(root, Path::new("./src/lib.rs")),
+            Some(PathBuf::from("src/lib.rs"))
+        );
+        assert_eq!(
+            normalize_session_path(root, Path::new("/work/repository/src/lib.rs")),
+            Some(PathBuf::from("src/lib.rs"))
+        );
+        assert_eq!(normalize_session_path(root, Path::new("../secret")), None);
+        assert_eq!(
+            normalize_session_path(root, Path::new("/work/other/secret")),
+            None
+        );
+        assert_eq!(normalize_session_path(root, Path::new(".")), None);
+    }
+
+    #[tokio::test]
+    async fn peer_change_is_replayed_to_a_detached_session_that_read_the_file() {
+        let api = MockServer::start().await;
+        let client = Client::new(
+            &format!("{}/", api.uri()),
+            ApiKey::new("test-key").expect("key"),
+            Duration::from_secs(120),
+        )
+        .expect("client");
+        let runtime = tempfile::tempdir().expect("runtime directory");
+        let root = tempfile::tempdir().expect("working tree");
+        let socket = runtime.path().join("session.sock");
+        let shutdown = CancellationToken::new();
+        let server = SessionServer::bind(socket.clone(), client)
+            .await
+            .expect("bind session server");
+        let server_task = tokio::spawn(server.run(shutdown.clone()));
+        let repo = Repo::new("fatelabs/estelle").expect("repo");
+
+        let mut reader = SessionConnection::connect_named(
+            &socket,
+            repo.clone(),
+            root.path().to_path_buf(),
+            "reader",
+        )
+        .await
+        .expect("reader session");
+        let _ = reader.next().await.expect("reader snapshot");
+        reader
+            .send(ClientRequest::FileRead {
+                path: PathBuf::from("src/lib.rs"),
+            })
+            .await
+            .expect("record reader touch");
+        assert!(matches!(
+            reader.next().await.expect("reader touch receipt"),
+            ServerMessage::FileActivityRecorded { path }
+                if path == Path::new("src/lib.rs")
+        ));
+        drop(reader);
+
+        let mut writer = SessionConnection::connect_named(
+            &socket,
+            repo.clone(),
+            root.path().to_path_buf(),
+            "writer",
+        )
+        .await
+        .expect("writer session");
+        let _ = writer.next().await.expect("writer snapshot");
+        writer
+            .send(ClientRequest::FileChanged {
+                path: PathBuf::from("src/lib.rs"),
+                summary: Some("edited lines 10-20".to_string()),
+            })
+            .await
+            .expect("record writer change");
+        assert!(matches!(
+            writer.next().await.expect("writer change receipt"),
+            ServerMessage::FileActivityRecorded { path }
+                if path == Path::new("src/lib.rs")
+        ));
+        drop(writer);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let mut replay = SessionConnection::connect_named(
+            &socket,
+            repo.clone(),
+            root.path().to_path_buf(),
+            "reader",
+        )
+        .await
+        .expect("reader replay");
+        let ServerMessage::Snapshot { file_shifts, .. } =
+            replay.next().await.expect("reader replay snapshot")
+        else {
+            panic!("reader replay did not receive a snapshot");
+        };
+        assert_eq!(file_shifts.len(), 1);
+        assert_eq!(file_shifts[0].path, PathBuf::from("src/lib.rs"));
+        assert_eq!(file_shifts[0].changed_by, "writer");
+        assert_eq!(
+            file_shifts[0].summary.as_deref(),
+            Some("edited lines 10-20")
+        );
+
+        let mut writer_replay =
+            SessionConnection::connect_named(&socket, repo, root.path().to_path_buf(), "writer")
+                .await
+                .expect("writer replay");
+        let ServerMessage::Snapshot { file_shifts, .. } =
+            writer_replay.next().await.expect("writer replay snapshot")
+        else {
+            panic!("writer replay did not receive a snapshot");
+        };
+        assert!(
+            file_shifts.is_empty(),
+            "the writer must not receive its own file-shift warning"
+        );
 
         shutdown.cancel();
         server_task

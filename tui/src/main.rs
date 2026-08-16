@@ -1304,6 +1304,7 @@ struct App {
     hidden_session_tabs: BTreeSet<String>,
     session_questions: BTreeSet<u64>,
     session_completed: BTreeSet<u64>,
+    session_file_shifts: BTreeSet<u64>,
     auth: Option<AuthContext>,
     /// Per-skill conversations for interactive `/skill:` runs, and the run currently in flight.
     /// The server continues a skill over `messages` when they arrive and restarts from `task`
@@ -1471,6 +1472,7 @@ impl App {
             hidden_session_tabs: BTreeSet::new(),
             session_questions: BTreeSet::new(),
             session_completed: BTreeSet::new(),
+            session_file_shifts: BTreeSet::new(),
             auth: None,
             skill_threads: HashMap::new(),
             pending_skill: None,
@@ -2573,6 +2575,25 @@ impl App {
         }
     }
 
+    fn record_file_shift(&mut self, notice: session_server::FileShiftNotice) {
+        if !self.session_file_shifts.insert(notice.id) {
+            return;
+        }
+        let summary = notice
+            .summary
+            .as_deref()
+            .map(str::trim)
+            .filter(|summary| !summary.is_empty())
+            .map(|summary| format!(" · {summary}"))
+            .unwrap_or_default();
+        self.transcript.push(TranscriptEntry::System(format!(
+            "FILE SHIFT · {}\n{} changed a file this session read{}\nInspect the diff before continuing.",
+            notice.path.display(),
+            notice.changed_by,
+            summary,
+        )));
+    }
+
     fn apply_command_success(&mut self, name: &'static str, result: RemoteCommandReply) {
         if name == "gate" {
             self.gate_modal = GateModal::from_reply(&result.reply, &result.inspected_files);
@@ -2636,6 +2657,7 @@ impl App {
                 sessions,
                 turns,
                 active,
+                file_shifts,
             } => {
                 if self.session_id != session_id {
                     self.clear_session_surface();
@@ -2645,6 +2667,14 @@ impl App {
                 self.hidden_session_tabs.remove(&self.session_id);
                 for turn in turns {
                     self.record_session_turn(turn);
+                }
+                let file_shifts_through = file_shifts.last().map(|notice| notice.id);
+                for notice in file_shifts {
+                    self.record_file_shift(notice);
+                }
+                if let (Some(session), Some(through)) = (&self.session, file_shifts_through) {
+                    let _ = session
+                        .send(session_server::ClientRequest::AcknowledgeFileShifts { through });
                 }
                 if let Some(active) = active {
                     let label = match &active.input {
@@ -2731,6 +2761,22 @@ impl App {
                 ]));
                 self.start_next(tx);
             }
+            session_server::ServerMessage::FileShift { notice } => {
+                let through = notice.id;
+                self.record_file_shift(notice);
+                if let Some(session) = &self.session {
+                    let _ = session
+                        .send(session_server::ClientRequest::AcknowledgeFileShifts { through });
+                }
+            }
+            session_server::ServerMessage::FileActivityRecorded { .. } => {}
+            session_server::ServerMessage::FileActivityRejected { message } => {
+                self.transcript.push(TranscriptEntry::Failure([
+                    "The session server rejected file activity.".to_string(),
+                    message,
+                    "Use a repository-relative path and retry the tool.".to_string(),
+                ]));
+            }
         }
     }
 
@@ -2740,6 +2786,7 @@ impl App {
         self.active = None;
         self.session_questions.clear();
         self.session_completed.clear();
+        self.session_file_shifts.clear();
         self.skill_threads.clear();
         self.pending_skill = None;
         self.last_question = None;
@@ -6757,6 +6804,12 @@ mod tests {
                         question: "verify the retry fix".to_string(),
                     },
                 }),
+                file_shifts: vec![session_server::FileShiftNotice {
+                    id: 1,
+                    path: PathBuf::from("api/charge.ts"),
+                    changed_by: "retries".to_string(),
+                    summary: Some("edited lines 48-60".to_string()),
+                }],
             }),
             &tx,
         );
@@ -6770,6 +6823,11 @@ mod tests {
         assert!(rendered.contains("main"));
         assert!(rendered.contains("retries"));
         assert!(rendered.contains("Alt+Left/Right switch"));
+        assert!(rendered.contains("FILE SHIFT"));
+        assert!(rendered.contains("retries changed a file this session read"));
+        assert!(app.transcript.iter().any(
+            |entry| matches!(entry, TranscriptEntry::System(text) if text.contains("edited lines 48-60"))
+        ));
         assert_eq!(app.active.as_ref().map(|active| active.id), Some(42));
     }
 

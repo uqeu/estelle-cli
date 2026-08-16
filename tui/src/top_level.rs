@@ -162,6 +162,7 @@ async fn run_hook_with(
     match mode {
         "ground" => ground_hook(&payload, repo).await,
         "guard" => Ok(guard_hook(&payload)),
+        "shift" => Ok(file_shift_hook(&payload, repo, root).await),
         "sync" => sync_hook(&payload, repo, root).await,
         "distil" => Ok(distil_hook(&payload)),
         "checkpoint" => checkpoint_hook(&payload).await,
@@ -668,6 +669,81 @@ async fn ground_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>, 
     Ok(vec![hook_message(Some(message), context, "PreToolUse")])
 }
 
+fn hook_session_socket_path() -> Option<PathBuf> {
+    std::env::var_os("ESTELLE_SESSION_SOCKET")
+        .map(PathBuf::from)
+        .or_else(|| crate::session_server::default_socket_path().ok())
+}
+
+fn file_shift_messages(notices: Vec<crate::session_server::FileShiftNotice>) -> Vec<String> {
+    notices
+        .into_iter()
+        .map(|notice| {
+            let summary = notice
+                .summary
+                .as_deref()
+                .map(str::trim)
+                .filter(|summary| !summary.is_empty())
+                .map(|summary| format!(" ({summary})"))
+                .unwrap_or_default();
+            let context = format!(
+                "File shift: {} changed {} after this session read it{}. Inspect the diff before continuing.",
+                notice.changed_by,
+                notice.path.display(),
+                summary,
+            );
+            hook_message(Some(context.clone()), Some(context), "PostToolUse")
+        })
+        .collect()
+}
+
+async fn file_shift_hook(payload: &HookPayload, repo: &Repo, root: &Path) -> Vec<String> {
+    let Some(socket) = hook_session_socket_path() else {
+        return Vec::new();
+    };
+    file_shift_hook_at(payload, repo, root, &socket).await
+}
+
+async fn file_shift_hook_at(
+    payload: &HookPayload,
+    repo: &Repo,
+    root: &Path,
+    socket: &Path,
+) -> Vec<String> {
+    let (path, _) = edited_file(payload);
+    if payload.session_id.is_empty() || path.is_empty() {
+        return Vec::new();
+    }
+    let path = PathBuf::from(path);
+    let notices = match payload.tool_name.as_str() {
+        "Read" => {
+            crate::session_server::record_hook_file_read(
+                socket,
+                repo.clone(),
+                root.to_path_buf(),
+                &payload.session_id,
+                path,
+            )
+            .await
+        }
+        "Write" | "Edit" => {
+            let action = payload.tool_name.to_ascii_lowercase();
+            crate::session_server::record_hook_file_change(
+                socket,
+                repo.clone(),
+                root.to_path_buf(),
+                &payload.session_id,
+                path,
+                Some(format!("{action} completed")),
+            )
+            .await
+        }
+        _ => return Vec::new(),
+    }
+    .unwrap_or_default();
+    file_shift_messages(notices)
+}
+
 async fn sync_hook(payload: &HookPayload, repo: &Repo, root: &Path) -> Result<Vec<String>, String> {
     let (path, _) = edited_file(payload);
     if path.is_empty() {
@@ -1009,6 +1085,13 @@ const HOOK_TABLE: &[HookRow] = &[
         matcher: Some("Bash"),
         mode: "guard",
         timeout: 10,
+        claude_async: false,
+    },
+    HookRow {
+        event: "PostToolUse",
+        matcher: Some("Read|Write|Edit"),
+        mode: "shift",
+        timeout: 5,
         claude_async: false,
     },
     HookRow {
@@ -3811,7 +3894,7 @@ tests/test_serve.py:88: AssertionError\n\
         );
         assert_eq!(
             installed["hooks"]["PostToolUse"].as_array().map(Vec::len),
-            Some(3)
+            Some(4)
         );
         assert_eq!(installed["hooks"]["Stop"].as_array().map(Vec::len), Some(2));
         assert_eq!(installed["hooks"]["Stop"][0], original["hooks"]["Stop"][0]);
@@ -3838,6 +3921,64 @@ tests/test_serve.py:88: AssertionError\n\
         assert!(!backup_path(&path).exists());
     }
 
+    #[tokio::test]
+    async fn installed_shift_hook_delivers_peer_edits_to_the_prior_reader() {
+        let api = wiremock::MockServer::start().await;
+        let client = Client::new(
+            &format!("{}/", api.uri()),
+            estelle_client::ApiKey::new("test-key").expect("key"),
+            Duration::from_secs(120),
+        )
+        .expect("client");
+        let runtime = tempfile::tempdir().expect("runtime directory");
+        let root = tempfile::tempdir().expect("working tree");
+        let socket = runtime.path().join("session.sock");
+        let shutdown = CancellationToken::new();
+        let server = crate::session_server::SessionServer::bind(socket.clone(), client)
+            .await
+            .expect("bind session server");
+        let server_task = tokio::spawn(server.run(shutdown.clone()));
+        let repo = Repo::new("fatelabs/estelle").expect("repo");
+        let payload = |session_id: &str, tool_name: &str| HookPayload {
+            tool_input: json!({"file_path": "src/lib.rs"}),
+            tool_name: tool_name.to_string(),
+            tool_response: Value::Null,
+            prompt: String::new(),
+            session_id: session_id.to_string(),
+            transcript_path: String::new(),
+            cwd: root.path().display().to_string(),
+            hook_event_name: "PostToolUse".to_string(),
+        };
+
+        assert!(
+            file_shift_hook_at(&payload("reader", "Read"), &repo, root.path(), &socket)
+                .await
+                .is_empty()
+        );
+        assert!(
+            file_shift_hook_at(&payload("writer", "Edit"), &repo, root.path(), &socket)
+                .await
+                .is_empty()
+        );
+        let warning =
+            file_shift_hook_at(&payload("reader", "Read"), &repo, root.path(), &socket).await;
+        assert_eq!(warning.len(), 1);
+        assert!(warning[0].contains("File shift: writer changed src/lib.rs"));
+        assert!(warning[0].contains("Inspect the diff before continuing"));
+        assert!(
+            file_shift_hook_at(&payload("reader", "Read"), &repo, root.path(), &socket)
+                .await
+                .is_empty(),
+            "a delivered file-shift warning must be acknowledged"
+        );
+
+        shutdown.cancel();
+        server_task
+            .await
+            .expect("server task")
+            .expect("server exit");
+    }
+
     #[test]
     fn generated_hook_file_is_accepted_by_the_maintained_codex_hooks_schema() {
         let mut value = json!({});
@@ -3847,13 +3988,13 @@ tests/test_serve.py:88: AssertionError\n\
             serde_json::from_value(value).expect("Codex hooks schema");
 
         assert_eq!(parsed.hooks.pre_tool_use.len(), 2);
-        assert_eq!(parsed.hooks.post_tool_use.len(), 2);
+        assert_eq!(parsed.hooks.post_tool_use.len(), 3);
         assert_eq!(parsed.hooks.stop.len(), 1);
         assert_eq!(parsed.hooks.pre_compact.len(), 1);
         assert_eq!(parsed.hooks.session_end.len(), 1);
         assert_eq!(parsed.hooks.session_start.len(), 1);
         assert_eq!(parsed.hooks.user_prompt_submit.len(), 1);
-        assert_eq!(parsed.hooks.handler_count(), 9);
+        assert_eq!(parsed.hooks.handler_count(), 10);
         for (_event, groups) in parsed.hooks.into_matcher_groups() {
             for group in &groups {
                 for handler in &group.hooks {
@@ -3874,9 +4015,10 @@ tests/test_serve.py:88: AssertionError\n\
 
         // (event, matcher, mode, timeout) — the contract, row for row. `async` is asserted
         // separately because it may appear on exactly one row of the whole table.
-        let expected: [(&str, Option<&str>, &str, u64); 9] = [
+        let expected: [(&str, Option<&str>, &str, u64); 10] = [
             ("PreToolUse", Some("Write|Edit"), "ground", 15),
             ("PreToolUse", Some("Bash"), "guard", 10),
+            ("PostToolUse", Some("Read|Write|Edit"), "shift", 5),
             ("PostToolUse", Some("Write|Edit"), "sync", 20),
             ("PostToolUse", Some("Bash"), "distil", 10),
             ("Stop", None, "checkpoint", 30),
@@ -3936,9 +4078,10 @@ tests/test_serve.py:88: AssertionError\n\
         merge_estelle_hooks(&mut value, HookHost::Codex, "estelle").expect("hook declaration");
         let hooks = &value["hooks"];
 
-        let expected: [(&str, Option<&str>, &str, u64); 9] = [
+        let expected: [(&str, Option<&str>, &str, u64); 10] = [
             ("PreToolUse", Some("Write|Edit"), "ground", 15),
             ("PreToolUse", Some("Bash"), "guard", 10),
+            ("PostToolUse", Some("Read|Write|Edit"), "shift", 5),
             ("PostToolUse", Some("Write|Edit"), "sync", 20),
             ("PostToolUse", Some("Bash"), "distil", 10),
             ("Stop", None, "checkpoint", 30),
