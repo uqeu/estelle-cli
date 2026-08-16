@@ -473,6 +473,88 @@ Required boundary and acceptance proof:
 **Missing-field rendering:** credential acquisition may be shown as imported/stored. It must not say
 connected, ready, or generating until the two-sided runtime probe passes.
 
+## 12. Cross-harness session capture - SERVER CONTRACT PRESENT; CLIENT ADAPTERS NOT SHIPPED
+
+**Surface unlocked:** one Estelle Session Diary whether the developer works in Claude Code, Codex, Kimi,
+OpenCode, Pi, Oh My Pi, Goose, Jcode, Hermes, or DeepSeek Harness.
+
+**Server wire:** `POST /session/capture` is an authenticated, metadata-only write. It does not call a model
+or an embedder. The account/team namespace and member identity come from the credential; a body-supplied
+identity is not accepted. Schema 1 is intentionally closed rather than extensible:
+
+```json
+{
+  "schema": 1,
+  "harness": "codex",
+  "event": "end",
+  "session_id": "0198...",
+  "observed_at": "2026-08-16T22:00:00+00:00",
+  "started_at": "2026-08-16T21:00:00+00:00",
+  "title": "Codex session in fatelabs/estelle",
+  "repo": {"status": "present", "name": "fatelabs/estelle"},
+  "counts": {"run_count": null, "skill_count": null}
+}
+```
+
+- `harness` is one of `claude-code`, `codex`, `kimi`, `opencode`, `pi`, `oh-my-pi`, `goose`, `jcode`,
+  `hermes`, or `deepseek-harness`. Unknown values fail closed; adding a harness is a reviewed contract
+  change, not an arbitrary analytics label.
+- `event` is `snapshot` or `end`. `observed_at` is required ISO-8601 with a timezone. `started_at` is an
+  ISO timestamp or null. A snapshot remains timestamped but does not become an ended session; only `end`
+  sets `ended_at`.
+- `title` is required to store a row. Prefer a native session title. If the harness exposes no title, use
+  the deterministic metadata label `<Harness> session in <owner/name>`; never summarize a prompt to make a
+  title. Blank title returns `{captured:false, reason:"title_absent"}` and creates no row.
+- `repo` is `{status:"present", name:"owner/name"}` or `{status:"absent"}`. Resolve the name from Git in
+  the hook's explicit `cwd`; do not infer it from a directory basename. Explicit absence returns
+  `{captured:false, reason:"repo_absent"}` and creates no row. This is a successful non-write, distinct
+  from transport or storage failure.
+- Counts are nullable non-negative integers. Null means the harness has no measured count. Zero means it
+  measured zero. The client never counts transcript entries as a substitute.
+- A success is `{captured:true, session_id, source:"harness", harness, event, observed_at}`. The server
+  reads its accepted capture back from the shared session store before returning success. Repeating a
+  session id updates that one record; a later terminal event preserves an earlier known start/count.
+- The stored row appears through the existing `GET /sessions`, `GET /session`, MCP `list_sessions`, and
+  resume paths with `source:"harness"`, its harness, observed timestamp and nullable counts. Metadata-only
+  resume says explicitly that prompt, transcript and file content were not captured.
+
+### Content boundary
+
+The request accepts exactly the fields above. `prompt`, `messages`, `transcript`, `transcript_path`, tool
+inputs/results, file paths/content, and every unknown top-level field are rejected with 400 before storage.
+A harness exposing those values is not consent to read them. A future content path requires a separate,
+explicit customer consent, retention and deletion contract; it must not widen this schema.
+
+The currently shipped Claude hook does not meet that rule: its checkpoint branch reads
+`transcript_path`, parses messages/files, and posts them to `/checkpoint` (`cli/bin/hook.js:604-623`),
+while `install-hooks` advertises automatic installation with no content-consent choice
+(`cli/bin/estelle.js:1570-1623`). The metadata endpoint does not launder that existing path into consent.
+The CLI+CONTRACT lane must either add an explicit content opt-in or stop registering the content checkpoint
+by default. Do not copy that behaviour into any new harness adapter.
+
+### Vendored harness census (source read, not product-name inference)
+
+| Harness | Native lifecycle surface | Can satisfy this contract? |
+|---|---|---|
+| Claude Code | Command hooks for `SessionStart`, `Stop`, `PreCompact`, and `SessionEnd` are exercised by the checked-in bridge (`vendor-reference/deepseek-harness/packages/hooks/hooks-claude-code/src/index.ts:206-303`) and by Estelle's current generated config (`cli/bin/hook.js:393-403`). | **Yes for metadata**, using session id + cwd and ignoring transcript paths. Client adapter absent. Existing content checkpoint has the consent defect above. |
+| Codex | Command-hook `SessionStartRequest` carries session id/cwd/model and optional transcript path; `SessionEndRequest` carries session id/cwd and has a 1s default, 3s maximum (`vendor-reference/codex/codex-rs/hooks/src/events/session_start.rs:36-58`, `session_end.rs:23-42`). | **Yes.** Ignore `transcript_path`; derive repo from cwd; keep the POST inside the shutdown bound. Client adapter absent. |
+| Kimi CLI | Beta hooks expose `SessionStart` and `SessionEnd`; both builders carry `session_id` and `cwd` (`vendor-reference/kimi-cli/src/kimi_cli/hooks/events.py:117-135`). | **Yes.** Use only those lifecycle payloads. `UserPromptSubmit`, tool and subagent payloads contain customer content and are out of scope. Client adapter absent. |
+| OpenCode | A plugin receives every typed event through `Hooks.event` (`vendor-reference/opencode/packages/plugin/src/index.ts:222-225`); `session.created/updated/deleted` carry `SessionInfo`, including directory, title and created/updated time (`vendor-reference/opencode/packages/schema/src/v1/session.ts:543-594`). | **Yes**, with native title/time/directory. Subscribe only to session events; message/part/diff/error events are out of scope. Client adapter absent. |
+| Pi | Extension events include `session_start`, `session_info_changed`, and `session_shutdown`; handler context carries cwd (`vendor-reference/pi/packages/coding-agent/src/core/extensions/types.ts:307-320,562-622,1205-1217`). | **Yes.** Hold the explicit session name when available; otherwise use the deterministic metadata label. Client extension absent. |
+| Oh My Pi | Its extension surface likewise emits `session_start` and an idempotent `session_shutdown`; extension context carries cwd (`vendor-reference/oh-my-pi/packages/coding-agent/src/extensibility/extensions/types.ts:442-491,1195-1212`; `src/session/agent-session.ts:3925-4027`). | **Yes.** Client extension absent. Do not treat its Pi-compatible surface as proof the Pi adapter package is already installed. |
+| Jcode | Detached observer hooks `session_start`/`session_end` expose JSON/env metadata with session id, cwd, source and model (`vendor-reference/jcode/crates/jcode-base/src/hooks.rs:1-63,101-137`; `jcode-app-core/src/agent.rs:887-901`). | **Yes.** The hook is fire-and-forget, so retry/read-back belongs to the client adapter. Client adapter absent. |
+| Hermes Agent | Plugins expose `on_session_start`, turn-scoped `on_session_end`, and the real identity teardown hook `on_session_finalize`; finalize carries session id/platform (`vendor-reference/hermes-agent/website/docs/user-guide/features/hooks.md:733-814,842-880`). | **Partial.** It can signal the boundary, but the documented finalize payload has no cwd/repo. Do not create a row until an adapter has an explicit configured repo or another grounded repo source. Never relabel turn-scoped `on_session_end` as session end. |
+| DeepSeek Harness | Cordis plugins can observe `agent/session-start` and `agent/disposed`; the Agent exposes a session header with id, created time and optional absolute cwd, and title is a typed session event (`vendor-reference/deepseek-harness/packages/core/agent/src/runtime-types.ts:145-225`; `packages/core/session/src/types.ts:61-75`; `packages/session/session-title/src/index.ts:60-100`). | **Yes** through a harness plugin. Client plugin absent. Listen to lifecycle/title metadata only, not `session/event` message/tool facts. |
+| Goose | Command hooks declare `SessionStart` and `SessionEnd`, but the emitted lifecycle `HookContext` contains only the session id; cwd is attached only to other hook contexts (`vendor-reference/goose/crates/goose/src/hooks/mod.rs:50-88,156-221`; `crates/goose/src/agents/agent.rs:494-501,1736-1737`). | **No admitted row today.** It can POST an id, but cannot ground repo/title from the lifecycle payload. Record this host limitation; do not fall back to process cwd or create a hollow row. |
+
+**Client acceptance proof:** for every shipped adapter, run one real repository session and read the exact
+row back through `GET /sessions`; then run a no-repo control and read back both the explicit non-write
+receipt and an unchanged session count. Also plant a `transcript_path` field and assert HTTP 400. A unit
+test that calls the serializer without installing/running the host adapter proves only the serializer.
+
+**Missing adapter rendering:** name the harness and say `session capture adapter not installed` or the
+specific host limitation above. Never claim “all harnesses” from the server endpoint alone.
+
 ## Shared absence and evidence rules
 
 - Every optional capability has an explicit absent/unknown value and a reason field.
