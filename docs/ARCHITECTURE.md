@@ -175,6 +175,10 @@ The same report removes the receipt credential from one child process and requir
 `CONNECT ESTELLE` picker to render numbered Estelle-account and Claude-subscription choices. It also runs
 `estelle memory forget receipt-sentinel` without `--yes` and passes only when the installed binary names
 the account-wide erasure radius, gives the explicit confirmation remedy, and says that nothing was sent.
+The cloned repository carries one harmless whitespace change to its smallest tracked `package-lock.json`;
+the installed TUI must drive both `/review` and `/scan` successfully against that measured diff. This
+keeps deep review and the whole-lockfile attachment path in the public receipt rather than accepting their
+wiremock proofs as production evidence.
 
 Secrets are refused or redacted before Estelle request construction. Stored ChatGPT OAuth material and
 Estelle API credentials have separate typed records and stores. A single remote auth rejection is evidence,

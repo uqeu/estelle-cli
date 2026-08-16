@@ -181,6 +181,14 @@ jobs:
           set -euo pipefail
           git clone --depth=1 https://github.com/Shubhamsaboo/awesome-llm-apps.git \
             "${RUNNER_TEMP}/awesome-llm-apps"
+          lockfile="${RUNNER_TEMP}/awesome-llm-apps/rag_tutorials/multimodal_agentic_rag/frontend/package-lock.json"
+          test -f "$lockfile"
+          printf '\n' >> "$lockfile"
+          if git -C "${RUNNER_TEMP}/awesome-llm-apps" diff --quiet -- \
+            rag_tutorials/multimodal_agentic_rag/frontend/package-lock.json; then
+            echo "public receipt: lockfile fixture did not produce a measured diff" >&2
+            exit 1
+          fi
       - name: Drive all 24 read surfaces through bare estelle
         working-directory: ${{ runner.temp }}/awesome-llm-apps
         env:

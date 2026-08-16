@@ -55,8 +55,8 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "blob": "7daaa05ea1b769e264730461cfccce71f2600d80",
-      "reason": "release validation gates the pinned fork audit, shipped-binary IP boundary, four native builds, signed artifacts, verified npm retirement shim, and a fresh-runner public install that fail-closed probes all 24 read surfaces on a real repository before attaching the exact receipt"
+      "blob": "61c9dba4684ad035e8b9b24ae7c12a96880cb41a",
+      "reason": "release validation gates the pinned fork audit, shipped-binary IP boundary, four native builds, signed artifacts, verified npm retirement shim, and a fresh-runner public install that fail-closed probes all 24 read surfaces plus deep review and whole-lockfile scan on a real repository before attaching the exact receipt"
     },
     {
       "path": "tui/src/session_gap.rs",

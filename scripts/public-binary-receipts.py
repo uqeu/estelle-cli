@@ -58,6 +58,7 @@ FAILURE_MARKERS = (
     "The Estelle request failed:",
 )
 GROUNDING_QUESTION = "Which file defines an application entry point in this repository?"
+DIFF_SURFACES = ("/review", "/scan")
 
 
 def installed_version_receipt(expected_tag: str) -> dict[str, object]:
@@ -232,6 +233,9 @@ def run_receipts(
         tui_surface_receipt(surface, repo, timeout) for surface in READ_SURFACES
     )
     receipts.append(tui_turn_receipt(GROUNDING_QUESTION, repo, timeout))
+    receipts.extend(
+        tui_surface_receipt(surface, repo, timeout) for surface in DIFF_SURFACES
+    )
     passed = sum(receipt["pass"] is True for receipt in receipts)
     return {
         "expected_version": expected_version,

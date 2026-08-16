@@ -214,9 +214,10 @@ def test_complete_harness_writes_every_receipt() -> None:
         )
         assert result.returncode == 0, result.stderr
         report = json.loads(output.read_text(encoding="utf-8"))
-        assert report["summary"] == {"passed": 29, "failed": 0}
+        assert report["summary"] == {"passed": 31, "failed": 0}
         assert [row["sent"] for row in report["receipts"][4:28]] == EXPECTED_READ_SURFACES
-        assert report["receipts"][-1]["sent"].startswith("Which file defines")
+        assert report["receipts"][-3]["sent"].startswith("Which file defines")
+        assert [row["sent"] for row in report["receipts"][-2:]] == ["/review", "/scan"]
         assert all(row["pass"] for row in report["receipts"])
 
 
