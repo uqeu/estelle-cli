@@ -4,16 +4,17 @@
 `uqeu/estelle-cli` repository. The parent repository may index or summarize it, but cannot be the only
 copy: a behaviour change and its architecture record must be reviewable in one CLI commit.
 
-**TODAY — source + public probes, 2026-08-16:** `v0.2.5` release run `31924677976` completed successfully.
-The 04:43Z read-back found nine public assets, verified all four archive checksums and one-member sets, ran
-the arm64 artifact as `estelle 0.2.5`, installed it from the public script, and found npm `0.2.5` with SLSA
-provenance metadata. Local GitHub attestation verification could not initialize a Sigstore verifier, so
-provenance read-back remains unproved outside the successful workflow. Source `v0.2.6` adds a fail-closed
-installer shadow check, a real-PTY first-run gate, and
-credential onboarding before the conversation surface. Local tests prove the five-row `/login` picker,
-masked provider-key wire request, read-only Claude Code snapshot, `/logout`, `/whoami`, `/doctor`, and
-explicit provider-route refusals. They do not prove Claude, ChatGPT, or a local model can serve the custom
-Estelle conversation path; those runtime bindings remain absent and are rendered as such.
+**TODAY — source + public probes, 2026-08-16:** `v0.2.6` release run `31927645013` completed successfully.
+The 06:00Z read-back found nine public assets, verified all four archive checksums and one-member sets, ran
+and installed the arm64 artifact as `estelle 0.2.6`, reached `CONNECT ESTELLE` from a clean-home public
+install, and installed the public npm shim to the same native version. npm returned SHA-512 integrity and
+SLSA v1 provenance metadata. Local GitHub attestation verification still could not initialize a Sigstore
+verifier, so independent provenance read-back remains unproved outside the successful workflow. The release
+adds a fail-closed installer shadow check, a real-PTY first-run gate, and credential onboarding before the
+conversation surface. Local tests prove the five-row `/login` picker, masked provider-key wire request,
+read-only Claude Code snapshot, `/logout`, `/whoami`, `/doctor`, and explicit provider-route refusals. They
+do not prove Claude, ChatGPT, or a local model can serve the custom Estelle conversation path; those runtime
+bindings remain absent and are rendered as such.
 
 ## System boundary
 
@@ -145,13 +146,13 @@ on uncommitted sweep contents. That client-side-only boundary is design limit #6
 
 ## Current limits
 
-- The immutable `v0.2.5` release is public and its archive/install/npm bytes passed read-back. The local
+- The immutable `v0.2.6` release is public and its archive/install/first-run/npm bytes passed read-back. The local
   Sigstore verifier could not initialize, so external attestation verification is still absent from that
   probe even though the release workflow's signing step passed.
-- The `v0.2.6` installer and first-run repairs have local proof but no public artifact or founder-machine
-  re-proof yet.
+- The founder's clean-machine default-shell restart, shadowed-npm-machine repair, and ChatGPT device-flow
+  walkthrough remain human/device-bound; the clean public install and first-run picker are independently
+  reproduced.
 - Claude/ChatGPT/local-model credential acquisition is not yet bound to the custom TUI answer runtime.
-- The founder's clean-machine re-install and ChatGPT device-flow walkthrough remain human/device-bound.
 - Client-provided MCP servers remain deliberately rejected.
 - Runtime process-tree egress proof, production settings/autonomy writes, and the complete ACP lifecycle
   remain open measurements.

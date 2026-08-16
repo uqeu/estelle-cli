@@ -5,13 +5,14 @@ Every row names a source, licence, implementation location, and measured status.
 its row. A status changes only from a probe, never from recollection.
 
 **Status:** ✅ built + wired + public-artifact/prod-proven · 🟡 built, but no public customer artifact proves
-the path · ⬜ decided, not built. **TODAY — 2026-08-16:** `v0.2.5` run `31924677976` completed successfully;
-the 04:43Z read-back verified nine public assets, four archive checksums/member sets, arm64 identity, public
-installer execution, and npm `0.2.5` with SLSA metadata. External GitHub attestation verification remains
-unmeasured because the local Sigstore verifier failed to initialize. Source `v0.2.6` adds first-run
-credential onboarding, provider-key storage, Claude Code credential snapshotting, credential
-diagnostics, shadow detection, and a PTY first-screen gate. Provider inference bindings are not built merely
-because credential acquisition exists; those rows remain separate and honest below.
+the path · ⬜ decided, not built. **TODAY — 2026-08-16:** `v0.2.6` run `31927645013` completed successfully;
+the 06:00Z read-back verified nine public assets, four archive checksums/member sets, arm64 identity, public
+installer execution, a clean-home `CONNECT ESTELLE` first screen, and the public npm shim launching native
+`0.2.6` with SLSA metadata. External GitHub attestation verification remains unproved because the local
+Sigstore verifier failed to initialize. This release adds credential-first launch, provider-key storage,
+Claude Code credential snapshotting, credential diagnostics, shadow detection, and a PTY first-screen gate.
+Provider inference bindings are not built merely because credential acquisition exists; those rows remain
+separate and honest below.
 
 ## PORTED — mechanism, source, and licence
 
@@ -44,7 +45,7 @@ because credential acquisition exists; those rows remain separate and honest bel
 | Reproducible tag-triggered release: exact version gate, target-native builds, normalized archives, checksum manifest, and no manual bypass | Reproducible Builds principles + GitHub Actions · workflow/configuration licences apply; repository code Apache-2.0 | `.github/workflows/release.yml`, `scripts/package-release.sh` | ✅ |
 | Build provenance tied to downloadable bytes through OIDC rather than a long-lived signing secret | SLSA provenance model + `actions/attest-build-provenance` · Apache-2.0 | `.github/workflows/release.yml:130`, `.github/workflows/release.yml:175` | ✅ |
 | Verify before install, one-member archive, bounded resources, and atomic destination replacement | Standard supply-chain and filesystem transaction pattern · repository code Apache-2.0 | `install.sh`, `npm-shim/install.js` | ✅ |
-| Consent-gated zsh/bash PATH setup with resolved-path output, old-command shadow refusal, final binary identity, clean-shell bare-command proof, and native first-run PTY probe | Shell startup-file conventions + fail-closed release testing · repository code Apache-2.0 | `install.sh`, `scripts/test-installer.sh`, `scripts/probe-first-run.py` | 🟡 |
+| Consent-gated zsh/bash PATH setup with resolved-path output, old-command shadow refusal, final binary identity, clean-shell bare-command proof, and native first-run PTY probe | Shell startup-file conventions + fail-closed release testing · repository code Apache-2.0 | `install.sh`, `scripts/test-installer.sh`, `scripts/probe-first-run.py` | ✅ |
 | Separate credential domains for Estelle API access and a user's model-plan OAuth, with auth rejection treated as evidence rather than deletion permission | Least privilege + typed sum types · repository code Apache-2.0 | `estelle-client/src/auth.rs`, `estelle-client/src/auth_record.rs`, `tui/src/login.rs` | 🟡 |
 
 ## Decided, not built
