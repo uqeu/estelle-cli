@@ -193,6 +193,7 @@ jobs:
         working-directory: ${{ runner.temp }}/awesome-llm-apps
         env:
           ESTELLE_API_KEY: ${{ secrets.ESTELLE_RECEIPT_API_KEY }}
+          ESTELLE_RECEIPT_PATH: ${{ runner.temp }}/public-http-receipts.jsonl
         run: |
           set -euo pipefail
           test -n "${ESTELLE_API_KEY:-}" || {

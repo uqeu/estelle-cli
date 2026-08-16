@@ -276,6 +276,48 @@ def test_first_run_picker_receipt() -> None:
         assert "2 Claude subscription" in receipt["came_back"]
 
 
+def test_http_contract_receipt_proves_hidden_fields() -> None:
+    with tempfile.TemporaryDirectory(prefix="estelle-http-receipt-") as raw_dir:
+        path = Path(raw_dir) / "http.jsonl"
+        records = [
+            {
+                "request": {
+                    "method": "POST",
+                    "path": "/deep-search",
+                    "body": {
+                        "question": "Which file defines an application entry point in this repository?",
+                        "working_memory": {"files": [{"path": "app.py", "content": "sentinel"}]},
+                    },
+                },
+                "response": {"status": 200, "body": {"answer": "app.py"}},
+            },
+            {
+                "request": {"method": "POST", "path": "/gate", "body": {"deep": True}},
+                "response": {"status": 200, "body": {"verdict": "merge"}},
+            },
+            {
+                "request": {
+                    "method": "POST",
+                    "path": "/scan",
+                    "body": {
+                        "files": [{"path": "package-lock.json", "content": "x" * 2_000}]
+                    },
+                },
+                "response": {"status": 200, "body": {"findings": []}},
+            },
+        ]
+        path.write_text(
+            "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+        )
+
+        receipt, observed = load_harness().http_contract_receipt(path)
+
+        assert receipt["pass"] is True
+        assert "deep review" in receipt["came_back"]
+        assert "whole lockfile" in receipt["came_back"]
+        assert observed == records
+
+
 def main() -> int:
     test_inventory()
     test_installed_version()
@@ -286,6 +328,7 @@ def main() -> int:
     test_repository_size_receipt()
     test_erasure_gate_receipt()
     test_first_run_picker_receipt()
+    test_http_contract_receipt_proves_hidden_fields()
 
     print("public receipt test: all 24 audited read surfaces are mandatory")
     return 0

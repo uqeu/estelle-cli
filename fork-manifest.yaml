@@ -55,8 +55,8 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "blob": "61c9dba4684ad035e8b9b24ae7c12a96880cb41a",
-      "reason": "release validation gates the pinned fork audit, shipped-binary IP boundary, four native builds, signed artifacts, verified npm retirement shim, and a fresh-runner public install that fail-closed probes all 24 read surfaces plus deep review and whole-lockfile scan on a real repository before attaching the exact receipt"
+      "blob": "22b13b46e2fb1c887970e5766de1a356482de4c8",
+      "reason": "release validation gates the pinned fork audit, shipped-binary IP boundary, four native builds, signed artifacts, verified npm retirement shim, and a fresh-runner public install that fail-closed probes all 24 read surfaces plus deep review and whole-lockfile scan on a real repository while recording a sanitized header-free HTTP contract receipt"
     },
     {
       "path": "tui/src/session_gap.rs",
@@ -70,8 +70,13 @@
     },
     {
       "path": "estelle-client/src/tests.rs",
-      "blob": "18026022e6734ebff082d4fef19f392e34ba7145",
-      "reason": "the endpoint denominator and exact POST /key method/auth contract are pinned"
+      "blob": "90e74080ac0d2ee8aeedcded05a061df022b537b",
+      "reason": "the endpoint denominator and exact POST /key method/auth contract are pinned; explicit HTTP receipts are proven header-free, redacted, exact on method/path/body/status/response, and fail closed on write failure"
+    },
+    {
+      "path": "estelle-client/src/lib.rs",
+      "blob": "32f324860f6dd544a25bc036745e1f05e6efa382",
+      "reason": "an explicit ESTELLE_RECEIPT_PATH adds a sanitized append-only request/response proof at the shared HTTP seam; authorization headers are structurally absent and recorder I/O failure fails the request"
     },
     {
       "path": "tui/src/claude_import.rs",

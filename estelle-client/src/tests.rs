@@ -100,6 +100,74 @@ async fn account_provider_selection_posts_the_exact_provider_and_model() {
     );
 }
 
+#[tokio::test]
+async fn explicit_receipt_records_the_http_contract_without_headers() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/gate"))
+        .and(body_json(serde_json::json!({
+            "repo": "fatelabs/estelle",
+            "diff": "diff body",
+            "deep": true
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "verdict": "merge",
+            "deep": {"changed_outcome": false},
+            "token": "response-token-sentinel"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let output = tempfile::tempdir().expect("receipt directory");
+    let receipt_path = output.path().join("http.jsonl");
+    let client = Client::new(&format!("{}/", server.uri()), test_key(), MINIMUM_TIMEOUT)
+        .expect("client")
+        .with_receipt_path(receipt_path.clone());
+
+    let _: CommandReply = client
+        .post_scoped(
+            Endpoint::Gate,
+            &Repo::new("fatelabs/estelle").expect("repo"),
+            &serde_json::json!({"diff": "diff body", "deep": true}),
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("gate response");
+
+    let raw_receipt = std::fs::read_to_string(receipt_path).expect("receipt");
+    let receipt: Value = serde_json::from_str(raw_receipt.trim()).expect("receipt JSON");
+    assert_eq!(receipt["request"]["method"], "POST");
+    assert_eq!(receipt["request"]["path"], "/gate");
+    assert_eq!(receipt["request"]["body"]["deep"], true);
+    assert_eq!(receipt["response"]["status"], 200);
+    assert_eq!(receipt["response"]["body"]["verdict"], "merge");
+    assert_eq!(receipt["response"]["body"]["token"], "[credential hidden]");
+    assert!(receipt.get("headers").is_none());
+    assert!(receipt["request"].get("headers").is_none());
+    assert!(!raw_receipt.contains("estelle_live_test-only"));
+}
+
+#[tokio::test]
+async fn explicit_receipt_fails_closed_when_it_cannot_be_written() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/account"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "plan": "pro"
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let output = tempfile::tempdir().expect("receipt directory");
+    let client = Client::new(&format!("{}/", server.uri()), test_key(), MINIMUM_TIMEOUT)
+        .expect("client")
+        .with_receipt_path(output.path().to_path_buf());
+
+    let result = client.account(&CancellationToken::new()).await;
+
+    assert!(matches!(result, Err(Error::ReceiptIo(_))));
+}
+
 #[test]
 fn timeout_below_two_minutes_is_refused() {
     let result = Client::new(

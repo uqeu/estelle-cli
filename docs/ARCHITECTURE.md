@@ -180,6 +180,14 @@ the installed TUI must drive both `/review` and `/scan` successfully against tha
 keeps deep review and the whole-lockfile attachment path in the public receipt rather than accepting their
 wiremock proofs as production evidence.
 
+The receipt job explicitly sets `ESTELLE_RECEIPT_PATH`, which activates a fail-closed recorder at the
+shared `estelle-client` HTTP seam. Each JSONL row contains method, route, query/body, status, and decoded
+response. Headers are structurally absent, sensitive key/token fields and secret-shaped strings are
+redacted before the append, and recorder I/O failure fails the customer request. The outer harness embeds
+those sanitized rows in the release receipt and requires the grounded question to remain byte-identical
+with working memory as a separate data object, `/review` to send `deep: true`, and `/scan` to carry the
+full changed lockfile rather than only its diff hunk.
+
 Secrets are refused or redacted before Estelle request construction. Stored ChatGPT OAuth material and
 Estelle API credentials have separate typed records and stores. A single remote auth rejection is evidence,
 not permission to destroy a stored credential.

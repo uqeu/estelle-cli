@@ -7,6 +7,8 @@ mod repo;
 mod types;
 
 use std::fmt;
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 pub use auth_record::AuthRecord;
@@ -20,6 +22,7 @@ use reqwest::Method;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 pub use types::*;
 use url::Url;
@@ -105,6 +108,8 @@ pub enum Error {
     },
     #[error("Estelle returned an empty response")]
     EmptyResponse,
+    #[error("HTTP receipt failed: {0}")]
+    ReceiptIo(String),
 }
 
 impl Error {
@@ -127,11 +132,17 @@ pub struct Client {
     http: reqwest::Client,
     base_url: Url,
     api_key: ApiKey,
+    receipt_path: Option<Arc<PathBuf>>,
 }
 
 impl Client {
     pub fn production(api_key: ApiKey) -> Result<Self, Error> {
-        Self::new(DEFAULT_BASE_URL, api_key, DEFAULT_TIMEOUT)
+        let client = Self::new(DEFAULT_BASE_URL, api_key, DEFAULT_TIMEOUT)?;
+        let Some(path) = std::env::var_os("ESTELLE_RECEIPT_PATH").filter(|path| !path.is_empty())
+        else {
+            return Ok(client);
+        };
+        Ok(client.with_receipt_path(PathBuf::from(path)))
     }
 
     pub fn new(base_url: &str, api_key: ApiKey, timeout: Duration) -> Result<Self, Error> {
@@ -144,7 +155,13 @@ impl Client {
             http,
             base_url,
             api_key,
+            receipt_path: None,
         })
+    }
+
+    pub fn with_receipt_path(mut self, path: PathBuf) -> Self {
+        self.receipt_path = Some(Arc::new(path));
+        self
     }
 
     pub async fn account(&self, cancel: &CancellationToken) -> Result<AccountResponse, Error> {
@@ -317,9 +334,11 @@ impl Client {
         }
 
         let url = self.base_url.join(endpoint.path())?;
+        let mut receipt_query = Vec::new();
+        let mut receipt_body = None;
         let mut request = self
             .http
-            .request(method, url)
+            .request(method.clone(), url)
             .bearer_auth(self.api_key.expose())
             .header(
                 "X-Estelle-Client-Protocol",
@@ -330,6 +349,7 @@ impl Client {
         if let Some(query) = query {
             let pairs = query_pairs(query)?;
             request = request.query(&pairs);
+            receipt_query = pairs;
         }
         if endpoint.requires_repo() && endpoint != Endpoint::ChatCompletions && body.is_none() {
             let repo = repo.ok_or(Error::RepoRequired(endpoint))?;
@@ -345,6 +365,7 @@ impl Client {
                     serde_json::Value::String(repo.to_string()),
                 );
             }
+            receipt_body = Some(value.clone());
             request = request.json(&value);
         }
         if endpoint == Endpoint::ChatCompletions {
@@ -361,6 +382,15 @@ impl Client {
             () = cancel.cancelled() => return Err(Error::Cancelled),
             bytes = response.bytes() => bytes?,
         };
+        self.write_receipt(
+            &method,
+            endpoint,
+            &receipt_query,
+            receipt_body,
+            status,
+            &bytes,
+        )
+        .await?;
         if !status.is_success() {
             return Err(Error::Http {
                 status,
@@ -371,6 +401,74 @@ impl Client {
             return Err(Error::EmptyResponse);
         }
         Ok(serde_json::from_slice(&bytes)?)
+    }
+
+    async fn write_receipt(
+        &self,
+        method: &Method,
+        endpoint: Endpoint,
+        query: &[(String, String)],
+        body: Option<Value>,
+        status: reqwest::StatusCode,
+        bytes: &[u8],
+    ) -> Result<(), Error> {
+        let Some(path) = &self.receipt_path else {
+            return Ok(());
+        };
+        let response = serde_json::from_slice(bytes)
+            .unwrap_or_else(|_| serde_json::json!({"non_json_bytes": bytes.len()}));
+        let value = redact_receipt_value(serde_json::json!({
+            "request": {
+                "method": method.as_str(),
+                "path": format!("/{}", endpoint.path()),
+                "query": query,
+                "body": body,
+            },
+            "response": {"status": status.as_u16(), "body": response},
+        }));
+        let mut line = serde_json::to_vec(&value).map_err(Error::Json)?;
+        line.push(b'\n');
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path.as_ref())
+            .await
+            .map_err(|error| Error::ReceiptIo(error.to_string()))?;
+        file.write_all(&line)
+            .await
+            .map_err(|error| Error::ReceiptIo(error.to_string()))?;
+        file.sync_data()
+            .await
+            .map_err(|error| Error::ReceiptIo(error.to_string()))
+    }
+}
+
+fn redact_receipt_value(value: Value) -> Value {
+    match value {
+        Value::String(value) => Value::String(redact_secrets(&value)),
+        Value::Array(values) => {
+            Value::Array(values.into_iter().map(redact_receipt_value).collect())
+        }
+        Value::Object(values) => Value::Object(
+            values
+                .into_iter()
+                .map(|(key, value)| {
+                    let lower = key.to_ascii_lowercase();
+                    let sensitive = matches!(
+                        lower.as_str(),
+                        "authorization" | "credential" | "secret" | "token"
+                    ) || lower.ends_with("_key")
+                        || lower.ends_with("_token");
+                    let value = if sensitive {
+                        Value::String("[credential hidden]".to_string())
+                    } else {
+                        redact_receipt_value(value)
+                    };
+                    (key, value)
+                })
+                .collect(),
+        ),
+        value => value,
     }
 }
 

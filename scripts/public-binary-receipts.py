@@ -220,6 +220,61 @@ def tui_surface_receipt(
     return tui_turn_receipt(command, repo, timeout)
 
 
+def http_contract_receipt(path: Path) -> tuple[dict[str, object], list[object]]:
+    try:
+        records = [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except (OSError, json.JSONDecodeError) as error:
+        return (
+            {
+                "sent": "inspect sanitized HTTP trace",
+                "came_back": f"trace unreadable: {type(error).__name__}",
+                "pass": False,
+            },
+            [],
+        )
+    requests = [record.get("request", {}) for record in records]
+    answer = next(
+        (
+            request
+            for request in requests
+            if request.get("path") == "/deep-search"
+            and request.get("body", {}).get("question") == GROUNDING_QUESTION
+            and isinstance(request.get("body", {}).get("working_memory"), dict)
+        ),
+        None,
+    )
+    deep = any(
+        request.get("path") == "/gate" and request.get("body", {}).get("deep") is True
+        for request in requests
+    )
+    whole_lockfile = any(
+        request.get("path") == "/scan"
+        and any(
+            file.get("path", "").endswith("package-lock.json")
+            and len(file.get("content", "")) > 1_000
+            for file in request.get("body", {}).get("files", [])
+            if isinstance(file, dict)
+        )
+        for request in requests
+    )
+    separated = answer is not None and not any(
+        key in answer.get("body", {}) for key in ("instruction", "prompt")
+    )
+    proof = f"grounded question data-only={separated}; deep review={deep}; whole lockfile={whole_lockfile}"
+    return (
+        {
+            "sent": "inspect sanitized HTTP trace",
+            "came_back": proof,
+            "pass": separated and deep and whole_lockfile,
+        },
+        records,
+    )
+
+
 def run_receipts(
     expected_version: str, repo: str, timeout: float
 ) -> dict[str, object]:
@@ -236,13 +291,20 @@ def run_receipts(
     receipts.extend(
         tui_surface_receipt(surface, repo, timeout) for surface in DIFF_SURFACES
     )
+    http_records = None
+    if raw_path := os.environ.get("ESTELLE_RECEIPT_PATH"):
+        http_receipt, http_records = http_contract_receipt(Path(raw_path))
+        receipts.append(http_receipt)
     passed = sum(receipt["pass"] is True for receipt in receipts)
-    return {
+    report = {
         "expected_version": expected_version,
         "repo": repo,
         "receipts": receipts,
         "summary": {"passed": passed, "failed": len(receipts) - passed},
     }
+    if http_records is not None:
+        report["http_contracts"] = http_records
+    return report
 
 
 def main(argv: list[str]) -> int:
