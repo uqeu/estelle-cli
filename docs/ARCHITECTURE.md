@@ -18,11 +18,13 @@ and provider-runtime limits from `v0.2.6` remain unchanged and honestly rendered
 
 ```mermaid
 flowchart LR
-    Human[Developer] --> CLI[estelle binary]
-    Editor[Claude Code / Codex hooks] --> CLI
+    Human[Developer] --> TUI[estelle connect · terminal client]
+    TUI <--> Session[estelle serve · session owner]
+    Editor[Claude Code / Codex hooks] --> CLI[estelle binary]
     ACP[ACP-capable editor] <--> CLI
+    Session --> API[api.fatelabs.ca]
     CLI --> Model[User-selected model provider]
-    CLI --> API[api.fatelabs.ca]
+    CLI --> API
     API --> Memory[Estelle memory / graph / gates]
     Release[GitHub Release] --> Installer[checksummed installer]
     Installer --> CLI
@@ -38,6 +40,7 @@ The CLI must not silently introduce a third destination.
 | entrypoint | implementation owner | contract |
 |---|---|---|
 | Interactive terminal | `tui/src/main.rs`, `tui/src/lib.rs` | Ratatui work surface, local approvals, grounding views, and server-backed Estelle commands |
+| Session owner | `tui/src/session_server.rs` | Long-lived questions, remote commands, sweeps, typed results, progress, cancellation, and reconnect replay over an owner-only local socket |
 | Headless commands | `tui/src/top_level.rs` | Login, sweep, hooks, MCP, ACP, settings, and explicit one-shot operations |
 | Typed Estelle transport | `estelle-client/` | Endpoint inventory, request/response types, auth store, cancellation, bounded timeouts, and redaction |
 | ChatGPT plan login | `login/`, `estelle-client/src/auth_record.rs` | Device flow and refresh rotation; ChatGPT credentials do not enter the Estelle credential store |
@@ -46,6 +49,31 @@ The CLI must not silently introduce a third destination.
 | MCP adapter | `estelle-mcp/` | MCP-facing Estelle catalogue; client-provided MCP servers are deliberately rejected |
 | Always-on hooks | `tui/src/top_level.rs`, generated host configuration | One Rust owner generates Claude Code and Codex hook tables; Python/Rust decisions are contract-pinned |
 | Public distribution | `.github/workflows/release.yml`, `install.sh`, `npm-shim/` | Exact SemVer tag to four native archives, checksums, provenance, GitHub Release, and npm retirement shim |
+
+## Server-owned sessions
+
+`estelle serve` is the only process in the split that resolves the Estelle credential. It owns a session
+per canonical working tree and repository, keeps the transcript plus the active cancellation token in
+memory, and performs questions, remote slash commands, and sweeps. `estelle connect` opens the Ratatui
+client without touching the credential store. Closing that terminal drops only its socket: the server task
+continues, records its typed result, and replays completed and still-active work to the next client.
+
+The local rendezvous defaults to `~/.estelle/session.sock`. Its directory is forced to mode 0700 and the
+socket and startup lock to mode 0600 on Unix. A held process lock prevents a competing server from reaping
+or replacing a live socket; a stale socket can be removed only while the next server owns that lock.
+Frames are newline-delimited typed JSON over the repository's cross-platform UDS layer. Request IDs use a
+random client seed and are rejected if repeated within a session.
+
+The design follows the server/client boundary documented by jcode (MIT): the server, not a terminal,
+owns work and broadcasts lifecycle events to any attached client. Estelle does not port jcode's provider
+brain. Its session owner calls the existing typed Estelle API paths and preserves the server's grounding,
+gate, retrieval, and product ownership.
+
+This first vertical slice deliberately exposes one session per repository/working-tree pair. Multiple
+independent sessions, tabbed watching, Affinity/Orchestra worker attachment, durable restart recovery, and
+file-shift swarm notifications remain the next ordered work. Explicit local shell commands and patch
+application remain terminal-owned because they mutate the attached working tree; they are never presented
+as detachable server work.
 
 ## Release pipeline
 
@@ -161,6 +189,10 @@ on uncommitted sweep contents. That client-side-only boundary is design limit #6
   reproduced.
 - Claude/ChatGPT/local-model credential acquisition is not yet bound to the custom TUI answer runtime.
 - Client-provided MCP servers remain deliberately rejected.
+- The `v0.2.8` source candidate has a locally probed server/client split, but it is not SHIPPED or PROBED
+  from public customer bytes until its tag, release, installer, and real-repository reconnect read-back pass.
+- Session state is in-memory across terminal detach, not durable across a server process or machine restart;
+  multi-session tabs and Affinity/Orchestra worker attachment are not yet built.
 - Runtime process-tree egress proof, production settings/autonomy writes, and the complete ACP lifecycle
   remain open measurements.
 - The binary IP-boundary invariant is SHIPPED and PROBED for its two named package prefixes; unnamed or
