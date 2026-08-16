@@ -57,6 +57,7 @@ endpoints! {
     (Automations, "automations", [Get], false),
     (Suites, "suites", [Get], false),
     (Providers, "providers", [Get], false),
+    (ProviderKey, "key", [Post], false),
     (ProviderSelect, "provider/select", [Post], false),
     (Overview, "overview", [Get], false),
     (Repos, "repos", [Get], false),

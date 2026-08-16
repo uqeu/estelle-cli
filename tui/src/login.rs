@@ -27,22 +27,32 @@ pub(crate) enum LoginOutcome {
     Rejected,
 }
 
+#[cfg(test)]
 pub(crate) fn read_secret_line(
     input: &mut impl BufRead,
     output: &mut impl Write,
 ) -> io::Result<Option<ApiKey>> {
-    output.write_all(b"Estelle key: ")?;
+    read_secret_value_line(b"Estelle key: ", input, output)?
+        .map(|value| ApiKey::new(value.to_string()))
+        .transpose()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
+}
+
+pub(crate) fn read_secret_value_line(
+    prompt: &[u8],
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+) -> io::Result<Option<Zeroizing<String>>> {
+    output.write_all(prompt)?;
     output.flush()?;
     let mut value = Zeroizing::new(String::new());
     input.read_line(&mut value)?;
     output.write_all(b"\n")?;
-    let value = value.trim();
-    if value.is_empty() {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
         return Ok(None);
     }
-    ApiKey::new(value.to_string())
-        .map(Some)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
+    Ok(Some(Zeroizing::new(trimmed.to_string())))
 }
 
 pub(crate) async fn validate_and_store(
@@ -81,11 +91,11 @@ impl SecretBuffer {
         self.0.pop().is_some()
     }
 
-    fn finish(self) -> Result<Option<ApiKey>, Error> {
+    fn finish(self) -> Option<Zeroizing<String>> {
         if self.0.trim().is_empty() {
-            return Ok(None);
+            return None;
         }
-        ApiKey::new(self.0.trim().to_string()).map(Some)
+        Some(Zeroizing::new(self.0.trim().to_string()))
     }
 }
 
@@ -98,9 +108,9 @@ impl Drop for RawModeGuard {
     }
 }
 
-fn read_secret_tty() -> io::Result<Option<ApiKey>> {
+fn read_secret_value_tty(prompt: &[u8]) -> io::Result<Option<Zeroizing<String>>> {
     let mut output = io::stdout();
-    output.write_all(b"Estelle key: ")?;
+    output.write_all(prompt)?;
     output.flush()?;
     enable_raw_mode()?;
     let _guard = RawModeGuard;
@@ -145,17 +155,22 @@ fn read_secret_tty() -> io::Result<Option<ApiKey>> {
     if cancelled {
         return Ok(None);
     }
-    buffer
-        .finish()
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
+    Ok(buffer.finish())
+}
+
+pub(crate) fn read_secret_value(prompt: &[u8]) -> io::Result<Option<Zeroizing<String>>> {
+    if io::stdin().is_terminal() {
+        read_secret_value_tty(prompt)
+    } else {
+        read_secret_value_line(prompt, &mut io::stdin().lock(), &mut io::stdout())
+    }
 }
 
 fn read_secret() -> io::Result<Option<ApiKey>> {
-    if io::stdin().is_terminal() {
-        read_secret_tty()
-    } else {
-        read_secret_line(&mut io::stdin().lock(), &mut io::stdout())
-    }
+    read_secret_value(b"Estelle key: ")?
+        .map(|value| ApiKey::new(value.to_string()))
+        .transpose()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))
 }
 
 // ── ChatGPT device-code login ───────────────────────────────────────────────
@@ -174,6 +189,32 @@ pub(crate) fn chatgpt_auth_home() -> io::Result<PathBuf> {
     dirs::home_dir()
         .map(|home| home.join(".estelle").join("chatgpt"))
         .ok_or_else(|| io::Error::other("could not locate the home directory for ChatGPT auth"))
+}
+
+pub(crate) fn chatgpt_credential_present() -> bool {
+    let Ok(home) = chatgpt_auth_home() else {
+        return false;
+    };
+    codex_login::load_auth_dot_json(
+        &home,
+        codex_login::AuthCredentialsStoreMode::File,
+        codex_login::AuthKeyringBackendKind::default(),
+    )
+    .ok()
+    .flatten()
+    .and_then(|auth| auth.tokens)
+    .is_some()
+}
+
+pub(crate) fn logout_chatgpt() -> io::Result<bool> {
+    let home = chatgpt_auth_home()?;
+    let present = chatgpt_credential_present();
+    codex_login::logout(
+        &home,
+        codex_login::AuthCredentialsStoreMode::File,
+        codex_login::AuthKeyringBackendKind::default(),
+    )?;
+    Ok(present)
 }
 
 fn chatgpt_auth_route_config() -> codex_login::AuthRouteConfig {
@@ -339,6 +380,22 @@ mod tests {
             })),
             URL_SAFE_NO_PAD.encode(b"sig")
         )
+    }
+
+    #[test]
+    fn provider_secret_reader_accepts_non_estelle_keys_without_echoing_them() {
+        let secret = "anthropic-test-secret";
+        let mut input = Cursor::new(format!("{secret}\n"));
+        let mut output = Vec::new();
+
+        let value = read_secret_value_line(b"Provider API key: ", &mut input, &mut output)
+            .expect("secret input")
+            .expect("non-empty secret");
+
+        assert_eq!(value.as_str(), secret);
+        let rendered = String::from_utf8(output).expect("utf-8 output");
+        assert_eq!(rendered, "Provider API key: \n");
+        assert!(!rendered.contains(secret));
     }
 
     async fn mock_device_usercode(server: &MockServer) {

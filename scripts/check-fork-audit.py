@@ -71,7 +71,8 @@ def verify_provenance(manifest: dict) -> None:
     reviewed = {row["path"]: row for row in manifest["reviewed_changes_after_audited_commit"]}
     # Compare the audited commit with the complete current tree. This works before commit during local
     # review and is identical to ``audited..HEAD`` in a clean CI checkout.
-    changed = git("diff", "--name-only", audited).splitlines()
+    changed = set(git("diff", "--name-only", audited).splitlines())
+    changed.update(git("ls-files", "--others", "--exclude-standard").splitlines())
     risky = sorted(
         path
         for path in changed

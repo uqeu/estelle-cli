@@ -79,7 +79,7 @@ prove_platform() {
   arch=$2
   target=$3
   install_dir="$TEST_DIR/install-$target"
-  PATH="$TEST_DIR/bin:$PATH" HOME="$TEST_DIR/home" ESTELLE_FIXTURE_DIR="$TEST_DIR/fixture" \
+  PATH="$TEST_DIR/bin:/usr/bin:/bin" HOME="$TEST_DIR/home" ESTELLE_FIXTURE_DIR="$TEST_DIR/fixture" \
     ESTELLE_TEST_OS="$os" ESTELLE_TEST_ARCH="$arch" ESTELLE_INSTALL_DIR="$install_dir" \
     sh "$ROOT/install.sh" >/dev/null
   [ "$("$install_dir/estelle" --version)" = "$EXPECTED_OUTPUT" ]
@@ -143,6 +143,10 @@ printf '%s\n' "$SUCCESS_OUTPUT" | grep -F "Open a new shell" >/dev/null || {
   echo "installer did not say a new shell is required" >&2
   exit 1
 }
+printf '%s\n' "$SUCCESS_OUTPUT" | grep -Fx "Installed. Run estelle login to connect your account." >/dev/null || {
+  echo "installer did not print the exact first-run command" >&2
+  exit 1
+}
 [ ! -e "$SUCCESS_HOME/.zshrc" ] || {
   echo "installer changed the zsh profile without consent" >&2
   exit 1
@@ -169,11 +173,19 @@ if HOME="$BASH_HOME" PATH=/usr/bin:/bin \
 fi
 printf '%s\n' "$BASH_OUTPUT" | grep -Fx "$EXPECTED_EXPORT" > "$BASH_HOME/.bashrc"
 BARE_VERSION=$(HOME="$BASH_HOME" PATH=/usr/bin:/bin \
-  bash --noprofile --rcfile "$BASH_HOME/.bashrc" -ic 'estelle --version' 2>/dev/null)
+  ESTELLE_EXPECTED_BINARY="$BASH_HOME/.local/bin/estelle" \
+  bash --noprofile --rcfile "$BASH_HOME/.bashrc" -ic \
+    'test "$(command -v estelle)" = "$ESTELLE_EXPECTED_BINARY" && estelle --version' 2>/dev/null)
 [ "$BARE_VERSION" = "$EXPECTED_OUTPUT" ] || {
   echo "bare estelle command did not resolve after applying the printed bash export" >&2
   exit 1
 }
+if [ -n "${ESTELLE_TEST_BINARY:-}" ]; then
+  FIRST_RUN_HOME="$TEST_DIR/first-run-home"
+  mkdir -p "$FIRST_RUN_HOME"
+  HOME="$FIRST_RUN_HOME" PATH="$BASH_HOME/.local/bin:/usr/bin:/bin" \
+    python3 "$ROOT/scripts/probe-first-run.py" "$BASH_HOME/.local/bin/estelle"
+fi
 ON_PATH_OUTPUT=$(PATH="$TEST_DIR/bin:$BASH_HOME/.local/bin:/usr/bin:/bin" \
   HOME="$BASH_HOME" SHELL=/bin/bash ESTELLE_FIXTURE_DIR="$TEST_DIR/fixture" \
   ESTELLE_TEST_OS="$MUTANT_OS" ESTELLE_TEST_ARCH="$MUTANT_ARCH" sh "$ROOT/install.sh")
@@ -186,7 +198,27 @@ fi
   exit 1
 }
 
-if PATH="$TEST_DIR/bin:$PATH" HOME="$TEST_DIR/home" ESTELLE_FIXTURE_DIR="$TEST_DIR/fixture" \
+SHADOW_HOME="$TEST_DIR/shadow-home"
+SHADOW_BIN="$TEST_DIR/shadow-bin"
+mkdir -p "$SHADOW_HOME" "$SHADOW_BIN"
+printf '#!/bin/sh\nprintf "0.2.3\\n"\n' > "$SHADOW_BIN/estelle"
+chmod 0755 "$SHADOW_BIN/estelle"
+if SHADOW_OUTPUT=$(PATH="$SHADOW_BIN:$TEST_DIR/bin:/usr/bin:/bin" HOME="$SHADOW_HOME" \
+    SHELL=/bin/zsh ESTELLE_FIXTURE_DIR="$TEST_DIR/fixture" ESTELLE_TEST_OS="$MUTANT_OS" \
+    ESTELLE_TEST_ARCH="$MUTANT_ARCH" sh "$ROOT/install.sh" 2>&1); then
+  echo "installer accepted an earlier shadowing estelle command" >&2
+  exit 1
+fi
+printf '%s\n' "$SHADOW_OUTPUT" | grep -F "$SHADOW_BIN/estelle" >/dev/null || {
+  echo "installer did not name the shadowing estelle path" >&2
+  exit 1
+}
+printf '%s\n' "$SHADOW_OUTPUT" | grep -F "npm uninstall -g @fatelabs/estelle" >/dev/null || {
+  echo "installer did not print the legacy npm removal command" >&2
+  exit 1
+}
+
+if PATH="$TEST_DIR/bin:/usr/bin:/bin" HOME="$TEST_DIR/home" ESTELLE_FIXTURE_DIR="$TEST_DIR/fixture" \
     ESTELLE_TEST_OS="$MUTANT_OS" ESTELLE_TEST_ARCH="$MUTANT_ARCH" \
     ESTELLE_INSTALL_DIR="$MUTANT_INSTALL" ESTELLE_VERSION='../attacker' \
     sh "$ROOT/install.sh" >/dev/null 2>&1; then
@@ -195,7 +227,7 @@ if PATH="$TEST_DIR/bin:$PATH" HOME="$TEST_DIR/home" ESTELLE_FIXTURE_DIR="$TEST_D
 fi
 [ ! -e "$MUTANT_INSTALL/estelle" ]
 
-if PATH="$TEST_DIR/bin:$PATH" HOME="$TEST_DIR/home" ESTELLE_FIXTURE_DIR="$TEST_DIR/fixture" \
+if PATH="$TEST_DIR/bin:/usr/bin:/bin" HOME="$TEST_DIR/home" ESTELLE_FIXTURE_DIR="$TEST_DIR/fixture" \
     ESTELLE_TEST_OS="$MUTANT_OS" ESTELLE_TEST_ARCH="$MUTANT_ARCH" \
     ESTELLE_INSTALL_DIR="$MUTANT_INSTALL" ESTELLE_RELEASE_REPOSITORY='../attacker' \
     sh "$ROOT/install.sh" >/dev/null 2>&1; then
@@ -205,7 +237,7 @@ fi
 [ ! -e "$MUTANT_INSTALL/estelle" ]
 
 printf 'corruption' >> "$TEST_DIR/fixture/$ARCHIVE"
-if PATH="$TEST_DIR/bin:$PATH" HOME="$TEST_DIR/home" ESTELLE_FIXTURE_DIR="$TEST_DIR/fixture" \
+if PATH="$TEST_DIR/bin:/usr/bin:/bin" HOME="$TEST_DIR/home" ESTELLE_FIXTURE_DIR="$TEST_DIR/fixture" \
     ESTELLE_TEST_OS="$MUTANT_OS" ESTELLE_TEST_ARCH="$MUTANT_ARCH" \
     ESTELLE_INSTALL_DIR="$MUTANT_INSTALL" sh "$ROOT/install.sh" >/dev/null 2>&1; then
   echo "installer accepted an archive whose checksum did not match" >&2
@@ -218,11 +250,15 @@ printf 'unexpected payload\n' > "$TEST_DIR/fixture/extra"
 tar -czf "$TEST_DIR/fixture/$ARCHIVE" -C "$TEST_DIR/fixture" estelle extra
 HASH=$(sha256_file "$TEST_DIR/fixture/$ARCHIVE")
 printf '%s  %s\n' "$HASH" "$ARCHIVE" > "$TEST_DIR/fixture/SHA256SUMS"
-if PATH="$TEST_DIR/bin:$PATH" HOME="$TEST_DIR/home" ESTELLE_FIXTURE_DIR="$TEST_DIR/fixture" \
+if PATH="$TEST_DIR/bin:/usr/bin:/bin" HOME="$TEST_DIR/home" ESTELLE_FIXTURE_DIR="$TEST_DIR/fixture" \
     ESTELLE_TEST_OS="$MUTANT_OS" ESTELLE_TEST_ARCH="$MUTANT_ARCH" \
     ESTELLE_INSTALL_DIR="$MUTANT_INSTALL" sh "$ROOT/install.sh" >/dev/null 2>&1; then
   echo "installer accepted an archive with an unexpected extra member" >&2
   exit 1
 fi
 [ ! -e "$MUTANT_INSTALL/estelle" ]
-echo "installer proof: four targets, both PATH states, zsh/bash guidance, bare command, and five controls passed"
+if [ -n "${ESTELLE_TEST_BINARY:-}" ]; then
+  echo "installer proof: native target, both PATH states, shadow detection, and first-run picker passed"
+else
+  echo "installer proof: four target archives, both PATH states, shadow detection, and archive controls passed"
+fi

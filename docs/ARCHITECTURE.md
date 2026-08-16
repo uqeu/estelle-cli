@@ -4,15 +4,16 @@
 `uqeu/estelle-cli` repository. The parent repository may index or summarize it, but cannot be the only
 copy: a behaviour change and its architecture record must be reviewable in one CLI commit.
 
-**TODAY — source + public probes, 2026-08-15:** clean workflow run `31913589144` published and attested
-`v0.2.4`, and public read-back proved its checksums, one-member archives, native identity, and npm shim.
-That proof invoked the installed binary by absolute path. A founder clean-machine probe then disproved the
-stronger customer claim: the default `${HOME}/.local/bin` was absent from macOS `PATH`, so bare `estelle`
-did not resolve. Source `v0.2.5` now prints the resolved binary path, an exact zsh/bash export when needed,
-asks before changing a profile, requires a new shell, and finishes with the installed version. Its local
-gate starts bash with a clean `PATH`, rejects a wrong export, applies only the printed export, and then
-requires bare `estelle --version` to pass. Profiles remain unchanged in the non-consenting probes. This fix
-is 🟡 until a new public release and founder-machine read-back prove the customer path.
+**TODAY — source + public probes, 2026-08-16:** `v0.2.5` release run `31924677976` completed successfully.
+The 04:43Z read-back found nine public assets, verified all four archive checksums and one-member sets, ran
+the arm64 artifact as `estelle 0.2.5`, installed it from the public script, and found npm `0.2.5` with SLSA
+provenance metadata. Local GitHub attestation verification could not initialize a Sigstore verifier, so
+provenance read-back remains unproved outside the successful workflow. Source `v0.2.6` adds a fail-closed
+installer shadow check, a real-PTY first-run gate, and
+credential onboarding before the conversation surface. Local tests prove the five-row `/login` picker,
+masked provider-key wire request, read-only Claude Code snapshot, `/logout`, `/whoami`, `/doctor`, and
+explicit provider-route refusals. They do not prove Claude, ChatGPT, or a local model can serve the custom
+Estelle conversation path; those runtime bindings remain absent and are rendered as such.
 
 ## System boundary
 
@@ -41,6 +42,7 @@ The CLI must not silently introduce a third destination.
 | Headless commands | `tui/src/top_level.rs` | Login, sweep, hooks, MCP, ACP, settings, and explicit one-shot operations |
 | Typed Estelle transport | `estelle-client/` | Endpoint inventory, request/response types, auth store, cancellation, bounded timeouts, and redaction |
 | ChatGPT plan login | `login/`, `estelle-client/src/auth_record.rs` | Device flow and refresh rotation; ChatGPT credentials do not enter the Estelle credential store |
+| Credential onboarding | `tui/src/main.rs`, `tui/src/login.rs`, `tui/src/claude_import.rs`, `tui/src/provider_keys.rs`, `tui/src/doctor.rs` | First-run picker, masked input, provider routing, presence-only diagnostics, and separate logout radii |
 | ACP adapter | `estelle-acp/` | Editor session protocol backed by the user's selected model credentials |
 | MCP adapter | `estelle-mcp/` | MCP-facing Estelle catalogue; client-provided MCP servers are deliberately rejected |
 | Always-on hooks | `tui/src/top_level.rs`, generated host configuration | One Rust owner generates Claude Code and Codex hook tables; Python/Rust decisions are contract-pinned |
@@ -76,8 +78,8 @@ new shell is required. The public command is:
 curl -fsSL https://raw.githubusercontent.com/uqeu/estelle-cli/main/install.sh | sh
 ```
 
-The legacy npm package is not allowed to keep executing abandoned JavaScript. Version `0.2.5` is a small
-compatibility launcher: its postinstall downloads the same exact-version native archive, accepts only HTTPS
+The legacy npm package is not allowed to keep executing abandoned JavaScript. Each published version is a
+small compatibility launcher: its postinstall downloads the same exact-version native archive, accepts only HTTPS
 GitHub/release-asset redirects, bounds manifest/archive/redirect resources, verifies the checksum and member
 set, and exposes only the verified binary. Its workflow publication is provenance-signed and runs only after
 the GitHub Release job.
@@ -99,6 +101,33 @@ Secrets are refused or redacted before Estelle request construction. Stored Chat
 Estelle API credentials have separate typed records and stores. A single remote auth rejection is evidence,
 not permission to destroy a stored credential.
 
+## Credential onboarding and provider boundary
+
+Credential absence is resolved before the first interactive frame. With no Estelle credential, the TUI
+opens the existing bottom-pane picker instead of accepting questions that must fail. `/login` reopens the
+same surface. The five top-level choices name what they buy: Estelle grounding, Claude subscription import,
+ChatGPT plan, provider API key, or local model. A failed inline flow returns to that picker and points to
+`/doctor`; shell failures point to `estelle doctor`.
+
+The stores and runtimes are deliberately distinct:
+
+- Estelle credentials authorize grounding/product requests and provider-key storage on `POST /key`.
+- ChatGPT device-flow credentials live under `~/.estelle/chatgpt`, never in Estelle's API-key record.
+- Claude import occurs only after the user selects it. It reads `CLAUDE_CODE_OAUTH_TOKEN` or the macOS
+  `Claude Code-credentials` Keychain item, copies a refreshable snapshot to a mode-0600 Estelle file, and
+  never moves, deletes, or modifies Claude Code's source credential.
+- API-key routes are allowlisted before prompting. `openai` means the ChatGPT plan; `openai-api` is the
+  explicit OpenAI API-key spelling. Unknown, Copilot, Azure, Bedrock, and unconfigured local routes fail
+  before a secret prompt or network request.
+- `/whoami` renders only credential presence and server-returned provider names. `/logout` removes local
+  Estelle/plan stores but never silently deletes server-owned provider keys.
+
+This is onboarding and storage, not a completed provider runtime. Claude subscription tokens require the
+Anthropic OAuth wire/tool schema, while the custom Estelle conversation currently uses the server answer
+path. LM Studio, Ollama, and no-key localhost endpoints likewise have no binding into that path. The missing
+contract and acceptance proof are recorded in `docs/SERVER-CONTRACTS-NEEDED.md`; neither import nor storage
+is styled as “connected.”
+
 ## Cross-repository contracts
 
 The Rust hook implementation must agree with the parent Python implementation on guard, distil, returning
@@ -116,13 +145,15 @@ on uncommitted sweep contents. That client-side-only boundary is design limit #6
 
 ## Current limits
 
-- The v0.2.4 public distribution gate proves customer URLs, checksums, one-member archives, native identity,
-  provenance, absolute-path installation, and npm postinstall. It does not prove that bare `estelle`
-  resolves; the founder's clean macOS probe showed that claim false.
-- The v0.2.5 source fix has local clean-PATH proof but no public artifact or founder-machine re-proof yet.
+- The immutable `v0.2.5` release is public and its archive/install/npm bytes passed read-back. The local
+  Sigstore verifier could not initialize, so external attestation verification is still absent from that
+  probe even though the release workflow's signing step passed.
+- The `v0.2.6` installer and first-run repairs have local proof but no public artifact or founder-machine
+  re-proof yet.
+- Claude/ChatGPT/local-model credential acquisition is not yet bound to the custom TUI answer runtime.
 - The founder's clean-machine re-install and ChatGPT device-flow walkthrough remain human/device-bound.
 - Client-provided MCP servers remain deliberately rejected.
-- Runtime process-tree egress proof, live terminal coverage, production settings/autonomy writes, and the
-  complete ACP lifecycle remain open measurements.
-- PLAN / ACCEPT-EDITS / AUTO, any-mode question picking, terminal Mermaid rendering, and the remaining ACP
-  session surfaces are ordered product work; this document does not style their presence as shipped.
+- Runtime process-tree egress proof, production settings/autonomy writes, and the complete ACP lifecycle
+  remain open measurements.
+- Any-mode question picking, terminal Mermaid rendering, and the remaining ACP session surfaces are ordered
+  product work; this document does not style their presence as shipped.

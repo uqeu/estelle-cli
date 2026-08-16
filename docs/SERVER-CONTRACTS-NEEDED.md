@@ -437,6 +437,42 @@ Required contract and two-sided acceptance proof:
 **Missing-field rendering:** `memory unavailable` is omitted from passive chrome. Opening `/memory` states
 that current uncommitted files are sent per turn and that durable private persistence is not yet proven.
 
+## 11. Local-plan and local-model inference bridge - BLOCKS connected-provider claims
+
+**Surface unlocked:** Claude subscription, ChatGPT plan, LM Studio, Ollama, and arbitrary OpenAI-compatible
+endpoints serving answers grounded by Estelle without sending model credentials to Estelle's server.
+
+**TODAY — source probes, 2026-08-16:** the CLI can acquire a ChatGPT device-flow credential, explicitly
+import a refreshable Claude Code OAuth snapshot, and store allowlisted provider API keys through `POST /key`.
+The custom Estelle TUI still sends questions to the server-owned answer route. No contract returns a bounded
+grounding packet for a local inference runtime, and no completion receipt joins that local model call back to
+the Estelle request. Consequently `/doctor` reports the local runtime missing and the Claude import receipt
+says runtime binding is not proven.
+
+Required boundary and acceptance proof:
+
+- A server response that returns a bounded, cited grounding packet tied to authenticated account, repo,
+  request id, graph revision, and `observed_at`, without performing model inference.
+- A CLI-owned provider runtime interface accepting that packet plus the user's question and returning a
+  typed answer/citation mapping. Provider metadata owns auth kind, base URL, model discovery, and diagnostic
+  instructions; vendor crates own wire translation.
+- Claude OAuth must use the Anthropic subscription wire/tool schema (including OAuth tool-name mapping), not
+  place a subscription token in the API-key path. Refresh updates only Estelle's snapshot and never Claude
+  Code's Keychain item.
+- ChatGPT plan inference uses the existing local Codex credential/runtime. Provider API keys remain either
+  server-owned BYOK or an explicitly selected local runtime credential; the client never silently copies
+  between those domains.
+- LM Studio/Ollama default to loopback OpenAI-compatible endpoints and require no key. A custom endpoint
+  prompts for its API base and may omit the key only when the provider contract permits it.
+- `estelle doctor` probes provider-specific reachability and auth shape without rendering credentials.
+  Failure identifies provider, phase, and remedy. A successful login alone is never a green runtime result.
+- End-to-end acceptance must run: fresh home -> first-run picker -> credential flow -> bounded grounding ->
+  provider inference -> cited answer, plus expired OAuth, wrong wire shape, unreachable localhost, shadowed
+  binary, and secret-redaction controls.
+
+**Missing-field rendering:** credential acquisition may be shown as imported/stored. It must not say
+connected, ready, or generating until the two-sided runtime probe passes.
+
 ## Shared absence and evidence rules
 
 - Every optional capability has an explicit absent/unknown value and a reason field.

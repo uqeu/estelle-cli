@@ -50,8 +50,8 @@
   "reviewed_changes_after_audited_commit": [
     {
       "path": "tui/src/top_level.rs",
-      "blob": "6557dc459f460ab6bf8da4ef6ec0a3ef09ab4b65",
-      "reason": "N-01 GitHub handoff remains origin-bound; hook parity now carries Python-produced standalone release oracles with live parent comparison"
+      "blob": "0dd714ca26b51368497e998f8d9122f8f642d4c6",
+      "reason": "N-01 GitHub handoff remains origin-bound; hook parity keeps standalone oracles, while doctor is explicitly local and performs no egress"
     },
     {
       "path": ".github/workflows/release.yml",
@@ -62,8 +62,48 @@
       "path": "tui/src/session_gap.rs",
       "blob": "07229a7a9ddb1241aad3f5c8259d7870569e01eb",
       "reason": "the Rust brief contract carries a Python-produced release oracle while retaining live cross-repo parity when the server source is present"
+    },
+    {
+      "path": "estelle-client/src/endpoint.rs",
+      "blob": "2c1bee48709734fdb9cbb020de481065b3830e39",
+      "reason": "the authenticated provider-key endpoint is named in the closed typed transport inventory"
+    },
+    {
+      "path": "estelle-client/src/tests.rs",
+      "blob": "18026022e6734ebff082d4fef19f392e34ba7145",
+      "reason": "the endpoint denominator and exact POST /key method/auth contract are pinned"
+    },
+    {
+      "path": "tui/src/claude_import.rs",
+      "blob": "c462745c2e945eb1843147f9e6dfa912eaae5a71",
+      "reason": "Claude Code credential access is consent-triggered, read-only at the source, privately snapshotted, and never reported runtime-ready"
+    },
+    {
+      "path": "tui/src/commands.rs",
+      "blob": "bbd7983bc225d05b772290d5c69351615599b8e9",
+      "reason": "local login/logout/whoami/doctor ownership and autonomy labels are explicit; remote route inventory remains closed"
+    },
+    {
+      "path": "tui/src/doctor.rs",
+      "blob": "1ad0f26480c1bf5a80e1d7a738ac87239dbab032",
+      "reason": "credential diagnostics render presence and remedies only, with no credential value or provider network probe"
+    },
+    {
+      "path": "tui/src/login.rs",
+      "blob": "895381104d1ffd30e8b29ef4789e293043ac77af",
+      "reason": "masked provider input and ChatGPT presence/logout reuse isolated credential stores without echoing secret material"
+    },
+    {
+      "path": "tui/src/main.rs",
+      "blob": "5d3e741fa8d647d06711512cb6c2e549b6125e77",
+      "reason": "first-run onboarding precedes conversation; provider routes are allowlisted before prompts; unsupported runtimes fail closed"
+    },
+    {
+      "path": "tui/src/provider_keys.rs",
+      "blob": "34676155e2495741df96b31b55cb0b64f22ba121",
+      "reason": "provider secrets cross only the authenticated POST /key boundary and receipts expose status/model but never the submitted value"
     }
   ],
   "owners": ["CLI", "SECURITY"],
-  "last_semantic_audit": "2026-08-15"
+  "last_semantic_audit": "2026-08-16"
 }

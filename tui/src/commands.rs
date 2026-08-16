@@ -2,8 +2,12 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 42] = [
+pub(crate) const SESSION_COMMANDS: [&str; 46] = [
     "help",
+    "login",
+    "logout",
+    "whoami",
+    "doctor",
     "init",
     "graph",
     "me",
@@ -47,8 +51,18 @@ pub(crate) const SESSION_COMMANDS: [&str; 42] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 42] = [
+const SESSION_HELP: [(&str, &str); 46] = [
     ("help", "what you can do here"),
+    (
+        "login",
+        "connect grounding plus the model plan, API key, or local engine you already have",
+    ),
+    ("logout", "remove local Estelle and plan credentials"),
+    (
+        "whoami",
+        "which credential kinds are present, never their values",
+    ),
+    ("doctor", "why a provider login cannot generate an answer"),
     ("init", "a grounded brief of this repo"),
     (
         "graph",
@@ -180,8 +194,9 @@ const GRAFT_HELP: &[(&str, &str)] = &[
 ];
 
 #[cfg(test)]
-pub(crate) const TOP_LEVEL_COMMANDS: [&str; 20] = [
+pub(crate) const TOP_LEVEL_COMMANDS: [&str; 21] = [
     "login",
+    "doctor",
     "init",
     "sweep",
     "reindex",
@@ -204,12 +219,12 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 20] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 42] {
+pub(crate) fn session_command_names() -> [&'static str; 46] {
     SESSION_COMMANDS
 }
 
 #[cfg(test)]
-pub(crate) fn top_level_command_names() -> [&'static str; 20] {
+pub(crate) fn top_level_command_names() -> [&'static str; 21] {
     TOP_LEVEL_COMMANDS
 }
 
@@ -463,7 +478,7 @@ const MODES: [&str; 4] = ["read_only", "propose", "branch", "execute"];
 pub(crate) fn parse_mode(value: &str) -> Option<&'static str> {
     match value.trim().to_ascii_lowercase().as_str() {
         "read" | "plan" | "read_only" | "read-only" | "readonly" => Some("read_only"),
-        "edit" | "propose" | "pr" => Some("propose"),
+        "accept-edits" | "accept_edits" | "edit" | "propose" | "pr" => Some("propose"),
         "branch" => Some("branch"),
         "auto" | "execute" => Some("execute"),
         _ => None,
@@ -477,7 +492,7 @@ pub(crate) fn mode_rank(value: &str) -> Option<usize> {
 pub(crate) fn mode_name(value: &str) -> &str {
     match value {
         "read_only" => "plan",
-        "propose" => "edit",
+        "propose" => "accept-edits",
         "execute" => "auto",
         value => value,
     }
@@ -493,8 +508,8 @@ pub(crate) fn mode_lines(local: &str, server: Option<&str>) -> Vec<String> {
     let effective = effective_mode(local, server);
     let what = match effective {
         "read_only" => "reads, answers, and verifies; nothing is written",
-        "propose" => "writes a sandboxed diff for human review",
-        "branch" => "may push a reviewable branch",
+        "propose" => "accepts sandboxed edits as a reviewable diff",
+        "branch" => "may push a non-main branch and run CI; never merges",
         "execute" => "merges only when every server guard passes; otherwise returns a PR",
         _ => "unknown capability",
     };
@@ -2693,11 +2708,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_inventory_is_exactly_the_42_accepted_commands() {
+    fn session_inventory_is_exactly_the_46_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
                 "help",
+                "login",
+                "logout",
+                "whoami",
+                "doctor",
                 "init",
                 "graph",
                 "me",
@@ -2749,6 +2768,7 @@ mod tests {
             top_level_command_names(),
             [
                 "login",
+                "doctor",
                 "init",
                 "sweep",
                 "reindex",
@@ -2779,6 +2799,32 @@ mod tests {
         assert_eq!(resolve_session_name("sesions"), Some("sessions"));
         assert_eq!(resolve_session_name("odel"), Some("model"));
         assert_eq!(resolve_session_name("blorp"), None);
+    }
+
+    #[test]
+    fn login_and_chatgpt_login_are_local_slash_commands() {
+        assert_eq!(
+            parse_input("/login"),
+            ParsedInput::Command {
+                name: Some("login"),
+                typed_name: "login".to_string(),
+                argument: String::new(),
+            }
+        );
+        assert_eq!(
+            parse_input("/login --chatgpt"),
+            ParsedInput::Command {
+                name: Some("login"),
+                typed_name: "login".to_string(),
+                argument: "--chatgpt".to_string(),
+            }
+        );
+        assert!(
+            remote_request("login", "", None, None)
+                .expect("local login classification")
+                .is_none(),
+            "login must never become a server request"
+        );
     }
 
     #[test]
@@ -4228,7 +4274,8 @@ mod tests {
             assert_eq!(request.endpoint, endpoint, "wrong route for {name}");
         }
         for local in [
-            "help", "sweep", "context", "apply", "undo", "mode", "status", "shell", "clear", "exit",
+            "help", "login", "logout", "whoami", "doctor", "sweep", "context", "apply", "undo",
+            "mode", "status", "shell", "clear", "exit",
         ] {
             assert!(
                 remote_request(local, "", None, None)

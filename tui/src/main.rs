@@ -1,9 +1,12 @@
 #![deny(clippy::print_stderr, clippy::print_stdout)]
 
+mod claude_import;
 mod commands;
+mod doctor;
 mod hook_distil;
 mod hook_guard;
 mod login;
+mod provider_keys;
 #[cfg(test)]
 mod test_gallery;
 mod top_level;
@@ -187,9 +190,28 @@ enum Command {
     /// Store and verify an Estelle API credential; --chatgpt signs in with a ChatGPT plan.
     Login {
         /// Device-code sign-in with a ChatGPT account (headless-safe; no browser needed).
-        #[arg(long)]
+        #[arg(long, conflicts_with = "provider")]
         chatgpt: bool,
+        /// Connect a model provider, subscription, API key, or local endpoint.
+        #[arg(
+            long,
+            visible_alias = "api-key",
+            value_name = "PROVIDER",
+            conflicts_with = "chatgpt"
+        )]
+        provider: Option<String>,
+        /// Override the provider API base URL (required for custom providers).
+        #[arg(long, requires = "provider")]
+        base_url: Option<String>,
+        /// Select the provider model after storing the key.
+        #[arg(long, requires = "provider")]
+        model: Option<String>,
+        /// Give this provider credential a non-secret account label.
+        #[arg(long, requires = "provider")]
+        label: Option<String>,
     },
+    /// Diagnose credential stores and provider-runtime readiness without printing secrets.
+    Doctor,
     /// Configure Estelle for the current repository.
     Init {
         #[arg(long)]
@@ -300,6 +322,16 @@ impl TerminalSession {
         enter_terminal_screen(&mut io::stdout())?;
         Ok(session)
     }
+
+    fn suspend(&mut self) -> io::Result<()> {
+        disable_raw_mode()?;
+        leave_terminal_screen(&mut io::stdout())
+    }
+
+    fn resume(&mut self) -> io::Result<()> {
+        enable_raw_mode()?;
+        enter_terminal_screen(&mut io::stdout())
+    }
 }
 
 impl Drop for TerminalSession {
@@ -367,6 +399,66 @@ enum QueuedRequest {
         diff: String,
         reverse: bool,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PendingLogin {
+    Estelle,
+    Claude,
+    Chatgpt,
+    Provider(&'static str),
+    EstelleThenProvider(&'static str),
+}
+
+enum InlineLoginOutcome {
+    Estelle(login::LoginOutcome),
+    Claude,
+    Chatgpt,
+    Provider(&'static str),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ProviderLoginRoute {
+    ClaudeImport,
+    ChatgptPlan,
+    ApiKey(String),
+}
+
+fn provider_login_route(provider: &str, base_url: Option<&str>) -> io::Result<ProviderLoginRoute> {
+    let provider = provider.trim().to_ascii_lowercase();
+    match provider.as_str() {
+        "claude" | "anthropic-subscription" => Ok(ProviderLoginRoute::ClaudeImport),
+        "openai" | "chatgpt" => Ok(ProviderLoginRoute::ChatgptPlan),
+        "openai-api" => Ok(ProviderLoginRoute::ApiKey("openai".to_string())),
+        "anthropic" | "gemini" | "openrouter" | "deepseek" => {
+            Ok(ProviderLoginRoute::ApiKey(provider))
+        }
+        "moonshot" | "kimi" => Ok(ProviderLoginRoute::ApiKey("moonshot".to_string())),
+        "zhipu" | "glm" => Ok(ProviderLoginRoute::ApiKey("zhipu".to_string())),
+        "openai-compatible" if base_url.is_some_and(|url| !url.trim().is_empty()) => {
+            Ok(ProviderLoginRoute::ApiKey(provider))
+        }
+        "openai-compatible" => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "openai-compatible requires --base-url; no credential was requested",
+        )),
+        "lmstudio" | "ollama" => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("{provider} local inference is not wired; no credential was requested"),
+        )),
+        "copilot" | "azure" | "bedrock" => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("{provider} provider runtime is not wired; no credential was requested"),
+        )),
+        "" => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "provider name cannot be empty",
+        )),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("unknown provider {provider}; no credential was requested"),
+        )),
+    }
 }
 
 struct AuthContext {
@@ -557,6 +649,13 @@ fn parse_setting_input(spec: &Value, text: &str) -> Result<Value, String> {
 
 #[derive(Clone, Debug)]
 enum PickerAction {
+    LoginEstelle,
+    LoginClaude,
+    LoginChatgpt,
+    OpenProviderLogin,
+    LoginProvider(&'static str),
+    OpenLocalLogin,
+    LoginLocal(&'static str),
     OpenMode,
     SelectMode(String),
     ConfirmMode(String),
@@ -604,6 +703,89 @@ struct PickerSurface {
 }
 
 impl PickerSurface {
+    fn login() -> Self {
+        Self {
+            title: "Connect Estelle".to_string(),
+            rows: vec![
+                PickerRow {
+                    label: "Estelle account".to_string(),
+                    detail: "buys grounding: memory, code graph, recall and gate; never pays for model tokens"
+                        .to_string(),
+                    action: PickerAction::LoginEstelle,
+                },
+                PickerRow {
+                    label: "Claude subscription".to_string(),
+                    detail: "imports the credential Claude Code stored on this machine · Pro, Max or Team"
+                        .to_string(),
+                    action: PickerAction::LoginClaude,
+                },
+                PickerRow {
+                    label: "ChatGPT plan".to_string(),
+                    detail: "the engine: your plan generates the answer · device code · headless-safe"
+                        .to_string(),
+                    action: PickerAction::LoginChatgpt,
+                },
+                PickerRow {
+                    label: "Provider API key".to_string(),
+                    detail: "Anthropic · OpenAI · Gemini · OpenRouter · DeepSeek · masked input".to_string(),
+                    action: PickerAction::OpenProviderLogin,
+                },
+                PickerRow {
+                    label: "Local model".to_string(),
+                    detail: "LM Studio · Ollama · any OpenAI-compatible endpoint · no token bill"
+                        .to_string(),
+                    action: PickerAction::OpenLocalLogin,
+                },
+            ],
+            selected: 0,
+        }
+    }
+
+    fn provider_login() -> Self {
+        Self {
+            title: "Provider API key".to_string(),
+            rows: [
+                "anthropic",
+                "openai",
+                "gemini",
+                "openrouter",
+                "deepseek",
+                "moonshot",
+                "zhipu",
+                "openai-compatible",
+            ]
+            .into_iter()
+            .map(|provider| PickerRow {
+                label: provider.to_string(),
+                detail: "masked input · stored in your Estelle account · never shown again"
+                    .to_string(),
+                action: PickerAction::LoginProvider(provider),
+            })
+            .collect(),
+            selected: 0,
+        }
+    }
+
+    fn local_login() -> Self {
+        Self {
+            title: "Local model".to_string(),
+            rows: ["lmstudio", "ollama", "openai-compatible"]
+                .into_iter()
+                .map(|provider| PickerRow {
+                    label: provider.to_string(),
+                    detail: if provider == "openai-compatible" {
+                        "enter an API base; localhost may omit the key"
+                    } else {
+                        "local OpenAI-compatible endpoint · no API key required"
+                    }
+                    .to_string(),
+                    action: PickerAction::LoginLocal(provider),
+                })
+                .collect(),
+            selected: 0,
+        }
+    }
+
     fn settings(app: &App) -> Self {
         let mode = commands::mode_name(commands::effective_mode(
             &app.local_mode,
@@ -644,7 +826,7 @@ impl PickerSurface {
             },
             PickerRow {
                 label: "Credential".to_string(),
-                detail: "secure store · managed by estelle login".to_string(),
+                detail: "secure store · managed by /login".to_string(),
                 action: PickerAction::None,
             },
         ];
@@ -791,8 +973,16 @@ impl PickerSurface {
         let current = app.server_mode.as_deref().unwrap_or(&app.local_mode);
         let definitions = [
             ("read_only", "plan", "verify · remember · retrieve · advise"),
-            ("propose", "edit", "+ sandboxed diff · reviewable PR"),
-            ("branch", "branch", "+ non-main branch push · CI"),
+            (
+                "propose",
+                "accept-edits",
+                "+ sandboxed diff · reviewable PR",
+            ),
+            (
+                "branch",
+                "branch",
+                "+ push to non-main branch · run CI · never merge",
+            ),
             (
                 "execute",
                 "auto",
@@ -1141,6 +1331,8 @@ struct App {
     picker: Option<PickerSurface>,
     settings: Option<CommandReply>,
     pending_setting_input: Option<PendingSettingInput>,
+    pending_login: Option<PendingLogin>,
+    login_required: bool,
     focus: FocusSurface,
     theme: Theme,
 }
@@ -1165,6 +1357,50 @@ fn env_truthy(name: &str) -> bool {
             "1" | "true" | "yes" | "on"
         )
     })
+}
+
+fn whoami_lines(app: &App, local_plan_present: bool) -> Vec<String> {
+    let server_plan_present = app.account.as_ref().is_some_and(|account| {
+        account
+            .extra
+            .get("uses_plan")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    });
+    let providers = match app.account.as_ref() {
+        Some(account) => match account.extra.get("configured").and_then(Value::as_array) {
+            Some(configured) => {
+                let names = configured
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>();
+                if names.is_empty() {
+                    "none".to_string()
+                } else {
+                    names.join(", ")
+                }
+            }
+            None => "not returned by server".to_string(),
+        },
+        None if app.auth.is_some() => "not returned yet".to_string(),
+        None => "unavailable until /login".to_string(),
+    };
+    vec![
+        format!(
+            "Estelle account  {}",
+            if app.auth.is_some() { "yes" } else { "no" }
+        ),
+        format!(
+            "Model plan  {}",
+            if local_plan_present || server_plan_present {
+                "yes"
+            } else {
+                "no"
+            }
+        ),
+        format!("Provider keys  {}", providers),
+        "Credential values are never displayed.".to_string(),
+    ]
 }
 
 impl App {
@@ -1251,6 +1487,8 @@ impl App {
             picker: None,
             settings: None,
             pending_setting_input: None,
+            pending_login: None,
+            login_required: false,
             focus: FocusSurface::Composer,
             theme: Theme::Dark,
         }
@@ -1415,6 +1653,73 @@ impl App {
         tx: &mpsc::UnboundedSender<UiEvent>,
     ) -> bool {
         match name {
+            "login" => match argument.trim() {
+                "" => self.picker = Some(PickerSurface::login()),
+                "--chatgpt" => {
+                    self.pending_login = Some(PendingLogin::Chatgpt);
+                    self.transcript.push(TranscriptEntry::System(
+                        "Starting the ChatGPT credential flow here.".to_string(),
+                    ));
+                }
+                value if value.starts_with("--api-key ") || value.starts_with("--provider ") => {
+                    let api_key_route = value.starts_with("--api-key ");
+                    let provider = value
+                        .strip_prefix("--api-key ")
+                        .or_else(|| value.strip_prefix("--provider "))
+                        .unwrap_or_default()
+                        .trim();
+                    let canonical_api_provider = match provider {
+                        "openai" if api_key_route => Some("openai"),
+                        "openai-api" => Some("openai"),
+                        "anthropic" => Some("anthropic"),
+                        "gemini" => Some("gemini"),
+                        "openrouter" => Some("openrouter"),
+                        "deepseek" => Some("deepseek"),
+                        "moonshot" | "kimi" => Some("moonshot"),
+                        "zhipu" | "glm" => Some("zhipu"),
+                        _ => None,
+                    };
+                    match (api_key_route, provider, canonical_api_provider) {
+                        (false, "openai" | "chatgpt", _) => {
+                            self.pending_login = Some(PendingLogin::Chatgpt)
+                        }
+                        (false, "claude" | "anthropic-subscription", _) => {
+                            self.transcript.push(TranscriptEntry::System(
+                                "Claude import reads the credential Claude Code stored on this machine after this explicit command; it never moves or modifies Claude Code's copy."
+                                    .to_string(),
+                            ));
+                            self.pending_login = Some(PendingLogin::Claude);
+                        }
+                        (_, _, Some(provider)) => {
+                            self.pending_login = Some(if self.client.is_some() {
+                                PendingLogin::Provider(provider)
+                            } else {
+                                PendingLogin::EstelleThenProvider(provider)
+                            });
+                        }
+                        _ => self.transcript.push(TranscriptEntry::System(
+                            "Choose a provider from /login; this client will not guess an unknown provider route."
+                                .to_string(),
+                        )),
+                    }
+                }
+                _ => self.transcript.push(TranscriptEntry::System(
+                    "Usage: /login, /login --chatgpt, or /login --provider <provider>.".to_string(),
+                )),
+            },
+            "logout" => self.logout_local_credentials(),
+            "whoami" => self.transcript.push(TranscriptEntry::Command {
+                name: "whoami".to_string(),
+                lines: whoami_lines(
+                    self,
+                    login::chatgpt_credential_present()
+                        || claude_import::imported_credential_present(),
+                ),
+            }),
+            "doctor" => self.transcript.push(TranscriptEntry::Command {
+                name: "doctor".to_string(),
+                lines: doctor::lines(doctor::Context::Tui),
+            }),
             "help" => self.transcript.push(TranscriptEntry::Command {
                 name: "help".to_string(),
                 lines: commands::help_lines(),
@@ -1465,7 +1770,7 @@ impl App {
                 } else {
                     let Some(mode) = commands::parse_mode(argument) else {
                         self.transcript.push(TranscriptEntry::System(format!(
-                            "No mode called {argument}. Use plan, edit, branch, or auto."
+                            "No mode called {argument}. Use plan, accept-edits, branch, or auto."
                         )));
                         return true;
                     };
@@ -1557,10 +1862,43 @@ impl App {
         true
     }
 
+    fn logout_local_credentials(&mut self) {
+        let estelle = match self.auth.take() {
+            Some(auth) if auth.source == CredentialSource::Environment => {
+                "environment credential remains; unset ESTELLE_API_KEY to remove it"
+            }
+            Some(auth) => match auth.store.delete_stored(auth.source) {
+                Ok(true) => "stored credential removed",
+                Ok(false) => "no stored credential was removed",
+                Err(_) => "stored credential could not be removed",
+            },
+            None => "no Estelle credential was present",
+        };
+        let plan = match (login::logout_chatgpt(), claude_import::logout()) {
+            (Ok(chatgpt), Ok(claude)) if chatgpt || claude => "stored plan credentials removed",
+            (Ok(_), Ok(_)) => "no stored plan credential was present",
+            _ => "one or more plan credentials could not be removed",
+        };
+        self.client = None;
+        self.account = None;
+        self.header.connected = false;
+        self.auth_resolved = true;
+        self.login_required = true;
+        self.picker = Some(PickerSurface::login());
+        self.transcript.push(TranscriptEntry::Command {
+            name: "logout".to_string(),
+            lines: vec![
+                format!("Estelle account  {estelle}"),
+                format!("Model plan  {plan}"),
+                "Server-side provider keys were not deleted.".to_string(),
+            ],
+        });
+    }
+
     fn write_refusal(&self) -> Option<String> {
         if commands::mode_rank(&self.local_mode).is_some_and(|rank| rank < 1) {
             return Some(format!(
-                "Mode is {}; the write path is off. Use /mode edit to allow a reviewable diff.",
+                "Mode is {}; the write path is off. Use /mode accept-edits to allow a reviewable diff.",
                 commands::mode_name(&self.local_mode)
             ));
         }
@@ -1571,7 +1909,7 @@ impl App {
             .is_some_and(|rank| rank < 1)
         {
             return Some(
-                "The account autonomy dial is plan; Estelle will not write. Use /mode edit or /settings to request a reviewable diff."
+                "The account autonomy dial is plan; Estelle will not write. Use /mode accept-edits or /settings to request a reviewable diff."
                     .to_string(),
             );
         }
@@ -1662,6 +2000,42 @@ impl App {
             .map(|row| row.action.clone())
             .unwrap_or(PickerAction::None);
         match action {
+            PickerAction::LoginEstelle => {
+                self.picker = None;
+                self.pending_login = Some(PendingLogin::Estelle);
+            }
+            PickerAction::LoginClaude => {
+                self.picker = None;
+                self.transcript.push(TranscriptEntry::System(
+                    "Claude import reads the credential Claude Code stored on this machine after this explicit selection; it never moves or modifies Claude Code's copy."
+                        .to_string(),
+                ));
+                self.pending_login = Some(PendingLogin::Claude);
+            }
+            PickerAction::LoginChatgpt => {
+                self.picker = None;
+                self.pending_login = Some(PendingLogin::Chatgpt);
+            }
+            PickerAction::OpenProviderLogin => {
+                self.picker = Some(PickerSurface::provider_login());
+            }
+            PickerAction::LoginProvider(provider) => {
+                self.picker = None;
+                self.pending_login = Some(if self.client.is_some() {
+                    PendingLogin::Provider(provider)
+                } else {
+                    PendingLogin::EstelleThenProvider(provider)
+                });
+            }
+            PickerAction::OpenLocalLogin => {
+                self.picker = Some(PickerSurface::local_login());
+            }
+            PickerAction::LoginLocal(provider) => {
+                self.transcript.push(TranscriptEntry::System(format!(
+                    "{provider} needs the local provider runtime before Estelle can claim it generates answers. Run /doctor for the missing binding."
+                )));
+                self.picker = Some(PickerSurface::login());
+            }
             PickerAction::OpenMode => self.picker = Some(PickerSurface::autonomy(self)),
             PickerAction::SelectMode(target) => {
                 self.request_autonomy(target, tx);
@@ -1675,7 +2049,7 @@ impl App {
                     spawn_theme_save(client, theme, tx);
                 } else {
                     self.transcript.push(TranscriptEntry::System(format!(
-                        "{} is active for this session only. Run estelle login to save it to personal settings.",
+                        "{} is active for this session only. Run /login to save it to personal settings.",
                         theme.name()
                     )));
                 }
@@ -1699,8 +2073,7 @@ impl App {
                 let Some(client) = self.client.clone() else {
                     self.picker = None;
                     self.transcript.push(TranscriptEntry::System(
-                        "Model selection needs an Estelle credential. Run estelle login."
-                            .to_string(),
+                        "Model selection needs an Estelle credential. Run /login.".to_string(),
                     ));
                     return;
                 };
@@ -1753,7 +2126,7 @@ impl App {
         let Some(client) = self.client.clone() else {
             self.picker = None;
             self.transcript.push(TranscriptEntry::System(
-                "Changing a setting needs an Estelle credential. Run estelle login.".to_string(),
+                "Changing a setting needs an Estelle credential. Run /login.".to_string(),
             ));
             return;
         };
@@ -1765,7 +2138,7 @@ impl App {
         let Some(client) = self.client.clone() else {
             self.picker = None;
             self.transcript.push(TranscriptEntry::System(
-                "Changing autonomy needs an Estelle credential. Run estelle login.".to_string(),
+                "Changing autonomy needs an Estelle credential. Run /login.".to_string(),
             ));
             return;
         };
@@ -1981,7 +2354,7 @@ impl App {
             self.transcript.push(TranscriptEntry::Failure([
                 "The request was not sent.".to_string(),
                 "This client has no Estelle credential.".to_string(),
-                "Set ESTELLE_API_KEY or run estelle login, then retry.".to_string(),
+                "Set ESTELLE_API_KEY or run /login, then retry.".to_string(),
             ]));
             return;
         };
@@ -2045,15 +2418,15 @@ impl App {
                 self.auth_resolved = true;
                 match result {
                     Ok((client, auth)) => {
+                        self.login_required = false;
                         self.client = Some(client.clone());
                         self.auth = Some(auth);
                         spawn_header_requests(Some(client), &self.repo, tx);
                         self.poll_production_if_due(tx);
                     }
                     Err(Error::NoCredential) => {
-                        self.transcript.push(TranscriptEntry::System(
-                            "No Estelle credential is configured. Run estelle login.".to_string(),
-                        ));
+                        self.login_required = true;
+                        self.picker = Some(PickerSurface::login());
                     }
                     Err(error) => self
                         .transcript
@@ -2471,7 +2844,7 @@ impl App {
         self.rejected_routes.insert(route.to_string());
         if self.rejected_routes.len() < 2 {
             self.transcript.push(TranscriptEntry::System(format!(
-                "The stored credential was rejected on {route}. It was NOT removed — a single rejection can be route scope, not a bad key. Run estelle login only if you revoked it."
+                "The stored credential was rejected on {route}. It was NOT removed — a single rejection can be route scope, not a bad key. Run /login only if you revoked it."
             )));
             return;
         }
@@ -2485,7 +2858,7 @@ impl App {
             self.client = None;
             self.header.connected = false;
             self.transcript.push(TranscriptEntry::System(format!(
-                "The stored credential was rejected on {routes} — different routes, so it was removed. Run estelle login to store a fresh key."
+                "The stored credential was rejected on {routes} — different routes, so it was removed. Run /login to store a fresh key."
             )));
         }
     }
@@ -3219,20 +3592,21 @@ fn spawn_provider_selection(
 fn spawn_credential_resolution(tx: &mpsc::UnboundedSender<UiEvent>) {
     let tx = tx.clone();
     tokio::task::spawn_blocking(move || {
-        let result = (|| {
-            let store = CredentialStore::default_location()?;
-            let credential = store.resolve()?;
-            let client = Client::production(credential.api_key)?;
-            Ok((
-                client,
-                AuthContext {
-                    store,
-                    source: credential.source,
-                },
-            ))
-        })();
-        let _ = tx.send(UiEvent::Credential(result));
+        let _ = tx.send(UiEvent::Credential(resolve_credential()));
     });
+}
+
+fn resolve_credential() -> Result<(Client, AuthContext), Error> {
+    let store = CredentialStore::default_location()?;
+    let credential = store.resolve()?;
+    let client = Client::production(credential.api_key)?;
+    Ok((
+        client,
+        AuthContext {
+            store,
+            source: credential.source,
+        },
+    ))
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -4463,7 +4837,7 @@ fn production_workspace_lines(app: &App) -> Vec<Line<'static>> {
         lines.push(dim("Connecting to Estelle...".to_string()));
     } else if app.client.is_none() {
         lines.push(dim("Live Monitor unavailable.".to_string()));
-        lines.push(dim("Run estelle login, then reopen.".to_string()));
+        lines.push(dim("Run /login here.".to_string()));
     } else if let Some(error) = &app.prod_issue_error {
         lines.push(Line::styled(
             error.clone(),
@@ -5309,7 +5683,8 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
     }
     if let Some(picker) = app.picker.as_mut() {
         match key.code {
-            KeyCode::Esc => app.picker = None,
+            KeyCode::Esc if !app.login_required => app.picker = None,
+            KeyCode::Esc => {}
             KeyCode::Down => {
                 picker.selected = (picker.selected + 1).min(picker.rows.len().saturating_sub(1));
             }
@@ -5468,11 +5843,13 @@ async fn record_session_checkpoint(root: PathBuf) {
 }
 
 async fn run(args: Args) -> io::Result<()> {
-    let _session = TerminalSession::enter()?;
+    let initial_credential = resolve_credential();
+    let mut session = TerminalSession::enter()?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
     let mut app = App::new(args);
     let (tx, mut rx) = mpsc::unbounded_channel();
+    app.handle_ui_event(UiEvent::Credential(initial_credential), &tx);
     let mut events = EventStream::new();
     let mut ticker = tokio::time::interval(FRAME_INTERVAL);
     let mut first_frame = true;
@@ -5481,7 +5858,6 @@ async fn run(args: Args) -> io::Result<()> {
         draw(&mut terminal, &app)?;
         if first_frame {
             first_frame = false;
-            spawn_credential_resolution(&tx);
             let context_root = app.root.clone();
             let context_tx = tx.clone();
             tokio::spawn(async move {
@@ -5523,6 +5899,74 @@ async fn run(args: Args) -> io::Result<()> {
                 None => break,
             },
         }
+        if let Some(pending_login) = app.pending_login.take() {
+            session.suspend()?;
+            let result = match pending_login {
+                PendingLogin::Estelle => login::run().await.map(InlineLoginOutcome::Estelle),
+                PendingLogin::Claude => claude_import::run().map(|()| InlineLoginOutcome::Claude),
+                PendingLogin::Chatgpt => login::run_chatgpt()
+                    .await
+                    .map(|()| InlineLoginOutcome::Chatgpt),
+                PendingLogin::Provider(provider) => provider_keys::run(provider, None, None, None)
+                    .await
+                    .map(|()| InlineLoginOutcome::Provider(provider)),
+                PendingLogin::EstelleThenProvider(provider) => match login::run().await {
+                    Ok(
+                        login::LoginOutcome::StoredVerified | login::LoginOutcome::StoredUnverified,
+                    ) => provider_keys::run(provider, None, None, None)
+                        .await
+                        .map(|()| InlineLoginOutcome::Provider(provider)),
+                    Ok(login::LoginOutcome::Rejected) => {
+                        Ok(InlineLoginOutcome::Estelle(login::LoginOutcome::Rejected))
+                    }
+                    Err(error) => Err(error),
+                },
+            };
+            session.resume()?;
+            terminal.clear()?;
+            match result {
+                Ok(InlineLoginOutcome::Estelle(login::LoginOutcome::Rejected)) => {
+                    app.transcript.push(TranscriptEntry::System(
+                        "Estelle rejected the credential; the previous credential was left unchanged."
+                            .to_string(),
+                    ));
+                }
+                Ok(InlineLoginOutcome::Estelle(_)) => {
+                    app.auth_resolved = false;
+                    spawn_credential_resolution(&tx);
+                }
+                Ok(InlineLoginOutcome::Claude) => {
+                    app.transcript.push(TranscriptEntry::System(
+                        "Claude Code credential imported into Estelle's own store; Claude Code's source was left unchanged. Provider runtime binding is not yet proven; run /doctor."
+                            .to_string(),
+                    ));
+                    if app.client.is_none() {
+                        app.picker = Some(PickerSurface::login());
+                    }
+                }
+                Ok(InlineLoginOutcome::Chatgpt) => {
+                    app.transcript.push(TranscriptEntry::System(
+                        "ChatGPT credential flow completed inside this session.".to_string(),
+                    ));
+                    if app.client.is_none() {
+                        app.picker = Some(PickerSurface::login());
+                    }
+                }
+                Ok(InlineLoginOutcome::Provider(provider)) => {
+                    app.transcript.push(TranscriptEntry::System(format!(
+                        "{provider} credential stored without exposing its value."
+                    )));
+                    app.auth_resolved = false;
+                    spawn_credential_resolution(&tx);
+                }
+                Err(error) => app.transcript.push(TranscriptEntry::System(format!(
+                    "Credential flow did not complete: {error}. Run /doctor."
+                ))),
+            }
+            if app.login_required && app.client.is_none() && app.picker.is_none() {
+                app.picker = Some(PickerSurface::login());
+            }
+        }
         if app.should_exit {
             break;
         }
@@ -5531,19 +5975,69 @@ async fn run(args: Args) -> io::Result<()> {
     Ok(())
 }
 
+async fn login_failure(error: &dyn std::fmt::Display) -> ExitCode {
+    let mut stdout = tokio::io::stdout();
+    let message = format!("Login did not complete: {error}\nRun estelle doctor.\n");
+    let _ = stdout.write_all(message.as_bytes()).await;
+    ExitCode::FAILURE
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = Args::parse();
-    if let Some(Command::Login { chatgpt }) = &args.command {
+    if let Some(Command::Login {
+        chatgpt,
+        provider,
+        base_url,
+        model,
+        label,
+    }) = &args.command
+    {
         if *chatgpt {
             return match login::run_chatgpt().await {
                 Ok(()) => ExitCode::SUCCESS,
-                Err(_) => ExitCode::FAILURE,
+                Err(error) => login_failure(&error).await,
+            };
+        }
+        if let Some(provider) = provider {
+            let result = match provider_login_route(provider, base_url.as_deref()) {
+                Ok(ProviderLoginRoute::ClaudeImport) => claude_import::run(),
+                Ok(ProviderLoginRoute::ChatgptPlan) => login::run_chatgpt().await,
+                Ok(ProviderLoginRoute::ApiKey(provider)) => {
+                    provider_keys::run(
+                        &provider,
+                        base_url.as_deref(),
+                        model.as_deref(),
+                        label.as_deref(),
+                    )
+                    .await
+                }
+                Err(error) => Err(error),
+            };
+            return match result {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => login_failure(&error).await,
             };
         }
         return match login::run().await {
-            Ok(login::LoginOutcome::Rejected) | Err(_) => ExitCode::FAILURE,
+            Ok(login::LoginOutcome::Rejected) => {
+                login_failure(&"Estelle rejected the credential").await
+            }
+            Err(error) => login_failure(&error).await,
             Ok(_) => ExitCode::SUCCESS,
+        };
+    }
+    if matches!(args.command, Some(Command::Doctor)) {
+        let lines = doctor::lines(doctor::Context::Shell);
+        let mut stdout = tokio::io::stdout();
+        return if stdout
+            .write_all(format!("{}\n", lines.join("\n")).as_bytes())
+            .await
+            .is_ok()
+        {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
         };
     }
     if matches!(args.command, Some(Command::Acp)) {
@@ -5677,6 +6171,51 @@ mod tests {
         });
         app.boot = None;
         app
+    }
+
+    #[test]
+    fn provider_login_parses_the_provider_and_optional_routing_metadata() {
+        let args = Args::try_parse_from([
+            "estelle",
+            "login",
+            "--provider",
+            "anthropic",
+            "--model",
+            "claude-opus",
+            "--label",
+            "production",
+        ])
+        .expect("keys set command");
+
+        assert!(matches!(
+            args.command,
+            Some(Command::Login {
+                chatgpt: false,
+                provider: Some(provider),
+                base_url: None,
+                model: Some(model),
+                label: Some(label),
+            }) if provider == "anthropic" && model == "claude-opus" && label == "production"
+        ));
+    }
+
+    #[test]
+    fn provider_login_routes_are_explicit_and_unknown_names_never_reach_the_key_api() {
+        assert_eq!(
+            provider_login_route("claude", None).expect("Claude route"),
+            ProviderLoginRoute::ClaudeImport
+        );
+        assert_eq!(
+            provider_login_route("openai", None).expect("ChatGPT route"),
+            ProviderLoginRoute::ChatgptPlan
+        );
+        assert_eq!(
+            provider_login_route("openai-api", None).expect("OpenAI key route"),
+            ProviderLoginRoute::ApiKey("openai".to_string())
+        );
+        assert!(provider_login_route("openai-compatible", None).is_err());
+        assert!(provider_login_route("copilot", None).is_err());
+        assert!(provider_login_route("made-up-provider", None).is_err());
     }
 
     fn rendered_frame(app: &App, now: Instant) -> String {
@@ -6424,7 +6963,7 @@ mod tests {
         assert_eq!(app.server_mode.as_deref(), Some("read_only"));
         assert_eq!(
             app.picker.as_ref().map(|picker| picker.title.as_str()),
-            Some("Confirm raise to edit")
+            Some("Confirm raise to accept-edits")
         );
 
         handle_key(
@@ -6830,7 +7369,7 @@ mod tests {
         assert!(rendered.contains("AGENT HEALTH"));
         assert!(rendered.contains("ESTELLE STATUS"));
         assert!(rendered.contains("ESTELLE QUEUE"));
-        assert!(rendered.contains("Run estelle login"));
+        assert!(rendered.contains("Run /login"));
         assert!(!rendered.contains("0 errors"));
         assert!(!rendered.contains("healthy"));
     }
@@ -7526,6 +8065,116 @@ mod tests {
         assert!(rendered.contains("/blorp"));
     }
 
+    #[test]
+    fn login_opens_the_five_way_credential_picker_before_any_request() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+
+        app.submit("/login".to_string(), &tx);
+
+        assert!(app.queue.is_empty(), "/login must stay local");
+        assert!(
+            app.active.is_none(),
+            "/login must not start an HTTP request"
+        );
+        let picker = app.picker.as_ref().expect("credential picker");
+        assert_eq!(picker.title, "Connect Estelle");
+        assert_eq!(picker.rows.len(), 5);
+        assert_eq!(picker.rows[0].label, "Estelle account");
+        assert!(picker.rows[0].detail.contains("grounding"));
+        assert!(
+            picker.rows[0]
+                .detail
+                .contains("never pays for model tokens")
+        );
+        assert_eq!(picker.rows[1].label, "Claude subscription");
+        assert!(picker.rows[1].detail.contains("Claude Code"));
+        assert_eq!(picker.rows[2].label, "ChatGPT plan");
+        assert!(picker.rows[2].detail.contains("device code"));
+        assert_eq!(picker.rows[3].label, "Provider API key");
+        assert!(picker.rows[3].detail.contains("Anthropic"));
+        assert_eq!(picker.rows[4].label, "Local model");
+        assert!(picker.rows[4].detail.contains("LM Studio"));
+        assert!(picker.rows[4].detail.contains("Ollama"));
+    }
+
+    #[test]
+    fn slash_provider_routes_match_the_shell_provider_meanings() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+
+        app.submit("/login --provider openai".to_string(), &tx);
+        assert_eq!(app.pending_login, Some(PendingLogin::Chatgpt));
+
+        app.pending_login = None;
+        app.submit("/login --provider claude".to_string(), &tx);
+        assert_eq!(app.pending_login, Some(PendingLogin::Claude));
+
+        app.pending_login = None;
+        app.submit("/login --api-key openai".to_string(), &tx);
+        assert_eq!(
+            app.pending_login,
+            Some(PendingLogin::EstelleThenProvider("openai"))
+        );
+    }
+
+    #[test]
+    fn first_run_absence_opens_login_before_the_conversation_surface() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+
+        app.handle_ui_event(UiEvent::Credential(Err(Error::NoCredential)), &tx);
+
+        assert!(app.auth_resolved);
+        assert_eq!(
+            app.picker.as_ref().map(|picker| picker.title.as_str()),
+            Some("Connect Estelle")
+        );
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 30);
+        assert!(rendered.contains("CONNECT ESTELLE"));
+        assert!(!rendered.contains("ASK ESTELLE"));
+        assert!(!rendered.contains("Run estelle login"));
+    }
+
+    #[test]
+    fn whoami_reports_credential_kinds_and_provider_names_but_never_values() {
+        let secret = "provider-secret-must-not-render";
+        let mut app = test_app();
+        app.auth = Some(AuthContext {
+            store: CredentialStore::new("/tmp/whoami-test-auth.json"),
+            source: CredentialSource::Stored,
+        });
+        app.account = Some(
+            serde_json::from_value(json!({
+                "configured": ["anthropic", "openrouter"],
+                "provider_key": secret
+            }))
+            .expect("account response"),
+        );
+
+        let rendered = whoami_lines(&app, true).join("\n");
+
+        assert!(rendered.contains("Estelle account  yes"));
+        assert!(rendered.contains("Model plan  yes"));
+        assert!(rendered.contains("Provider keys  anthropic, openrouter"));
+        assert!(!rendered.contains(secret));
+    }
+
+    #[test]
+    fn whoami_does_not_turn_an_unfetched_account_into_no_provider_keys() {
+        let mut app = test_app();
+        app.auth = Some(AuthContext {
+            store: CredentialStore::new("/tmp/whoami-unfetched-auth.json"),
+            source: CredentialSource::Stored,
+        });
+
+        let rendered = whoami_lines(&app, false).join("\n");
+
+        assert!(rendered.contains("Provider keys  not returned yet"));
+        assert!(!rendered.contains("Provider keys  none"));
+    }
+
     #[tokio::test]
     async fn typed_mode_raise_uses_the_same_confirmation_and_account_post_as_settings() {
         let server = MockServer::start().await;
@@ -7553,7 +8202,7 @@ mod tests {
         app.submit("/mode edit".to_string(), &tx);
         assert_eq!(
             app.picker.as_ref().map(|picker| picker.title.as_str()),
-            Some("Confirm raise to edit")
+            Some("Confirm raise to accept-edits")
         );
         assert_eq!(app.server_mode.as_deref(), Some("read_only"));
 

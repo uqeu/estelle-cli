@@ -92,6 +92,18 @@ mv -f "$DEST_TMP" "$INSTALL_DIR/estelle"
 trap 'rm -rf "$TMP_DIR"' EXIT HUP INT TERM
 
 printf 'Installed Estelle to %s/estelle\n' "$INSTALL_DIR"
+RESOLVED_COMMAND=$(command -v estelle 2>/dev/null || true)
+case "$RESOLVED_COMMAND" in
+  ""|"$REQUESTED_INSTALL_DIR/estelle"|"$INSTALL_DIR/estelle") ;;
+  *)
+    printf 'estelle installer: an earlier estelle shadows the new binary: %s\n' \
+      "$RESOLVED_COMMAND" >&2
+    printf 'Remove the legacy npm CLI with: npm uninstall -g @fatelabs/estelle\n' >&2
+    printf 'The verified new binary remains at %s/estelle; installation is not complete until bare estelle resolves there.\n' \
+      "$INSTALL_DIR" >&2
+    exit 1
+    ;;
+esac
 case ":${PATH}:" in
   *:"$REQUESTED_INSTALL_DIR":*|*:"$INSTALL_DIR":*) ;;
   *)
@@ -123,4 +135,5 @@ case ":${PATH}:" in
     printf 'Open a new shell before running estelle.\n'
     ;;
 esac
+printf 'Installed. Run estelle login to connect your account.\n'
 "$INSTALL_DIR/estelle" --version

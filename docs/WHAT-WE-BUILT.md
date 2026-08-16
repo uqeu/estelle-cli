@@ -5,21 +5,24 @@ Every row names a source, licence, implementation location, and measured status.
 its row. A status changes only from a probe, never from recollection.
 
 **Status:** ✅ built + wired + public-artifact/prod-proven · 🟡 built, but no public customer artifact proves
-the path · ⬜ decided, not built. **TODAY — 2026-08-15:** `v0.2.4` has nine public assets, four verified
-archive checksums, arm64 identity/provenance proof, and npm `0.2.4`. Its installer probes called the absolute
-destination, however, and a founder clean-machine install disproved bare command resolution. Source `v0.2.5`
-now emits exact zsh/bash PATH guidance, requires consent before profile edits, and passes a discriminating
-clean-PATH bare-command gate. That repair remains 🟡 until public `v0.2.5` and founder re-proof exist.
+the path · ⬜ decided, not built. **TODAY — 2026-08-16:** `v0.2.5` run `31924677976` completed successfully;
+the 04:43Z read-back verified nine public assets, four archive checksums/member sets, arm64 identity, public
+installer execution, and npm `0.2.5` with SLSA metadata. External GitHub attestation verification remains
+unmeasured because the local Sigstore verifier failed to initialize. Source `v0.2.6` adds first-run
+credential onboarding, provider-key storage, Claude Code credential snapshotting, credential
+diagnostics, shadow detection, and a PTY first-screen gate. Provider inference bindings are not built merely
+because credential acquisition exists; those rows remain separate and honest below.
 
 ## PORTED — mechanism, source, and licence
 
 | mechanism | source / licence | implementation | status |
 |---|---|---|---|
 | Codex terminal application core: Ratatui event loop, composer, history, approvals, model execution, and local tools | OpenAI Codex commit `582569998181aad08a88bacc151a94b2048a5d1f` · Apache-2.0; exact tree and import delta in `fork-manifest.yaml` | `tui/src/lib.rs`, `tui/src/app.rs`, `core/`, `tools/` | 🟡 |
-| Filled user-message block and direct number-key picker selection | OpenAI Codex at the pinned import · Apache-2.0 | `tui/src/main.rs:3313`, `tui/src/main.rs:5318` | 🟡 |
-| Persistent right-side terminal surface pattern, with Estelle-owned grounding data rather than a copied agent brain | jcode `crates/jcode-tui/src/tui/ui_input.rs:2558`, `jcode-tui-render/src/chrome.rs:31`, `jcode-tui/src/tui/ui.rs:2727` · MIT | `tui/src/main.rs:1581`, `tui/src/main.rs:4214` | 🟡 |
+| Filled user-message block and direct number-key picker selection | OpenAI Codex at the pinned import · Apache-2.0 | `tui/src/main.rs:3687`, `tui/src/main.rs:5712` | 🟡 |
+| Persistent right-side terminal surface pattern, with Estelle-owned grounding data rather than a copied agent brain | jcode `crates/jcode-tui/src/tui/ui_input.rs:2558`, `jcode-tui-render/src/chrome.rs:31`, `jcode-tui/src/tui/ui.rs:2727` · MIT | `tui/src/main.rs:1919`, `tui/src/main.rs:4588` | 🟡 |
 | Three-type `Api | OAuth | WellKnown` auth record and account-id fallback chain | opencode `packages/opencode/src/auth/index.ts` and provider `openai.ts` · MIT | `estelle-client/src/auth_record.rs:1`, `login/src/token_data.rs:91` | 🟡 |
 | ChatGPT device-code login and refresh behavior, kept in a store separate from Estelle credentials | OpenAI Codex device auth · Apache-2.0; opencode refresh failure behavior · MIT | `tui/src/login.rs:161`, `login/src/auth/manager.rs:185` | 🟡 |
+| Consent-gated Claude Code credential import: environment/Keychain discovery, wrapped OAuth parsing, refresh-token requirement, and private snapshot | jcode `crates/jcode-app-core/src/external_auth.rs:66`, `jcode-base/src/auth/claude.rs:1` · MIT | `tui/src/claude_import.rs:196` | 🟡 |
 
 ## OURS — the product-specific half
 
@@ -30,6 +33,9 @@ clean-PATH bare-command gate. That repair remains 🟡 until public `v0.2.5` and
 | Standalone Python/Rust release oracles: 19 returning-brief decisions plus exact guard, distil, repository, sync-refusal, grounding-verdict, and verify-request fixtures; live Python comparison when the server source exists | Fate Labs · Apache-2.0 repository; fixtures originate in parent `tests/test_hook_contract.py` | `tui/src/session_gap.rs:708`, `tui/src/top_level.rs:3196` | ✅ |
 | Finite fork/egress audit: pinned upstream/import trees, reviewed risky blobs, named sinks, and primitive census | Fate Labs · Apache-2.0 repository | `fork-manifest.yaml`, `docs/egress-sinks.toml`, `scripts/check-fork-audit.py` | ✅ |
 | Native retirement of the abandoned JavaScript package through an exact-version, checksum-first npm launcher | Fate Labs · Apache-2.0 repository | `npm-shim/install.js`, `npm-shim/bin/estelle.js` | ✅ |
+| Credential-first launch and five-way `/login` picker, plus `/logout`, presence-only `/whoami`, and context-correct `/doctor` | Fate Labs · Apache-2.0 repository | `tui/src/main.rs:706`, `tui/src/main.rs:1362`, `tui/src/main.rs:1865`, `tui/src/doctor.rs:14` | 🟡 |
+| Allowlisted provider-key login with masked input, typed `/key` request, secret-free receipt, and explicit unsupported-route refusal | Fate Labs · Apache-2.0 repository | `tui/src/main.rs:427`, `tui/src/provider_keys.rs:15`, `estelle-client/src/endpoint.rs:60` | 🟡 |
+| Four-run autonomy ladder with customer label `accept-edits`, non-main branch/CI/no-merge contract, and auto's reviewable-PR fallback | Fate Labs · Apache-2.0 repository | `tui/src/commands.rs:478`, `tui/src/commands.rs:492`, `tui/src/main.rs:973` | 🟡 |
 
 ## SYSTEM DESIGN — established mechanisms applied here
 
@@ -38,7 +44,7 @@ clean-PATH bare-command gate. That repair remains 🟡 until public `v0.2.5` and
 | Reproducible tag-triggered release: exact version gate, target-native builds, normalized archives, checksum manifest, and no manual bypass | Reproducible Builds principles + GitHub Actions · workflow/configuration licences apply; repository code Apache-2.0 | `.github/workflows/release.yml`, `scripts/package-release.sh` | ✅ |
 | Build provenance tied to downloadable bytes through OIDC rather than a long-lived signing secret | SLSA provenance model + `actions/attest-build-provenance` · Apache-2.0 | `.github/workflows/release.yml:130`, `.github/workflows/release.yml:175` | ✅ |
 | Verify before install, one-member archive, bounded resources, and atomic destination replacement | Standard supply-chain and filesystem transaction pattern · repository code Apache-2.0 | `install.sh`, `npm-shim/install.js` | ✅ |
-| Consent-gated zsh/bash PATH setup with resolved-path output, final binary identity, and clean-shell bare-command release proof | Shell startup-file conventions + fail-closed release testing · repository code Apache-2.0 | `install.sh`, `scripts/test-installer.sh` | 🟡 |
+| Consent-gated zsh/bash PATH setup with resolved-path output, old-command shadow refusal, final binary identity, clean-shell bare-command proof, and native first-run PTY probe | Shell startup-file conventions + fail-closed release testing · repository code Apache-2.0 | `install.sh`, `scripts/test-installer.sh`, `scripts/probe-first-run.py` | 🟡 |
 | Separate credential domains for Estelle API access and a user's model-plan OAuth, with auth rejection treated as evidence rather than deletion permission | Least privilege + typed sum types · repository code Apache-2.0 | `estelle-client/src/auth.rs`, `estelle-client/src/auth_record.rs`, `tui/src/login.rs` | 🟡 |
 
 ## Decided, not built
@@ -46,5 +52,5 @@ clean-PATH bare-command gate. That repair remains 🟡 until public `v0.2.5` and
 | mechanism | source / licence | intended owner | status |
 |---|---|---|---|
 | Any-mode question picker using the inherited renderer | OpenAI Codex request-user-input renderer · Apache-2.0 | `tui/src/bottom_pane/request_user_input/` | ⬜ |
-| PLAN / ACCEPT-EDITS / AUTO with ACCEPT-EDITS as the everyday default and persistent visible mode | Fate Labs product decision · repository licence when implemented | TUI collaboration-mode state | ⬜ |
+| Claude subscription, ChatGPT plan, and local-model credentials actually serving the custom Estelle conversation runtime | jcode provider/runtime separation precedent · MIT; repository code Apache-2.0 | provider runtime bridge | ⬜ |
 | Mermaid diagrams rendered in the terminal | jcode renderer precedent · MIT | TUI markdown/render pipeline | ⬜ |

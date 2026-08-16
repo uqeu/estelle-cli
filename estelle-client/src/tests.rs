@@ -21,7 +21,7 @@ fn test_key() -> ApiKey {
 
 #[test]
 fn endpoint_inventory_is_unique_and_matches_the_server_audit() {
-    assert_eq!(API_ENDPOINTS.len(), 74);
+    assert_eq!(API_ENDPOINTS.len(), 75);
     let unique = API_ENDPOINTS
         .iter()
         .map(|spec| spec.path)
@@ -41,6 +41,13 @@ fn endpoint_inventory_is_unique_and_matches_the_server_audit() {
         .expect("the checkpoint hook mode posts here");
     assert_eq!(checkpoint.methods, &[HttpMethod::Post]);
     assert!(!checkpoint.requires_repo);
+}
+
+#[test]
+fn provider_key_write_uses_the_authenticated_server_contract() {
+    assert_eq!(Endpoint::ProviderKey.path(), "key");
+    assert_eq!(Endpoint::ProviderKey.methods(), &[HttpMethod::Post]);
+    assert!(!Endpoint::ProviderKey.requires_repo());
 }
 
 #[test]
