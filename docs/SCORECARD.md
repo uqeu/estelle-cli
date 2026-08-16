@@ -1,7 +1,8 @@
 # Estelle CLI scorecard
 
-**Status:** partial measurement. Rows record measurements, not feature inventory. A green local row does not
-imply a public artifact, live-terminal behavior, or production reachability.
+**Status:** public distribution measured; product behavior remains partially measured. Rows record
+measurements, not feature inventory. A green distribution row does not imply live-terminal behavior or
+production server reachability.
 
 | measured question | method / corpus | n | control | measured result | does not cover |
 |---|---|---:|---|---|---|
@@ -12,11 +13,13 @@ imply a public artifact, live-terminal behavior, or production reachability.
 | Does the shell installer enforce the four-target checksum contract? | `scripts/test-installer.sh` and `scripts/test-release-package.sh`; 2026-08-15 | 4 target selections · 4 refusal mutants · 4 reproducible archives | Valid fixture installs; malformed repository, malformed version, corrupt checksum, and extra-member archive must install nothing | All target selections installed; all four mutants refused; four normalized archives reproduced byte-for-byte | TLS endpoint ownership, GitHub availability, actual release binaries, signatures, or customer machine state |
 | Does the npm retirement shim install only a verified native artifact? | `npm test --prefix npm-shim`; packed tarball opened and enumerated, 2026-08-15 | 5 tests · 1 packed npm artifact | Four target mappings, HTTPS/GitHub redirect fence, exact checksum row, atomic install, checksum mutant; tarball must omit legacy modules | 5/5 passed; packed artifact contained only launcher, installer, package metadata, and README | npm trusted-publisher configuration, registry publication, GitHub release availability, or all archive-member mutants |
 | Is fork provenance and the source-level egress register internally consistent? | `python3 scripts/check-fork-audit.py`; exact upstream object fetched in CI, 2026-08-15 | 1 upstream tree · 1 import tree · 3 reviewed high-risk blobs · 19 sink rows | Tree hashes, audited ancestry, exact risky path set/blob hashes, source-symbol presence, and primitive occurrence counts | PASS; 14 released and 5 latent sinks matched the declared denominator | Runtime process-tree traffic, DNS destinations, provider behavior, or customer consent quality |
-| Can the public repository pass its release validation from a clean checkout? | GitHub Actions runs `31911232894` and `31912554854`, tag `v0.2.4`, Ubuntu clean runners, 2026-08-15 | 2 completed clean runs | Tag/version, installer, archive reproducibility, and fork provenance passed before locked Rust tests; release/build/npm jobs remained fail-closed | REFUSED: first run found the returning-brief dependency; second reached the binary suite, where 217 passed and 6 parity tests exposed the same parent-source assumption | The complete standalone-oracle repair recorded with this scorecard, platform builds, release creation, npm publication, or artifact readback |
+| Can the public repository pass its release pipeline from a clean checkout? | GitHub Actions runs `31911232894`, `31912554854`, and `31913589144`, tag `v0.2.4`, clean runners, 2026-08-15 | 3 completed clean runs · 4 target-native builds in the accepted run | Tag/version, installer mutants, archive reproducibility, fork provenance, locked Rust tests, native architecture/version checks, release creation, and npm publication are fail-closed | First two runs refused parent-source parity assumptions; standalone-oracle repair then made `31913589144` pass every validation, build, release, attestation, and npm job | Customer-byte readback is measured separately; founder machine state and interactive product behavior |
+| Can a customer acquire and identify every public native artifact? | GitHub release API/download, `shasum -a 256 -c`, `tar -tzf`, native execution, `gh attestation verify`, release installer, and raw-`main` latest installer; 2026-08-15 | 9 public assets · 4 archives · 4 checksum rows · 2 public installer origins | Non-draft/non-prerelease `v0.2.4`; exact asset set; every archive hash must match; selected archive must have one `estelle`, be Mach-O arm64, print the tag, verify provenance, and install one destination file | PASS: release published `2026-08-16T00:25:28Z`; 4/4 hashes matched; one-member arm64 binary printed `estelle 0.2.4`; provenance passed; both installer origins installed one working file | Linux execution on this macOS probe, founder's physical clean machine, interactive TUI, auth, hooks, or server reachability |
+| Does the public npm package retire the legacy implementation and install the native release? | `npm view --prefer-online`, `npm pack @fatelabs/estelle@0.2.4`, tar enumeration, clean `npm install`, dependency tree, and installed launch; 2026-08-15 | 1 registry version · 4 packed files · 1 dependency · 1 native postinstall | `latest` must equal `0.2.4`; no deprecation; pack contains only README/launcher/installer/metadata; registry integrity and SLSA v1 attestation present; installed command prints exact version | PASS: `latest` is `0.2.4`; 4-file pack has no legacy modules; registry exposes integrity, signature, and SLSA v1 provenance; clean install added one package and launched native arm64 `estelle 0.2.4` | Registry compromise, other target execution, interactive product behavior, or future-version upgrade behavior |
 
-## Publication gate
+## Publication gate — v0.2.4 PASS
 
-No row may claim a shipped Rust CLI until all of these are read back from public systems:
+The two public-distribution rows above read back all six required facts from public systems:
 
 1. the remote tag resolves to the intended source commit;
 2. four release archives and `SHA256SUMS` exist at customer URLs;
@@ -26,4 +29,4 @@ No row may claim a shipped Rust CLI until all of these are read back from public
 6. `npm view --prefer-online @fatelabs/estelle` reports the native compatibility shim, and `npm pack`
    shows no abandoned JavaScript implementation inside it.
 
-The founder's clean-machine install is a separate proof after these six machine-readable facts hold.
+All six machine-readable facts now hold. The founder's physical clean-machine install is a separate proof.
