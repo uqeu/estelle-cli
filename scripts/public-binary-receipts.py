@@ -15,6 +15,7 @@ import struct
 import subprocess
 import sys
 import termios
+import tempfile
 import time
 from pathlib import Path
 
@@ -251,6 +252,79 @@ def first_run_picker_receipt(timeout: float = 10) -> dict[str, object]:
             os.waitpid(pid, 0)
         except (ChildProcessError, OSError, ProcessLookupError):
             pass
+
+
+def _write_rejected_fixture(home: Path) -> Path:
+    estelle_home = home / ".estelle"
+    estelle_home.mkdir(mode=0o700)
+    auth_path = estelle_home / "auth.json"
+    auth_fd = os.open(auth_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(auth_fd, b'{"key":"public-receipt-intentionally-invalid"}\n')
+    finally:
+        os.close(auth_fd)
+    return auth_path
+
+
+def credential_retention_receipt(
+    repo: str,
+    timeout: float = 30,
+) -> dict[str, object]:
+    with tempfile.TemporaryDirectory(prefix="estelle-rejected-fixture-") as raw_home:
+        home = Path(raw_home)
+        auth_path = _write_rejected_fixture(home)
+        child_env = os.environ.copy()
+        child_env.pop("ESTELLE_API_KEY", None)
+        child_env["HOME"] = str(home)
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.execvpe("estelle", ["estelle", "--repo", repo], child_env)
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 160, 0, 0))
+        os.kill(pid, signal.SIGWINCH)
+        observed = bytearray()
+        visible = ""
+        retained = False
+        removed = False
+        try:
+            visible = _read_until(
+                fd, observed, ("NOT removed",), time.monotonic() + timeout
+            )
+            retained = auth_path.is_file() and "NOT removed" in visible
+            if retained:
+                os.write(fd, b"/me ")
+                time.sleep(0.5)
+                os.write(fd, b"\r")
+                visible = _read_until(
+                    fd, observed, ("you  /me",), time.monotonic() + 1
+                )
+                if "you  /me" not in visible:
+                    os.write(fd, b"\r")
+                visible = _read_until(
+                    fd,
+                    observed,
+                    ("different routes, so it was removed",),
+                    time.monotonic() + timeout,
+                )
+                removed = not auth_path.exists()
+            named_routes = "a background poll" in visible and "me" in visible
+            return {
+                "sent": "production rejection on a background poll, then /me",
+                "came_back": visible.strip(),
+                "fixture": "non-secret intentionally rejected sentinel",
+                "after_one_route": "retained" if retained else "missing",
+                "after_two_routes": "removed" if removed else "retained",
+                "pass": retained
+                and removed
+                and named_routes
+                and "different routes, so it was removed" in visible,
+            }
+        finally:
+            try:
+                os.write(fd, b"\x03")
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+            except (ChildProcessError, OSError, ProcessLookupError):
+                pass
 
 
 def _read_until(
@@ -518,6 +592,7 @@ def run_receipts(
         repository_size_receipt(Path.cwd()),
         erasure_gate_receipt(),
         first_run_picker_receipt(),
+        credential_retention_receipt(repo, timeout),
     ]
     receipts.extend(
         tui_surface_receipt(surface, repo, timeout) for surface in READ_SURFACES

@@ -177,6 +177,10 @@ then presses `1` and passes only when that digit directly activates the `Estelle
 advertised no-arrows/no-Enter path rather than treating visible badges as wiring. It also runs
 `estelle memory forget receipt-sentinel` without `--yes` and passes only when the installed binary names
 the account-wide erasure radius, gives the explicit confirmation remedy, and says that nothing was sent.
+In a separate isolated child home, a non-secret intentionally invalid sentinel crosses the production
+API: repeated background-route rejections must leave its local fixture present and say `NOT removed`;
+only a subsequent `/me` rejection may remove it, after the installed TUI names both distinct routes.
+The recorder structurally omits authorization headers, and the report contains only retained/removed state.
 The cloned repository carries one harmless whitespace change to its smallest tracked `package-lock.json`;
 the installed TUI must drive both `/review` and `/scan` successfully against that measured diff. This
 keeps deep review and the whole-lockfile attachment path in the public receipt rather than accepting their

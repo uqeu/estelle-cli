@@ -212,6 +212,11 @@ def test_complete_harness_writes_every_receipt() -> None:
             "if [ \"$1\" = reindex ]; then printf 'Memory current.\\n'; exit 0; fi\n"
             "if [ \"$1\" = install-hooks ]; then printf 'full session lifecycle\\n'; exit 0; fi\n"
             "if [ \"$1\" = hook ]; then printf '{\"mode\":\"%s\"}\\n' \"$2\"; exit 0; fi\n"
+            "if [ -f \"$HOME/.estelle/auth.json\" ]; then\n"
+            "  printf 'Ask Estelle\\nrejected on a background poll. It was NOT removed\\n› Ask Estelle\\n'\n"
+            "  IFS= read -r command; rm \"$HOME/.estelle/auth.json\"\n"
+            "  printf 'you  %s\\nrejected on a background poll, me — different routes, so it was removed.\\n› Ask Estelle\\n' \"$command\"; exit 0\n"
+            "fi\n"
             "if [ -z \"${ESTELLE_API_KEY:-}\" ]; then\n"
             "  printf 'CONNECT ESTELLE\\n1 Estelle account\\n2 Claude subscription\\n'\n"
             "  stty raw -echo; dd bs=1 count=1 >/dev/null 2>&1\n"
@@ -253,12 +258,13 @@ def test_complete_harness_writes_every_receipt() -> None:
         )
         assert result.returncode == 0, result.stderr
         report = json.loads(output.read_text(encoding="utf-8"))
-        assert report["summary"] == {"passed": 46, "failed": 0}
-        assert [row["sent"] for row in report["receipts"][4:28]] == EXPECTED_READ_SURFACES
-        assert report["receipts"][28]["sent"].startswith("Which file defines")
-        assert report["receipts"][29]["processes_started"] == 1
-        assert [row["sent"] for row in report["receipts"][30:32]] == ["/review", "/scan"]
-        assert report["receipts"][34]["sent"] == "estelle reindex"
+        assert report["summary"] == {"passed": 47, "failed": 0}
+        assert report["receipts"][4]["after_one_route"] == "retained"
+        assert [row["sent"] for row in report["receipts"][5:29]] == EXPECTED_READ_SURFACES
+        assert report["receipts"][29]["sent"].startswith("Which file defines")
+        assert report["receipts"][30]["processes_started"] == 1
+        assert [row["sent"] for row in report["receipts"][31:33]] == ["/review", "/scan"]
+        assert report["receipts"][35]["sent"] == "estelle reindex"
         assert report["receipts"][-1]["event"] == "UserPromptSubmit/context"
         assert all(row["pass"] for row in report["receipts"])
 
@@ -320,6 +326,38 @@ def test_first_run_picker_receipt() -> None:
         assert "1 Estelle account" in receipt["came_back"]
         assert "2 Claude subscription" in receipt["came_back"]
         assert "Estelle key:" in receipt["came_back"]
+
+
+def test_credential_retention_receipt_requires_two_named_routes() -> None:
+    with tempfile.TemporaryDirectory(prefix="estelle-credential-retention-") as raw_dir:
+        fake_bin = Path(raw_dir) / "bin"
+        fake_bin.mkdir()
+        fake_estelle = fake_bin / "estelle"
+        fake_estelle.write_text(
+            "#!/bin/sh\n"
+            "auth_path=\"$HOME/.estelle/auth.json\"\n"
+            "printf 'Ask Estelle\\n'\n"
+            "printf 'rejected on a background poll. It was NOT removed\\n› Ask Estelle\\n'\n"
+            "IFS= read -r command\n"
+            "rm \"$auth_path\"\n"
+            "printf 'you  %s\\nrejected on a background poll, me — different routes, so it was removed.\\n› Ask Estelle\\n' \"$command\"\n",
+            encoding="utf-8",
+        )
+        fake_estelle.chmod(0o755)
+        original_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{fake_bin}{os.pathsep}{original_path}"
+        try:
+            receipt = load_harness().credential_retention_receipt(
+                "uqeu/estelle", timeout=3
+            )
+        finally:
+            os.environ["PATH"] = original_path
+        assert receipt["pass"] is True
+        assert receipt["after_one_route"] == "retained"
+        assert receipt["after_two_routes"] == "removed"
+        assert "a background poll" in receipt["came_back"]
+        assert "me" in receipt["came_back"]
+        assert "public-receipt-intentionally-invalid" not in json.dumps(receipt)
 
 
 def test_http_contract_receipt_proves_hidden_fields() -> None:
@@ -506,6 +544,7 @@ def main() -> int:
     test_repository_size_receipt()
     test_erasure_gate_receipt()
     test_first_run_picker_receipt()
+    test_credential_retention_receipt_requires_two_named_routes()
     test_http_contract_receipt_proves_hidden_fields()
     test_head_surface_commands_run_through_bare_binary()
     test_hook_receipts_drive_every_current_table_row()
