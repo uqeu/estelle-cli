@@ -1,7 +1,7 @@
 schema_version = 1
 audit_date = "2026-08-15"
 audit_state = "source census recorded; call-site exhaustion and process-tree runtime canary remain open"
-released_sink_count = 14
+released_sink_count = 15
 latent_sink_count = 5
 
 [[sink]]
@@ -80,6 +80,17 @@ confirmation = "command plus displayed provider URL"
 destination = "https://auth.openai.com"
 data = "OAuth device/login request"
 disposition = "keep"
+
+[[sink]]
+id = "copilot-device-auth"
+reachability = "released"
+source_file = "tui/src/copilot_login.rs"
+source_symbol = "GITHUB_DEVICE_CODE_URL"
+trigger = "explicit estelle login --provider copilot or matching TUI picker selection"
+confirmation = "explicit provider selection plus the displayed GitHub verification URL and user code"
+destination = "https://github.com/login/device/code and https://github.com/login/oauth/access_token"
+data = "public OAuth client id, device code, and GitHub OAuth access token exchange"
+disposition = "keep; token is stored mode 0600 and entitlement/runtime verification remains explicitly unproven"
 
 [[sink]]
 id = "acp-chatgpt-provider"

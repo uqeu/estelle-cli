@@ -44,7 +44,6 @@ struct DeviceCodeResponse {
 struct AccessTokenResponse {
     access_token: Option<String>,
     error: Option<String>,
-    error_description: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -73,8 +72,12 @@ pub(crate) fn logout() -> io::Result<bool> {
 }
 
 pub(crate) async fn run() -> io::Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(io::Error::other)?;
     run_with(
-        &reqwest::Client::new(),
+        &client,
         &Endpoints::production(),
         &store_path()?,
         &mut io::stdout(),
@@ -138,7 +141,7 @@ async fn poll_for_token(
     initial_interval: u64,
     expires_in: u64,
 ) -> io::Result<Zeroizing<String>> {
-    let deadline = Instant::now() + Duration::from_secs(expires_in.max(1));
+    let deadline = Instant::now() + Duration::from_secs(expires_in.clamp(1, 1_800));
     let mut interval = initial_interval;
     loop {
         if Instant::now() >= deadline {
@@ -148,6 +151,12 @@ async fn poll_for_token(
             ));
         }
         tokio::time::sleep(Duration::from_secs(interval)).await;
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "GitHub device code expired; run login again",
+            ));
+        }
         let response = client
             .post(&endpoints.token)
             .header("Accept", "application/json")
@@ -179,9 +188,8 @@ async fn poll_for_token(
                 ));
             }
             Some(error) => {
-                let detail = token.error_description.unwrap_or_default();
                 return Err(io::Error::other(format!(
-                    "GitHub authorization failed: {error} {detail}"
+                    "GitHub authorization failed with status {error}"
                 )));
             }
             None => {
@@ -300,5 +308,50 @@ mod tests {
         assert!(receipt.contains("ABCD-EFGH"));
         assert!(receipt.contains("runtime binding is not yet proven"));
         assert!(!receipt.contains(token));
+    }
+
+    #[tokio::test]
+    async fn provider_error_body_is_not_rendered_or_persisted() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/device"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "device_code": "device-secret",
+                "user_code": "ABCD-EFGH",
+                "verification_uri": "https://github.example/device",
+                "expires_in": 30,
+                "interval": 0
+            })))
+            .mount(&server)
+            .await;
+        let secret = "provider-error-secret";
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "error": "server_error",
+                "error_description": secret
+            })))
+            .mount(&server)
+            .await;
+        let dir = tempdir().expect("tempdir");
+        let destination = dir.path().join("providers/copilot.json");
+        let endpoints = Endpoints {
+            device: format!("{}/device", server.uri()),
+            token: format!("{}/token", server.uri()),
+        };
+        let mut output = Vec::new();
+
+        let error = run_with(
+            &reqwest::Client::new(),
+            &endpoints,
+            &destination,
+            &mut output,
+        )
+        .await
+        .expect_err("provider error");
+
+        assert!(!destination.exists());
+        assert!(!error.to_string().contains(secret));
+        assert!(!String::from_utf8(output).unwrap().contains(secret));
     }
 }

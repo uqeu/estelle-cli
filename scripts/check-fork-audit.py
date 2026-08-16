@@ -137,7 +137,7 @@ def main() -> None:
     verify_provenance(manifest)
     verify_egress()
     digest = hashlib.sha256(MANIFEST.read_bytes()).hexdigest()
-    print(f"fork_audit=PASS manifest_sha256={digest} released=14 latent=5")
+    print(f"fork_audit=PASS manifest_sha256={digest} released=15 latent=5")
 
 
 if __name__ == "__main__":

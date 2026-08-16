@@ -85,18 +85,33 @@
     },
     {
       "path": "tui/src/doctor.rs",
-      "blob": "1ad0f26480c1bf5a80e1d7a738ac87239dbab032",
-      "reason": "credential diagnostics render presence and remedies only, with no credential value or provider network probe"
+      "blob": "af3ac8ffd12bee524a35ca590245878029068fba",
+      "reason": "credential diagnostics render Estelle, plan, Copilot, provider-key, and local-endpoint presence and remedies only, with no credential value or provider network probe"
     },
     {
       "path": "tui/src/login.rs",
-      "blob": "895381104d1ffd30e8b29ef4789e293043ac77af",
-      "reason": "masked provider input and ChatGPT presence/logout reuse isolated credential stores without echoing secret material"
+      "blob": "219e881c66add50f48d099c23f832b8906eacd64",
+      "reason": "masked provider input, non-secret endpoint input, and ChatGPT presence/logout reuse isolated credential stores without echoing secret material"
     },
     {
       "path": "tui/src/main.rs",
-      "blob": "9c73abe6f3fe65d9513ed6ce577a29569a502074",
-      "reason": "connected terminals resolve no credential and render acknowledged file-shift warnings alongside named long-lived session transcripts; catalog tabs switch and close only the local view while standalone provider routes remain allowlisted before prompts"
+      "blob": "a03fccc10bc70b69196dddb021e966adeb6f9833",
+      "reason": "shell, slash, and picker login surfaces share the reviewed provider catalog and one acquisition dispatcher; the first-run menu explains the two-credential boundary before any prompt"
+    },
+    {
+      "path": "tui/src/copilot_login.rs",
+      "blob": "a2cbe6fed3150f4eaf1dfa77b295c9584ba13d9b",
+      "reason": "explicit GitHub Copilot device login has request and issued-expiry bounds, persists the access token in a mode-0600 Estelle-owned file, and never renders tokens, provider error bodies, or runtime-entitlement claims"
+    },
+    {
+      "path": "tui/src/local_provider.rs",
+      "blob": "1a0ff08ffedbfd13e63ba42fd4dc96b31255a1cd",
+      "reason": "explicit local/custom endpoint acquisition persists a mode-0600 snapshot, omits keys only for catalog-approved local hosts, and renders no submitted key or connection claim"
+    },
+    {
+      "path": "tui/src/provider_catalog.rs",
+      "blob": "f5f9f26ad105a21590f99fb61fc39ecbe9190a8d",
+      "reason": "one static provider catalog owns canonical ids, globally unique aliases, acquisition kinds, UI surfaces, server identities, base defaults, and fail-closed HTTP endpoint policy"
     },
     {
       "path": "estelle-client/src/types.rs",
