@@ -59,6 +59,7 @@ FAILURE_MARKERS = (
     "The Estelle request failed:",
 )
 GROUNDING_QUESTION = "Which file defines an application entry point in this repository?"
+CONVERSATIONAL_QUESTION = "hi"
 DIFF_SURFACES = ("/review", "/scan")
 SMALL_SWEEP_PATH = "rag_tutorials/multimodal_agentic_rag/frontend"
 SKILL_TURNS = (
@@ -557,6 +558,16 @@ def _answer_contract(requests: list[dict]) -> bool:
     )
 
 
+def _conversational_contract(requests: list[dict]) -> bool:
+    matches = [
+        request
+        for request in requests
+        if request.get("path") == "/deep-search"
+        and request.get("body", {}).get("question") == CONVERSATIONAL_QUESTION
+    ]
+    return len(matches) == 1 and "working_memory" not in matches[0].get("body", {})
+
+
 def _whole_lockfile_contract(requests: list[dict]) -> bool:
     return any(
         request.get("path") == "/scan"
@@ -659,6 +670,7 @@ def http_contract_receipt(path: Path) -> tuple[dict[str, object], list[object]]:
         if 200 <= record.get("response", {}).get("status", 0) < 300
     ]
     separated = _answer_contract(requests)
+    conversational = _conversational_contract(requests)
     deep = any(
         request.get("path") == "/gate" and request.get("body", {}).get("deep") is True
         for request in requests
@@ -670,13 +682,15 @@ def http_contract_receipt(path: Path) -> tuple[dict[str, object], list[object]]:
     proof = (
         f"grounded question data-only={separated}; deep review={deep}; "
         f"whole lockfile={whole_lockfile}; three head markers={three_heads}; "
-        f"hook network rows={hook_network}; skill thread={skill_thread}"
+        f"hook network rows={hook_network}; skill thread={skill_thread}; "
+        f"conversational upload absent={conversational}"
     )
     return (
         {
             "sent": "inspect sanitized HTTP trace",
             "came_back": proof,
             "pass": separated
+            and conversational
             and deep
             and whole_lockfile
             and three_heads
@@ -703,6 +717,7 @@ def run_receipts(
         tui_surface_receipt(surface, repo, timeout) for surface in READ_SURFACES
     )
     receipts.append(tui_turn_receipt(GROUNDING_QUESTION, repo, timeout))
+    receipts.append(tui_turn_receipt(CONVERSATIONAL_QUESTION, repo, timeout))
     receipts.append(tui_skill_thread_receipt(repo, timeout))
     receipts.append(
         dropped_command_receipt(

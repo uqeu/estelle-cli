@@ -192,7 +192,9 @@ response. Headers are structurally absent, sensitive key/token fields and secret
 redacted before the append, and recorder I/O failure fails the customer request. The outer harness embeds
 those sanitized rows in the release receipt and requires the grounded question to remain byte-identical
 with working memory as a separate data object, `/review` to send `deep: true`, and `/scan` to carry the
-full changed lockfile rather than only its diff hunk.
+full changed lockfile rather than only its diff hunk. A separate `hi` turn must still cross `/deep-search`
+with the question byte-identical while omitting `working_memory` entirely, proving the conversational
+bandwidth gate from the installed client rather than inferring it from a production answer.
 
 Interactive-skill receipts keep two `/skill:grill-me` turns inside one installed TUI process. The screen
 receipt records both returned frames and the single spawned process; the HTTP proof requires the first

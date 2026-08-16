@@ -294,14 +294,15 @@ def test_complete_harness_writes_every_receipt() -> None:
             output.read_text(encoding="utf-8") if output.exists() else "no report",
         )
         report = json.loads(output.read_text(encoding="utf-8"))
-        assert report["summary"] == {"passed": 48, "failed": 0}
+        assert report["summary"] == {"passed": 49, "failed": 0}
         assert report["receipts"][4]["after_one_route"] == "retained"
         assert [row["sent"] for row in report["receipts"][5:29]] == EXPECTED_READ_SURFACES
         assert report["receipts"][29]["sent"].startswith("Which file defines")
-        assert report["receipts"][30]["processes_started"] == 1
-        assert len(report["receipts"][31]["sent"]) == 26
-        assert [row["sent"] for row in report["receipts"][32:34]] == ["/review", "/scan"]
-        assert report["receipts"][36]["sent"] == "estelle reindex"
+        assert report["receipts"][30]["sent"] == "hi"
+        assert report["receipts"][31]["processes_started"] == 1
+        assert len(report["receipts"][32]["sent"]) == 26
+        assert [row["sent"] for row in report["receipts"][33:35]] == ["/review", "/scan"]
+        assert report["receipts"][37]["sent"] == "estelle reindex"
         assert report["receipts"][-1]["event"] == "UserPromptSubmit/context"
         assert all(row["pass"] for row in report["receipts"])
 
@@ -445,6 +446,14 @@ def test_http_contract_receipt_proves_hidden_fields() -> None:
                 "response": {"status": 200, "body": {"answer": "app.py"}},
             },
             {
+                "request": {
+                    "method": "POST",
+                    "path": "/deep-search",
+                    "body": {"question": "hi"},
+                },
+                "response": {"status": 200, "body": {"answer": "Hello."}},
+            },
+            {
                 "request": {"method": "POST", "path": "/gate", "body": {"deep": True}},
                 "response": {"status": 200, "body": {"verdict": "merge"}},
             },
@@ -540,6 +549,7 @@ def test_http_contract_receipt_proves_hidden_fields() -> None:
         assert "three head markers=True" in receipt["came_back"]
         assert "hook network rows=True" in receipt["came_back"]
         assert "skill thread=True" in receipt["came_back"]
+        assert "conversational upload absent=True" in receipt["came_back"]
         assert observed == records
 
 
