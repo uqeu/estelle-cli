@@ -194,6 +194,14 @@ a bounded subdirectory sweep takes the synchronous `/sync` path, the full real-s
 each request carries a 40-character hexadecimal `head`; a successful screen message without those three
 wire facts is a failure.
 
+Hook receipts first run `estelle install-hooks`, then drive all 10 rows in the current canonical table with
+safe synthetic host envelopes: two PreToolUse rows, three PostToolUse rows (including file shift), the
+Stop/PreCompact/SessionEnd checkpoints, SessionStart, and UserPromptSubmit. Each row records its stdin and
+output even when the host contract is intentionally silent. The HTTP proof additionally requires the
+ground `/verify`, sync `/reindex`, all three distinct checkpoint event values, and context `/search` calls
+to return successfully; local guard, distil, shift, and welcome behavior cannot be substituted for those
+server-bound facts.
+
 Secrets are refused or redacted before Estelle request construction. Stored ChatGPT OAuth material and
 Estelle API credentials have separate typed records and stores. A single remote auth rejection is evidence,
 not permission to destroy a stored credential.

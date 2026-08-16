@@ -131,7 +131,10 @@ def erasure_gate_receipt() -> dict[str, object]:
 
 
 def command_receipt(
-    arguments: list[str], required: tuple[str, ...], timeout: float
+    arguments: list[str],
+    required: tuple[str, ...],
+    timeout: float,
+    input_text: str | None = None,
 ) -> dict[str, object]:
     sent = " ".join(arguments)
     try:
@@ -141,17 +144,21 @@ def command_receipt(
             capture_output=True,
             text=True,
             timeout=timeout,
+            input=input_text,
         )
     except subprocess.TimeoutExpired:
         return {"sent": sent, "came_back": f"timed out after {timeout}s", "pass": False}
     output = "\n".join(
         part.strip() for part in (result.stdout, result.stderr) if part.strip()
     )
-    return {
+    receipt = {
         "sent": sent,
         "came_back": output,
         "pass": result.returncode == 0 and all(marker in output for marker in required),
     }
+    if input_text is not None:
+        receipt["stdin"] = input_text
+    return receipt
 
 
 def head_surface_receipts(timeout: float = 600) -> list[dict[str, object]]:
@@ -162,6 +169,50 @@ def head_surface_receipts(timeout: float = 600) -> list[dict[str, object]]:
         command_receipt(["estelle", "sweep"], ("Repo swept",), timeout),
         command_receipt(["estelle", "reindex"], ("Memory current",), timeout),
     ]
+
+
+def _hook_specs(root: Path, transcript: Path) -> list[tuple[str, str, dict]]:
+    common = {"cwd": str(root), "session_id": "public-receipt-session"}
+    checkpoints = {
+        **common,
+        "transcript_path": str(transcript),
+    }
+    return [
+        ("PreToolUse/ground", "ground", {**common, "tool_name": "Write", "tool_input": {"file_path": "receipt_probe.py", "content": "def receipt_probe():\n    return 1\n"}}),
+        ("PreToolUse/guard", "guard", {**common, "tool_name": "Bash", "tool_input": {"command": "chmod -R 777 /"}}),
+        ("PostToolUse/shift", "shift", {**common, "tool_name": "Read", "tool_input": {"file_path": "README.md"}}),
+        ("PostToolUse/sync", "sync", {**common, "tool_name": "Write", "tool_input": {"file_path": "README.md"}}),
+        ("PostToolUse/distil", "distil", {**common, "tool_name": "Bash", "tool_response": {"stdout": "tests/a.py::test_one PASSED\ntests/a.py::test_two PASSED\n"}}),
+        ("Stop/checkpoint", "checkpoint", {**checkpoints, "hook_event_name": "Stop"}),
+        ("PreCompact/checkpoint", "checkpoint", {**checkpoints, "hook_event_name": "PreCompact"}),
+        ("SessionEnd/checkpoint", "checkpoint", {**checkpoints, "hook_event_name": "SessionEnd"}),
+        ("SessionStart/welcome", "welcome", {**common, "hook_event_name": "SessionStart"}),
+        ("UserPromptSubmit/context", "context", {**common, "prompt": "Where is the application entry point?", "hook_event_name": "UserPromptSubmit"}),
+    ]
+
+
+def hook_event_receipts(root: Path, timeout: float = 30) -> list[dict[str, object]]:
+    transcript = root / ".estelle-public-receipt-transcript.jsonl"
+    records = [
+        {"type": "user", "cwd": str(root), "gitBranch": "main", "version": "receipt", "message": {"role": "user", "content": "inspect the application entry point"}},
+        {"type": "assistant", "message": {"role": "assistant", "model": "receipt", "content": [{"type": "text", "text": "inspection complete"}]}},
+    ]
+    transcript.write_text(
+        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+    )
+    receipts = [
+        command_receipt(
+            ["estelle", "install-hooks"], ("full session lifecycle",), timeout
+        )
+    ]
+    receipts[0]["event"] = "install/current-table"
+    for event, mode, payload in _hook_specs(root, transcript):
+        receipt = command_receipt(
+            ["estelle", "hook", mode], (), timeout, json.dumps(payload)
+        )
+        receipt["event"] = event
+        receipts.append(receipt)
+    return receipts
 
 
 def first_run_picker_receipt(timeout: float = 10) -> dict[str, object]:
@@ -255,6 +306,72 @@ def tui_surface_receipt(
     return tui_turn_receipt(command, repo, timeout)
 
 
+def _answer_contract(requests: list[dict]) -> bool:
+    answer = next(
+        (
+            request
+            for request in requests
+            if request.get("path") == "/deep-search"
+            and request.get("body", {}).get("question") == GROUNDING_QUESTION
+            and isinstance(request.get("body", {}).get("working_memory"), dict)
+        ),
+        None,
+    )
+    return answer is not None and not any(
+        key in answer.get("body", {}) for key in ("instruction", "prompt")
+    )
+
+
+def _whole_lockfile_contract(requests: list[dict]) -> bool:
+    return any(
+        request.get("path") == "/scan"
+        and any(
+            file.get("path", "").endswith("package-lock.json")
+            and len(file.get("content", "")) > 1_000
+            for file in request.get("body", {}).get("files", [])
+            if isinstance(file, dict)
+        )
+        for request in requests
+    )
+
+
+def _head_contract(requests: list[dict]) -> bool:
+    routes = {
+        request.get("path")
+        for request in requests
+        if request.get("path") in ("/sync", "/ingest/start", "/reindex")
+        and len(request.get("body", {}).get("head", "")) == 40
+        and all(
+            character in "0123456789abcdef"
+            for character in request.get("body", {}).get("head", "")
+        )
+    }
+    return routes == {"/sync", "/ingest/start", "/reindex"}
+
+
+def _hook_network_contract(requests: list[dict]) -> bool:
+    checkpoint_events = {
+        request.get("body", {}).get("client", {}).get("event")
+        for request in requests
+        if request.get("path") == "/checkpoint"
+    }
+    return (
+        any(request.get("path") == "/verify" for request in requests)
+        and any(
+            request.get("path") == "/reindex"
+            and "head" not in request.get("body", {})
+            for request in requests
+        )
+        and checkpoint_events == {"Stop", "PreCompact", "SessionEnd"}
+        and any(
+            request.get("path") == "/search"
+            and request.get("body", {}).get("query")
+            == "Where is the application entry point?"
+            for request in requests
+        )
+    )
+
+
 def http_contract_receipt(path: Path) -> tuple[dict[str, object], list[object]]:
     try:
         records = [
@@ -271,54 +388,29 @@ def http_contract_receipt(path: Path) -> tuple[dict[str, object], list[object]]:
             },
             [],
         )
-    requests = [record.get("request", {}) for record in records]
-    answer = next(
-        (
-            request
-            for request in requests
-            if request.get("path") == "/deep-search"
-            and request.get("body", {}).get("question") == GROUNDING_QUESTION
-            and isinstance(request.get("body", {}).get("working_memory"), dict)
-        ),
-        None,
-    )
+    requests = [
+        record.get("request", {})
+        for record in records
+        if 200 <= record.get("response", {}).get("status", 0) < 300
+    ]
+    separated = _answer_contract(requests)
     deep = any(
         request.get("path") == "/gate" and request.get("body", {}).get("deep") is True
         for request in requests
     )
-    whole_lockfile = any(
-        request.get("path") == "/scan"
-        and any(
-            file.get("path", "").endswith("package-lock.json")
-            and len(file.get("content", "")) > 1_000
-            for file in request.get("body", {}).get("files", [])
-            if isinstance(file, dict)
-        )
-        for request in requests
-    )
-    separated = answer is not None and not any(
-        key in answer.get("body", {}) for key in ("instruction", "prompt")
-    )
-    head_routes = {
-        request.get("path")
-        for request in requests
-        if request.get("path") in ("/sync", "/ingest/start", "/reindex")
-        and len(request.get("body", {}).get("head", "")) == 40
-        and all(
-            character in "0123456789abcdef"
-            for character in request.get("body", {}).get("head", "")
-        )
-    }
-    three_heads = head_routes == {"/sync", "/ingest/start", "/reindex"}
+    whole_lockfile = _whole_lockfile_contract(requests)
+    three_heads = _head_contract(requests)
+    hook_network = _hook_network_contract(requests)
     proof = (
         f"grounded question data-only={separated}; deep review={deep}; "
-        f"whole lockfile={whole_lockfile}; three head markers={three_heads}"
+        f"whole lockfile={whole_lockfile}; three head markers={three_heads}; "
+        f"hook network rows={hook_network}"
     )
     return (
         {
             "sent": "inspect sanitized HTTP trace",
             "came_back": proof,
-            "pass": separated and deep and whole_lockfile and three_heads,
+            "pass": separated and deep and whole_lockfile and three_heads and hook_network,
         },
         records,
     )
@@ -341,6 +433,7 @@ def run_receipts(
         tui_surface_receipt(surface, repo, timeout) for surface in DIFF_SURFACES
     )
     receipts.extend(head_surface_receipts(max(timeout, 600)))
+    receipts.extend(hook_event_receipts(Path.cwd(), max(timeout, 30)))
     http_records = None
     if raw_path := os.environ.get("ESTELLE_RECEIPT_PATH"):
         http_receipt, http_records = http_contract_receipt(Path(raw_path))

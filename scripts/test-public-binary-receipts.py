@@ -178,6 +178,8 @@ def test_complete_harness_writes_every_receipt() -> None:
             "fi\n"
             "if [ \"$1\" = sweep ]; then printf 'Repo swept.\\n'; exit 0; fi\n"
             "if [ \"$1\" = reindex ]; then printf 'Memory current.\\n'; exit 0; fi\n"
+            "if [ \"$1\" = install-hooks ]; then printf 'full session lifecycle\\n'; exit 0; fi\n"
+            "if [ \"$1\" = hook ]; then printf '{\"mode\":\"%s\"}\\n' \"$2\"; exit 0; fi\n"
             "if [ -z \"${ESTELLE_API_KEY:-}\" ]; then\n"
             "  printf 'CONNECT ESTELLE\\n1 Estelle account\\n2 Claude subscription\\n'; exit 0\n"
             "fi\n"
@@ -216,11 +218,12 @@ def test_complete_harness_writes_every_receipt() -> None:
         )
         assert result.returncode == 0, result.stderr
         report = json.loads(output.read_text(encoding="utf-8"))
-        assert report["summary"] == {"passed": 34, "failed": 0}
+        assert report["summary"] == {"passed": 45, "failed": 0}
         assert [row["sent"] for row in report["receipts"][4:28]] == EXPECTED_READ_SURFACES
         assert report["receipts"][28]["sent"].startswith("Which file defines")
         assert [row["sent"] for row in report["receipts"][29:31]] == ["/review", "/scan"]
-        assert report["receipts"][-1]["sent"] == "estelle reindex"
+        assert report["receipts"][33]["sent"] == "estelle reindex"
+        assert report["receipts"][-1]["event"] == "UserPromptSubmit/context"
         assert all(row["pass"] for row in report["receipts"])
 
 
@@ -319,6 +322,25 @@ def test_http_contract_receipt_proves_hidden_fields() -> None:
                 }
                 for route in ("/sync", "/ingest/start", "/reindex")
             ],
+            {
+                "request": {"method": "POST", "path": "/verify", "body": {"answer": "def receipt_probe(): pass"}},
+                "response": {"status": 200, "body": {"grounded": True}},
+            },
+            {
+                "request": {"method": "POST", "path": "/reindex", "body": {"files": [{"path": "README.md"}]}},
+                "response": {"status": 200, "body": {"ok": True}},
+            },
+            *[
+                {
+                    "request": {"method": "POST", "path": "/checkpoint", "body": {"client": {"event": event}}},
+                    "response": {"status": 200, "body": {"ok": True}},
+                }
+                for event in ("Stop", "PreCompact", "SessionEnd")
+            ],
+            {
+                "request": {"method": "POST", "path": "/search", "body": {"query": "Where is the application entry point?"}},
+                "response": {"status": 200, "body": {"recall": "app.py"}},
+            },
         ]
         path.write_text(
             "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
@@ -330,6 +352,7 @@ def test_http_contract_receipt_proves_hidden_fields() -> None:
         assert "deep review" in receipt["came_back"]
         assert "whole lockfile" in receipt["came_back"]
         assert "three head markers=True" in receipt["came_back"]
+        assert "hook network rows=True" in receipt["came_back"]
         assert observed == records
 
 
@@ -356,6 +379,42 @@ def test_head_surface_commands_run_through_bare_binary() -> None:
         assert receipts[-1]["sent"] == "estelle reindex"
 
 
+def test_hook_receipts_drive_every_current_table_row() -> None:
+    with tempfile.TemporaryDirectory(prefix="estelle-hook-receipt-") as raw_dir:
+        root = Path(raw_dir)
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        fake_estelle = fake_bin / "estelle"
+        fake_estelle.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = install-hooks ]; then printf 'full session lifecycle\\n'; exit 0; fi\n"
+            "if [ \"$1\" = hook ]; then printf '{\"mode\":\"%s\"}\\n' \"$2\"; exit 0; fi\n",
+            encoding="utf-8",
+        )
+        fake_estelle.chmod(0o755)
+        (root / "README.md").write_text("receipt fixture\n", encoding="utf-8")
+        original_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{fake_bin}{os.pathsep}{original_path}"
+        try:
+            receipts = load_harness().hook_event_receipts(root, timeout=3)
+        finally:
+            os.environ["PATH"] = original_path
+        assert len(receipts) == 11
+        assert all(receipt["pass"] for receipt in receipts)
+        assert [receipt["event"] for receipt in receipts[1:]] == [
+            "PreToolUse/ground",
+            "PreToolUse/guard",
+            "PostToolUse/shift",
+            "PostToolUse/sync",
+            "PostToolUse/distil",
+            "Stop/checkpoint",
+            "PreCompact/checkpoint",
+            "SessionEnd/checkpoint",
+            "SessionStart/welcome",
+            "UserPromptSubmit/context",
+        ]
+
+
 def main() -> int:
     test_inventory()
     test_installed_version()
@@ -368,6 +427,7 @@ def main() -> int:
     test_first_run_picker_receipt()
     test_http_contract_receipt_proves_hidden_fields()
     test_head_surface_commands_run_through_bare_binary()
+    test_hook_receipts_drive_every_current_table_row()
 
     print("public receipt test: all 24 audited read surfaces are mandatory")
     return 0
