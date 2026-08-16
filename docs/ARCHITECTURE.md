@@ -13,8 +13,10 @@ with Alt+Right, and closed only the watched tab with Ctrl+W while the server rem
 installer, direct archive, and npm-installed native binary were byte-identical (`285284e2…`). npm returned
 SHA-512 integrity and SLSA v1 provenance metadata and its packed tarball contained
 only the four native-launcher files. Independent GitHub attestation verification remains unproved outside
-the successful workflow. This release adds same-repository named-session tabs; credential onboarding
-and provider-runtime limits from `v0.2.6` remain unchanged and honestly rendered.
+the successful workflow. The local `v0.2.10` candidate adds same-repository file-shift warnings and has
+passed the release-equivalent suite plus a release-binary hook probe on `awesome-llm-apps`; it is not yet
+public. Credential onboarding and provider-runtime limits from `v0.2.6` remain unchanged and honestly
+rendered.
 
 ## System boundary
 
@@ -42,14 +44,14 @@ The CLI must not silently introduce a third destination.
 | entrypoint | implementation owner | contract |
 |---|---|---|
 | Interactive terminal | `tui/src/main.rs`, `tui/src/lib.rs` | Ratatui work surface, local approvals, grounding views, and server-backed Estelle commands |
-| Session owner | `tui/src/session_server.rs` | Long-lived questions, remote commands, sweeps, typed results, progress, cancellation, and reconnect replay over an owner-only local socket |
+| Session owner | `tui/src/session_server.rs` | Long-lived questions, remote commands, sweeps, typed results, progress, cancellation, reconnect replay, and bounded same-repository file-shift notices over an owner-only local socket |
 | Headless commands | `tui/src/top_level.rs` | Login, sweep, hooks, MCP, ACP, settings, and explicit one-shot operations |
 | Typed Estelle transport | `estelle-client/` | Endpoint inventory, request/response types, auth store, cancellation, bounded timeouts, and redaction |
 | ChatGPT plan login | `login/`, `estelle-client/src/auth_record.rs` | Device flow and refresh rotation; ChatGPT credentials do not enter the Estelle credential store |
 | Credential onboarding | `tui/src/main.rs`, `tui/src/login.rs`, `tui/src/claude_import.rs`, `tui/src/provider_keys.rs`, `tui/src/doctor.rs` | First-run picker, masked input, provider routing, presence-only diagnostics, and separate logout radii |
 | ACP adapter | `estelle-acp/` | Editor session protocol backed by the user's selected model credentials |
 | MCP adapter | `estelle-mcp/` | MCP-facing Estelle catalogue; client-provided MCP servers are deliberately rejected |
-| Always-on hooks | `tui/src/top_level.rs`, generated host configuration | One Rust owner generates Claude Code and Codex hook tables; Python/Rust decisions are contract-pinned |
+| Always-on hooks | `tui/src/top_level.rs`, generated host configuration | One Rust owner generates Claude Code and Codex hook tables; PostToolUse read/edit activity feeds file-shift tracking while Python/Rust decisions remain contract-pinned |
 | Public distribution | `.github/workflows/release.yml`, `install.sh`, `npm-shim/` | Exact SemVer tag to four native archives, checksums, provenance, GitHub Release, and npm retirement shim |
 
 ## Server-owned sessions
@@ -76,9 +78,26 @@ same-repository session catalogue with every snapshot; the TUI renders it as a t
 switches the watched transcript with Alt+Left/Right (with Ctrl+Tab accepted where terminals report it), and
 closes only the local tab with Ctrl+W. Switching creates
 a new server session when the name is not present and never cancels the session being left. Affinity/
-Orchestra worker registration, durable restart recovery, and file-shift swarm notifications remain ordered
-work. Explicit local shell commands and patch application remain terminal-owned because they mutate the
-attached working tree; they are never presented as detachable server work.
+Orchestra worker registration and durable restart recovery remain ordered work. Explicit local shell
+commands and patch application remain terminal-owned because they mutate the attached working tree; they
+are never presented as detachable server work.
+
+The installed Claude Code and Codex `PostToolUse` table reports `Read`, `Write`, and `Edit` activity through
+the same socket. Read sets are kept by the server, capped at 4,096 repository-relative paths per session.
+When another named session under the exact same repository and root reports a change to one of those paths,
+the server stores and broadcasts a notice to the reader; each reader retains at most 64 notices. A detached
+reader receives the pending notice in its next snapshot, while an attached TUI renders `FILE SHIFT` and
+acknowledges it. The headless hook returns the same warning as model context and acknowledges it after
+delivery. Absolute paths are stripped only when they are under the session root; traversal, outside-root,
+and empty paths are rejected. Tool contents and credential values are never included—the summary is only
+the completed tool action.
+
+This mechanism follows the reader-after-edit behavior documented at `jcode.sh/swarm` and the bounded
+server-owned activity architecture in jcode's MIT-licensed `jcode-swarm-core` and `FileTouchService`.
+Estelle does not claim an exact port: the current vendored jcode `latest_peer_touches` predicate selects
+modifying peers, while the requested Estelle invariant explicitly selects prior readers. The red test pins
+that stronger behavior and the implementation is original Apache-2.0 Estelle code. It does not yet include
+jcode's direct-message, broadcast, heartbeat, roster, or Orchestra worker-registration surfaces.
 
 ## Release pipeline
 
@@ -198,6 +217,9 @@ on uncommitted sweep contents. That client-side-only boundary is design limit #6
   `awesome-llm-apps`; a production-authenticated successful answer still requires a customer credential.
 - Session state is in-memory across terminal detach, not durable across a server process or machine restart;
   Affinity/Orchestra worker registration is not yet wired to create the named sessions automatically.
+- File-shift read sets and pending notices share that in-memory lifetime. The local `v0.2.10` release binary
+  passed a synthetic host `PostToolUse` Read/Edit sequence against public-origin `awesome-llm-apps`, but
+  customer-installed public bytes have not yet repeated the proof.
 - Runtime process-tree egress proof, production settings/autonomy writes, and the complete ACP lifecycle
   remain open measurements.
 - The binary IP-boundary invariant is SHIPPED and PROBED for its two named package prefixes; unnamed or
