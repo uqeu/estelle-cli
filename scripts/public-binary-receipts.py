@@ -57,6 +57,7 @@ FAILURE_MARKERS = (
     "The request was cancelled.",
     "The Estelle request failed:",
 )
+GROUNDING_QUESTION = "Which file defines an application entry point in this repository?"
 
 
 def installed_version_receipt(expected_tag: str) -> dict[str, object]:
@@ -86,6 +87,27 @@ def installed_version_receipt(expected_tag: str) -> dict[str, object]:
     }
 
 
+def repository_size_receipt(
+    root: Path, minimum_per_language: int = 100
+) -> dict[str, object]:
+    assert minimum_per_language > 0
+    assert root.is_dir()
+    python_files = 0
+    typescript_files = 0
+    for path in root.rglob("*"):
+        if not path.is_file() or ".git" in path.parts:
+            continue
+        python_files += path.suffix == ".py"
+        typescript_files += path.suffix in (".ts", ".tsx")
+    output = f"{python_files:,} Python + {typescript_files:,} TypeScript files"
+    return {
+        "sent": "measure cloned public repository",
+        "came_back": output,
+        "pass": python_files >= minimum_per_language
+        and typescript_files >= minimum_per_language,
+    }
+
+
 def _read_until(
     fd: int, observed: bytearray, markers: tuple[str, ...], deadline: float
 ) -> str:
@@ -104,12 +126,12 @@ def _read_until(
     return visible
 
 
-def tui_surface_receipt(
-    command: str,
+def tui_turn_receipt(
+    turn: str,
     repo: str,
     timeout: float = 30,
 ) -> dict[str, object]:
-    assert command.startswith("/")
+    assert turn.strip() == turn and turn
     pid, fd = pty.fork()
     if pid == 0:
         os.execvp("estelle", ["estelle", "--repo", repo])
@@ -122,17 +144,18 @@ def tui_surface_receipt(
         visible = _read_until(fd, observed, ("Ask Estelle",), ready_deadline)
         if "Ask Estelle" in visible:
             time.sleep(0.25)
-            os.write(fd, f"{command} ".encode())
+            submitted = f"{turn} " if turn.startswith("/") else turn
+            os.write(fd, submitted.encode())
             time.sleep(0.1)
             os.write(fd, b"\r")
-            visible = _read_until(fd, observed, (f"you  {command}",), ready_deadline)
+            visible = _read_until(fd, observed, (f"you  {turn}",), ready_deadline)
             visible = _read_until(fd, observed, ("› Ask Estelle",), ready_deadline)
         passed = (
-            f"you  {command}" in visible
+            f"you  {turn}" in visible
             and "› Ask Estelle" in visible
             and not any(marker in visible for marker in FAILURE_MARKERS)
         )
-        return {"sent": command, "came_back": visible.strip(), "pass": passed}
+        return {"sent": turn, "came_back": visible.strip(), "pass": passed}
     finally:
         try:
             os.write(fd, b"\x03")
@@ -142,13 +165,24 @@ def tui_surface_receipt(
             pass
 
 
+def tui_surface_receipt(
+    command: str, repo: str, timeout: float = 30
+) -> dict[str, object]:
+    assert command.startswith("/")
+    return tui_turn_receipt(command, repo, timeout)
+
+
 def run_receipts(
     expected_version: str, repo: str, timeout: float
 ) -> dict[str, object]:
-    receipts = [installed_version_receipt(expected_version)]
+    receipts = [
+        installed_version_receipt(expected_version),
+        repository_size_receipt(Path.cwd()),
+    ]
     receipts.extend(
         tui_surface_receipt(surface, repo, timeout) for surface in READ_SURFACES
     )
+    receipts.append(tui_turn_receipt(GROUNDING_QUESTION, repo, timeout))
     passed = sum(receipt["pass"] is True for receipt in receipts)
     return {
         "expected_version": expected_version,

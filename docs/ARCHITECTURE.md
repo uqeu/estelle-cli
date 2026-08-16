@@ -161,12 +161,14 @@ named package and implementation boundaries, not the absence of every conceivabl
 The release workflow's public receipt job starts only after GitHub has published the release. On a fresh
 runner it fetches `install.sh` from that release's public URL, requires bare `estelle` to resolve to the
 new native binary, checks the exact SemVer, and clones `Shubhamsaboo/awesome-llm-apps` rather than using a
-fixture repository. `scripts/public-binary-receipts.py` then opens the installed TUI in a real
+fixture repository. The receipt records the clone's measured Python and TypeScript file counts and fails
+unless both are at least 100. `scripts/public-binary-receipts.py` then opens the installed TUI in a real
 pseudo-terminal once per audited read surface: the 22 route-coverage additions plus the pre-existing
 `/init` and `/sessions` paths. Every receipt records what was typed and the rendered server result. An
 unreached surface, auth rejection, HTTP error, timeout, network failure, or client decode failure fails the
-whole job; no surface can be recorded as skipped. The exact JSON is attached to the public release and
-linked from its release notes. This 24-read slice is wired for the next release; it is not a shipped claim
+whole job; no surface can be recorded as skipped. A non-conversational repository question also crosses
+the same installed TUI seam and records its grounded production answer. The exact JSON is attached to the
+public release and linked from its release notes. This 24-read slice is wired for the next release; it is not a shipped claim
 until that public job passes.
 
 Secrets are refused or redacted before Estelle request construction. Stored ChatGPT OAuth material and

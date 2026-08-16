@@ -114,6 +114,31 @@ def test_tui_surface() -> None:
         assert receipt["pass"] is True
 
 
+def test_question_turn_uses_the_same_public_tui_seam() -> None:
+    with tempfile.TemporaryDirectory(prefix="estelle-public-question-") as raw_dir:
+        fake_bin = Path(raw_dir) / "bin"
+        fake_bin.mkdir()
+        fake_estelle = fake_bin / "estelle"
+        fake_estelle.write_text(
+            "#!/bin/sh\nprintf 'Ask Estelle\\n'\nIFS= read -r turn\n"
+            "printf 'you  %s\\nGROUNDED ANSWER\\n› Ask Estelle\\n' \"$turn\"\n",
+            encoding="utf-8",
+        )
+        fake_estelle.chmod(0o755)
+        original_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{fake_bin}{os.pathsep}{original_path}"
+        try:
+            receipt = load_harness().tui_turn_receipt(
+                "Which file defines the application entry point?",
+                "uqeu/estelle",
+                timeout=3,
+            )
+        finally:
+            os.environ["PATH"] = original_path
+        assert receipt["pass"] is True
+        assert "GROUNDED ANSWER" in receipt["came_back"]
+
+
 def test_tui_surface_fails_closed() -> None:
     with tempfile.TemporaryDirectory(prefix="estelle-public-tui-fail-") as raw_dir:
         fake_bin = Path(raw_dir) / "bin"
@@ -154,6 +179,9 @@ def test_complete_harness_writes_every_receipt() -> None:
             encoding="utf-8",
         )
         fake_estelle.chmod(0o755)
+        for index in range(100):
+            (root / f"module-{index}.py").write_text("pass\n", encoding="utf-8")
+            (root / f"module-{index}.ts").write_text("export {};\n", encoding="utf-8")
         output = root / "receipts.json"
         environment = os.environ.copy()
         environment["PATH"] = f"{fake_bin}{os.pathsep}{environment.get('PATH', '')}"
@@ -174,21 +202,36 @@ def test_complete_harness_writes_every_receipt() -> None:
             capture_output=True,
             text=True,
             env=environment,
+            cwd=root,
             timeout=30,
         )
         assert result.returncode == 0, result.stderr
         report = json.loads(output.read_text(encoding="utf-8"))
-        assert report["summary"] == {"passed": 25, "failed": 0}
-        assert [row["sent"] for row in report["receipts"][1:]] == EXPECTED_READ_SURFACES
+        assert report["summary"] == {"passed": 27, "failed": 0}
+        assert [row["sent"] for row in report["receipts"][2:26]] == EXPECTED_READ_SURFACES
+        assert report["receipts"][-1]["sent"].startswith("Which file defines")
         assert all(row["pass"] for row in report["receipts"])
+
+
+def test_repository_size_receipt() -> None:
+    with tempfile.TemporaryDirectory(prefix="estelle-public-repo-") as raw_dir:
+        root = Path(raw_dir)
+        for name in ["one.py", "two.py", "one.ts", "two.ts"]:
+            (root / name).write_text("sentinel\n", encoding="utf-8")
+        receipt = load_harness().repository_size_receipt(root, minimum_per_language=2)
+        assert receipt["pass"] is True
+        assert receipt["sent"] == "measure cloned public repository"
+        assert "2 Python + 2 TypeScript files" in receipt["came_back"]
 
 
 def main() -> int:
     test_inventory()
     test_installed_version()
     test_tui_surface()
+    test_question_turn_uses_the_same_public_tui_seam()
     test_tui_surface_fails_closed()
     test_complete_harness_writes_every_receipt()
+    test_repository_size_receipt()
 
     print("public receipt test: all 24 audited read surfaces are mandatory")
     return 0
