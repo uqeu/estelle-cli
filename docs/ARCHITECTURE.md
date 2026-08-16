@@ -4,17 +4,15 @@
 `uqeu/estelle-cli` repository. The parent repository may index or summarize it, but cannot be the only
 copy: a behaviour change and its architecture record must be reviewable in one CLI commit.
 
-**TODAY — source + public probes, 2026-08-16:** `v0.2.6` release run `31927645013` completed successfully.
-The 06:00Z read-back found nine public assets, verified all four archive checksums and one-member sets, ran
-and installed the arm64 artifact as `estelle 0.2.6`, reached `CONNECT ESTELLE` from a clean-home public
-install, and installed the public npm shim to the same native version. npm returned SHA-512 integrity and
-SLSA v1 provenance metadata. Local GitHub attestation verification still could not initialize a Sigstore
-verifier, so independent provenance read-back remains unproved outside the successful workflow. The release
-adds a fail-closed installer shadow check, a real-PTY first-run gate, and credential onboarding before the
-conversation surface. Local tests prove the five-row `/login` picker, masked provider-key wire request,
-read-only Claude Code snapshot, `/logout`, `/whoami`, `/doctor`, and explicit provider-route refusals. They
-do not prove Claude, ChatGPT, or a local model can serve the custom Estelle conversation path; those runtime
-bindings remain absent and are rendered as such.
+**TODAY — source + public probes, 2026-08-16:** `v0.2.7` release run `31939611428` completed successfully.
+The read-back found nine public assets, verified all four archive checksums and one-member sets, ran and
+installed the arm64 artifact as `estelle 0.2.7`, and proved the clean-home bare command against the real
+`awesome-llm-apps` checkout. The shell installer, direct archive, and npm-installed native binary were
+byte-identical (`881ce252…`). npm returned SHA-512 integrity and SLSA v1 provenance metadata and its packed
+tarball contained only the four native-launcher files. Local GitHub attestation verification still could
+not initialize a Sigstore verifier, so independent provenance read-back remains unproved outside the
+successful workflow. This release adds the artifact-level server/CLI IP boundary; the credential onboarding
+and provider-runtime limits from `v0.2.6` remain unchanged and honestly rendered.
 
 ## System boundary
 
@@ -102,8 +100,10 @@ The downloadable binary is a readable customer artifact, so the server/CLI owner
 on the artifact rather than trusted as a source-layout convention. `scripts/check-ip-boundary.py` reads one
 regular binary under a named 512 MiB ceiling and rejects the server-owned Python symbol prefixes
 `estelle.serve` and `estelle.agent`. Every target-native release build crosses this gate before packaging;
-`scripts/test-ip-boundary.py` plants a server-symbol mutant and proves it is rejected. This proves the two
-named package boundaries, not the absence of every conceivable proprietary byte pattern.
+`scripts/test-ip-boundary.py` plants a server-symbol mutant and proves it is rejected. All four target-native
+`v0.2.7` builds crossed the guard, and the separately downloaded and shell-installed arm64 bytes passed it
+again. This proves the two named package boundaries, not the absence of every conceivable proprietary byte
+pattern.
 
 Secrets are refused or redacted before Estelle request construction. Stored ChatGPT OAuth material and
 Estelle API credentials have separate typed records and stores. A single remote auth rejection is evidence,
@@ -153,7 +153,7 @@ on uncommitted sweep contents. That client-side-only boundary is design limit #6
 
 ## Current limits
 
-- The immutable `v0.2.6` release is public and its archive/install/first-run/npm bytes passed read-back. The local
+- The immutable `v0.2.7` release is public and its archive/install/first-run/npm bytes passed read-back. The local
   Sigstore verifier could not initialize, so external attestation verification is still absent from that
   probe even though the release workflow's signing step passed.
 - The founder's clean-machine default-shell restart, shadowed-npm-machine repair, and ChatGPT device-flow
@@ -163,7 +163,7 @@ on uncommitted sweep contents. That client-side-only boundary is design limit #6
 - Client-provided MCP servers remain deliberately rejected.
 - Runtime process-tree egress proof, production settings/autonomy writes, and the complete ACP lifecycle
   remain open measurements.
-- The binary IP-boundary test is wired into the next release, but is not SHIPPED or PROBED until those public
-  bytes are downloaded and checked independently.
+- The binary IP-boundary invariant is SHIPPED and PROBED for its two named package prefixes; unnamed or
+  differently encoded proprietary logic remains outside that deliberately narrow claim.
 - Any-mode question picking, terminal Mermaid rendering, and the remaining ACP session surfaces are ordered
   product work; this document does not style their presence as shipped.
