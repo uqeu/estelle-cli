@@ -166,6 +166,16 @@ pub(crate) fn read_secret_value(prompt: &[u8]) -> io::Result<Option<Zeroizing<St
     }
 }
 
+pub(crate) fn read_plain_value(prompt: &[u8]) -> io::Result<Option<String>> {
+    let mut output = io::stdout();
+    output.write_all(prompt)?;
+    output.flush()?;
+    let mut value = String::new();
+    io::stdin().read_line(&mut value)?;
+    let value = value.trim();
+    Ok((!value.is_empty()).then(|| value.to_string()))
+}
+
 fn read_secret() -> io::Result<Option<ApiKey>> {
     read_secret_value(b"Estelle key: ")?
         .map(|value| ApiKey::new(value.to_string()))

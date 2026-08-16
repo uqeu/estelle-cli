@@ -2,10 +2,13 @@
 
 mod claude_import;
 mod commands;
+mod copilot_login;
 mod doctor;
 mod hook_distil;
 mod hook_guard;
+mod local_provider;
 mod login;
+mod provider_catalog;
 mod provider_keys;
 mod session_server;
 #[cfg(test)]
@@ -432,50 +435,6 @@ enum InlineLoginOutcome {
     Provider(&'static str),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum ProviderLoginRoute {
-    ClaudeImport,
-    ChatgptPlan,
-    ApiKey(String),
-}
-
-fn provider_login_route(provider: &str, base_url: Option<&str>) -> io::Result<ProviderLoginRoute> {
-    let provider = provider.trim().to_ascii_lowercase();
-    match provider.as_str() {
-        "claude" | "anthropic-subscription" => Ok(ProviderLoginRoute::ClaudeImport),
-        "openai" | "chatgpt" => Ok(ProviderLoginRoute::ChatgptPlan),
-        "openai-api" => Ok(ProviderLoginRoute::ApiKey("openai".to_string())),
-        "anthropic" | "gemini" | "openrouter" | "deepseek" => {
-            Ok(ProviderLoginRoute::ApiKey(provider))
-        }
-        "moonshot" | "kimi" => Ok(ProviderLoginRoute::ApiKey("moonshot".to_string())),
-        "zhipu" | "glm" => Ok(ProviderLoginRoute::ApiKey("zhipu".to_string())),
-        "openai-compatible" if base_url.is_some_and(|url| !url.trim().is_empty()) => {
-            Ok(ProviderLoginRoute::ApiKey(provider))
-        }
-        "openai-compatible" => Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "openai-compatible requires --base-url; no credential was requested",
-        )),
-        "lmstudio" | "ollama" => Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            format!("{provider} local inference is not wired; no credential was requested"),
-        )),
-        "copilot" | "azure" | "bedrock" => Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            format!("{provider} provider runtime is not wired; no credential was requested"),
-        )),
-        "" => Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "provider name cannot be empty",
-        )),
-        _ => Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("unknown provider {provider}; no credential was requested"),
-        )),
-    }
-}
-
 struct AuthContext {
     store: CredentialStore,
     source: CredentialSource,
@@ -762,24 +721,13 @@ impl PickerSurface {
     fn provider_login() -> Self {
         Self {
             title: "Provider API key".to_string(),
-            rows: [
-                "anthropic",
-                "openai",
-                "gemini",
-                "openrouter",
-                "deepseek",
-                "moonshot",
-                "zhipu",
-                "openai-compatible",
-            ]
-            .into_iter()
-            .map(|provider| PickerRow {
-                label: provider.to_string(),
-                detail: "masked input · stored in your Estelle account · never shown again"
-                    .to_string(),
-                action: PickerAction::LoginProvider(provider),
-            })
-            .collect(),
+            rows: provider_catalog::on_surface(provider_catalog::Surface::ProviderKey)
+                .map(|provider| PickerRow {
+                    label: provider.display_name.to_string(),
+                    detail: provider.detail.to_string(),
+                    action: PickerAction::LoginProvider(provider.id),
+                })
+                .collect(),
             selected: 0,
         }
     }
@@ -787,17 +735,11 @@ impl PickerSurface {
     fn local_login() -> Self {
         Self {
             title: "Local model".to_string(),
-            rows: ["lmstudio", "ollama", "openai-compatible"]
-                .into_iter()
+            rows: provider_catalog::on_surface(provider_catalog::Surface::Local)
                 .map(|provider| PickerRow {
-                    label: provider.to_string(),
-                    detail: if provider == "openai-compatible" {
-                        "enter an API base; localhost may omit the key"
-                    } else {
-                        "local OpenAI-compatible endpoint · no API key required"
-                    }
-                    .to_string(),
-                    action: PickerAction::LoginLocal(provider),
+                    label: provider.display_name.to_string(),
+                    detail: provider.detail.to_string(),
+                    action: PickerAction::LoginLocal(provider.id),
                 })
                 .collect(),
             selected: 0,
@@ -1424,6 +1366,22 @@ fn whoami_lines(app: &App, local_plan_present: bool) -> Vec<String> {
             }
         ),
         format!("Provider keys  {}", providers),
+        format!(
+            "GitHub Copilot  {}",
+            if copilot_login::credential_present() {
+                "credential present · entitlement/runtime not yet proven"
+            } else {
+                "no"
+            }
+        ),
+        format!(
+            "Local endpoint  {}",
+            if local_provider::configured_present() {
+                "configured · runtime not yet proven"
+            } else {
+                "no"
+            }
+        ),
         "Credential values are never displayed.".to_string(),
     ]
 }
@@ -1703,40 +1661,7 @@ impl App {
                         .or_else(|| value.strip_prefix("--provider "))
                         .unwrap_or_default()
                         .trim();
-                    let canonical_api_provider = match provider {
-                        "openai" if api_key_route => Some("openai"),
-                        "openai-api" => Some("openai"),
-                        "anthropic" => Some("anthropic"),
-                        "gemini" => Some("gemini"),
-                        "openrouter" => Some("openrouter"),
-                        "deepseek" => Some("deepseek"),
-                        "moonshot" | "kimi" => Some("moonshot"),
-                        "zhipu" | "glm" => Some("zhipu"),
-                        _ => None,
-                    };
-                    match (api_key_route, provider, canonical_api_provider) {
-                        (false, "openai" | "chatgpt", _) => {
-                            self.pending_login = Some(PendingLogin::Chatgpt)
-                        }
-                        (false, "claude" | "anthropic-subscription", _) => {
-                            self.transcript.push(TranscriptEntry::System(
-                                "Claude import reads the credential Claude Code stored on this machine after this explicit command; it never moves or modifies Claude Code's copy."
-                                    .to_string(),
-                            ));
-                            self.pending_login = Some(PendingLogin::Claude);
-                        }
-                        (_, _, Some(provider)) => {
-                            self.pending_login = Some(if self.client.is_some() {
-                                PendingLogin::Provider(provider)
-                            } else {
-                                PendingLogin::EstelleThenProvider(provider)
-                            });
-                        }
-                        _ => self.transcript.push(TranscriptEntry::System(
-                            "Choose a provider from /login; this client will not guess an unknown provider route."
-                                .to_string(),
-                        )),
-                    }
+                    self.queue_provider_login(provider, api_key_route);
                 }
                 _ => self.transcript.push(TranscriptEntry::System(
                     "Usage: /login, /login --chatgpt, or /login --provider <provider>.".to_string(),
@@ -1897,6 +1822,37 @@ impl App {
         true
     }
 
+    fn queue_provider_login(&mut self, name: &str, force_api_key: bool) {
+        let lookup = match (force_api_key, name) {
+            (true, "openai" | "chatgpt") => "openai-api",
+            (true, "claude" | "anthropic-subscription") => "anthropic-api",
+            _ => name,
+        };
+        let Some(provider) = provider_catalog::resolve(lookup) else {
+            self.transcript.push(TranscriptEntry::System(
+                "Choose a provider from /login; this client will not guess an unknown provider route."
+                    .to_string(),
+            ));
+            return;
+        };
+        match provider.auth {
+            provider_catalog::AuthKind::ClaudeImport => {
+                self.transcript.push(TranscriptEntry::System(
+                    "Claude import reads the credential Claude Code stored on this machine after this explicit command; it never moves or modifies Claude Code's copy."
+                        .to_string(),
+                ));
+                self.pending_login = Some(PendingLogin::Claude);
+            }
+            provider_catalog::AuthKind::ChatgptDevice => {
+                self.pending_login = Some(PendingLogin::Chatgpt)
+            }
+            _ if provider.server_provider.is_some() && self.client.is_none() => {
+                self.pending_login = Some(PendingLogin::EstelleThenProvider(provider.id));
+            }
+            _ => self.pending_login = Some(PendingLogin::Provider(provider.id)),
+        }
+    }
+
     fn logout_local_credentials(&mut self) {
         let estelle = match self.auth.take() {
             Some(auth) if auth.source == CredentialSource::Environment => {
@@ -1914,6 +1870,16 @@ impl App {
             (Ok(_), Ok(_)) => "no stored plan credential was present",
             _ => "one or more plan credentials could not be removed",
         };
+        let copilot = match copilot_login::logout() {
+            Ok(true) => "stored credential removed",
+            Ok(false) => "no stored credential was present",
+            Err(_) => "stored credential could not be removed",
+        };
+        let local = match local_provider::logout() {
+            Ok(true) => "local endpoint configuration removed",
+            Ok(false) => "no local endpoint configuration was present",
+            Err(_) => "local endpoint configuration could not be removed",
+        };
         self.client = None;
         self.account = None;
         self.header.connected = false;
@@ -1925,6 +1891,8 @@ impl App {
             lines: vec![
                 format!("Estelle account  {estelle}"),
                 format!("Model plan  {plan}"),
+                format!("GitHub Copilot  {copilot}"),
+                format!("Local endpoint  {local}"),
                 "Server-side provider keys were not deleted.".to_string(),
             ],
         });
@@ -2056,20 +2024,14 @@ impl App {
             }
             PickerAction::LoginProvider(provider) => {
                 self.picker = None;
-                self.pending_login = Some(if self.client.is_some() {
-                    PendingLogin::Provider(provider)
-                } else {
-                    PendingLogin::EstelleThenProvider(provider)
-                });
+                self.queue_provider_login(provider, false);
             }
             PickerAction::OpenLocalLogin => {
                 self.picker = Some(PickerSurface::local_login());
             }
             PickerAction::LoginLocal(provider) => {
-                self.transcript.push(TranscriptEntry::System(format!(
-                    "{provider} needs the local provider runtime before Estelle can claim it generates answers. Run /doctor for the missing binding."
-                )));
-                self.picker = Some(PickerSurface::login());
+                self.picker = None;
+                self.queue_provider_login(provider, false);
             }
             PickerAction::OpenMode => self.picker = Some(PickerSurface::autonomy(self)),
             PickerAction::SelectMode(target) => {
@@ -4494,9 +4456,22 @@ fn truncate_display(value: &str, max_width: usize) -> String {
 }
 
 fn render_picker(frame: &mut Frame<'_>, picker: &PickerSurface, area: Rect, app: &App) {
-    let height = u16::try_from(picker.rows.len().saturating_add(2))
-        .unwrap_or(u16::MAX)
-        .min(area.height.max(3));
+    let login_context = (picker.title == "Connect Estelle").then_some([
+        Line::from("Estelle grounds your coding agent in your real codebase."),
+        Line::from(
+            "It runs on the model plan or API key you already have — Estelle never bills you for model tokens.",
+        ),
+    ]);
+    let context_height = login_context.as_ref().map_or(0, |lines| lines.len());
+    let height = u16::try_from(
+        picker
+            .rows
+            .len()
+            .saturating_add(context_height)
+            .saturating_add(3),
+    )
+    .unwrap_or(u16::MAX)
+    .min(area.height.max(3));
     let modal = Rect {
         x: area.x,
         y: area.bottom().saturating_sub(height),
@@ -4507,44 +4482,46 @@ fn render_picker(frame: &mut Frame<'_>, picker: &PickerSurface, area: Rect, app:
     let inner_width = usize::from(modal.width.saturating_sub(3));
     let label_width = (inner_width / 3).clamp(12, 24);
     let detail_width = inner_width.saturating_sub(label_width.saturating_add(3));
-    let lines = picker
-        .rows
-        .iter()
-        .enumerate()
-        .map(|(index, row)| {
-            let selected = index == picker.selected;
-            let badge = if index < 9 {
-                (index + 1).to_string()
-            } else {
-                " ".to_string()
-            };
-            Line::from(vec![
-                Span::styled(
-                    format!(
-                        "{} {} {:<label_width$}  ",
-                        if selected { ">" } else { " " },
-                        badge,
-                        truncate_display(&row.label, label_width),
+    let mut lines = login_context.into_iter().flatten().collect::<Vec<_>>();
+    lines.extend(
+        picker
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let selected = index == picker.selected;
+                let badge = if index < 9 {
+                    (index + 1).to_string()
+                } else {
+                    " ".to_string()
+                };
+                Line::from(vec![
+                    Span::styled(
+                        format!(
+                            "{} {} {:<label_width$}  ",
+                            if selected { ">" } else { " " },
+                            badge,
+                            truncate_display(&row.label, label_width),
+                        ),
+                        if selected {
+                            Style::default()
+                                .fg(app.theme.primary())
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(Color::Gray)
+                        },
                     ),
-                    if selected {
-                        Style::default()
-                            .fg(app.theme.primary())
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(Color::Gray)
-                    },
-                ),
-                Span::styled(
-                    truncate_display(&row.detail, detail_width),
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ])
-        })
-        .chain(std::iter::once(Line::styled(
-            "↑↓ navigate · 1-9 or Enter select · Esc close",
-            Style::default().fg(Color::DarkGray),
-        )))
-        .collect::<Vec<_>>();
+                    Span::styled(
+                        truncate_display(&row.detail, detail_width),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ])
+            })
+            .chain(std::iter::once(Line::styled(
+                "↑↓ navigate · 1-9 or Enter select · Esc close",
+                Style::default().fg(Color::DarkGray),
+            ))),
+    );
     frame.render_widget(
         Paragraph::new(lines)
             .style(
@@ -6404,13 +6381,13 @@ async fn run(
                 PendingLogin::Chatgpt => login::run_chatgpt()
                     .await
                     .map(|()| InlineLoginOutcome::Chatgpt),
-                PendingLogin::Provider(provider) => provider_keys::run(provider, None, None, None)
+                PendingLogin::Provider(provider) => run_provider_login(provider, None, None, None)
                     .await
                     .map(|()| InlineLoginOutcome::Provider(provider)),
                 PendingLogin::EstelleThenProvider(provider) => match login::run().await {
                     Ok(
                         login::LoginOutcome::StoredVerified | login::LoginOutcome::StoredUnverified,
-                    ) => provider_keys::run(provider, None, None, None)
+                    ) => run_provider_login(provider, None, None, None)
                         .await
                         .map(|()| InlineLoginOutcome::Provider(provider)),
                     Ok(login::LoginOutcome::Rejected) => {
@@ -6479,6 +6456,38 @@ async fn login_failure(error: &dyn std::fmt::Display) -> ExitCode {
     ExitCode::FAILURE
 }
 
+async fn run_provider_login(
+    provider: &str,
+    base_url: Option<&str>,
+    model: Option<&str>,
+    label: Option<&str>,
+) -> io::Result<()> {
+    let descriptor = provider_catalog::resolve(provider)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "unknown provider"))?;
+    if descriptor.auth == provider_catalog::AuthKind::LocalEndpoint {
+        return local_provider::run(provider, base_url, model);
+    }
+    let prompted_base = if base_url.is_none() && descriptor.requires_base_url() {
+        login::read_plain_value(b"Provider API base URL: ")?
+    } else {
+        None
+    };
+    let route = provider_catalog::login_route(provider, base_url.or(prompted_base.as_deref()))?;
+    match route.provider.auth {
+        provider_catalog::AuthKind::ClaudeImport => claude_import::run(),
+        provider_catalog::AuthKind::ChatgptDevice => login::run_chatgpt().await,
+        provider_catalog::AuthKind::ApiKey => {
+            let server_provider = route
+                .provider
+                .server_provider
+                .ok_or_else(|| io::Error::other("provider key route has no server identity"))?;
+            provider_keys::run(server_provider, route.base_url.as_deref(), model, label).await
+        }
+        provider_catalog::AuthKind::CopilotDevice => copilot_login::run().await,
+        provider_catalog::AuthKind::LocalEndpoint => unreachable!("handled before route dispatch"),
+    }
+}
+
 async fn command_failure(message: impl std::fmt::Display) -> ExitCode {
     let mut stderr = tokio::io::stderr();
     let _ = stderr.write_all(format!("{message}\n").as_bytes()).await;
@@ -6503,20 +6512,13 @@ async fn main() -> ExitCode {
             };
         }
         if let Some(provider) = provider {
-            let result = match provider_login_route(provider, base_url.as_deref()) {
-                Ok(ProviderLoginRoute::ClaudeImport) => claude_import::run(),
-                Ok(ProviderLoginRoute::ChatgptPlan) => login::run_chatgpt().await,
-                Ok(ProviderLoginRoute::ApiKey(provider)) => {
-                    provider_keys::run(
-                        &provider,
-                        base_url.as_deref(),
-                        model.as_deref(),
-                        label.as_deref(),
-                    )
-                    .await
-                }
-                Err(error) => Err(error),
-            };
+            let result = run_provider_login(
+                provider,
+                base_url.as_deref(),
+                model.as_deref(),
+                label.as_deref(),
+            )
+            .await;
             return match result {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => login_failure(&error).await,
@@ -6860,20 +6862,35 @@ mod tests {
     #[test]
     fn provider_login_routes_are_explicit_and_unknown_names_never_reach_the_key_api() {
         assert_eq!(
-            provider_login_route("claude", None).expect("Claude route"),
-            ProviderLoginRoute::ClaudeImport
+            provider_catalog::login_route("claude", None)
+                .expect("Claude route")
+                .provider
+                .auth,
+            provider_catalog::AuthKind::ClaudeImport
         );
         assert_eq!(
-            provider_login_route("openai", None).expect("ChatGPT route"),
-            ProviderLoginRoute::ChatgptPlan
+            provider_catalog::login_route("openai", None)
+                .expect("ChatGPT route")
+                .provider
+                .auth,
+            provider_catalog::AuthKind::ChatgptDevice
         );
         assert_eq!(
-            provider_login_route("openai-api", None).expect("OpenAI key route"),
-            ProviderLoginRoute::ApiKey("openai".to_string())
+            provider_catalog::login_route("openai-api", None)
+                .expect("OpenAI key route")
+                .provider
+                .server_provider,
+            Some("openai")
         );
-        assert!(provider_login_route("openai-compatible", None).is_err());
-        assert!(provider_login_route("copilot", None).is_err());
-        assert!(provider_login_route("made-up-provider", None).is_err());
+        assert!(provider_catalog::login_route("openai-compatible", None).is_err());
+        assert_eq!(
+            provider_catalog::login_route("copilot", None)
+                .expect("Copilot route")
+                .provider
+                .auth,
+            provider_catalog::AuthKind::CopilotDevice
+        );
+        assert!(provider_catalog::login_route("made-up-provider", None).is_err());
     }
 
     fn rendered_frame(app: &App, now: Instant) -> String {
@@ -8773,7 +8790,7 @@ mod tests {
         app.submit("/login --api-key openai".to_string(), &tx);
         assert_eq!(
             app.pending_login,
-            Some(PendingLogin::EstelleThenProvider("openai"))
+            Some(PendingLogin::EstelleThenProvider("openai-api"))
         );
     }
 
@@ -8791,6 +8808,8 @@ mod tests {
         );
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 30);
         assert!(rendered.contains("CONNECT ESTELLE"));
+        assert!(rendered.contains("grounds your coding agent in your real codebase"));
+        assert!(rendered.contains("never bills you for model tokens"));
         assert!(!rendered.contains("ASK ESTELLE"));
         assert!(!rendered.contains("Run estelle login"));
     }
