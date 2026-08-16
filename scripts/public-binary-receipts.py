@@ -60,6 +60,10 @@ FAILURE_MARKERS = (
 GROUNDING_QUESTION = "Which file defines an application entry point in this repository?"
 DIFF_SURFACES = ("/review", "/scan")
 SMALL_SWEEP_PATH = "rag_tutorials/multimodal_agentic_rag/frontend"
+SKILL_TURNS = (
+    "/skill:grill-me State one risk in changing a CLI contract.",
+    "/skill:grill-me Challenge that answer.",
+)
 
 
 def installed_version_receipt(expected_tag: str) -> dict[str, object]:
@@ -306,6 +310,53 @@ def tui_turn_receipt(
             pass
 
 
+def tui_skill_thread_receipt(
+    repo: str,
+    timeout: float = 30,
+) -> dict[str, object]:
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execvp("estelle", ["estelle", "--repo", repo])
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 160, 0, 0))
+    os.kill(pid, signal.SIGWINCH)
+    observed = bytearray()
+    screens = []
+    passed = True
+    try:
+        visible = _read_until(
+            fd, observed, ("Ask Estelle",), time.monotonic() + timeout
+        )
+        passed = "Ask Estelle" in visible
+        for turn in SKILL_TURNS:
+            if not passed:
+                break
+            deadline = time.monotonic() + timeout
+            os.write(fd, f"{turn} ".encode())
+            time.sleep(0.1)
+            os.write(fd, b"\r")
+            visible = _read_until(fd, observed, (f"you  {turn}",), deadline)
+            visible = _read_until(fd, observed, ("› Ask Estelle",), deadline)
+            screens.append(visible.strip())
+            passed = (
+                f"you  {turn}" in visible
+                and "› Ask Estelle" in visible
+                and not any(marker in visible for marker in FAILURE_MARKERS)
+            )
+        return {
+            "sent": list(SKILL_TURNS),
+            "came_back": screens,
+            "processes_started": 1,
+            "pass": passed and len(screens) == len(SKILL_TURNS),
+        }
+    finally:
+        try:
+            os.write(fd, b"\x03")
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+        except (ChildProcessError, OSError, ProcessLookupError):
+            pass
+
+
 def tui_surface_receipt(
     command: str, repo: str, timeout: float = 30
 ) -> dict[str, object]:
@@ -379,6 +430,36 @@ def _hook_network_contract(requests: list[dict]) -> bool:
     )
 
 
+def _skill_thread_contract(records: list[dict]) -> bool:
+    successful = [
+        record
+        for record in records
+        if record.get("request", {}).get("path") == "/skill/run"
+        and 200 <= record.get("response", {}).get("status", 0) < 300
+    ]
+    if len(successful) != 2:
+        return False
+    first, second = successful
+    first_body = first.get("request", {}).get("body", {})
+    second_body = second.get("request", {}).get("body", {})
+    first_reply = first.get("response", {}).get("body", {}).get("reply")
+    expected_messages = [
+        {"role": "user", "content": "State one risk in changing a CLI contract."},
+        {"role": "assistant", "content": first_reply},
+        {"role": "user", "content": "Challenge that answer."},
+    ]
+    return (
+        first_body.get("skill") == "grill-me"
+        and first_body.get("task") == expected_messages[0]["content"]
+        and "messages" not in first_body
+        and isinstance(first_reply, str)
+        and bool(first_reply.strip())
+        and second_body.get("skill") == "grill-me"
+        and second_body.get("task") == expected_messages[2]["content"]
+        and second_body.get("messages") == expected_messages
+    )
+
+
 def http_contract_receipt(path: Path) -> tuple[dict[str, object], list[object]]:
     try:
         records = [
@@ -408,16 +489,22 @@ def http_contract_receipt(path: Path) -> tuple[dict[str, object], list[object]]:
     whole_lockfile = _whole_lockfile_contract(requests)
     three_heads = _head_contract(requests)
     hook_network = _hook_network_contract(requests)
+    skill_thread = _skill_thread_contract(records)
     proof = (
         f"grounded question data-only={separated}; deep review={deep}; "
         f"whole lockfile={whole_lockfile}; three head markers={three_heads}; "
-        f"hook network rows={hook_network}"
+        f"hook network rows={hook_network}; skill thread={skill_thread}"
     )
     return (
         {
             "sent": "inspect sanitized HTTP trace",
             "came_back": proof,
-            "pass": separated and deep and whole_lockfile and three_heads and hook_network,
+            "pass": separated
+            and deep
+            and whole_lockfile
+            and three_heads
+            and hook_network
+            and skill_thread,
         },
         records,
     )
@@ -436,6 +523,7 @@ def run_receipts(
         tui_surface_receipt(surface, repo, timeout) for surface in READ_SURFACES
     )
     receipts.append(tui_turn_receipt(GROUNDING_QUESTION, repo, timeout))
+    receipts.append(tui_skill_thread_receipt(repo, timeout))
     receipts.extend(
         tui_surface_receipt(surface, repo, timeout) for surface in DIFF_SURFACES
     )

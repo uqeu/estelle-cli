@@ -190,6 +190,11 @@ those sanitized rows in the release receipt and requires the grounded question t
 with working memory as a separate data object, `/review` to send `deep: true`, and `/scan` to carry the
 full changed lockfile rather than only its diff hunk.
 
+Interactive-skill receipts keep two `/skill:grill-me` turns inside one installed TUI process. The screen
+receipt records both returned frames and the single spawned process; the HTTP proof requires the first
+request to omit invented history and the second request's `messages` to equal the first user turn, the
+exact assistant reply returned by production, and the second user turn in order.
+
 Graph-currency receipts exercise all three transport branches from the same installed binary and clone:
 a bounded subdirectory sweep takes the synchronous `/sync` path, the full real-size repository sweep takes
 `/ingest/start`, and `estelle reindex` sends the measured lockfile change. The HTTP proof passes only when

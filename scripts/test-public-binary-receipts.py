@@ -139,6 +139,38 @@ def test_question_turn_uses_the_same_public_tui_seam() -> None:
         assert "GROUNDED ANSWER" in receipt["came_back"]
 
 
+def test_skill_thread_receipt_keeps_both_turns_in_one_tui_process() -> None:
+    with tempfile.TemporaryDirectory(prefix="estelle-public-skill-thread-") as raw_dir:
+        fake_bin = Path(raw_dir) / "bin"
+        fake_bin.mkdir()
+        fake_estelle = fake_bin / "estelle"
+        fake_estelle.write_text(
+            "#!/bin/sh\nprintf 'Ask Estelle\\n'\n"
+            "IFS= read -r first\n"
+            "printf 'you  %s\\nFIRST SKILL REPLY pid=%s\\n› Ask Estelle\\n' \"$first\" \"$$\"\n"
+            "IFS= read -r second\n"
+            "printf 'you  %s\\nSECOND SKILL REPLY pid=%s\\n› Ask Estelle\\n' \"$second\" \"$$\"\n",
+            encoding="utf-8",
+        )
+        fake_estelle.chmod(0o755)
+        original_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{fake_bin}{os.pathsep}{original_path}"
+        try:
+            receipt = load_harness().tui_skill_thread_receipt(
+                "uqeu/estelle", timeout=3
+            )
+        finally:
+            os.environ["PATH"] = original_path
+        assert receipt["pass"] is True
+        assert receipt["processes_started"] == 1
+        screens = receipt["came_back"]
+        assert "FIRST SKILL REPLY" in screens[0]
+        assert "SECOND SKILL REPLY" in screens[1]
+        first_pid = screens[0].split("pid=", 1)[1].split()[0]
+        second_pid = screens[1].split("pid=", 1)[1].split()[0]
+        assert first_pid == second_pid
+
+
 def test_tui_surface_fails_closed() -> None:
     with tempfile.TemporaryDirectory(prefix="estelle-public-tui-fail-") as raw_dir:
         fake_bin = Path(raw_dir) / "bin"
@@ -186,8 +218,9 @@ def test_complete_harness_writes_every_receipt() -> None:
             "  printf 'Estelle key: '; exit 0\n"
             "fi\n"
             "printf 'Ask Estelle\\n'\n"
-            "IFS= read -r command\n"
-            "printf 'you  %s\\nSERVER RECEIPT OK\\n› Ask Estelle\\n' \"$command\"\n",
+            "while IFS= read -r command; do\n"
+            "  printf 'you  %s\\nSERVER RECEIPT OK\\n› Ask Estelle\\n' \"$command\"\n"
+            "done\n",
             encoding="utf-8",
         )
         fake_estelle.chmod(0o755)
@@ -220,11 +253,12 @@ def test_complete_harness_writes_every_receipt() -> None:
         )
         assert result.returncode == 0, result.stderr
         report = json.loads(output.read_text(encoding="utf-8"))
-        assert report["summary"] == {"passed": 45, "failed": 0}
+        assert report["summary"] == {"passed": 46, "failed": 0}
         assert [row["sent"] for row in report["receipts"][4:28]] == EXPECTED_READ_SURFACES
         assert report["receipts"][28]["sent"].startswith("Which file defines")
-        assert [row["sent"] for row in report["receipts"][29:31]] == ["/review", "/scan"]
-        assert report["receipts"][33]["sent"] == "estelle reindex"
+        assert report["receipts"][29]["processes_started"] == 1
+        assert [row["sent"] for row in report["receipts"][30:32]] == ["/review", "/scan"]
+        assert report["receipts"][34]["sent"] == "estelle reindex"
         assert report["receipts"][-1]["event"] == "UserPromptSubmit/context"
         assert all(row["pass"] for row in report["receipts"])
 
@@ -347,6 +381,45 @@ def test_http_contract_receipt_proves_hidden_fields() -> None:
                 "request": {"method": "POST", "path": "/search", "body": {"query": "Where is the application entry point?"}},
                 "response": {"status": 200, "body": {"recall": "app.py"}},
             },
+            {
+                "request": {
+                    "method": "POST",
+                    "path": "/skill/run",
+                    "body": {
+                        "skill": "grill-me",
+                        "task": "State one risk in changing a CLI contract.",
+                    },
+                },
+                "response": {
+                    "status": 200,
+                    "body": {"reply": "The client and server can disagree."},
+                },
+            },
+            {
+                "request": {
+                    "method": "POST",
+                    "path": "/skill/run",
+                    "body": {
+                        "skill": "grill-me",
+                        "task": "Challenge that answer.",
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": "State one risk in changing a CLI contract.",
+                            },
+                            {
+                                "role": "assistant",
+                                "content": "The client and server can disagree.",
+                            },
+                            {"role": "user", "content": "Challenge that answer."},
+                        ],
+                    },
+                },
+                "response": {
+                    "status": 200,
+                    "body": {"reply": "Versioning can contain that risk."},
+                },
+            },
         ]
         path.write_text(
             "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
@@ -359,6 +432,7 @@ def test_http_contract_receipt_proves_hidden_fields() -> None:
         assert "whole lockfile" in receipt["came_back"]
         assert "three head markers=True" in receipt["came_back"]
         assert "hook network rows=True" in receipt["came_back"]
+        assert "skill thread=True" in receipt["came_back"]
         assert observed == records
 
 
@@ -426,6 +500,7 @@ def main() -> int:
     test_installed_version()
     test_tui_surface()
     test_question_turn_uses_the_same_public_tui_seam()
+    test_skill_thread_receipt_keeps_both_turns_in_one_tui_process()
     test_tui_surface_fails_closed()
     test_complete_harness_writes_every_receipt()
     test_repository_size_receipt()
