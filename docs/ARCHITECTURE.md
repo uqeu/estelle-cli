@@ -281,9 +281,18 @@ on uncommitted sweep contents. That client-side-only boundary is design limit #6
 
 ## Current limits
 
-- The immutable `v0.2.11` release is public and its archive/install/provider-boundary/npm bytes passed read-back. The local
-  Sigstore verifier could not initialize, so external attestation verification is still absent from that
-  probe even though the release workflow's signing step passed.
+- The immutable `v0.2.12` release is public at candidate commit `6fa3bf744f1d08a3cb1f2ecf3e115a2e40cfae78`.
+  All four native archives, the checksum-first public installer, and npm package `@fatelabs/estelle@0.2.12`
+  passed remote read-back. Fresh temporary-home installs through both the release installer and npm resolved
+  bare `estelle` to `estelle 0.2.12`; the release-installed 41,510,536-byte macOS arm64 binary also passed the
+  IP-boundary scan. This is SHIPPED evidence, not a production-surface receipt.
+- The `v0.2.12` public-binary receipt job failed closed before its first request because the repository does
+  not have `ESTELLE_RECEIPT_API_KEY` configured. No receipt asset was attached. The 24 reads, production
+  answer/review/scan, graph-head paths, hook network paths, and interactive skill thread therefore remain
+  not PROBED through the installed public binary. The missing external credential is not converted into a
+  skip, mock, or green board row.
+- The local Sigstore verifier could not initialize during the preceding `v0.2.11` probe, so external
+  attestation verification is still absent even though the release workflow's signing steps passed.
 - The founder's clean-machine default-shell restart, shadowed-npm-machine repair, and ChatGPT device-flow
   walkthrough remain human/device-bound; the clean public install and first-run picker are independently
   reproduced.
