@@ -53,9 +53,9 @@ The CLI must not silently introduce a third destination.
 
 ## Server-owned sessions
 
-`estelle serve` is the only process in the split that resolves the Estelle credential. It owns a session
-per canonical working tree and repository, keeps the transcript plus the active cancellation token in
-memory, and performs questions, remote slash commands, and sweeps. `estelle connect` opens the Ratatui
+`estelle serve` is the only process in the split that resolves the Estelle credential. It owns named
+sessions per canonical working tree and repository, keeps each transcript plus active cancellation token
+in memory, and performs questions, remote slash commands, and sweeps. `estelle connect` opens the Ratatui
 client without touching the credential store. Closing that terminal drops only its socket: the server task
 continues, records its typed result, and replays completed and still-active work to the next client.
 
@@ -70,11 +70,14 @@ owns work and broadcasts lifecycle events to any attached client. Estelle does n
 brain. Its session owner calls the existing typed Estelle API paths and preserves the server's grounding,
 gate, retrieval, and product ownership.
 
-This first vertical slice deliberately exposes one session per repository/working-tree pair. Multiple
-independent sessions, tabbed watching, Affinity/Orchestra worker attachment, durable restart recovery, and
-file-shift swarm notifications remain the next ordered work. Explicit local shell commands and patch
-application remain terminal-owned because they mutate the attached working tree; they are never presented
-as detachable server work.
+`estelle connect --session NAME` creates or attaches a validated named session. The server returns the
+same-repository session catalogue with every snapshot; the TUI renders it as a tab row, marks active work,
+switches the watched transcript with Alt+Left/Right (with Ctrl+Tab accepted where terminals report it), and
+closes only the local tab with Ctrl+W. Switching creates
+a new server session when the name is not present and never cancels the session being left. Affinity/
+Orchestra worker registration, durable restart recovery, and file-shift swarm notifications remain ordered
+work. Explicit local shell commands and patch application remain terminal-owned because they mutate the
+attached working tree; they are never presented as detachable server work.
 
 ## Release pipeline
 
@@ -193,7 +196,7 @@ on uncommitted sweep contents. That client-side-only boundary is design limit #6
 - The public server/client split passed terminal detach/reconnect and detached failure replay on
   `awesome-llm-apps`; a production-authenticated successful answer still requires a customer credential.
 - Session state is in-memory across terminal detach, not durable across a server process or machine restart;
-  multi-session tabs and Affinity/Orchestra worker attachment are not yet built.
+  Affinity/Orchestra worker registration is not yet wired to create the named sessions automatically.
 - Runtime process-tree egress proof, production settings/autonomy writes, and the complete ACP lifecycle
   remain open measurements.
 - The binary IP-boundary invariant is SHIPPED and PROBED for its two named package prefixes; unnamed or
