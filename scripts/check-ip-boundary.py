@@ -4,12 +4,19 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 
 
 MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
 FORBIDDEN_SYMBOL_PREFIXES = (b"estelle.serve", b"estelle.agent")
+FORBIDDEN_IMPLEMENTATION_MARKERS = {
+    "ranker": re.compile(rb"(?:^|[^0-9])6ranker[0-9]+"),
+    "scorer": re.compile(rb"(?:^|[^0-9])6scorer[0-9]+"),
+    "judge": re.compile(rb"(?:^|[^0-9])5judge[0-9]+"),
+    "chunker": re.compile(rb"(?:^|[^0-9])7chunker[0-9]+"),
+}
 
 
 def read_bounded_artifact(path: Path) -> bytes:
@@ -29,11 +36,17 @@ def read_bounded_artifact(path: Path) -> bytes:
 def forbidden_symbols(contents: bytes) -> list[str]:
     assert isinstance(contents, bytes)
     assert len(FORBIDDEN_SYMBOL_PREFIXES) == 2
-    return [
+    matches = [
         symbol.decode("ascii")
         for symbol in FORBIDDEN_SYMBOL_PREFIXES
         if symbol in contents
     ]
+    matches.extend(
+        name
+        for name, marker in FORBIDDEN_IMPLEMENTATION_MARKERS.items()
+        if marker.search(contents)
+    )
+    return matches
 
 
 def main(argv: list[str]) -> int:
@@ -56,7 +69,7 @@ def main(argv: list[str]) -> int:
         return 1
     print(
         f"IP boundary proof: clean ({os.path.getsize(artifact)} bytes, "
-        "no estelle.serve or estelle.agent symbol prefix)"
+        "no server-owned implementation markers)"
     )
     return 0
 

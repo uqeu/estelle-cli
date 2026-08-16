@@ -149,11 +149,14 @@ itself contacts GitHub solely to acquire public release bytes and sends no repos
 The downloadable binary is a readable customer artifact, so the server/CLI ownership line is also enforced
 on the artifact rather than trusted as a source-layout convention. `scripts/check-ip-boundary.py` reads one
 regular binary under a named 512 MiB ceiling and rejects the server-owned Python symbol prefixes
-`estelle.serve` and `estelle.agent`. Every target-native release build crosses this gate before packaging;
-`scripts/test-ip-boundary.py` plants a server-symbol mutant and proves it is rejected. All four target-native
+`estelle.serve` and `estelle.agent`, plus Rust module symbols for a `ranker`, `scorer`, `judge`, or `chunker`
+even when no Python package marker is present. It matches implementation-shaped, length-prefixed module
+segments rather than prose or dependency function suffixes. Every target-native release build crosses this
+gate before packaging; `scripts/test-ip-boundary.py` plants one mutant for each forbidden implementation
+category, proves each is rejected, and proves an incidental dependency suffix remains legal. All four target-native
 `v0.2.11` builds crossed the guard, and the separately downloaded, shell-installed, and npm-installed arm64
-bytes passed it again. This proves the two named package boundaries, not the absence of every conceivable proprietary byte
-pattern.
+bytes passed the original prefix gate again. The expanded gate applies to the next release. This proves the
+named package and implementation boundaries, not the absence of every conceivable proprietary byte pattern.
 
 Secrets are refused or redacted before Estelle request construction. Stored ChatGPT OAuth material and
 Estelle API credentials have separate typed records and stores. A single remote auth rejection is evidence,
