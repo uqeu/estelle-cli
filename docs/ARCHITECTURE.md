@@ -4,15 +4,16 @@
 `uqeu/estelle-cli` repository. The parent repository may index or summarize it, but cannot be the only
 copy: a behaviour change and its architecture record must be reviewable in one CLI commit.
 
-**TODAY — source + public probes, 2026-08-16:** `v0.2.8` release run `31944978440` completed successfully.
+**TODAY — source + public probes, 2026-08-16:** `v0.2.9` release run `31949439211` completed successfully.
 The read-back found nine public assets, verified all four archive checksums and one-member sets, ran and
-installed the arm64 artifact as `estelle 0.2.8`, and proved the clean-home bare command against the real
-`awesome-llm-apps` checkout. That public binary served the repository session, accepted two separate TUI
-attachments without stopping, and replayed a detached request's typed failure after an intentionally invalid
-credential. The shell installer, direct archive, and npm-installed native binary were byte-identical
-(`5f5e7df8…`). npm returned SHA-512 integrity and SLSA v1 provenance metadata and its packed tarball contained
+installed the arm64 artifact as `estelle 0.2.9`, and proved the bare command against the real
+`awesome-llm-apps` checkout. That public binary served independent `payments` and `retries` sessions,
+replayed their isolated detached typed failures after an intentionally invalid credential, switched the TUI
+with Alt+Right, and closed only the watched tab with Ctrl+W while the server remained alive. The shell
+installer, direct archive, and npm-installed native binary were byte-identical (`285284e2…`). npm returned
+SHA-512 integrity and SLSA v1 provenance metadata and its packed tarball contained
 only the four native-launcher files. Independent GitHub attestation verification remains unproved outside
-the successful workflow. This release adds server-owned terminal detach/reconnect; credential onboarding
+the successful workflow. This release adds same-repository named-session tabs; credential onboarding
 and provider-runtime limits from `v0.2.6` remain unchanged and honestly rendered.
 
 ## System boundary
@@ -133,7 +134,7 @@ on the artifact rather than trusted as a source-layout convention. `scripts/chec
 regular binary under a named 512 MiB ceiling and rejects the server-owned Python symbol prefixes
 `estelle.serve` and `estelle.agent`. Every target-native release build crosses this gate before packaging;
 `scripts/test-ip-boundary.py` plants a server-symbol mutant and proves it is rejected. All four target-native
-`v0.2.8` builds crossed the guard, and the separately downloaded, shell-installed, and npm-installed arm64
+`v0.2.9` builds crossed the guard, and the separately downloaded, shell-installed, and npm-installed arm64
 bytes passed it again. This proves the two named package boundaries, not the absence of every conceivable proprietary byte
 pattern.
 
@@ -185,7 +186,7 @@ on uncommitted sweep contents. That client-side-only boundary is design limit #6
 
 ## Current limits
 
-- The immutable `v0.2.8` release is public and its archive/install/session/npm bytes passed read-back. The local
+- The immutable `v0.2.9` release is public and its archive/install/named-session/npm bytes passed read-back. The local
   Sigstore verifier could not initialize, so external attestation verification is still absent from that
   probe even though the release workflow's signing step passed.
 - The founder's clean-machine default-shell restart, shadowed-npm-machine repair, and ChatGPT device-flow
