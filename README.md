@@ -10,15 +10,15 @@ The component boundaries, trust model, release path, measurements, provenance in
 live in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/SCORECARD.md`](docs/SCORECARD.md), and
 [`docs/WHAT-WE-BUILT.md`](docs/WHAT-WE-BUILT.md).
 
-Once the first Rust release is published, the clean-machine install command is:
+Install the latest Rust release with:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -fsSL \
-  https://github.com/uqeu/estelle-cli/releases/latest/download/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/uqeu/estelle-cli/main/install.sh | sh
 ```
 
 The installer detects the platform, downloads from the Estelle-owned release repository by default, verifies
 the archive against `SHA256SUMS`, rejects archives with unexpected members, and atomically installs `estelle`
 to `~/.local/bin`. `ESTELLE_RELEASE_REPOSITORY` is an explicit operator/test override that changes that trust
-root; normal installs must leave it unset. Until a release containing `install.sh` exists, this is a release
-contract—not a claim that the command is live.
+root; normal installs must leave it unset. Release `v0.2.4` and this public install path were read back and
+executed successfully on macOS arm64; the exact distribution evidence and unproven product paths are recorded
+in [`docs/SCORECARD.md`](docs/SCORECARD.md).
