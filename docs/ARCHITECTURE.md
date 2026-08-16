@@ -168,8 +168,13 @@ pseudo-terminal once per audited read surface: the 22 route-coverage additions p
 unreached surface, auth rejection, HTTP error, timeout, network failure, or client decode failure fails the
 whole job; no surface can be recorded as skipped. A non-conversational repository question also crosses
 the same installed TUI seam and records its grounded production answer. The exact JSON is attached to the
-public release and linked from its release notes. This 24-read slice is wired for the next release; it is not a shipped claim
-until that public job passes.
+public release and linked from its release notes. This 24-read slice is wired for the next release; it is
+not a shipped claim until that public job passes.
+
+The same report removes the receipt credential from one child process and requires the first-run
+`CONNECT ESTELLE` picker to render numbered Estelle-account and Claude-subscription choices. It also runs
+`estelle memory forget receipt-sentinel` without `--yes` and passes only when the installed binary names
+the account-wide erasure radius, gives the explicit confirmation remedy, and says that nothing was sent.
 
 Secrets are refused or redacted before Estelle request construction. Stored ChatGPT OAuth material and
 Estelle API credentials have separate typed records and stores. A single remote auth rejection is evidence,

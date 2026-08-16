@@ -173,6 +173,12 @@ def test_complete_harness_writes_every_receipt() -> None:
         fake_estelle.write_text(
             "#!/bin/sh\n"
             "if [ \"$1\" = --version ]; then printf 'estelle 9.9.9\\n'; exit 0; fi\n"
+            "if [ \"$1\" = memory ]; then\n"
+            "  printf 'EVERY namespace; re-run with --yes. Nothing was sent.\\n'; exit 0\n"
+            "fi\n"
+            "if [ -z \"${ESTELLE_API_KEY:-}\" ]; then\n"
+            "  printf 'CONNECT ESTELLE\\n1 Estelle account\\n2 Claude subscription\\n'; exit 0\n"
+            "fi\n"
             "printf 'Ask Estelle\\n'\n"
             "IFS= read -r command\n"
             "printf 'you  %s\\nSERVER RECEIPT OK\\n› Ask Estelle\\n' \"$command\"\n",
@@ -185,6 +191,7 @@ def test_complete_harness_writes_every_receipt() -> None:
         output = root / "receipts.json"
         environment = os.environ.copy()
         environment["PATH"] = f"{fake_bin}{os.pathsep}{environment.get('PATH', '')}"
+        environment["ESTELLE_API_KEY"] = "test-receipt-key"
         result = subprocess.run(
             [
                 sys.executable,
@@ -207,8 +214,8 @@ def test_complete_harness_writes_every_receipt() -> None:
         )
         assert result.returncode == 0, result.stderr
         report = json.loads(output.read_text(encoding="utf-8"))
-        assert report["summary"] == {"passed": 27, "failed": 0}
-        assert [row["sent"] for row in report["receipts"][2:26]] == EXPECTED_READ_SURFACES
+        assert report["summary"] == {"passed": 29, "failed": 0}
+        assert [row["sent"] for row in report["receipts"][4:28]] == EXPECTED_READ_SURFACES
         assert report["receipts"][-1]["sent"].startswith("Which file defines")
         assert all(row["pass"] for row in report["receipts"])
 
@@ -224,6 +231,50 @@ def test_repository_size_receipt() -> None:
         assert "2 Python + 2 TypeScript files" in receipt["came_back"]
 
 
+def test_erasure_gate_receipt() -> None:
+    with tempfile.TemporaryDirectory(prefix="estelle-erasure-receipt-") as raw_dir:
+        fake_bin = Path(raw_dir) / "bin"
+        fake_bin.mkdir()
+        fake_estelle = fake_bin / "estelle"
+        fake_estelle.write_text(
+            "#!/bin/sh\nprintf 'EVERY namespace owned by this account\\n'\n"
+            "printf 'Re-run with --yes to confirm. Nothing was sent.\\n'\n",
+            encoding="utf-8",
+        )
+        fake_estelle.chmod(0o755)
+        original_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{fake_bin}{os.pathsep}{original_path}"
+        try:
+            receipt = load_harness().erasure_gate_receipt()
+        finally:
+            os.environ["PATH"] = original_path
+        assert receipt["sent"] == "estelle memory forget receipt-sentinel"
+        assert receipt["pass"] is True
+        assert "Nothing was sent" in receipt["came_back"]
+
+
+def test_first_run_picker_receipt() -> None:
+    with tempfile.TemporaryDirectory(prefix="estelle-picker-receipt-") as raw_dir:
+        fake_bin = Path(raw_dir) / "bin"
+        fake_bin.mkdir()
+        fake_estelle = fake_bin / "estelle"
+        fake_estelle.write_text(
+            "#!/bin/sh\nprintf 'CONNECT ESTELLE\\n'\n"
+            "printf '1 Estelle account\\n2 Claude subscription\\n'\n",
+            encoding="utf-8",
+        )
+        fake_estelle.chmod(0o755)
+        original_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{fake_bin}{os.pathsep}{original_path}"
+        try:
+            receipt = load_harness().first_run_picker_receipt(timeout=3)
+        finally:
+            os.environ["PATH"] = original_path
+        assert receipt["pass"] is True
+        assert "1 Estelle account" in receipt["came_back"]
+        assert "2 Claude subscription" in receipt["came_back"]
+
+
 def main() -> int:
     test_inventory()
     test_installed_version()
@@ -232,6 +283,8 @@ def main() -> int:
     test_tui_surface_fails_closed()
     test_complete_harness_writes_every_receipt()
     test_repository_size_receipt()
+    test_erasure_gate_receipt()
+    test_first_run_picker_receipt()
 
     print("public receipt test: all 24 audited read surfaces are mandatory")
     return 0

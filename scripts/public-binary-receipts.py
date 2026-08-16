@@ -108,6 +108,53 @@ def repository_size_receipt(
     }
 
 
+def erasure_gate_receipt() -> dict[str, object]:
+    arguments = ["estelle", "memory", "forget", "receipt-sentinel"]
+    result = subprocess.run(
+        arguments,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    output = "\n".join(
+        part.strip() for part in (result.stdout, result.stderr) if part.strip()
+    )
+    required = ("EVERY namespace", "--yes", "Nothing was sent")
+    return {
+        "sent": " ".join(arguments),
+        "came_back": output,
+        "pass": result.returncode == 0 and all(marker in output for marker in required),
+    }
+
+
+def first_run_picker_receipt(timeout: float = 10) -> dict[str, object]:
+    environment = os.environ.copy()
+    environment.pop("ESTELLE_API_KEY", None)
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execvpe("estelle", ["estelle"], environment)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 120, 0, 0))
+    os.kill(pid, signal.SIGWINCH)
+    observed = bytearray()
+    try:
+        visible = _read_until(
+            fd, observed, ("CONNECT ESTELLE",), time.monotonic() + timeout
+        )
+        required = ("CONNECT ESTELLE", "1 Estelle account", "2 Claude subscription")
+        return {
+            "sent": "estelle (without a credential)",
+            "came_back": visible.strip(),
+            "pass": all(marker in visible for marker in required),
+        }
+    finally:
+        try:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+        except (ChildProcessError, OSError, ProcessLookupError):
+            pass
+
+
 def _read_until(
     fd: int, observed: bytearray, markers: tuple[str, ...], deadline: float
 ) -> str:
@@ -178,6 +225,8 @@ def run_receipts(
     receipts = [
         installed_version_receipt(expected_version),
         repository_size_receipt(Path.cwd()),
+        erasure_gate_receipt(),
+        first_run_picker_receipt(),
     ]
     receipts.extend(
         tui_surface_receipt(surface, repo, timeout) for surface in READ_SURFACES
