@@ -65,6 +65,34 @@ SKILL_TURNS = (
     "/skill:grill-me State one risk in changing a CLI contract.",
     "/skill:grill-me Challenge that answer.",
 )
+DROPPED_COMMANDS = (
+    "pet",
+    "vim",
+    "theme",
+    "statusline",
+    "title",
+    "raw",
+    "copy",
+    "mention",
+    "ide",
+    "apps",
+    "plugins",
+    "experimental",
+    "app",
+    "import",
+    "logout",
+    "rollout",
+    "debug-config",
+    "test-approval",
+    "debug-m-drop",
+    "debug-m-update",
+    "setup-default-sandbox",
+    "sandbox-add-read-dir",
+    "hooks",
+    "personality",
+    "agent",
+    "subagents",
+)
 
 
 def installed_version_receipt(expected_tag: str) -> dict[str, object]:
@@ -220,6 +248,26 @@ def hook_event_receipts(root: Path, timeout: float = 30) -> list[dict[str, objec
     return receipts
 
 
+def _terminate_pty(pid: int, fd: int) -> None:
+    try:
+        os.write(fd, b"\x03")
+    except OSError:
+        pass
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        return
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        try:
+            waited, _ = os.waitpid(pid, os.WNOHANG)
+        except (ChildProcessError, OSError):
+            return
+        if waited == pid:
+            return
+        time.sleep(0.02)
+
+
 def first_run_picker_receipt(timeout: float = 10) -> dict[str, object]:
     environment = os.environ.copy()
     environment.pop("ESTELLE_API_KEY", None)
@@ -247,11 +295,7 @@ def first_run_picker_receipt(timeout: float = 10) -> dict[str, object]:
             "pass": all(marker in visible for marker in required),
         }
     finally:
-        try:
-            os.kill(pid, signal.SIGKILL)
-            os.waitpid(pid, 0)
-        except (ChildProcessError, OSError, ProcessLookupError):
-            pass
+        _terminate_pty(pid, fd)
 
 
 def _write_rejected_fixture(home: Path) -> Path:
@@ -319,12 +363,7 @@ def credential_retention_receipt(
                 and "different routes, so it was removed" in visible,
             }
         finally:
-            try:
-                os.write(fd, b"\x03")
-                os.kill(pid, signal.SIGKILL)
-                os.waitpid(pid, 0)
-            except (ChildProcessError, OSError, ProcessLookupError):
-                pass
+            _terminate_pty(pid, fd)
 
 
 def _read_until(
@@ -376,12 +415,7 @@ def tui_turn_receipt(
         )
         return {"sent": turn, "came_back": visible.strip(), "pass": passed}
     finally:
-        try:
-            os.write(fd, b"\x03")
-            os.kill(pid, signal.SIGKILL)
-            os.waitpid(pid, 0)
-        except (ChildProcessError, OSError, ProcessLookupError):
-            pass
+        _terminate_pty(pid, fd)
 
 
 def tui_skill_thread_receipt(
@@ -423,12 +457,81 @@ def tui_skill_thread_receipt(
             "pass": passed and len(screens) == len(SKILL_TURNS),
         }
     finally:
-        try:
-            os.write(fd, b"\x03")
-            os.kill(pid, signal.SIGKILL)
-            os.waitpid(pid, 0)
-        except (ChildProcessError, OSError, ProcessLookupError):
-            pass
+        _terminate_pty(pid, fd)
+
+
+def _trace_line_count(path: Path | None) -> int | None:
+    if path is None or not path.exists():
+        return 0 if path is not None else None
+    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line)
+
+
+def dropped_command_receipt(
+    repo: str,
+    http_trace: Path | None,
+    timeout: float = 30,
+    settle_seconds: float = 2,
+) -> dict[str, object]:
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execvp("estelle", ["estelle", "--repo", repo])
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 160, 0, 0))
+    os.kill(pid, signal.SIGWINCH)
+    observed = bytearray()
+    outputs = []
+    passed = True
+    try:
+        visible = _read_until(
+            fd, observed, ("Ask Estelle",), time.monotonic() + timeout
+        )
+        passed = "Ask Estelle" in visible
+        time.sleep(settle_seconds)
+        _read_until(fd, observed, ("receipt-settle-marker",), time.monotonic() + 0.1)
+        before = _trace_line_count(http_trace)
+        conversation_deadline = time.monotonic() + timeout
+        production_tui = http_trace is not None and settle_seconds > 0
+        enter = b"\r" if production_tui else b"\n"
+        for name in DROPPED_COMMANDS:
+            expected = (
+                f"Unknown command /{name}; nothing ran and nothing was sent. Use /help."
+            )
+            os.write(fd, f"/{name} ".encode())
+            time.sleep(0.1)
+            os.write(fd, enter)
+            visible = _read_until(
+                fd,
+                observed,
+                (expected,),
+                min(conversation_deadline, time.monotonic() + 1),
+            )
+            if expected not in visible:
+                if production_tui:
+                    os.write(fd, enter)
+                visible = _read_until(
+                    fd, observed, (expected,), conversation_deadline
+                )
+            visible = _read_until(
+                fd, observed, ("› Ask Estelle",), conversation_deadline
+            )
+            found = expected in visible
+            outputs.append(expected if found else visible.strip())
+            passed = passed and found
+            if not found:
+                break
+        time.sleep(settle_seconds)
+        after = _trace_line_count(http_trace)
+        wire_unchanged = before is None or before == after
+        return {
+            "sent": [f"/{name}" for name in DROPPED_COMMANDS],
+            "came_back": outputs,
+            "processes_started": 1,
+            "http_lines": {"before": before, "after": after},
+            "pass": passed
+            and len(outputs) == len(DROPPED_COMMANDS)
+            and wire_unchanged,
+        }
+    finally:
+        _terminate_pty(pid, fd)
 
 
 def tui_surface_receipt(
@@ -587,6 +690,8 @@ def http_contract_receipt(path: Path) -> tuple[dict[str, object], list[object]]:
 def run_receipts(
     expected_version: str, repo: str, timeout: float
 ) -> dict[str, object]:
+    raw_path = os.environ.get("ESTELLE_RECEIPT_PATH")
+    http_trace = Path(raw_path) if raw_path else None
     receipts = [
         installed_version_receipt(expected_version),
         repository_size_receipt(Path.cwd()),
@@ -599,14 +704,22 @@ def run_receipts(
     )
     receipts.append(tui_turn_receipt(GROUNDING_QUESTION, repo, timeout))
     receipts.append(tui_skill_thread_receipt(repo, timeout))
+    receipts.append(
+        dropped_command_receipt(
+            repo,
+            http_trace,
+            max(timeout, 10),
+            settle_seconds=2 if http_trace is not None else 0,
+        )
+    )
     receipts.extend(
         tui_surface_receipt(surface, repo, timeout) for surface in DIFF_SURFACES
     )
     receipts.extend(head_surface_receipts(max(timeout, 600)))
     receipts.extend(hook_event_receipts(Path.cwd(), max(timeout, 30)))
     http_records = None
-    if raw_path := os.environ.get("ESTELLE_RECEIPT_PATH"):
-        http_receipt, http_records = http_contract_receipt(Path(raw_path))
+    if http_trace is not None:
+        http_receipt, http_records = http_contract_receipt(http_trace)
         receipts.append(http_receipt)
     passed = sum(receipt["pass"] is True for receipt in receipts)
     report = {

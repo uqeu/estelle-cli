@@ -42,6 +42,34 @@ EXPECTED_READ_SURFACES = [
     "/billing",
     "/sessions",
 ]
+EXPECTED_DROPPED_COMMANDS = [
+    "pet",
+    "vim",
+    "theme",
+    "statusline",
+    "title",
+    "raw",
+    "copy",
+    "mention",
+    "ide",
+    "apps",
+    "plugins",
+    "experimental",
+    "app",
+    "import",
+    "logout",
+    "rollout",
+    "debug-config",
+    "test-approval",
+    "debug-m-drop",
+    "debug-m-update",
+    "setup-default-sandbox",
+    "sandbox-add-read-dir",
+    "hooks",
+    "personality",
+    "agent",
+    "subagents",
+]
 
 
 def load_harness():
@@ -224,7 +252,11 @@ def test_complete_harness_writes_every_receipt() -> None:
             "fi\n"
             "printf 'Ask Estelle\\n'\n"
             "while IFS= read -r command; do\n"
-            "  printf 'you  %s\\nSERVER RECEIPT OK\\n› Ask Estelle\\n' \"$command\"\n"
+            "  name=${command#/}; name=${name%% *}\n"
+            "  case ' pet vim theme statusline title raw copy mention ide apps plugins experimental app import logout rollout debug-config test-approval debug-m-drop debug-m-update setup-default-sandbox sandbox-add-read-dir hooks personality agent subagents ' in\n"
+            "    *\" $name \"*) printf '\\033[2J\\033[1;1HUnknown command /%s; nothing ran and nothing was sent. Use /help.\\n› Ask Estelle\\n' \"$name\" ;;\n"
+            "    *) printf 'you  %s\\nSERVER RECEIPT OK\\n› Ask Estelle\\n' \"$command\" ;;\n"
+            "  esac\n"
             "done\n",
             encoding="utf-8",
         )
@@ -254,17 +286,22 @@ def test_complete_harness_writes_every_receipt() -> None:
             text=True,
             env=environment,
             cwd=root,
-            timeout=30,
+            timeout=40,
         )
-        assert result.returncode == 0, result.stderr
+        assert result.returncode == 0, (
+            result.stdout,
+            result.stderr,
+            output.read_text(encoding="utf-8") if output.exists() else "no report",
+        )
         report = json.loads(output.read_text(encoding="utf-8"))
-        assert report["summary"] == {"passed": 47, "failed": 0}
+        assert report["summary"] == {"passed": 48, "failed": 0}
         assert report["receipts"][4]["after_one_route"] == "retained"
         assert [row["sent"] for row in report["receipts"][5:29]] == EXPECTED_READ_SURFACES
         assert report["receipts"][29]["sent"].startswith("Which file defines")
         assert report["receipts"][30]["processes_started"] == 1
-        assert [row["sent"] for row in report["receipts"][31:33]] == ["/review", "/scan"]
-        assert report["receipts"][35]["sent"] == "estelle reindex"
+        assert len(report["receipts"][31]["sent"]) == 26
+        assert [row["sent"] for row in report["receipts"][32:34]] == ["/review", "/scan"]
+        assert report["receipts"][36]["sent"] == "estelle reindex"
         assert report["receipts"][-1]["event"] == "UserPromptSubmit/context"
         assert all(row["pass"] for row in report["receipts"])
 
@@ -358,6 +395,38 @@ def test_credential_retention_receipt_requires_two_named_routes() -> None:
         assert "a background poll" in receipt["came_back"]
         assert "me" in receipt["came_back"]
         assert "public-receipt-intentionally-invalid" not in json.dumps(receipt)
+
+
+def test_dropped_commands_stay_local_in_one_installed_tui() -> None:
+    with tempfile.TemporaryDirectory(prefix="estelle-dropped-commands-") as raw_dir:
+        root = Path(raw_dir)
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        fake_estelle = fake_bin / "estelle"
+        fake_estelle.write_text(
+            "#!/bin/sh\nprintf 'Ask Estelle\\n'\n"
+            "while IFS= read -r command; do\n"
+            "  name=${command#/}; name=${name%% *}\n"
+            "  printf '\\033[2J\\033[1;1HUnknown command /%s; nothing ran and nothing was sent. Use /help.\\n› Ask Estelle\\n' \"$name\"\n"
+            "done\n",
+            encoding="utf-8",
+        )
+        fake_estelle.chmod(0o755)
+        http_trace = root / "http.jsonl"
+        http_trace.write_text('{"baseline":true}\n', encoding="utf-8")
+        original_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{fake_bin}{os.pathsep}{original_path}"
+        try:
+            receipt = load_harness().dropped_command_receipt(
+                "uqeu/estelle", http_trace, timeout=3, settle_seconds=0
+            )
+        finally:
+            os.environ["PATH"] = original_path
+        assert receipt["pass"] is True, receipt
+        assert receipt["sent"] == [f"/{name}" for name in EXPECTED_DROPPED_COMMANDS]
+        assert receipt["processes_started"] == 1
+        assert receipt["http_lines"] == {"before": 1, "after": 1}
+        assert all("nothing ran and nothing was sent" in row for row in receipt["came_back"])
 
 
 def test_http_contract_receipt_proves_hidden_fields() -> None:
@@ -545,6 +614,7 @@ def main() -> int:
     test_erasure_gate_receipt()
     test_first_run_picker_receipt()
     test_credential_retention_receipt_requires_two_named_routes()
+    test_dropped_commands_stay_local_in_one_installed_tui()
     test_http_contract_receipt_proves_hidden_fields()
     test_head_surface_commands_run_through_bare_binary()
     test_hook_receipts_drive_every_current_table_row()

@@ -199,6 +199,11 @@ receipt records both returned frames and the single spawned process; the HTTP pr
 request to omit invented history and the second request's `messages` to equal the first user turn, the
 exact assistant reply returned by production, and the second user turn in order.
 
+The dropped-command receipt drives all 26 Codex-only or colliding names through one installed TUI process.
+Every name must return the exact local `nothing ran and nothing was sent` refusal, including `/vim` rather
+than its fuzzy `/vis` neighbor, and the sanitized HTTP trace line count must remain unchanged across the
+whole sequence. One conversation-wide deadline and bounded PTY cleanup keep that negative proof fail-closed.
+
 Graph-currency receipts exercise all three transport branches from the same installed binary and clone:
 a bounded subdirectory sweep takes the synchronous `/sync` path, the full real-size repository sweep takes
 `/ingest/start`, and `estelle reindex` sends the measured lockfile change. The HTTP proof passes only when
