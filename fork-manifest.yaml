@@ -50,8 +50,8 @@
   "reviewed_changes_after_audited_commit": [
     {
       "path": "tui/src/top_level.rs",
-      "blob": "0dd714ca26b51368497e998f8d9122f8f642d4c6",
-      "reason": "N-01 GitHub handoff remains origin-bound; hook parity keeps standalone oracles, while doctor is explicitly local and performs no egress"
+      "blob": "5913cc9ed00a91864088ce9dd1c10d1fa5cf9357",
+      "reason": "N-01 GitHub handoff remains origin-bound; hook parity keeps standalone oracles, while sweep progress is serializable only across the owner-only local session transport"
     },
     {
       "path": ".github/workflows/release.yml",
@@ -80,8 +80,8 @@
     },
     {
       "path": "tui/src/commands.rs",
-      "blob": "bbd7983bc225d05b772290d5c69351615599b8e9",
-      "reason": "local login/logout/whoami/doctor ownership and autonomy labels are explicit; remote route inventory remains closed"
+      "blob": "e4a4ea031ff08a0f7b3cf0761b976219ae131f77",
+      "reason": "local login/logout/whoami/doctor ownership and autonomy labels are explicit; serve/connect join the closed top-level command inventory"
     },
     {
       "path": "tui/src/doctor.rs",
@@ -95,8 +95,18 @@
     },
     {
       "path": "tui/src/main.rs",
-      "blob": "5d3e741fa8d647d06711512cb6c2e549b6125e77",
-      "reason": "first-run onboarding precedes conversation; provider routes are allowlisted before prompts; unsupported runtimes fail closed"
+      "blob": "b997f8d7bd0329315808ede9bb28f098c4925d14",
+      "reason": "connected terminals resolve no credential and send questions, remote commands, and sweeps to the long-lived session owner; standalone provider routes remain allowlisted before prompts"
+    },
+    {
+      "path": "estelle-client/src/types.rs",
+      "blob": "b3a8f69bec600d35fee7ca5ae7b43f1657b649fe",
+      "reason": "typed server responses gain lossless serialization for replay across the owner-only local session transport; no endpoint or egress destination changes"
+    },
+    {
+      "path": "tui/src/session_server.rs",
+      "blob": "b7c2365a127e90e7b3028f2ede411af3e782377b",
+      "reason": "the jcode-inspired local session owner uses a 0700 directory, 0600 socket and startup lock; only the server holds the Estelle credential and in-flight remote work survives client disconnect"
     },
     {
       "path": "tui/src/provider_keys.rs",

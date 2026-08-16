@@ -62,6 +62,7 @@ fn contract(command: &Command) -> Contract {
     match command {
         Command::Login { .. }
         | Command::Doctor
+        | Command::Serve { .. }
         | Command::Connect { .. }
         | Command::Remove
         | Command::Hook { .. }
@@ -88,7 +89,8 @@ pub(crate) async fn run(command: Command, repo: Repo, root: &Path) -> Result<Vec
     match command {
         Command::Login { .. } => Err("login is handled by the credential reader".to_string()),
         Command::Doctor => Err("doctor is handled by the credential diagnostics".to_string()),
-        Command::Connect { client } => Ok(connect_lines(client.as_deref().unwrap_or("cursor"))),
+        Command::Connect { client, .. } => Ok(connect_lines(client.as_deref().unwrap_or("cursor"))),
+        Command::Serve { .. } => Err("serve is handled by the session runtime".to_string()),
         Command::Remove => remove_editor_configs(root),
         Command::Hook { mode } => run_hook(mode.as_deref().unwrap_or("ground"), &repo, root).await,
         Command::InstallHooks => install_hooks(),
@@ -1283,6 +1285,7 @@ async fn run_authenticated(
         Command::Gate { base } => gate(api, &repo, root, base.as_deref()).await,
         Command::Login { .. }
         | Command::Doctor
+        | Command::Serve { .. }
         | Command::Connect { .. }
         | Command::Remove
         | Command::Hook { .. }
@@ -1548,7 +1551,7 @@ async fn sweep(api: &Api, repo: &Repo, root: &Path, dry_run: bool) -> Result<Vec
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub(crate) struct SweepProgress {
     pub(crate) state: String,
     pub(crate) percent: f64,
@@ -4357,7 +4360,7 @@ tests/test_serve.py:88: AssertionError\n\
             let command = args.command.expect("command");
             let actual = contract(&command);
             let expected = match name {
-                "login" | "doctor" | "connect" | "remove" | "hook" | "install-hooks"
+                "login" | "doctor" | "serve" | "connect" | "remove" | "hook" | "install-hooks"
                 | "uninstall-hooks" | "acp" | "mcp" | "mcp-server" => Contract::Local,
                 "init" | "sweep" | "reindex" | "github" | "research" => Contract::Compound,
                 _ => Contract::Remote,

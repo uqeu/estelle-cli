@@ -6,7 +6,7 @@ use serde_json::Value;
 #[derive(Clone, Copy, Debug, Default, Serialize)]
 pub struct NoQuery;
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AccountResponse {
     #[serde(default)]
     pub email: Option<String>,
@@ -26,7 +26,7 @@ pub struct AccountResponse {
     pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct TeamIdentity {
     pub id: String,
     #[serde(default)]
@@ -41,7 +41,7 @@ pub struct TeamIdentity {
     pub owner_email: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct OverviewResponse {
     #[serde(default)]
     pub memory: Option<MemoryOverview>,
@@ -49,7 +49,7 @@ pub struct OverviewResponse {
     pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MemoryOverview {
     #[serde(default)]
     pub memories: Option<u64>,
@@ -63,7 +63,7 @@ pub struct MemoryOverview {
     pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RepoOverview {
     pub repo: String,
     #[serde(default)]
@@ -74,7 +74,7 @@ pub struct RepoOverview {
     pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ReposResponse {
     #[serde(default)]
     pub repos: Vec<String>,
@@ -133,7 +133,7 @@ impl DeepSearchRequest {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DeepSearchResponse {
     #[serde(default)]
     pub answer: Option<String>,
@@ -175,7 +175,7 @@ impl DeepSearchResponse {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Source {
     pub file: String,
     #[serde(default)]
@@ -184,7 +184,7 @@ pub struct Source {
     pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct CommandReply {
     #[serde(default)]
     pub answer: Option<String>,
@@ -375,7 +375,7 @@ impl CommandReply {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct GraphFileEntry {
     #[serde(default)]
     pub path: String,
@@ -383,7 +383,7 @@ pub struct GraphFileEntry {
     pub symbols: Option<u64>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct GraphRoot {
     #[serde(default)]
     pub name: String,
@@ -391,7 +391,7 @@ pub struct GraphRoot {
     pub files: Option<u64>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct GraphNode {
     #[serde(default)]
     pub id: String,
@@ -405,7 +405,7 @@ pub struct GraphNode {
     pub weight: Option<f64>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct GraphEdge {
     #[serde(default, rename = "from")]
     pub from_path: String,
@@ -415,7 +415,7 @@ pub struct GraphEdge {
     pub kind: String,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct KeySummary {
     #[serde(default)]
     pub id: Option<String>,
@@ -433,7 +433,7 @@ pub struct KeySummary {
     pub revoked: Option<bool>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct TeamView {
     #[serde(default)]
     pub id: Option<String>,
@@ -457,7 +457,7 @@ pub struct TeamView {
     pub invites: Vec<serde_json::Value>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct TeamMember {
     #[serde(default)]
     pub email: Option<String>,
@@ -469,7 +469,7 @@ pub struct TeamMember {
     pub display_name: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct SeatLedger {
     #[serde(default)]
     pub purchased: Option<u64>,
@@ -483,7 +483,7 @@ pub struct SeatLedger {
     pub full: Option<bool>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct MemoryCard {
     #[serde(default)]
     pub id: Option<String>,
@@ -501,7 +501,7 @@ pub struct MemoryCard {
     pub edited: Option<bool>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct UsagePoint {
     #[serde(default)]
     pub date: Option<String>,
@@ -511,7 +511,7 @@ pub struct UsagePoint {
     pub tokens: Option<u64>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ActivityRow {
     #[serde(default)]
     pub endpoint: Option<String>,
@@ -523,7 +523,7 @@ pub struct ActivityRow {
     pub models: Option<Map<String, Value>>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct MemoryItem {
     #[serde(default)]
     pub source: Option<String>,
@@ -539,7 +539,7 @@ pub struct MemoryItem {
     pub externally_authored: Option<bool>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct AuditEntry {
     #[serde(default)]
     pub at: Option<String>,
@@ -549,7 +549,7 @@ pub struct AuditEntry {
     pub detail: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct RequestRecord {
     #[serde(default)]
     pub ts: Option<String>,
@@ -561,7 +561,7 @@ pub struct RequestRecord {
     pub model: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct LeaderboardRow {
     /// Required on purpose: a row WITHOUT a skill (e.g. a /team/leaderboard member row, same
     /// envelope key) must fail the parse so the accessor returns empty — never an all-None row,
@@ -575,7 +575,7 @@ pub struct LeaderboardRow {
     pub success_rate: Option<f64>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct MarketplacePlugin {
     #[serde(default)]
     pub name: Option<String>,
@@ -589,7 +589,7 @@ pub struct MarketplacePlugin {
     pub mcp_servers: Vec<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct AutomationRow {
     #[serde(default)]
     pub id: Option<String>,
@@ -605,7 +605,7 @@ pub struct AutomationRow {
     pub autonomy_ceiling: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct SuiteRow {
     #[serde(default)]
     pub id: Option<String>,
@@ -621,7 +621,7 @@ pub struct SuiteRow {
     pub playbooks: Vec<serde_json::Value>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct FleetSnapshot {
     pub id: String,
     pub batch: String,
@@ -647,7 +647,7 @@ pub struct FleetSnapshot {
     pub attempt: FleetAttempt,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct FleetAgent {
     pub index: u64,
     pub status: FleetAgentStatus,
@@ -666,7 +666,7 @@ pub struct FleetAgent {
     pub attempt: FleetAttempt,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct FleetAssignmentCounts {
     #[serde(default)]
     pub attempted: Option<u64>,
@@ -676,14 +676,14 @@ pub struct FleetAssignmentCounts {
     pub lost: Option<u64>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct FleetObservedText {
     pub text: String,
     #[serde(default)]
     pub evidence: FleetEvidence,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FleetEvidence {
     Measured,
@@ -694,7 +694,7 @@ pub enum FleetEvidence {
     Unknown,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FleetAttempt {
     First,
@@ -703,13 +703,13 @@ pub enum FleetAttempt {
     Unknown,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct FleetAgentProgress {
     pub completed: u64,
     pub total: u64,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct TodoSnapshot {
     pub observed_at: f64,
     #[serde(default = "default_fleet_stale_after_s")]
@@ -718,7 +718,7 @@ pub struct TodoSnapshot {
     pub items: Vec<TodoItem>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct TodoItem {
     pub title: String,
     pub status: TodoStatus,
@@ -728,7 +728,7 @@ pub struct TodoItem {
     pub evidence: FleetEvidence,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TodoStatus {
     Pending,
@@ -738,7 +738,7 @@ pub enum TodoStatus {
     Unknown,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct MonitorIssuesResponse {
     #[serde(default)]
     pub issues: Vec<MonitorIssue>,
@@ -760,7 +760,7 @@ pub struct MonitorIssuesResponse {
     pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct MonitorIssue {
     pub key: String,
     #[serde(default)]
@@ -902,7 +902,7 @@ impl MonitorIssue {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct IssueSignal {
     #[serde(default)]
     pub error_type: String,
@@ -920,7 +920,7 @@ pub struct IssueSignal {
     pub last_seen: f64,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct IssueBinding {
     #[serde(default)]
     pub symbol: Option<String>,
@@ -934,7 +934,7 @@ pub struct IssueBinding {
     pub line: Option<u64>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct IssueRepair {
     #[serde(default)]
     pub status: String,
@@ -944,7 +944,7 @@ pub struct IssueRepair {
     pub pr: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct IssueGate {
     #[serde(default)]
     pub state: String,
@@ -956,7 +956,7 @@ pub struct IssueGate {
     pub verified: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SymbolRange {
     pub symbol: String,
     pub file: String,
@@ -966,7 +966,7 @@ pub struct SymbolRange {
     pub resolved_by: String,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct MonitorOverviewResponse {
     #[serde(default)]
     pub series: Option<MonitorSeries>,
@@ -982,7 +982,7 @@ pub struct MonitorOverviewResponse {
     pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct MonitorUptimeCounts {
     #[serde(default)]
     pub checks: u64,
@@ -1021,7 +1021,7 @@ impl MonitorOverviewResponse {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct MonitorSeries {
     #[serde(default)]
     pub window_s: u64,
@@ -1033,7 +1033,7 @@ pub struct MonitorSeries {
     pub requests_source: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct MonitorErrorBucket {
     #[serde(default, alias = "start")]
     pub t: f64,
@@ -1045,7 +1045,7 @@ pub struct MonitorErrorBucket {
     pub p99_ms: Option<f64>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct LegacyErrorSeries {
     #[serde(default)]
     pub window_s: f64,
@@ -1057,7 +1057,7 @@ pub struct LegacyErrorSeries {
     pub series: Vec<LegacyErrorBucket>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct LegacyErrorBucket {
     #[serde(default)]
     pub start: f64,
@@ -1065,7 +1065,7 @@ pub struct LegacyErrorBucket {
     pub count: u64,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FleetAgentStatus {
     #[default]
@@ -1090,7 +1090,7 @@ const fn default_fleet_stale_after_s() -> u64 {
     60
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct SessionSummary {
     #[serde(default)]
     pub id: Option<serde_json::Value>,
@@ -1106,7 +1106,7 @@ pub struct SessionSummary {
     pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Finding {
     #[serde(default)]
     pub path: Option<String>,
@@ -1122,7 +1122,7 @@ pub struct Finding {
     pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct Proposal {
     #[serde(default)]
     pub title: Option<String>,
@@ -1144,7 +1144,7 @@ pub struct Proposal {
     pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct AgentRun {
     #[serde(default)]
     pub task: Option<String>,
@@ -1166,7 +1166,7 @@ pub struct AgentRun {
     pub extra: Map<String, Value>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ChatCompletionResponse {
     pub id: String,
     pub object: String,
@@ -1184,26 +1184,26 @@ impl ChatCompletionResponse {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ChatChoice {
     pub index: usize,
     pub message: ChatMessage,
     pub finish_reason: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct ErrorEnvelope {
     pub error: ErrorBody,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct ErrorBody {
     pub message: String,
 }

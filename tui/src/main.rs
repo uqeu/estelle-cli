@@ -7,6 +7,7 @@ mod hook_distil;
 mod hook_guard;
 mod login;
 mod provider_keys;
+mod session_server;
 #[cfg(test)]
 mod test_gallery;
 mod top_level;
@@ -172,7 +173,7 @@ impl Theme {
     }
 }
 
-#[derive(Debug, Parser)]
+#[derive(Clone, Debug, Parser)]
 #[command(
     name = "estelle",
     version,
@@ -234,8 +235,19 @@ enum Command {
         dry_run: bool,
         paths: Vec<PathBuf>,
     },
-    /// Show local editor connection instructions.
-    Connect { client: Option<String> },
+    /// Run the long-lived owner of Estelle sessions.
+    Serve {
+        /// Override the owner-only local session socket.
+        #[arg(long, value_name = "PATH")]
+        socket: Option<PathBuf>,
+    },
+    /// Attach this terminal to the session server; a client name keeps editor setup compatibility.
+    Connect {
+        client: Option<String>,
+        /// Override the owner-only local session socket.
+        #[arg(long, value_name = "PATH")]
+        socket: Option<PathBuf>,
+    },
     /// Remove Estelle from local editor configurations.
     #[command(visible_aliases = ["disconnect", "off"])]
     Remove,
@@ -513,6 +525,8 @@ enum UiEvent {
         id: u64,
         result: Result<Vec<String>, top_level::SweepFailure>,
     },
+    Session(session_server::ServerMessage),
+    SessionDisconnected(String),
 }
 
 struct AnswerReply {
@@ -523,12 +537,13 @@ struct AnswerReply {
     working_paths: Vec<String>,
 }
 
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 struct RemoteCommandReply {
     reply: CommandReply,
     inspected_files: Vec<DiffFileStat>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 struct DiffFileStat {
     path: String,
     changed_lines: u64,
@@ -1280,6 +1295,9 @@ struct App {
     session_context: Option<session_gap::SessionContext>,
     repo: Repo,
     client: Option<Client>,
+    session: Option<session_server::SessionHandle>,
+    session_questions: BTreeSet<u64>,
+    session_completed: BTreeSet<u64>,
     auth: Option<AuthContext>,
     /// Per-skill conversations for interactive `/skill:` runs, and the run currently in flight.
     /// The server continues a skill over `messages` when they arrive and restarts from `task`
@@ -1441,11 +1459,17 @@ impl App {
             session_context: None,
             repo,
             client: None,
+            session: None,
+            session_questions: BTreeSet::new(),
+            session_completed: BTreeSet::new(),
             auth: None,
             skill_threads: HashMap::new(),
             pending_skill: None,
             rejected_routes: BTreeSet::new(),
-            next_request_id: 0,
+            // Request IDs cross process boundaries and can be created by several attached
+            // terminals. A random seed avoids the reconnect collision of every client starting
+            // at zero; the server also rejects any repeated ID within a session.
+            next_request_id: rand::random(),
             credential_input_hidden: false,
             auth_resolved: false,
             root,
@@ -2270,6 +2294,24 @@ impl App {
                 question,
                 session_context,
             } => {
+                if let Some(session) = self.session.clone() {
+                    let (id, _cancel) = self.begin_active("thinking");
+                    self.session_questions.insert(id);
+                    if let Err(error) = session.send(session_server::ClientRequest::Ask {
+                        id,
+                        question,
+                        session_context,
+                    }) {
+                        self.active = None;
+                        self.transcript.push(TranscriptEntry::Failure([
+                            "The session request was not sent.".to_string(),
+                            error.to_string(),
+                            "Run estelle connect to reattach, then retry.".to_string(),
+                        ]));
+                        self.start_next(tx);
+                    }
+                    return;
+                }
                 let Some(client) = self.client.clone() else {
                     self.handle_missing_client(QueuedRequest::Question {
                         question,
@@ -2289,6 +2331,20 @@ impl App {
                 });
             }
             QueuedRequest::Sweep => {
+                if let Some(session) = self.session.clone() {
+                    let (id, _cancel) = self.begin_active("/sweep");
+                    self.session_questions.insert(id);
+                    if let Err(error) = session.send(session_server::ClientRequest::Sweep { id }) {
+                        self.active = None;
+                        self.transcript.push(TranscriptEntry::Failure([
+                            "The sweep was not sent to the session server.".to_string(),
+                            error.to_string(),
+                            "Run estelle connect to reattach, then retry /sweep.".to_string(),
+                        ]));
+                        self.start_next(tx);
+                    }
+                    return;
+                }
                 let Some(client) = self.client.clone() else {
                     self.handle_missing_client(QueuedRequest::Sweep);
                     return;
@@ -2315,6 +2371,27 @@ impl App {
                 });
             }
             QueuedRequest::Command(command) => {
+                if let Some(session) = self.session.clone() {
+                    let name = command.name;
+                    let (id, _cancel) = self.begin_active(&format!("/{name}"));
+                    self.session_questions.insert(id);
+                    if let Err(error) = session.send(session_server::ClientRequest::Command {
+                        id,
+                        name: name.to_string(),
+                        argument: command.argument,
+                        last_question: command.last_question,
+                        skill_thread: command.skill_thread,
+                    }) {
+                        self.active = None;
+                        self.transcript.push(TranscriptEntry::Failure([
+                            format!("/{name} was not sent to the session server."),
+                            error.to_string(),
+                            "Run estelle connect to reattach, then retry.".to_string(),
+                        ]));
+                        self.start_next(tx);
+                    }
+                    return;
+                }
                 let Some(client) = self.client.clone() else {
                     self.handle_missing_client(QueuedRequest::Command(command));
                     return;
@@ -2363,6 +2440,9 @@ impl App {
 
     fn cancel_active(&mut self) {
         if let Some(active) = self.active.take() {
+            if let Some(session) = &self.session {
+                let _ = session.send(session_server::ClientRequest::Cancel { id: active.id });
+            }
             active.cancel.cancel();
             self.transcript
                 .push(TranscriptEntry::System("Request cancelled.".to_string()));
@@ -2407,6 +2487,209 @@ impl App {
             return;
         }
         self.submit(text, tx);
+    }
+
+    fn push_answer_reply(&mut self, response: AnswerReply) {
+        if !response.text.trim().is_empty() {
+            self.citations = response.sources.clone();
+            self.working_memory_paths = response.working_paths;
+            self.transcript.push(TranscriptEntry::Answer {
+                text: response.text,
+                grounded: response.grounded,
+                degraded: response.degraded,
+                sources: response.sources,
+            });
+        } else {
+            self.transcript.push(TranscriptEntry::Failure([
+                "Estelle returned no answer.".to_string(),
+                "The server completed the request with an empty result.".to_string(),
+                "Retry with a narrower question.".to_string(),
+            ]));
+        }
+    }
+
+    fn record_session_input(&mut self, id: u64, input: session_server::SessionInput) {
+        if self.session_questions.insert(id) {
+            let text = match input {
+                session_server::SessionInput::Question { question } => {
+                    self.last_question = Some(question.clone());
+                    self.has_submitted_question = true;
+                    question
+                }
+                session_server::SessionInput::Command { name, argument } => {
+                    format!("/{name} {argument}").trim_end().to_string()
+                }
+                session_server::SessionInput::Sweep => "/sweep".to_string(),
+            };
+            self.transcript.push(TranscriptEntry::User(text));
+        }
+    }
+
+    fn record_session_turn(&mut self, turn: session_server::SessionTurn) {
+        let command_name = match &turn.input {
+            session_server::SessionInput::Command { name, .. } => {
+                commands::resolve_session_name(name)
+            }
+            _ => None,
+        };
+        self.record_session_input(turn.id, turn.input);
+        if !self.session_completed.insert(turn.id) {
+            return;
+        }
+        match turn.outcome {
+            session_server::SessionOutcome::Answer { answer } => {
+                self.push_answer_reply(answer.into());
+            }
+            session_server::SessionOutcome::Command { reply } => {
+                if let Some(name) = command_name {
+                    self.apply_command_success(name, *reply);
+                } else {
+                    self.transcript.push(TranscriptEntry::Failure([
+                        "The server returned an unknown command result.".to_string(),
+                        "The stored command name is not in this client's command inventory."
+                            .to_string(),
+                        "Upgrade the client and reconnect to replay this session.".to_string(),
+                    ]));
+                }
+            }
+            session_server::SessionOutcome::Sweep { lines } => {
+                self.transcript.push(TranscriptEntry::Command {
+                    name: "sweep".to_string(),
+                    lines,
+                });
+            }
+            session_server::SessionOutcome::Failure { lines } => {
+                self.transcript.push(TranscriptEntry::Failure(lines));
+            }
+        }
+    }
+
+    fn apply_command_success(&mut self, name: &'static str, result: RemoteCommandReply) {
+        if name == "gate" {
+            self.gate_modal = GateModal::from_reply(&result.reply, &result.inspected_files);
+        }
+        let reply = result.reply;
+        if name == "orchestra" && reply.fleet.is_some() {
+            self.fleet = reply.fleet.clone();
+        }
+        if name == "model" {
+            self.picker = Some(PickerSurface::model(&reply));
+        } else if name == "skills" {
+            self.picker = Some(PickerSurface::skills(&reply));
+        }
+        if matches!(name, "model" | "routing")
+            && let Some(model) = observed_model(&reply)
+        {
+            self.active_model = Some(model.to_string());
+            self.active_model_observed_at = Some(Instant::now());
+        }
+        if let Some(todo) = reply.todo.clone() {
+            self.todo = Some(todo);
+            self.todo_visible = true;
+        }
+        if name == "work" {
+            self.last_diff = reply
+                .diff
+                .as_deref()
+                .filter(|diff| !diff.trim().is_empty())
+                .map(str::to_string);
+        }
+        if name == "skill:"
+            && let Some((skill, task)) = self.pending_skill.take()
+        {
+            let thread = self.skill_threads.entry(skill).or_default();
+            if !task.trim().is_empty() {
+                thread.push(("user".to_string(), task));
+            }
+            if let Some(reply_text) = reply
+                .extra
+                .get("reply")
+                .and_then(Value::as_str)
+                .filter(|text| !text.trim().is_empty())
+            {
+                thread.push(("assistant".to_string(), reply_text.to_string()));
+            }
+        }
+        self.transcript.push(TranscriptEntry::Command {
+            name: name.to_string(),
+            lines: commands::render_remote_reply(name, &reply),
+        });
+    }
+
+    fn handle_session_message(
+        &mut self,
+        message: session_server::ServerMessage,
+        tx: &mpsc::UnboundedSender<UiEvent>,
+    ) {
+        match message {
+            session_server::ServerMessage::Snapshot { turns, active } => {
+                for turn in turns {
+                    self.record_session_turn(turn);
+                }
+                if let Some(active) = active {
+                    let label = match &active.input {
+                        session_server::SessionInput::Question { .. } => "thinking".to_string(),
+                        session_server::SessionInput::Command { name, .. } => format!("/{name}"),
+                        session_server::SessionInput::Sweep => "/sweep".to_string(),
+                    };
+                    self.record_session_input(active.id, active.input);
+                    self.active = Some(ActiveRequest {
+                        id: active.id,
+                        label,
+                        started: Instant::now(),
+                        cancel: CancellationToken::new(),
+                    });
+                }
+            }
+            session_server::ServerMessage::Started { active } => {
+                let label = match &active.input {
+                    session_server::SessionInput::Question { .. } => "thinking".to_string(),
+                    session_server::SessionInput::Command { name, .. } => format!("/{name}"),
+                    session_server::SessionInput::Sweep => "/sweep".to_string(),
+                };
+                self.record_session_input(active.id, active.input);
+                self.active = Some(ActiveRequest {
+                    id: active.id,
+                    label,
+                    started: Instant::now(),
+                    cancel: CancellationToken::new(),
+                });
+            }
+            session_server::ServerMessage::Completed { turn } => {
+                let was_current = self
+                    .active
+                    .as_ref()
+                    .is_some_and(|active| active.id == turn.id);
+                if was_current {
+                    self.active = None;
+                }
+                self.record_session_turn(turn);
+                if was_current {
+                    self.start_next(tx);
+                }
+            }
+            session_server::ServerMessage::Cancelled { id } => {
+                if self.active.as_ref().is_some_and(|active| active.id == id) {
+                    self.active = None;
+                }
+            }
+            session_server::ServerMessage::SweepProgress { id, progress } => {
+                if self.active.as_ref().is_some_and(|active| active.id == id) {
+                    self.sweep_progress = Some(progress);
+                }
+            }
+            session_server::ServerMessage::Rejected { id, message } => {
+                if self.active.as_ref().is_some_and(|active| active.id == id) {
+                    self.active = None;
+                }
+                self.transcript.push(TranscriptEntry::Failure([
+                    "The session server rejected the request.".to_string(),
+                    message,
+                    "Wait for the active session work or reconnect, then retry.".to_string(),
+                ]));
+                self.start_next(tx);
+            }
+        }
     }
 
     fn handle_ui_event(&mut self, event: UiEvent, tx: &mpsc::UnboundedSender<UiEvent>) {
@@ -2640,25 +2923,7 @@ impl App {
                 }
                 self.active = None;
                 match result {
-                    Ok(response) => {
-                        if !response.text.trim().is_empty() {
-                            self.citations = response.sources.clone();
-                            self.working_memory_paths = response.working_paths;
-                            self.transcript.push(TranscriptEntry::Answer {
-                                text: response.text,
-                                grounded: response.grounded,
-                                degraded: response.degraded,
-                                sources: response.sources,
-                            });
-                        } else {
-                            self.transcript.push(TranscriptEntry::Failure([
-                                "Estelle returned no answer.".to_string(),
-                                "The server completed the request with an empty result."
-                                    .to_string(),
-                                "Retry with a narrower question.".to_string(),
-                            ]));
-                        }
-                    }
+                    Ok(response) => self.push_answer_reply(response),
                     Err(Error::Cancelled) => {}
                     Err(error) => {
                         self.clear_rejected(&error, "/deep-search");
@@ -2674,58 +2939,7 @@ impl App {
                 }
                 self.active = None;
                 match result {
-                    Ok(result) => {
-                        if name == "gate" {
-                            self.gate_modal =
-                                GateModal::from_reply(&result.reply, &result.inspected_files);
-                        }
-                        let reply = result.reply;
-                        if name == "orchestra" && reply.fleet.is_some() {
-                            self.fleet = reply.fleet.clone();
-                        }
-                        if name == "model" {
-                            self.picker = Some(PickerSurface::model(&reply));
-                        } else if name == "skills" {
-                            self.picker = Some(PickerSurface::skills(&reply));
-                        }
-                        if matches!(name, "model" | "routing")
-                            && let Some(model) = observed_model(&reply)
-                        {
-                            self.active_model = Some(model.to_string());
-                            self.active_model_observed_at = Some(Instant::now());
-                        }
-                        if let Some(todo) = reply.todo.clone() {
-                            self.todo = Some(todo);
-                            self.todo_visible = true;
-                        }
-                        if name == "work" {
-                            self.last_diff = reply
-                                .diff
-                                .as_deref()
-                                .filter(|diff| !diff.trim().is_empty())
-                                .map(str::to_string);
-                        }
-                        if name == "skill:"
-                            && let Some((skill, task)) = self.pending_skill.take()
-                        {
-                            let thread = self.skill_threads.entry(skill).or_default();
-                            if !task.trim().is_empty() {
-                                thread.push(("user".to_string(), task));
-                            }
-                            if let Some(reply_text) = reply
-                                .extra
-                                .get("reply")
-                                .and_then(Value::as_str)
-                                .filter(|text| !text.trim().is_empty())
-                            {
-                                thread.push(("assistant".to_string(), reply_text.to_string()));
-                            }
-                        }
-                        self.transcript.push(TranscriptEntry::Command {
-                            name: name.to_string(),
-                            lines: commands::render_remote_reply(name, &reply),
-                        });
-                    }
+                    Ok(result) => self.apply_command_success(name, result),
                     Err(CommandFailure::Client(Error::Cancelled)) => {
                         self.pending_skill = None;
                     }
@@ -2797,6 +3011,17 @@ impl App {
                     }
                 }
                 self.start_next(tx);
+            }
+            UiEvent::Session(message) => self.handle_session_message(message, tx),
+            UiEvent::SessionDisconnected(error) => {
+                self.session = None;
+                self.active = None;
+                self.transcript.push(TranscriptEntry::Failure([
+                    "This terminal detached from the session server.".to_string(),
+                    error,
+                    "Server-owned work was not cancelled; run estelle connect to reattach."
+                        .to_string(),
+                ]));
             }
         }
     }
@@ -5842,14 +6067,55 @@ async fn record_session_checkpoint(root: PathBuf) {
     let _ = session_gap::record_checkpoint(&root, &files, chrono::Utc::now()).await;
 }
 
-async fn run(args: Args) -> io::Result<()> {
-    let initial_credential = resolve_credential();
+async fn run(args: Args, session_socket: Option<PathBuf>) -> io::Result<()> {
+    let connected = session_socket.is_some();
+    // The attached terminal is a transport/rendering client. It neither resolves nor owns the
+    // Estelle credential; only `serve` does. This also keeps keychain prompts out of reconnects.
+    let initial_credential = (!connected).then(resolve_credential);
+    let mut app = App::new(args);
+    let session_connection = match session_socket {
+        Some(socket) => Some(
+            session_server::SessionConnection::connect(&socket, app.repo.clone(), app.root.clone())
+                .await
+                .map_err(|error| {
+                    io::Error::new(
+                        error.kind(),
+                        format!(
+                            "cannot connect to Estelle session server at {}: {error}",
+                            socket.display()
+                        ),
+                    )
+                })?,
+        ),
+        None => None,
+    };
     let mut session = TerminalSession::enter()?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
-    let mut app = App::new(args);
     let (tx, mut rx) = mpsc::unbounded_channel();
-    app.handle_ui_event(UiEvent::Credential(initial_credential), &tx);
+    if let Some(connection) = session_connection {
+        let (handle, mut session_events) = connection.start();
+        app.session = Some(handle);
+        let session_tx = tx.clone();
+        tokio::spawn(async move {
+            while let Some(event) = session_events.recv().await {
+                let ui_event = match event {
+                    Ok(message) => UiEvent::Session(message),
+                    Err(error) => UiEvent::SessionDisconnected(error),
+                };
+                if session_tx.send(ui_event).is_err() {
+                    return;
+                }
+            }
+        });
+    }
+    match initial_credential {
+        None => {
+            app.auth_resolved = true;
+            app.header.connected = true;
+        }
+        Some(result) => app.handle_ui_event(UiEvent::Credential(result), &tx),
+    }
     let mut events = EventStream::new();
     let mut ticker = tokio::time::interval(FRAME_INTERVAL);
     let mut first_frame = true;
@@ -5982,6 +6248,12 @@ async fn login_failure(error: &dyn std::fmt::Display) -> ExitCode {
     ExitCode::FAILURE
 }
 
+async fn command_failure(message: impl std::fmt::Display) -> ExitCode {
+    let mut stderr = tokio::io::stderr();
+    let _ = stderr.write_all(format!("{message}\n").as_bytes()).await;
+    ExitCode::FAILURE
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = Args::parse();
@@ -6038,6 +6310,65 @@ async fn main() -> ExitCode {
             ExitCode::SUCCESS
         } else {
             ExitCode::FAILURE
+        };
+    }
+    if let Some(Command::Serve { socket }) = args.command.clone() {
+        let socket = match socket
+            .map(Ok)
+            .unwrap_or_else(session_server::default_socket_path)
+        {
+            Ok(socket) => socket,
+            Err(error) => return command_failure(error).await,
+        };
+        let (client, _auth) = match resolve_credential() {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                return command_failure(format!("session server needs login: {error}")).await;
+            }
+        };
+        let server = match session_server::SessionServer::bind(socket.clone(), client).await {
+            Ok(server) => server,
+            Err(error) => return command_failure(error).await,
+        };
+        let mut stdout = tokio::io::stdout();
+        if stdout
+            .write_all(
+                format!("Estelle session server listening at {}\n", socket.display()).as_bytes(),
+            )
+            .await
+            .is_err()
+        {
+            return ExitCode::FAILURE;
+        }
+        let shutdown = CancellationToken::new();
+        let signal_shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                signal_shutdown.cancel();
+            }
+        });
+        return match server.run(shutdown).await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => command_failure(error).await,
+        };
+    }
+    if let Some(Command::Connect {
+        client: None,
+        socket,
+    }) = args.command.clone()
+    {
+        let socket = match socket
+            .map(Ok)
+            .unwrap_or_else(session_server::default_socket_path)
+        {
+            Ok(socket) => socket,
+            Err(error) => return command_failure(error).await,
+        };
+        let mut tui_args = args;
+        tui_args.command = None;
+        return match run(tui_args, Some(socket)).await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => command_failure(error).await,
         };
     }
     if matches!(args.command, Some(Command::Acp)) {
@@ -6146,7 +6477,7 @@ async fn main() -> ExitCode {
             ExitCode::FAILURE
         };
     }
-    match run(args).await {
+    match run(args, None).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(_) => ExitCode::FAILURE,
     }
@@ -6171,6 +6502,70 @@ mod tests {
         });
         app.boot = None;
         app
+    }
+
+    #[test]
+    fn serve_and_connect_are_distinct_session_runtime_commands() {
+        let served =
+            Args::try_parse_from(["estelle", "serve", "--socket", "/tmp/estelle-session.sock"])
+                .expect("serve command");
+        assert!(matches!(
+            served.command,
+            Some(Command::Serve { socket: Some(path) })
+                if path.as_path() == std::path::Path::new("/tmp/estelle-session.sock")
+        ));
+
+        let connected = Args::try_parse_from(["estelle", "connect"]).expect("connect command");
+        assert!(matches!(
+            connected.command,
+            Some(Command::Connect {
+                client: None,
+                socket: None,
+            })
+        ));
+    }
+
+    #[test]
+    fn reconnect_snapshot_replays_completed_work_and_restores_active_work() {
+        let mut app = test_app();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        app.handle_ui_event(
+            UiEvent::Session(session_server::ServerMessage::Snapshot {
+                turns: vec![session_server::SessionTurn {
+                    id: 41,
+                    input: session_server::SessionInput::Question {
+                        question: "where does charge fail?".to_string(),
+                    },
+                    outcome: session_server::SessionOutcome::Answer {
+                        answer: session_server::WireAnswer {
+                            text: "The retry loop has no ceiling.".to_string(),
+                            grounded: Some(true),
+                            degraded: false,
+                            sources: vec![session_server::WireSource {
+                                file: "api/charge.ts".to_string(),
+                                line: Some(52),
+                                extra: serde_json::Map::new(),
+                            }],
+                            working_paths: Vec::new(),
+                        },
+                    },
+                }],
+                active: Some(session_server::ActiveTurn {
+                    id: 42,
+                    input: session_server::SessionInput::Question {
+                        question: "verify the retry fix".to_string(),
+                    },
+                }),
+            }),
+            &tx,
+        );
+
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 30);
+        assert!(rendered.contains("where does charge fail?"));
+        assert!(rendered.contains("The retry loop has no ceiling."));
+        assert!(rendered.contains("api/charge.ts:52"));
+        assert!(rendered.contains("verify the retry fix"));
+        assert_eq!(app.active.as_ref().map(|active| active.id), Some(42));
     }
 
     #[test]

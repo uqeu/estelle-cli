@@ -1,0 +1,931 @@
+// Server-owned Estelle sessions. The transport shape follows jcode's MIT-licensed
+// server/client architecture; the implementation is original to Estelle's API contract.
+
+use std::collections::HashMap;
+use std::io;
+use std::io::ErrorKind;
+use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use codex_uds::UnixListener;
+use codex_uds::UnixStream;
+use estelle_client::Client;
+use estelle_client::Repo;
+use serde::Deserialize;
+use serde::Serialize;
+use serde_json::Map;
+use serde_json::Value;
+use tokio::io::AsyncBufReadExt;
+use tokio::io::AsyncWriteExt;
+use tokio::io::BufReader;
+use tokio::io::BufWriter;
+use tokio::io::ReadHalf;
+use tokio::io::WriteHalf;
+use tokio::sync::Mutex;
+use tokio::sync::broadcast;
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+
+use crate::AnswerReply;
+
+#[cfg(unix)]
+const SESSION_SOCKET_MODE: u32 = 0o600;
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ClientFrame {
+    Attach { repo: String, root: PathBuf },
+    Request { request: ClientRequest },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(crate) enum ClientRequest {
+    Ask {
+        id: u64,
+        question: String,
+        session_context: Option<String>,
+    },
+    Command {
+        id: u64,
+        name: String,
+        argument: String,
+        last_question: Option<String>,
+        skill_thread: Option<Vec<(String, String)>>,
+    },
+    Sweep {
+        id: u64,
+    },
+    Cancel {
+        id: u64,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(crate) enum ServerMessage {
+    Snapshot {
+        turns: Vec<SessionTurn>,
+        active: Option<ActiveTurn>,
+    },
+    Started {
+        active: ActiveTurn,
+    },
+    Completed {
+        turn: SessionTurn,
+    },
+    SweepProgress {
+        id: u64,
+        progress: crate::top_level::SweepProgress,
+    },
+    Cancelled {
+        id: u64,
+    },
+    Rejected {
+        id: u64,
+        message: String,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct ActiveTurn {
+    pub(crate) id: u64,
+    pub(crate) input: SessionInput,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct SessionTurn {
+    pub(crate) id: u64,
+    pub(crate) input: SessionInput,
+    pub(crate) outcome: SessionOutcome,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(crate) enum SessionInput {
+    Question { question: String },
+    Command { name: String, argument: String },
+    Sweep,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(crate) enum SessionOutcome {
+    Answer {
+        answer: WireAnswer,
+    },
+    Command {
+        reply: Box<crate::RemoteCommandReply>,
+    },
+    Sweep {
+        lines: Vec<String>,
+    },
+    Failure {
+        lines: [String; 3],
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct WireAnswer {
+    pub(crate) text: String,
+    pub(crate) grounded: Option<bool>,
+    pub(crate) degraded: bool,
+    pub(crate) sources: Vec<WireSource>,
+    pub(crate) working_paths: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct WireSource {
+    pub(crate) file: String,
+    pub(crate) line: Option<u64>,
+    pub(crate) extra: Map<String, Value>,
+}
+
+impl From<AnswerReply> for WireAnswer {
+    fn from(answer: AnswerReply) -> Self {
+        Self {
+            text: answer.text,
+            grounded: answer.grounded,
+            degraded: answer.degraded,
+            sources: answer
+                .sources
+                .into_iter()
+                .map(|source| WireSource {
+                    file: source.file,
+                    line: source.line,
+                    extra: source.extra,
+                })
+                .collect(),
+            working_paths: answer.working_paths,
+        }
+    }
+}
+
+impl From<WireAnswer> for AnswerReply {
+    fn from(answer: WireAnswer) -> Self {
+        Self {
+            text: answer.text,
+            grounded: answer.grounded,
+            degraded: answer.degraded,
+            sources: answer
+                .sources
+                .into_iter()
+                .map(|source| estelle_client::Source {
+                    file: source.file,
+                    line: source.line,
+                    extra: source.extra,
+                })
+                .collect(),
+            working_paths: answer.working_paths,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct SessionKey {
+    repo: String,
+    root: PathBuf,
+}
+
+struct ActiveWork {
+    turn: ActiveTurn,
+    cancel: CancellationToken,
+}
+
+struct SessionState {
+    repo: Repo,
+    root: PathBuf,
+    turns: Vec<SessionTurn>,
+    active: Option<ActiveWork>,
+    events: broadcast::Sender<ServerMessage>,
+}
+
+impl SessionState {
+    fn new(repo: Repo, root: PathBuf) -> Self {
+        let (events, _) = broadcast::channel(64);
+        Self {
+            repo,
+            root,
+            turns: Vec::new(),
+            active: None,
+            events,
+        }
+    }
+}
+
+type SharedSession = Arc<Mutex<SessionState>>;
+type Sessions = Arc<Mutex<HashMap<SessionKey, SharedSession>>>;
+
+pub(crate) struct SessionServer {
+    listener: UnixListener,
+    socket_guard: SocketGuard,
+    _startup_lock: StartupLock,
+    client: Client,
+    sessions: Sessions,
+}
+
+impl SessionServer {
+    pub(crate) async fn bind(socket_path: PathBuf, client: Client) -> io::Result<Self> {
+        let startup_lock = acquire_startup_lock(&socket_path).await?;
+        prepare_socket_path(&socket_path).await?;
+        let listener = UnixListener::bind(&socket_path).await?;
+        set_socket_permissions(&socket_path).await?;
+        Ok(Self {
+            listener,
+            socket_guard: SocketGuard { socket_path },
+            _startup_lock: startup_lock,
+            client,
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+        })
+    }
+
+    pub(crate) async fn run(mut self, shutdown: CancellationToken) -> io::Result<()> {
+        loop {
+            let stream = tokio::select! {
+                _ = shutdown.cancelled() => break,
+                stream = self.listener.accept() => stream?,
+            };
+            let client = self.client.clone();
+            let sessions = self.sessions.clone();
+            tokio::spawn(async move {
+                let _ = handle_connection(stream, client, sessions).await;
+            });
+        }
+        drop(self.socket_guard);
+        Ok(())
+    }
+}
+
+pub(crate) struct SessionConnection {
+    reader: BufReader<ReadHalf<UnixStream>>,
+    writer: BufWriter<WriteHalf<UnixStream>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct SessionHandle {
+    requests: mpsc::UnboundedSender<ClientRequest>,
+}
+
+impl SessionHandle {
+    pub(crate) fn send(&self, request: ClientRequest) -> io::Result<()> {
+        self.requests
+            .send(request)
+            .map_err(|_| io::Error::new(ErrorKind::BrokenPipe, "Estelle session connection closed"))
+    }
+}
+
+impl SessionConnection {
+    pub(crate) async fn connect(socket_path: &Path, repo: Repo, root: PathBuf) -> io::Result<Self> {
+        let stream = UnixStream::connect(socket_path).await?;
+        let (reader, writer) = tokio::io::split(stream);
+        let mut connection = Self {
+            reader: BufReader::new(reader),
+            writer: BufWriter::new(writer),
+        };
+        connection
+            .write_frame(&ClientFrame::Attach {
+                repo: repo.as_str().to_string(),
+                root,
+            })
+            .await?;
+        Ok(connection)
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn send(&mut self, request: ClientRequest) -> io::Result<()> {
+        self.write_frame(&ClientFrame::Request { request }).await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn next(&mut self) -> io::Result<ServerMessage> {
+        read_json_line(&mut self.reader).await
+    }
+
+    async fn write_frame(&mut self, frame: &ClientFrame) -> io::Result<()> {
+        write_json_line(&mut self.writer, frame).await
+    }
+
+    pub(crate) fn start(
+        self,
+    ) -> (
+        SessionHandle,
+        mpsc::UnboundedReceiver<Result<ServerMessage, String>>,
+    ) {
+        let (requests_tx, mut requests_rx) = mpsc::unbounded_channel();
+        let (events_tx, events_rx) = mpsc::unbounded_channel();
+        let Self {
+            mut reader,
+            mut writer,
+        } = self;
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    request = requests_rx.recv() => {
+                        let Some(request) = request else {
+                            return;
+                        };
+                        if let Err(error) = write_json_line(
+                            &mut writer,
+                            &ClientFrame::Request { request },
+                        )
+                        .await
+                        {
+                            let _ = events_tx.send(Err(error.to_string()));
+                            return;
+                        }
+                    }
+                    message = read_json_line::<ServerMessage, _>(&mut reader) => {
+                        match message {
+                            Ok(message) => {
+                                if events_tx.send(Ok(message)).is_err() {
+                                    return;
+                                }
+                            }
+                            Err(error) => {
+                                let _ = events_tx.send(Err(error.to_string()));
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        (
+            SessionHandle {
+                requests: requests_tx,
+            },
+            events_rx,
+        )
+    }
+}
+
+pub(crate) fn default_socket_path() -> io::Result<PathBuf> {
+    dirs::home_dir()
+        .map(|home| home.join(".estelle").join("session.sock"))
+        .ok_or_else(|| io::Error::new(ErrorKind::NotFound, "home directory is unavailable"))
+}
+
+struct StartupLock(std::fs::File);
+
+async fn acquire_startup_lock(socket_path: &Path) -> io::Result<StartupLock> {
+    let parent = socket_path.parent().ok_or_else(|| {
+        io::Error::new(
+            ErrorKind::InvalidInput,
+            "session socket has no parent directory",
+        )
+    })?;
+    codex_uds::prepare_private_socket_directory(parent).await?;
+    let lock_path = socket_path.with_extension("lock");
+    tokio::task::spawn_blocking(move || {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&lock_path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+        file.try_lock().map_err(|error| match error {
+            std::fs::TryLockError::WouldBlock => io::Error::new(
+                ErrorKind::AddrInUse,
+                format!(
+                    "Estelle session server startup is already owned at {}",
+                    lock_path.display()
+                ),
+            ),
+            std::fs::TryLockError::Error(error) => error,
+        })?;
+        Ok(StartupLock(file))
+    })
+    .await
+    .map_err(|error| io::Error::other(format!("session startup lock task failed: {error}")))?
+}
+
+impl Drop for StartupLock {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
+async fn handle_connection(
+    stream: UnixStream,
+    client: Client,
+    sessions: Sessions,
+) -> io::Result<()> {
+    let (reader, writer) = tokio::io::split(stream);
+    let mut reader = BufReader::new(reader);
+    let mut writer = BufWriter::new(writer);
+    let ClientFrame::Attach { repo, root } = read_json_line(&mut reader).await? else {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "first session frame must attach",
+        ));
+    };
+    let repo = Repo::new(&repo)
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "invalid repository name"))?;
+    let root = tokio::fs::canonicalize(&root).await.unwrap_or(root);
+    let key = SessionKey {
+        repo: repo.as_str().to_string(),
+        root: root.clone(),
+    };
+    let session = {
+        let mut sessions = sessions.lock().await;
+        sessions
+            .entry(key)
+            .or_insert_with(|| Arc::new(Mutex::new(SessionState::new(repo, root))))
+            .clone()
+    };
+    let (snapshot, mut events) = {
+        let state = session.lock().await;
+        (
+            ServerMessage::Snapshot {
+                turns: state.turns.clone(),
+                active: state.active.as_ref().map(|work| work.turn.clone()),
+            },
+            state.events.subscribe(),
+        )
+    };
+    write_json_line(&mut writer, &snapshot).await?;
+
+    loop {
+        tokio::select! {
+            frame = read_json_line::<ClientFrame, _>(&mut reader) => {
+                let frame = match frame {
+                    Ok(frame) => frame,
+                    Err(error) if error.kind() == ErrorKind::UnexpectedEof => return Ok(()),
+                    Err(error) => return Err(error),
+                };
+                let ClientFrame::Request { request } = frame else {
+                    return Err(io::Error::new(ErrorKind::InvalidData, "client attached twice"));
+                };
+                handle_request(request, session.clone(), client.clone()).await;
+            }
+            message = events.recv() => {
+                match message {
+                    Ok(message) => write_json_line(&mut writer, &message).await?,
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        let snapshot = {
+                            let state = session.lock().await;
+                            ServerMessage::Snapshot {
+                                turns: state.turns.clone(),
+                                active: state.active.as_ref().map(|work| work.turn.clone()),
+                            }
+                        };
+                        write_json_line(&mut writer, &snapshot).await?;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => return Ok(()),
+                }
+            }
+        }
+    }
+}
+
+async fn handle_request(request: ClientRequest, session: SharedSession, client: Client) {
+    match request {
+        ClientRequest::Ask {
+            id,
+            question,
+            session_context,
+        } => {
+            let input = SessionInput::Question {
+                question: question.clone(),
+            };
+            let Some((repo, root, cancel, _events)) = begin_work(&session, id, input.clone()).await
+            else {
+                return;
+            };
+            tokio::spawn(async move {
+                let result = crate::answer_question(
+                    client,
+                    repo,
+                    root,
+                    question.clone(),
+                    session_context,
+                    &cancel,
+                )
+                .await;
+                let outcome = match result {
+                    Ok(answer) => SessionOutcome::Answer {
+                        answer: answer.into(),
+                    },
+                    Err(estelle_client::Error::Cancelled) => {
+                        return;
+                    }
+                    Err(error) => SessionOutcome::Failure {
+                        lines: crate::failure_lines(&error),
+                    },
+                };
+                finish_work(session, id, input, outcome).await;
+            });
+        }
+        ClientRequest::Command {
+            id,
+            name,
+            argument,
+            last_question,
+            skill_thread,
+        } => {
+            let Some(static_name) = crate::commands::resolve_session_name(&name) else {
+                reject(&session, id, format!("unknown session command /{name}")).await;
+                return;
+            };
+            let input = SessionInput::Command {
+                name: static_name.to_string(),
+                argument: argument.clone(),
+            };
+            let Some((repo, root, cancel, _events)) = begin_work(&session, id, input.clone()).await
+            else {
+                return;
+            };
+            let pending = crate::PendingCommand {
+                name: static_name,
+                argument,
+                last_question,
+                skill_thread,
+            };
+            tokio::spawn(async move {
+                let result =
+                    crate::execute_remote_command(client, repo, root, pending, &cancel).await;
+                let outcome = match result {
+                    Ok(reply) => SessionOutcome::Command {
+                        reply: Box::new(reply),
+                    },
+                    Err(crate::CommandFailure::Client(estelle_client::Error::Cancelled)) => return,
+                    Err(crate::CommandFailure::Client(error)) => SessionOutcome::Failure {
+                        lines: crate::failure_lines(&error),
+                    },
+                    Err(crate::CommandFailure::Local(lines)) => SessionOutcome::Failure { lines },
+                };
+                finish_work(session, id, input, outcome).await;
+            });
+        }
+        ClientRequest::Sweep { id } => {
+            let input = SessionInput::Sweep;
+            let Some((repo, root, cancel, events)) = begin_work(&session, id, input.clone()).await
+            else {
+                return;
+            };
+            tokio::spawn(async move {
+                let result = crate::top_level::sweep_with_progress(
+                    &client,
+                    &repo,
+                    &root,
+                    false,
+                    &cancel,
+                    |progress| {
+                        let _ = events.send(ServerMessage::SweepProgress { id, progress });
+                        Ok(())
+                    },
+                )
+                .await;
+                let outcome = match result {
+                    Ok(lines) => SessionOutcome::Sweep { lines },
+                    Err(crate::top_level::SweepFailure::Client(
+                        estelle_client::Error::Cancelled,
+                    )) => return,
+                    Err(crate::top_level::SweepFailure::Client(error)) => SessionOutcome::Failure {
+                        lines: crate::failure_lines(&error),
+                    },
+                    Err(crate::top_level::SweepFailure::Local(error)) => SessionOutcome::Failure {
+                        lines: [
+                            format!("Sweep stopped: {error}"),
+                            "The repository was not reported as fully swept.".to_string(),
+                            "Correct the local or account state, then retry /sweep.".to_string(),
+                        ],
+                    },
+                };
+                finish_work(session, id, input, outcome).await;
+            });
+        }
+        ClientRequest::Cancel { id } => {
+            let mut state = session.lock().await;
+            let Some(active) = state.active.take() else {
+                return;
+            };
+            if active.turn.id != id {
+                state.active = Some(active);
+                return;
+            }
+            active.cancel.cancel();
+            let _ = state.events.send(ServerMessage::Cancelled { id });
+        }
+    }
+}
+
+async fn begin_work(
+    session: &SharedSession,
+    id: u64,
+    input: SessionInput,
+) -> Option<(
+    Repo,
+    PathBuf,
+    CancellationToken,
+    broadcast::Sender<ServerMessage>,
+)> {
+    let mut state = session.lock().await;
+    if state.active.is_some() {
+        let _ = state.events.send(ServerMessage::Rejected {
+            id,
+            message: "this session already has work in progress".to_string(),
+        });
+        return None;
+    }
+    if state.turns.iter().any(|turn| turn.id == id) {
+        let _ = state.events.send(ServerMessage::Rejected {
+            id,
+            message: "this session request ID was already used".to_string(),
+        });
+        return None;
+    }
+    let turn = ActiveTurn { id, input };
+    let cancel = CancellationToken::new();
+    state.active = Some(ActiveWork {
+        turn: turn.clone(),
+        cancel: cancel.clone(),
+    });
+    let _ = state.events.send(ServerMessage::Started { active: turn });
+    Some((
+        state.repo.clone(),
+        state.root.clone(),
+        cancel,
+        state.events.clone(),
+    ))
+}
+
+async fn reject(session: &SharedSession, id: u64, message: String) {
+    let state = session.lock().await;
+    let _ = state.events.send(ServerMessage::Rejected { id, message });
+}
+
+async fn finish_work(
+    session: SharedSession,
+    id: u64,
+    input: SessionInput,
+    outcome: SessionOutcome,
+) {
+    let mut state = session.lock().await;
+    if state.active.as_ref().is_none_or(|work| work.turn.id != id) {
+        return;
+    }
+    state.active = None;
+    let turn = SessionTurn { id, input, outcome };
+    state.turns.push(turn.clone());
+    let _ = state.events.send(ServerMessage::Completed { turn });
+}
+
+async fn read_json_line<T, R>(reader: &mut R) -> io::Result<T>
+where
+    T: for<'de> Deserialize<'de>,
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    let mut line = String::new();
+    if reader.read_line(&mut line).await? == 0 {
+        return Err(io::Error::new(
+            ErrorKind::UnexpectedEof,
+            "session connection closed",
+        ));
+    }
+    serde_json::from_str(&line).map_err(|error| io::Error::new(ErrorKind::InvalidData, error))
+}
+
+async fn write_json_line<T, W>(writer: &mut W, value: &T) -> io::Result<()>
+where
+    T: Serialize,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut bytes =
+        serde_json::to_vec(value).map_err(|error| io::Error::new(ErrorKind::InvalidData, error))?;
+    bytes.push(b'\n');
+    writer.write_all(&bytes).await?;
+    writer.flush().await
+}
+
+async fn prepare_socket_path(socket_path: &Path) -> io::Result<()> {
+    let parent = socket_path.parent().ok_or_else(|| {
+        io::Error::new(
+            ErrorKind::InvalidInput,
+            "session socket has no parent directory",
+        )
+    })?;
+    codex_uds::prepare_private_socket_directory(parent).await?;
+    match UnixStream::connect(socket_path).await {
+        Ok(_) => Err(io::Error::new(
+            ErrorKind::AddrInUse,
+            format!(
+                "Estelle session server is already running at {}",
+                socket_path.display()
+            ),
+        )),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) if error.kind() == ErrorKind::ConnectionRefused => {
+            if codex_uds::is_stale_socket_path(socket_path).await? {
+                tokio::fs::remove_file(socket_path).await
+            } else {
+                Err(io::Error::new(
+                    ErrorKind::AlreadyExists,
+                    format!(
+                        "session socket path is not a socket: {}",
+                        socket_path.display()
+                    ),
+                ))
+            }
+        }
+        Err(_error) if !socket_path.exists() => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(unix)]
+async fn set_socket_permissions(socket_path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    tokio::fs::set_permissions(
+        socket_path,
+        std::fs::Permissions::from_mode(SESSION_SOCKET_MODE),
+    )
+    .await
+}
+
+#[cfg(not(unix))]
+async fn set_socket_permissions(_socket_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+struct SocketGuard {
+    socket_path: PathBuf,
+}
+
+impl Drop for SocketGuard {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_file(&self.socket_path)
+            && error.kind() != ErrorKind::NotFound
+        {
+            tracing::warn!(
+                socket_path = %self.socket_path.display(),
+                %error,
+                "failed to remove Estelle session socket"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use estelle_client::ApiKey;
+    use estelle_client::Client;
+    use estelle_client::Repo;
+    use tokio_util::sync::CancellationToken;
+    use wiremock::Mock;
+    use wiremock::MockServer;
+    use wiremock::ResponseTemplate;
+    use wiremock::matchers::body_json;
+    use wiremock::matchers::method;
+    use wiremock::matchers::path;
+
+    use super::ClientRequest;
+    use super::ServerMessage;
+    use super::SessionConnection;
+    use super::SessionOutcome;
+    use super::SessionServer;
+
+    #[tokio::test]
+    async fn work_survives_client_disconnect_and_is_replayed_on_reconnect() {
+        let api = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/deep-search"))
+            .and(body_json(serde_json::json!({
+                "repo": "fatelabs/estelle",
+                "question": "where does charge fail?"
+            })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(Duration::from_millis(100))
+                    .set_body_json(serde_json::json!({
+                        "answer": "The retry loop has no ceiling.",
+                        "grounded": true,
+                        "sources": [{"file": "api/charge.ts", "line": 52}]
+                    })),
+            )
+            .expect(1)
+            .mount(&api)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/me"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(Duration::from_millis(100))
+                    .set_body_json(serde_json::json!({
+                        "plan": "founder",
+                        "configured": ["anthropic"]
+                    })),
+            )
+            .expect(1)
+            .mount(&api)
+            .await;
+        let client = Client::new(
+            &format!("{}/", api.uri()),
+            ApiKey::new("test-key").expect("key"),
+            Duration::from_secs(120),
+        )
+        .expect("client");
+        let runtime = tempfile::tempdir().expect("runtime directory");
+        let root = tempfile::tempdir().expect("working tree");
+        let socket = runtime.path().join("session.sock");
+        let shutdown = CancellationToken::new();
+        let server = SessionServer::bind(socket.clone(), client.clone())
+            .await
+            .expect("bind session server");
+        let duplicate = SessionServer::bind(socket.clone(), client).await;
+        assert!(
+            matches!(duplicate, Err(error) if error.kind() == std::io::ErrorKind::AddrInUse),
+            "a second server must not steal the live session socket"
+        );
+        let server_task = tokio::spawn(server.run(shutdown.clone()));
+
+        let mut first = SessionConnection::connect(
+            &socket,
+            Repo::new("fatelabs/estelle").expect("repo"),
+            root.path().to_path_buf(),
+        )
+        .await
+        .expect("first client");
+        let _snapshot = first.next().await.expect("initial snapshot");
+        first
+            .send(ClientRequest::Ask {
+                id: 41,
+                question: "where does charge fail?".to_string(),
+                session_context: None,
+            })
+            .await
+            .expect("submit question");
+        drop(first);
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let mut second = SessionConnection::connect(
+            &socket,
+            Repo::new("fatelabs/estelle").expect("repo"),
+            root.path().to_path_buf(),
+        )
+        .await
+        .expect("second client");
+
+        let ServerMessage::Snapshot { turns, active } =
+            second.next().await.expect("reconnect snapshot")
+        else {
+            panic!("first reconnect event was not a snapshot");
+        };
+        assert!(active.is_none(), "completed work must not remain active");
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].id, 41);
+        assert!(matches!(
+            &turns[0].outcome,
+            SessionOutcome::Answer { answer }
+                if answer.text == "The retry loop has no ceiling."
+        ));
+
+        second
+            .send(ClientRequest::Command {
+                id: 42,
+                name: "me".to_string(),
+                argument: String::new(),
+                last_question: None,
+                skill_thread: None,
+            })
+            .await
+            .expect("submit command");
+        drop(second);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let mut third = SessionConnection::connect(
+            &socket,
+            Repo::new("fatelabs/estelle").expect("repo"),
+            root.path().to_path_buf(),
+        )
+        .await
+        .expect("third client");
+        let ServerMessage::Snapshot { turns, active } =
+            third.next().await.expect("command reconnect snapshot")
+        else {
+            panic!("first command reconnect event was not a snapshot");
+        };
+        assert!(active.is_none());
+        assert_eq!(turns.len(), 2);
+        assert!(matches!(
+            &turns[1].outcome,
+            SessionOutcome::Command { reply }
+                if reply.reply.extra.get("plan").and_then(serde_json::Value::as_str)
+                    == Some("founder")
+        ));
+
+        shutdown.cancel();
+        server_task
+            .await
+            .expect("server task")
+            .expect("server exit");
+    }
+}

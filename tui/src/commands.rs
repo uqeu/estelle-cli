@@ -194,12 +194,13 @@ const GRAFT_HELP: &[(&str, &str)] = &[
 ];
 
 #[cfg(test)]
-pub(crate) const TOP_LEVEL_COMMANDS: [&str; 21] = [
+pub(crate) const TOP_LEVEL_COMMANDS: [&str; 22] = [
     "login",
     "doctor",
     "init",
     "sweep",
     "reindex",
+    "serve",
     "connect",
     "remove",
     "github",
@@ -224,7 +225,7 @@ pub(crate) fn session_command_names() -> [&'static str; 46] {
 }
 
 #[cfg(test)]
-pub(crate) fn top_level_command_names() -> [&'static str; 21] {
+pub(crate) fn top_level_command_names() -> [&'static str; 22] {
     TOP_LEVEL_COMMANDS
 }
 
@@ -2772,6 +2773,7 @@ mod tests {
                 "init",
                 "sweep",
                 "reindex",
+                "serve",
                 "connect",
                 "remove",
                 "github",
