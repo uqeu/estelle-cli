@@ -5,13 +5,13 @@ Every row names a source, licence, implementation location, and measured status.
 its row. A status changes only from a probe, never from recollection.
 
 **Status:** ✅ built + wired + public-artifact/prod-proven · 🟡 built, but no public customer artifact proves
-the path · ⬜ decided, not built. **TODAY — 2026-08-16:** `v0.2.7` run `31939611428` completed successfully;
+the path · ⬜ decided, not built. **TODAY — 2026-08-16:** `v0.2.8` run `31944978440` completed successfully;
 the read-back verified nine public assets, four archive checksums/member sets, arm64 identity, public
-installer execution, a clean-home bare command against `awesome-llm-apps`, and the public npm shim launching
-the byte-identical native `0.2.7` with SLSA metadata. External GitHub attestation verification remains
-unproved because the local Sigstore verifier failed to initialize. This release adds the artifact-level
-server/CLI IP boundary. Provider inference bindings are not built merely because credential acquisition
-exists; those rows remain separate and honest below.
+installer execution, a clean-home bare command against `awesome-llm-apps`, public session detach/reconnect,
+and the public npm shim launching the byte-identical native `0.2.8` with SLSA metadata. A detached request
+replayed its expected typed auth failure because the public probe deliberately used an invalid credential;
+production-authenticated answer success is not claimed. Provider inference bindings are not built merely
+because credential acquisition exists; those rows remain separate and honest below.
 
 ## PORTED — mechanism, source, and licence
 
@@ -33,7 +33,7 @@ exists; those rows remain separate and honest below.
 | Standalone Python/Rust release oracles: 19 returning-brief decisions plus exact guard, distil, repository, sync-refusal, grounding-verdict, and verify-request fixtures; live Python comparison when the server source exists | Fate Labs · Apache-2.0 repository; fixtures originate in parent `tests/test_hook_contract.py` | `tui/src/session_gap.rs:708`, `tui/src/top_level.rs:3196` | ✅ |
 | Finite fork/egress audit: pinned upstream/import trees, reviewed risky blobs, named sinks, and primitive census | Fate Labs · Apache-2.0 repository | `fork-manifest.yaml`, `docs/egress-sinks.toml`, `scripts/check-fork-audit.py` | ✅ |
 | Shipped-binary IP boundary rejecting server-owned `estelle.serve` and `estelle.agent` symbols on every native target | Fate Labs · Apache-2.0 repository | `scripts/check-ip-boundary.py`, `scripts/test-ip-boundary.py`, `.github/workflows/release.yml` | ✅ |
-| Server-owned detachable session: `estelle serve` + credential-free `estelle connect`, owner-only UDS, question/remote-command/sweep continuation and typed reconnect replay | jcode server/client architecture (MIT), adapted to Estelle's typed API boundary; Fate Labs implementation Apache-2.0 | `tui/src/session_server.rs`, `tui/src/main.rs` | 🟡 local source proof; public `v0.2.8` pending |
+| Server-owned detachable session: `estelle serve` + credential-free `estelle connect`, owner-only UDS, question/remote-command/sweep continuation and typed reconnect replay | jcode server/client architecture (MIT), adapted to Estelle's typed API boundary; Fate Labs implementation Apache-2.0 | `tui/src/session_server.rs`, `tui/src/main.rs` | ✅ public `v0.2.8`: two TUI attachments and detached typed failure replay on `awesome-llm-apps` |
 | Native retirement of the abandoned JavaScript package through an exact-version, checksum-first npm launcher | Fate Labs · Apache-2.0 repository | `npm-shim/install.js`, `npm-shim/bin/estelle.js` | ✅ |
 | Credential-first launch and five-way `/login` picker, plus `/logout`, presence-only `/whoami`, and context-correct `/doctor` | Fate Labs · Apache-2.0 repository | `tui/src/main.rs:706`, `tui/src/main.rs:1362`, `tui/src/main.rs:1865`, `tui/src/doctor.rs:14` | 🟡 |
 | Allowlisted provider-key login with masked input, typed `/key` request, secret-free receipt, and explicit unsupported-route refusal | Fate Labs · Apache-2.0 repository | `tui/src/main.rs:427`, `tui/src/provider_keys.rs:15`, `estelle-client/src/endpoint.rs:60` | 🟡 |

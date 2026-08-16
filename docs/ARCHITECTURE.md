@@ -4,14 +4,15 @@
 `uqeu/estelle-cli` repository. The parent repository may index or summarize it, but cannot be the only
 copy: a behaviour change and its architecture record must be reviewable in one CLI commit.
 
-**TODAY — source + public probes, 2026-08-16:** `v0.2.7` release run `31939611428` completed successfully.
+**TODAY — source + public probes, 2026-08-16:** `v0.2.8` release run `31944978440` completed successfully.
 The read-back found nine public assets, verified all four archive checksums and one-member sets, ran and
-installed the arm64 artifact as `estelle 0.2.7`, and proved the clean-home bare command against the real
-`awesome-llm-apps` checkout. The shell installer, direct archive, and npm-installed native binary were
-byte-identical (`881ce252…`). npm returned SHA-512 integrity and SLSA v1 provenance metadata and its packed
-tarball contained only the four native-launcher files. Local GitHub attestation verification still could
-not initialize a Sigstore verifier, so independent provenance read-back remains unproved outside the
-successful workflow. This release adds the artifact-level server/CLI IP boundary; the credential onboarding
+installed the arm64 artifact as `estelle 0.2.8`, and proved the clean-home bare command against the real
+`awesome-llm-apps` checkout. That public binary served the repository session, accepted two separate TUI
+attachments without stopping, and replayed a detached request's typed failure after an intentionally invalid
+credential. The shell installer, direct archive, and npm-installed native binary were byte-identical
+(`5f5e7df8…`). npm returned SHA-512 integrity and SLSA v1 provenance metadata and its packed tarball contained
+only the four native-launcher files. Independent GitHub attestation verification remains unproved outside
+the successful workflow. This release adds server-owned terminal detach/reconnect; credential onboarding
 and provider-runtime limits from `v0.2.6` remain unchanged and honestly rendered.
 
 ## System boundary
@@ -129,8 +130,8 @@ on the artifact rather than trusted as a source-layout convention. `scripts/chec
 regular binary under a named 512 MiB ceiling and rejects the server-owned Python symbol prefixes
 `estelle.serve` and `estelle.agent`. Every target-native release build crosses this gate before packaging;
 `scripts/test-ip-boundary.py` plants a server-symbol mutant and proves it is rejected. All four target-native
-`v0.2.7` builds crossed the guard, and the separately downloaded and shell-installed arm64 bytes passed it
-again. This proves the two named package boundaries, not the absence of every conceivable proprietary byte
+`v0.2.8` builds crossed the guard, and the separately downloaded, shell-installed, and npm-installed arm64
+bytes passed it again. This proves the two named package boundaries, not the absence of every conceivable proprietary byte
 pattern.
 
 Secrets are refused or redacted before Estelle request construction. Stored ChatGPT OAuth material and
@@ -181,7 +182,7 @@ on uncommitted sweep contents. That client-side-only boundary is design limit #6
 
 ## Current limits
 
-- The immutable `v0.2.7` release is public and its archive/install/first-run/npm bytes passed read-back. The local
+- The immutable `v0.2.8` release is public and its archive/install/session/npm bytes passed read-back. The local
   Sigstore verifier could not initialize, so external attestation verification is still absent from that
   probe even though the release workflow's signing step passed.
 - The founder's clean-machine default-shell restart, shadowed-npm-machine repair, and ChatGPT device-flow
@@ -189,8 +190,8 @@ on uncommitted sweep contents. That client-side-only boundary is design limit #6
   reproduced.
 - Claude/ChatGPT/local-model credential acquisition is not yet bound to the custom TUI answer runtime.
 - Client-provided MCP servers remain deliberately rejected.
-- The `v0.2.8` source candidate has a locally probed server/client split, but it is not SHIPPED or PROBED
-  from public customer bytes until its tag, release, installer, and real-repository reconnect read-back pass.
+- The public server/client split passed terminal detach/reconnect and detached failure replay on
+  `awesome-llm-apps`; a production-authenticated successful answer still requires a customer credential.
 - Session state is in-memory across terminal detach, not durable across a server process or machine restart;
   multi-session tabs and Affinity/Orchestra worker attachment are not yet built.
 - Runtime process-tree egress proof, production settings/autonomy writes, and the complete ACP lifecycle
