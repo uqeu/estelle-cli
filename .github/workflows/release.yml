@@ -35,6 +35,8 @@ jobs:
         run: ./scripts/test-installer.sh
       - name: Prove release archives are byte-reproducible
         run: ./scripts/test-release-package.sh
+      - name: Prove the shipped IP-boundary guard
+        run: python3 scripts/test-ip-boundary.py
       - name: Verify fork provenance and egress census
         shell: bash
         run: |
@@ -90,6 +92,7 @@ jobs:
           cargo build --locked --release --package estelle-tui --bin estelle --target "${{ matrix.target }}"
           binary="target/${{ matrix.target }}/release/estelle"
           test -x "$binary"
+          python3 scripts/check-ip-boundary.py "$binary"
           description=$(file "$binary")
           grep -F -- "${{ matrix.file_marker }}" <<<"$description"
           test "$("$binary" --version)" = "estelle ${GITHUB_REF_NAME#v}"

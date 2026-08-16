@@ -98,6 +98,13 @@ inherited OpenAI announcement fetch, npm update check, feedback upload, sharing 
 and remote catalogue initialization have been removed from the released Estelle entrypoint. The installer
 itself contacts GitHub solely to acquire public release bytes and sends no repository contents.
 
+The downloadable binary is a readable customer artifact, so the server/CLI ownership line is also enforced
+on the artifact rather than trusted as a source-layout convention. `scripts/check-ip-boundary.py` reads one
+regular binary under a named 512 MiB ceiling and rejects the server-owned Python symbol prefixes
+`estelle.serve` and `estelle.agent`. Every target-native release build crosses this gate before packaging;
+`scripts/test-ip-boundary.py` plants a server-symbol mutant and proves it is rejected. This proves the two
+named package boundaries, not the absence of every conceivable proprietary byte pattern.
+
 Secrets are refused or redacted before Estelle request construction. Stored ChatGPT OAuth material and
 Estelle API credentials have separate typed records and stores. A single remote auth rejection is evidence,
 not permission to destroy a stored credential.
@@ -156,5 +163,7 @@ on uncommitted sweep contents. That client-side-only boundary is design limit #6
 - Client-provided MCP servers remain deliberately rejected.
 - Runtime process-tree egress proof, production settings/autonomy writes, and the complete ACP lifecycle
   remain open measurements.
+- The binary IP-boundary test is wired into the next release, but is not SHIPPED or PROBED until those public
+  bytes are downloaded and checked independently.
 - Any-mode question picking, terminal Mermaid rendering, and the remaining ACP session surfaces are ordered
   product work; this document does not style their presence as shipped.

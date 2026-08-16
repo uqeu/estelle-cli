@@ -55,8 +55,8 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "blob": "2a6bbecd55c4f201d68bd512c217c1f31ba05072",
-      "reason": "release validation gates the pinned fork audit, four native builds, signed artifacts, and the verified npm retirement shim"
+      "blob": "d0c651a3e98682067e1e91ae8739b990c7c42ae7",
+      "reason": "release validation gates the pinned fork audit, shipped-binary IP boundary, four native builds, signed artifacts, and the verified npm retirement shim"
     },
     {
       "path": "tui/src/session_gap.rs",
