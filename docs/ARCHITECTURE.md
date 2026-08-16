@@ -4,17 +4,17 @@
 `uqeu/estelle-cli` repository. The parent repository may index or summarize it, but cannot be the only
 copy: a behaviour change and its architecture record must be reviewable in one CLI commit.
 
-**TODAY — source + public probes, 2026-08-16:** `v0.2.10` release run `31954108595` completed successfully.
+**TODAY — source + public probes, 2026-08-16:** `v0.2.11` release run `31961123102` completed successfully.
 The read-back found nine public assets, verified all four archive checksums and one-member sets, ran and
-installed the arm64 artifact as `estelle 0.2.10`, and resolved the bare command from a clean destination.
+installed the arm64 artifact as `estelle 0.2.11`, and resolved the bare command from a clean destination.
 The direct archive, public-installer, and npm-installed native binaries were byte-identical
-(`56835bf2…`, 41,321,032 bytes). npm returned SHA-512 integrity and SLSA v1 provenance metadata and its
-packed tarball contained only the four native-launcher files. On a fresh public `awesome-llm-apps` clone,
-the installed binary served `reader` and `writer`, observed a real edit to a disposable file, returned the
-file-shift warning once to the prior reader, then acknowledged it and cleaned up its socket. The earlier
-public `v0.2.9` probe remains the named-session detach/switch/close proof. Independent GitHub attestation
-verification remains unproved outside the successful workflow. Credential onboarding and provider-runtime
-limits from `v0.2.6` remain unchanged and honestly rendered.
+(`e30c1aa8…`, 41,354,008 bytes). npm returned SHA-512 integrity and SLSA v1 provenance metadata and its
+packed tarball contained only the four native-launcher files. On a fresh public `awesome-llm-apps` clone
+with 532 Python and 313 TypeScript/TSX files, the installed binary rejected an unknown provider and an
+unsafe public HTTP provider base before any secret prompt or request. This proves the public catalogue's
+fail-closed boundary, not a successful provider login or model runtime. Public `v0.2.10` remains the
+once-only file-shift proof and `v0.2.9` remains the named-session detach/switch/close proof. Independent
+GitHub attestation verification remains unproved outside the successful workflow.
 
 ## System boundary
 
@@ -151,7 +151,7 @@ on the artifact rather than trusted as a source-layout convention. `scripts/chec
 regular binary under a named 512 MiB ceiling and rejects the server-owned Python symbol prefixes
 `estelle.serve` and `estelle.agent`. Every target-native release build crosses this gate before packaging;
 `scripts/test-ip-boundary.py` plants a server-symbol mutant and proves it is rejected. All four target-native
-`v0.2.10` builds crossed the guard, and the separately downloaded, shell-installed, and npm-installed arm64
+`v0.2.11` builds crossed the guard, and the separately downloaded, shell-installed, and npm-installed arm64
 bytes passed it again. This proves the two named package boundaries, not the absence of every conceivable proprietary byte
 pattern.
 
@@ -216,7 +216,7 @@ on uncommitted sweep contents. That client-side-only boundary is design limit #6
 
 ## Current limits
 
-- The immutable `v0.2.10` release is public and its archive/install/file-shift/npm bytes passed read-back. The local
+- The immutable `v0.2.11` release is public and its archive/install/provider-boundary/npm bytes passed read-back. The local
   Sigstore verifier could not initialize, so external attestation verification is still absent from that
   probe even though the release workflow's signing step passed.
 - The founder's clean-machine default-shell restart, shadowed-npm-machine repair, and ChatGPT device-flow

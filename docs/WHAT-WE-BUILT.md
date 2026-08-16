@@ -5,14 +5,14 @@ Every row names a source, licence, implementation location, and measured status.
 its row. A status changes only from a probe, never from recollection.
 
 **Status:** ✅ built + wired + public-artifact/prod-proven · 🟡 built, but no public customer artifact proves
-the path · ⬜ decided, not built. **TODAY — 2026-08-16:** `v0.2.10` run `31954108595` completed successfully;
+the path · ⬜ decided, not built. **TODAY — 2026-08-16:** `v0.2.11` run `31961123102` completed successfully;
 the read-back verified nine public assets, four archive checksums/member sets, arm64 identity, public
 installer execution, bare-command resolution, and the public npm shim launching byte-identical native
-`0.2.10` bytes with SLSA metadata. Those installed bytes then served a fresh `awesome-llm-apps` clone and
-delivered a once-only file-shift warning after an actual peer edit. Public `v0.2.9` remains the independent
-named-session switch/close and detached typed-failure replay proof. Production-authenticated answer success
-is not claimed. Provider inference bindings are not built merely because credential acquisition exists;
-those rows remain separate and honest below.
+`0.2.11` bytes with SLSA metadata. On a fresh `awesome-llm-apps` clone, those installed bytes failed closed
+for an unknown provider and an unsafe public HTTP provider base before any secret prompt or request. Public
+`v0.2.10` remains the once-only file-shift proof and `v0.2.9` remains the named-session switch/close and
+detached typed-failure replay proof. Production-authenticated answer success and provider inference are not
+claimed merely because credential acquisition exists; those rows remain separate and honest below.
 
 ## PORTED — mechanism, source, and licence
 
@@ -42,7 +42,7 @@ those rows remain separate and honest below.
 | Same-repository file-shift warning: installed Read/Write/Edit hooks record bounded reader sets; a peer edit is stored through detach, rendered in the TUI or returned as model context, and acknowledged once | jcode swarm behavior page, `jcode-swarm-core`, and `FileTouchService` architecture · MIT; requested reader invariant is stronger than the current vendored modification-only peer filter; Fate Labs implementation Apache-2.0 | `tui/src/session_server.rs`, `tui/src/top_level.rs`, `tui/src/main.rs` | ✅ public `v0.2.10`: URL-installed `reader`/`writer` hooks delivered one warning after an actual disposable-file edit in a fresh `awesome-llm-apps` clone; the next read was silent |
 | Native retirement of the abandoned JavaScript package through an exact-version, checksum-first npm launcher | Fate Labs · Apache-2.0 repository | `npm-shim/install.js`, `npm-shim/bin/estelle.js` | ✅ |
 | Credential-first launch and contextual five-way `/login` picker, plus `/logout`, presence-only `/whoami`, and context-correct `/doctor` | Fate Labs · Apache-2.0 repository | `tui/src/main.rs`, `tui/src/doctor.rs` | 🟡 |
-| One catalogue-driven login dispatcher shared by shell, slash, and picker surfaces; masked provider-key input, typed `/key` request, secret-free receipts, and fail-closed endpoint policy | Fate Labs · Apache-2.0 repository | `tui/src/main.rs`, `tui/src/provider_catalog.rs`, `tui/src/provider_keys.rs`, `estelle-client/src/endpoint.rs:60` | 🟡 |
+| One catalogue-driven login dispatcher shared by shell, slash, and picker surfaces; masked provider-key input, typed `/key` request, secret-free receipts, and fail-closed endpoint policy | Fate Labs · Apache-2.0 repository | `tui/src/main.rs`, `tui/src/provider_catalog.rs`, `tui/src/provider_keys.rs`, `estelle-client/src/endpoint.rs:60` | 🟡 public `v0.2.11`: unknown-provider and unsafe-public-HTTP controls passed on `awesome-llm-apps`; successful acquisition/runtime remains unproved |
 | Four-run autonomy ladder with customer label `accept-edits`, non-main branch/CI/no-merge contract, and auto's reviewable-PR fallback | Fate Labs · Apache-2.0 repository | `tui/src/commands.rs:478`, `tui/src/commands.rs:492`, `tui/src/main.rs:973` | 🟡 |
 
 ## SYSTEM DESIGN — established mechanisms applied here
