@@ -958,6 +958,19 @@ impl MonitorIssue {
             .unwrap_or(self.repair_pr.as_str())
     }
 
+    pub fn effective_repair_patch(&self) -> Option<&IssuePatch> {
+        self.repair
+            .as_ref()
+            .and_then(|repair| repair.patch.as_ref())
+    }
+
+    pub fn effective_patch_absent_reason(&self) -> Option<&str> {
+        self.repair
+            .as_ref()
+            .and_then(|repair| repair.patch_absent_reason.as_deref())
+            .filter(|reason| !reason.trim().is_empty())
+    }
+
     pub fn effective_gate_verdict(&self) -> Option<&str> {
         self.gate
             .as_ref()
@@ -1011,6 +1024,22 @@ pub struct IssueRepair {
     pub detail: String,
     #[serde(default)]
     pub pr: Option<String>,
+    #[serde(default)]
+    pub patch: Option<IssuePatch>,
+    #[serde(default)]
+    pub patch_absent_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct IssuePatch {
+    #[serde(default)]
+    pub format: String,
+    #[serde(default)]
+    pub base_sha: String,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub observed_at: f64,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

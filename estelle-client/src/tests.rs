@@ -797,6 +797,38 @@ fn production_issues_feed_preserves_nested_signal_binding_repair_and_absent_gate
     assert_eq!(issues.next_since, Some(42.5));
 }
 
+#[test]
+fn production_issues_feed_preserves_the_exact_patch_receipt_or_its_absence_reason() {
+    let exact = "--- a/billing.py\n+++ b/billing.py\n@@ -1 +1 @@\n-old\n+new\n";
+    let issues: MonitorIssuesResponse = serde_json::from_value(serde_json::json!({
+        "issues": [{
+            "key": "with-patch",
+            "repair": {
+                "status": "proposed",
+                "patch": {"format": "unified_diff", "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                          "text": exact, "observed_at": 42.5},
+                "patch_absent_reason": null
+            }
+        }, {
+            "key": "without-patch",
+            "repair": {"status": "proposed", "patch": null, "patch_absent_reason": "not_persisted"}
+        }]
+    }))
+    .expect("patch receipt contract");
+
+    let patch = issues.issues[0]
+        .effective_repair_patch()
+        .expect("exact patch");
+    assert_eq!(patch.format, "unified_diff");
+    assert_eq!(patch.base_sha, "a".repeat(40));
+    assert_eq!(patch.text, exact);
+    assert_eq!(patch.observed_at, 42.5);
+    assert_eq!(
+        issues.issues[1].effective_patch_absent_reason(),
+        Some("not_persisted")
+    );
+}
+
 #[tokio::test]
 async fn cancellation_wins_without_waiting_for_the_server() {
     let server = MockServer::start().await;

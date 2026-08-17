@@ -5399,6 +5399,19 @@ fn production_workspace_lines(app: &App) -> Vec<Line<'static>> {
             {
                 lines.push(dim(format!("       gate absent · {reason}")));
             }
+            if let Some(patch) = issue.effective_repair_patch() {
+                let short_sha = patch.base_sha.chars().take(12).collect::<String>();
+                lines.push(dim(format!(
+                    "       patch · {} · base {short_sha}",
+                    patch.format
+                )));
+                lines.extend(github_diff_lines(&patch.text, 96, app));
+            } else {
+                let reason = issue
+                    .effective_patch_absent_reason()
+                    .unwrap_or("unavailable");
+                lines.push(dim(format!("       diff unavailable - {reason}")));
+            }
         }
     }
 
@@ -8243,6 +8256,52 @@ mod tests {
         assert!(rendered.contains("bind · unbound · reason not recorded"));
         assert!(rendered.contains("drafted repair · awaiting human review"));
         assert!(!rendered.contains("repair · proposed"));
+    }
+
+    #[test]
+    fn production_queue_renders_the_exact_patch_or_a_named_unavailable_reason() {
+        let mut app = test_app();
+        app.prod_issues = Some(
+            serde_json::from_value(json!({
+                "issues": [{
+                    "key": "with-patch",
+                    "status": "unresolved",
+                    "signal": {"title": "Patch ready"},
+                    "repair": {"status": "proposed", "pr": null,
+                        "patch": {"format": "unified_diff", "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                                  "text": "--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n", "observed_at": 42.5},
+                        "patch_absent_reason": null}
+                }, {
+                    "key": "without-patch",
+                    "status": "unresolved",
+                    "signal": {"title": "Old proposal"},
+                    "repair": {"status": "proposed", "pr": null, "patch": null,
+                               "patch_absent_reason": "not_persisted"}
+                }]
+            }))
+            .expect("issues"),
+        );
+
+        let rendered = production_workspace_lines(&app)
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains("base aaaaaaaaaaaa"), "{rendered}");
+        assert!(rendered.contains("+ new"), "{rendered}");
+        assert!(
+            rendered.contains("diff unavailable - not_persisted"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("drafted repair · Old proposal"),
+            "{rendered}"
+        );
     }
 
     #[test]
