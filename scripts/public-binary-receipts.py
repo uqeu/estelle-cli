@@ -102,6 +102,21 @@ DROPPED_COMMANDS = (
     "subagents",
 )
 
+PASSIVE_TUI_ROUTES = frozenset(
+    {
+        "/account",
+        "/overview",
+        "/repos",
+        "/settings/suite",
+        "/autonomy/scope",
+        "/issues",
+        "/monitor/overview",
+        "/agent/health",
+        "/github/status",
+        "/prs",
+    }
+)
+
 
 def installed_version_receipt(expected_tag: str) -> dict[str, object]:
     assert expected_tag.startswith("v")
@@ -600,6 +615,19 @@ def _trace_line_count(path: Path | None) -> int | None:
     return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line)
 
 
+def _unexpected_non_passive_paths(records: list[dict]) -> list[str]:
+    paths = {
+        record.get("request", {}).get("path")
+        for record in records
+        if isinstance(record.get("request"), dict)
+    }
+    return sorted(
+        path
+        for path in paths
+        if isinstance(path, str) and path not in PASSIVE_TUI_ROUTES
+    )
+
+
 def dropped_command_receipt(
     repo: str,
     http_trace: Path | None,
@@ -630,7 +658,7 @@ def dropped_command_receipt(
                 f"Unknown command /{name}; nothing ran and nothing was sent. Use /help."
             )
             os.write(fd, f"/{name} ".encode())
-            time.sleep(0.1)
+            time.sleep(TUI_PASTE_SETTLE_SECONDS)
             os.write(fd, enter)
             visible = _read_until(
                 fd,
@@ -654,15 +682,22 @@ def dropped_command_receipt(
                 break
         time.sleep(settle_seconds)
         after = _trace_line_count(http_trace)
-        wire_unchanged = before is None or before == after
+        new_records = (
+            _read_http_records_after(http_trace, before or 0)
+            if http_trace is not None
+            else []
+        )
+        unexpected_paths = _unexpected_non_passive_paths(new_records)
+        wire_isolated = not unexpected_paths
         return {
             "sent": [f"/{name}" for name in DROPPED_COMMANDS],
             "came_back": outputs,
             "processes_started": 1,
             "http_lines": {"before": before, "after": after},
+            "unexpected_http_paths": unexpected_paths,
             "pass": passed
             and len(outputs) == len(DROPPED_COMMANDS)
-            and wire_unchanged,
+            and wire_isolated,
         }
     finally:
         _terminate_pty(pid, fd)

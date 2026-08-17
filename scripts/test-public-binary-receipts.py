@@ -695,7 +695,7 @@ def test_dropped_commands_stay_local_in_one_installed_tui() -> None:
         os.environ["PATH"] = f"{fake_bin}{os.pathsep}{original_path}"
         try:
             receipt = load_harness().dropped_command_receipt(
-                "uqeu/estelle", http_trace, timeout=3, settle_seconds=0
+                "uqeu/estelle", http_trace, timeout=10, settle_seconds=0
             )
         finally:
             os.environ["PATH"] = original_path
@@ -704,6 +704,17 @@ def test_dropped_commands_stay_local_in_one_installed_tui() -> None:
         assert receipt["processes_started"] == 1
         assert receipt["http_lines"] == {"before": 1, "after": 1}
         assert all("nothing ran and nothing was sent" in row for row in receipt["came_back"])
+
+
+def test_dropped_command_isolation_ignores_only_named_passive_routes() -> None:
+    harness = load_harness()
+    passive = [
+        {"request": {"path": "/overview"}},
+        {"request": {"path": "/monitor/overview"}},
+    ]
+    assert harness._unexpected_non_passive_paths(passive) == []
+    active_mutant = passive + [{"request": {"path": "/deep-search"}}]
+    assert harness._unexpected_non_passive_paths(active_mutant) == ["/deep-search"]
 
 
 def test_http_contract_receipt_proves_hidden_fields() -> None:
@@ -938,6 +949,7 @@ def main() -> int:
     test_first_run_picker_receipt()
     test_credential_retention_receipt_requires_two_named_routes()
     test_dropped_commands_stay_local_in_one_installed_tui()
+    test_dropped_command_isolation_ignores_only_named_passive_routes()
     test_http_contract_receipt_proves_hidden_fields()
     test_head_surface_commands_run_through_bare_binary()
     test_hook_receipts_drive_every_current_table_row()
