@@ -599,7 +599,7 @@ def tui_skill_thread_receipt(
                 break
             deadline = time.monotonic() + timeout
             os.write(fd, f"{turn} ".encode())
-            time.sleep(0.1)
+            time.sleep(TUI_PASTE_SETTLE_SECONDS)
             os.write(fd, b"\r")
             visible = _read_until(fd, observed, (f"you  {turn}",), deadline)
             visible = _read_until(fd, observed, ("› Ask Estelle",), deadline)

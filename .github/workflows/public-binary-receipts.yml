@@ -45,11 +45,19 @@ jobs:
           git clone --depth=1 https://github.com/Shubhamsaboo/awesome-llm-apps.git \
             "${RUNNER_TEMP}/awesome-llm-apps"
           lockfile="${RUNNER_TEMP}/awesome-llm-apps/rag_tutorials/multimodal_agentic_rag/frontend/package-lock.json"
+          reindex_source="${RUNNER_TEMP}/awesome-llm-apps/mcp_ai_agents/ai_travel_planner_mcp_agent_team/app.py"
           test -f "$lockfile"
+          test -f "$reindex_source"
           printf '\n' >> "$lockfile"
+          printf '\n# Estelle public receipt reindex marker.\n' >> "$reindex_source"
           if git -C "${RUNNER_TEMP}/awesome-llm-apps" diff --quiet -- \
             rag_tutorials/multimodal_agentic_rag/frontend/package-lock.json; then
               echo "public receipt: lockfile fixture did not produce a measured diff" >&2
+              exit 1
+          fi
+          if git -C "${RUNNER_TEMP}/awesome-llm-apps" diff --quiet -- \
+            mcp_ai_agents/ai_travel_planner_mcp_agent_team/app.py; then
+              echo "public receipt: source fixture did not produce a measured diff" >&2
               exit 1
           fi
       - name: Drive the installed public binary against production

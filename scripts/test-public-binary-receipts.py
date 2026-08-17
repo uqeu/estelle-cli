@@ -839,6 +839,22 @@ def test_http_contract_receipt_proves_hidden_fields() -> None:
         assert "conversational upload absent=True" in receipt["came_back"]
         assert observed == records
 
+        missing_head = json.loads(json.dumps(records))
+        headed_reindex = next(
+            record
+            for record in missing_head
+            if record["request"].get("path") == "/reindex"
+            and "head" in record["request"].get("body", {})
+        )
+        del headed_reindex["request"]["body"]["head"]
+        path.write_text(
+            "".join(json.dumps(record) + "\n" for record in missing_head),
+            encoding="utf-8",
+        )
+        failed, _ = load_harness().http_contract_receipt(path)
+        assert failed["pass"] is False
+        assert "three head markers=False" in failed["came_back"]
+
 
 def test_head_surface_commands_run_through_bare_binary() -> None:
     with tempfile.TemporaryDirectory(prefix="estelle-head-receipt-") as raw_dir:
