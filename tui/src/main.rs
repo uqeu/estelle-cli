@@ -2621,6 +2621,7 @@ impl App {
                 turns,
                 active,
                 file_shifts,
+                fleet,
             } => {
                 if self.session_id != session_id {
                     self.clear_session_surface();
@@ -2631,6 +2632,7 @@ impl App {
                 for turn in turns {
                     self.record_session_turn(turn);
                 }
+                self.fleet = fleet.and_then(|fleet| serde_json::from_str(&fleet).ok());
                 let file_shifts_through = file_shifts.last().map(|notice| notice.id);
                 for notice in file_shifts {
                     self.record_file_shift(notice);
@@ -2711,6 +2713,13 @@ impl App {
             session_server::ServerMessage::SweepProgress { id, progress } => {
                 if self.active.as_ref().is_some_and(|active| active.id == id) {
                     self.sweep_progress = Some(progress);
+                }
+            }
+            session_server::ServerMessage::Fleet { fleet } => {
+                if self.fleet.as_ref().is_none_or(|current| {
+                    current.id != fleet.id || fleet.revision > current.revision
+                }) {
+                    self.fleet = Some(fleet);
                 }
             }
             session_server::ServerMessage::Rejected { id, message } => {
@@ -6813,6 +6822,7 @@ mod tests {
                     changed_by: "retries".to_string(),
                     summary: Some("edited lines 48-60".to_string()),
                 }],
+                fleet: None,
             }),
             &tx,
         );

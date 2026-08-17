@@ -91,6 +91,9 @@ pub(crate) enum ServerMessage {
         turns: Vec<SessionTurn>,
         active: Option<ActiveTurn>,
         file_shifts: Vec<FileShiftNotice>,
+        /// JSON text avoids serde's internally-tagged + nested-flatten ambiguity when command turns and
+        /// a fleet coexist in one reconnect snapshot. The decoded value is still FleetSnapshot end to end.
+        fleet: Option<String>,
     },
     Started {
         active: ActiveTurn,
@@ -101,6 +104,9 @@ pub(crate) enum ServerMessage {
     SweepProgress {
         id: u64,
         progress: crate::top_level::SweepProgress,
+    },
+    Fleet {
+        fleet: estelle_client::FleetSnapshot,
     },
     Cancelled {
         id: u64,
@@ -250,6 +256,7 @@ struct SessionState {
     read_paths: VecDeque<PathBuf>,
     file_shifts: Vec<FileShiftNotice>,
     next_file_shift_id: u64,
+    fleet: Option<estelle_client::FleetSnapshot>,
     events: broadcast::Sender<ServerMessage>,
 }
 
@@ -265,6 +272,7 @@ impl SessionState {
             read_paths: VecDeque::new(),
             file_shifts: Vec::new(),
             next_file_shift_id: 1,
+            fleet: None,
             events,
         }
     }
@@ -678,15 +686,35 @@ fn validate_session_id(session_id: &str) -> io::Result<()> {
 }
 
 async fn session_snapshot(session: &SharedSession, sessions: &Sessions) -> ServerMessage {
-    let (session_id, repo, root, turns, active, file_shifts) = {
+    let (session_id, repo, root, turns, active, file_shifts, fleet) = {
         let state = session.lock().await;
         (
             state.id.clone(),
             state.repo.as_str().to_string(),
             state.root.clone(),
-            state.turns.clone(),
+            {
+                let mut turns = state.turns.clone();
+                if let Some(fleet) = &state.fleet {
+                    // The snapshot carries the one authoritative fleet at top level. Keeping the same
+                    // typed fleet nested in an old generic CommandReply hits serde's flattened-envelope
+                    // ambiguity on replay; retain an honest count in the transcript and no second copy.
+                    for turn in &mut turns {
+                        let is_orchestra = matches!(
+                            &turn.input,
+                            SessionInput::Command { name, .. } if name == "orchestra"
+                        );
+                        if is_orchestra && let SessionOutcome::Command { reply } = &mut turn.outcome
+                        {
+                            reply.reply.count = fleet.total;
+                            reply.reply.fleet = None;
+                        }
+                    }
+                }
+                turns
+            },
             state.active.as_ref().map(|work| work.turn.clone()),
             state.file_shifts.clone(),
+            state.fleet.clone(),
         )
     };
     let matching = {
@@ -713,6 +741,7 @@ async fn session_snapshot(session: &SharedSession, sessions: &Sessions) -> Serve
         turns,
         active,
         file_shifts,
+        fleet: fleet.and_then(|fleet| serde_json::to_string(&fleet).ok()),
     }
 }
 
@@ -778,6 +807,7 @@ async fn handle_request(
             else {
                 return;
             };
+            let follows_orchestra = static_name == "orchestra";
             let pending = crate::PendingCommand {
                 name: static_name,
                 argument,
@@ -785,8 +815,27 @@ async fn handle_request(
                 skill_thread,
             };
             tokio::spawn(async move {
+                let poll_client = client.clone();
+                let poll_repo = repo.clone();
                 let result =
                     crate::execute_remote_command(client, repo, root, pending, &cancel).await;
+                let result = if follows_orchestra {
+                    match result {
+                        Ok(reply) => {
+                            follow_orchestra(
+                                poll_client,
+                                poll_repo,
+                                session.clone(),
+                                reply,
+                                &cancel,
+                            )
+                            .await
+                        }
+                        error => error,
+                    }
+                } else {
+                    result
+                };
                 let outcome = match result {
                     Ok(reply) => SessionOutcome::Command {
                         reply: Box::new(reply),
@@ -1012,6 +1061,88 @@ async fn finish_work(
     let _ = state.events.send(ServerMessage::Completed { turn });
 }
 
+fn fleet_is_terminal(fleet: &estelle_client::FleetSnapshot) -> bool {
+    matches!(
+        fleet.state.as_str(),
+        "completed"
+            | "failed"
+            | "timed_out"
+            | "killed"
+            | "lost"
+            | "blocked"
+            | "needs_input"
+            | "cancelled"
+    )
+}
+
+async fn publish_fleet(session: &SharedSession, fleet: estelle_client::FleetSnapshot) {
+    let mut state = session.lock().await;
+    if state
+        .fleet
+        .as_ref()
+        .is_some_and(|current| current.id == fleet.id && current.revision >= fleet.revision)
+    {
+        return;
+    }
+    state.fleet = Some(fleet.clone());
+    let _ = state.events.send(ServerMessage::Fleet { fleet });
+}
+
+async fn follow_orchestra(
+    client: Client,
+    repo: Repo,
+    session: SharedSession,
+    mut reply: crate::RemoteCommandReply,
+    cancel: &CancellationToken,
+) -> Result<crate::RemoteCommandReply, crate::CommandFailure> {
+    let accepted = reply.reply.orchestra_accepted() == Some(true);
+    let job_id = reply
+        .reply
+        .orchestra_job_id()
+        .unwrap_or_default()
+        .to_string();
+    let Some(mut fleet) = reply.reply.fleet.clone() else {
+        return Err(crate::CommandFailure::Local([
+            "Orchestra did not return a fleet snapshot.".to_string(),
+            "The server accepted no revisioned live state.".to_string(),
+            "Nothing was inferred from request timing; retry when the contract is available."
+                .to_string(),
+        ]));
+    };
+    if !accepted || job_id.is_empty() {
+        return Err(crate::CommandFailure::Local([
+            "Orchestra did not return a durable acceptance receipt.".to_string(),
+            "A fleet without accepted=true and job_id cannot be followed safely.".to_string(),
+            "Nothing was reported as running; retry after the server contract is repaired."
+                .to_string(),
+        ]));
+    }
+    publish_fleet(&session, fleet.clone()).await;
+    while !fleet_is_terminal(&fleet) {
+        let query = estelle_client::OrchestraStatusQuery::new(&job_id, fleet.revision);
+        let status = client
+            .orchestra_status(&repo, &query, cancel)
+            .await
+            .map_err(crate::CommandFailure::Client)?;
+        if status.fleet.id != fleet.id {
+            return Err(crate::CommandFailure::Local([
+                "Orchestra status changed fleet identity.".to_string(),
+                format!("Expected {}, received {}.", fleet.id, status.fleet.id),
+                "The session refused to merge two server fleets.".to_string(),
+            ]));
+        }
+        if status.fleet.revision > fleet.revision {
+            fleet = status.fleet;
+            reply.reply.fleet = Some(fleet.clone());
+            if let Some(todo) = status.todo {
+                reply.reply.todo = Some(todo);
+            }
+            publish_fleet(&session, fleet.clone()).await;
+        }
+    }
+    Ok(reply)
+}
+
 async fn read_json_line<T, R>(reader: &mut R) -> io::Result<T>
 where
     T: for<'de> Deserialize<'de>,
@@ -1110,13 +1241,16 @@ impl Drop for SocketGuard {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::path::Path;
     use std::path::PathBuf;
+    use std::sync::Arc;
     use std::time::Duration;
 
     use estelle_client::ApiKey;
     use estelle_client::Client;
     use estelle_client::Repo;
+    use tokio::sync::Mutex;
     use tokio_util::sync::CancellationToken;
     use wiremock::Mock;
     use wiremock::MockServer;
@@ -1124,13 +1258,109 @@ mod tests {
     use wiremock::matchers::body_json;
     use wiremock::matchers::method;
     use wiremock::matchers::path;
+    use wiremock::matchers::query_param;
 
     use super::ClientRequest;
     use super::ServerMessage;
     use super::SessionConnection;
+    use super::SessionInput;
     use super::SessionOutcome;
     use super::SessionServer;
+    use super::SessionState;
+    use super::SessionTurn;
     use super::normalize_session_path;
+    use super::publish_fleet;
+    use super::session_snapshot;
+
+    fn fleet(id: &str, revision: u64, state: &str) -> estelle_client::FleetSnapshot {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "batch": "one",
+            "state": state,
+            "revision": revision,
+            "observed_at": 1000.0,
+            "stale_after_s": 60,
+            "completed": 0,
+            "total": 1,
+            "agents": []
+        }))
+        .expect("fleet")
+    }
+
+    #[tokio::test]
+    async fn a_new_orchestra_fleet_replaces_the_previous_terminal_run() {
+        let session = Arc::new(Mutex::new(SessionState::new(
+            "main".to_string(),
+            Repo::new("fatelabs/estelle").expect("repo"),
+            PathBuf::from("/tmp/estelle"),
+        )));
+        session.lock().await.fleet = Some(fleet("old", 9, "completed"));
+
+        publish_fleet(&session, fleet("new", 1, "created")).await;
+
+        let current = session.lock().await.fleet.clone().expect("current fleet");
+        assert_eq!(current.id, "new");
+        assert_eq!(current.revision, 1);
+    }
+
+    #[tokio::test]
+    async fn fleet_snapshot_rewrite_never_changes_an_unrelated_command_count() {
+        let session = Arc::new(Mutex::new(SessionState::new(
+            "main".to_string(),
+            Repo::new("fatelabs/estelle").expect("repo"),
+            PathBuf::from("/tmp/estelle"),
+        )));
+        {
+            let mut state = session.lock().await;
+            state.fleet = Some(fleet("job_123", 2, "completed"));
+            let reply = |count, fleet| crate::RemoteCommandReply {
+                reply: estelle_client::CommandReply {
+                    count,
+                    fleet,
+                    ..Default::default()
+                },
+                inspected_files: Vec::new(),
+            };
+            state.turns = vec![
+                SessionTurn {
+                    id: 1,
+                    input: SessionInput::Command {
+                        name: "outcomes".to_string(),
+                        argument: String::new(),
+                    },
+                    outcome: SessionOutcome::Command {
+                        reply: Box::new(reply(Some(8), None)),
+                    },
+                },
+                SessionTurn {
+                    id: 2,
+                    input: SessionInput::Command {
+                        name: "orchestra".to_string(),
+                        argument: "inspect auth".to_string(),
+                    },
+                    outcome: SessionOutcome::Command {
+                        reply: Box::new(reply(None, Some(fleet("job_123", 2, "completed")))),
+                    },
+                },
+            ];
+        }
+        let sessions = Arc::new(Mutex::new(HashMap::new()));
+
+        let ServerMessage::Snapshot { turns, .. } = session_snapshot(&session, &sessions).await
+        else {
+            panic!("expected snapshot");
+        };
+        let SessionOutcome::Command { reply: outcomes } = &turns[0].outcome else {
+            panic!("expected outcomes reply");
+        };
+        let SessionOutcome::Command { reply: orchestra } = &turns[1].outcome else {
+            panic!("expected orchestra reply");
+        };
+        assert_eq!(outcomes.reply.count, Some(8));
+        assert!(outcomes.reply.fleet.is_none());
+        assert_eq!(orchestra.reply.count, Some(1));
+        assert!(orchestra.reply.fleet.is_none());
+    }
 
     #[tokio::test]
     async fn work_survives_client_disconnect_and_is_replayed_on_reconnect() {
@@ -1262,6 +1492,112 @@ mod tests {
                 if reply.reply.extra.get("plan").and_then(serde_json::Value::as_str)
                     == Some("founder")
         ));
+
+        shutdown.cancel();
+        server_task
+            .await
+            .expect("server task")
+            .expect("server exit");
+    }
+
+    #[tokio::test]
+    async fn orchestra_fleet_keeps_running_and_replays_after_terminal_disconnect() {
+        let api = MockServer::start().await;
+        let created = serde_json::json!({
+            "id": "job_123", "batch": "1 admitted assignment", "models": ["provider/model-a"],
+            "state": "created", "attempt": "first", "revision": 1, "observed_at": 1000.0,
+            "stale_after_s": 60, "completed": 0, "total": 1, "agents": [{
+                "index": 1, "status": "queued", "attempt": "first", "state_observed_at": 1000.0,
+                "progress": null, "assignments": {"attempted": null, "completed": null, "lost": null}
+            }]
+        });
+        let mut completed = created.clone();
+        completed["state"] = serde_json::json!("completed");
+        completed["revision"] = serde_json::json!(2);
+        completed["completed"] = serde_json::json!(1);
+        completed["agents"][0]["status"] = serde_json::json!("completed");
+        Mock::given(method("POST"))
+            .and(path("/orchestra/run"))
+            .and(body_json(serde_json::json!({
+                "repo": "fatelabs/estelle", "task": "inspect auth"
+            })))
+            .respond_with(ResponseTemplate::new(202).set_body_json(serde_json::json!({
+                "accepted": true, "job_id": "job_123", "fleet": created
+            })))
+            .expect(1)
+            .mount(&api)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/orchestra/status"))
+            .and(query_param("fleet_id", "job_123"))
+            .and(query_param("after_revision", "1"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(Duration::from_millis(100))
+                    .set_body_json(serde_json::json!({"fleet": completed})),
+            )
+            .expect(1)
+            .mount(&api)
+            .await;
+        let client = Client::new(
+            &format!("{}/", api.uri()),
+            ApiKey::new("test-key").expect("key"),
+            Duration::from_secs(120),
+        )
+        .expect("client");
+        let runtime = tempfile::tempdir().expect("runtime directory");
+        let root = tempfile::tempdir().expect("working tree");
+        let socket = runtime.path().join("session.sock");
+        let shutdown = CancellationToken::new();
+        let server = SessionServer::bind(socket.clone(), client)
+            .await
+            .expect("bind session server");
+        let server_task = tokio::spawn(server.run(shutdown.clone()));
+        let mut first = SessionConnection::connect_named(
+            &socket,
+            Repo::new("fatelabs/estelle").expect("repo"),
+            root.path().to_path_buf(),
+            "main",
+        )
+        .await
+        .expect("first client");
+        let _ = first.next().await.expect("initial snapshot");
+        first
+            .send(ClientRequest::Command {
+                id: 71,
+                name: "orchestra".to_string(),
+                argument: "inspect auth".to_string(),
+                last_question: None,
+                skill_thread: None,
+            })
+            .await
+            .expect("start orchestra");
+        drop(first);
+
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let mut second = SessionConnection::connect_named(
+            &socket,
+            Repo::new("fatelabs/estelle").expect("repo"),
+            root.path().to_path_buf(),
+            "main",
+        )
+        .await
+        .expect("reconnect");
+        let ServerMessage::Snapshot {
+            fleet,
+            turns,
+            active,
+            ..
+        } = second.next().await.expect("reconnect snapshot")
+        else {
+            panic!("reconnect did not receive a snapshot");
+        };
+        assert!(active.is_none() && turns.len() == 1);
+        let fleet: estelle_client::FleetSnapshot =
+            serde_json::from_str(&fleet.expect("server-owned fleet replay"))
+                .expect("typed fleet replay");
+        assert_eq!(fleet.revision, 2);
+        assert_eq!(fleet.state, "completed");
 
         shutdown.cancel();
         server_task
