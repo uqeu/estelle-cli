@@ -167,6 +167,77 @@ def test_question_turn_uses_the_same_public_tui_seam() -> None:
         assert "GROUNDED ANSWER" in receipt["came_back"]
 
 
+def test_tui_turn_waits_past_the_composer_paste_suppression_window() -> None:
+    with tempfile.TemporaryDirectory(prefix="estelle-public-paste-window-") as raw_dir:
+        fake_bin = Path(raw_dir) / "bin"
+        fake_bin.mkdir()
+        fake_estelle = fake_bin / "estelle"
+        fake_estelle.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, sys, time, tty\n"
+            "print('Ask Estelle', flush=True)\n"
+            "tty.setraw(0)\n"
+            "started = None\n"
+            "data = bytearray()\n"
+            "while True:\n"
+            "    byte = os.read(0, 1)\n"
+            "    if started is None:\n"
+            "        started = time.monotonic()\n"
+            "    if byte in (b'\\r', b'\\n'):\n"
+            "        break\n"
+            "    data.extend(byte)\n"
+            "elapsed = time.monotonic() - started\n"
+            "turn = data.decode()\n"
+            "if elapsed < 0.18:\n"
+            "    print('Estelle returned HTTP 409: Enter suppressed', flush=True)\n"
+            "else:\n"
+            "    print(f'you  {turn}\\nTIMING RECEIPT\\n› Ask Estelle', flush=True)\n",
+            encoding="utf-8",
+        )
+        fake_estelle.chmod(0o755)
+        original_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{fake_bin}{os.pathsep}{original_path}"
+        try:
+            receipt = load_harness().tui_turn_receipt(
+                "timing sentinel", "uqeu/estelle", timeout=2
+            )
+        finally:
+            os.environ["PATH"] = original_path
+        assert receipt["pass"] is True
+        assert "TIMING RECEIPT" in receipt["came_back"]
+
+
+def test_grounded_question_requires_both_request_and_response_evidence() -> None:
+    harness = load_harness()
+    record = {
+        "request": {
+            "path": "/deep-search",
+            "body": {
+                "question": harness.GROUNDING_QUESTION,
+                "working_memory": {"files": [{"path": "main.py", "content": "run()"}]},
+            },
+        },
+        "response": {
+            "status": 200,
+            "body": {
+                "answer": "main.py defines the application entry point.",
+                "grounded": True,
+                "sources": [{"file": "main.py", "line": 1}],
+            },
+        },
+    }
+    assert harness._surface_http_contract(harness.GROUNDING_QUESTION, record) is True
+    no_working_memory = json.loads(json.dumps(record))
+    del no_working_memory["request"]["body"]["working_memory"]
+    assert (
+        harness._surface_http_contract(harness.GROUNDING_QUESTION, no_working_memory)
+        is False
+    )
+    ungrounded = json.loads(json.dumps(record))
+    ungrounded["response"]["body"]["grounded"] = False
+    assert harness._surface_http_contract(harness.GROUNDING_QUESTION, ungrounded) is False
+
+
 def test_skill_thread_receipt_keeps_both_turns_in_one_tui_process() -> None:
     with tempfile.TemporaryDirectory(prefix="estelle-public-skill-thread-") as raw_dir:
         fake_bin = Path(raw_dir) / "bin"
@@ -851,6 +922,8 @@ def main() -> int:
     test_installed_version()
     test_tui_surface()
     test_question_turn_uses_the_same_public_tui_seam()
+    test_tui_turn_waits_past_the_composer_paste_suppression_window()
+    test_grounded_question_requires_both_request_and_response_evidence()
     test_skill_thread_receipt_keeps_both_turns_in_one_tui_process()
     test_tui_surface_fails_closed()
     test_init_receipt_rejects_an_echo_without_its_named_http_route()

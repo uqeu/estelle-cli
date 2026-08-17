@@ -53,6 +53,7 @@ READ_SURFACES = [
 READ_SURFACE_HTTP_ROUTES = {
     "/init": "/wiki",
     "/outcomes": "/outcomes",
+    "Which file defines an application entry point in this repository?": "/deep-search",
 }
 
 FAILURE_MARKERS = (
@@ -67,6 +68,7 @@ GROUNDING_QUESTION = "Which file defines an application entry point in this repo
 CONVERSATIONAL_QUESTION = "hi"
 DIFF_SURFACES = ("/review", "/scan")
 SMALL_SWEEP_PATH = "rag_tutorials/multimodal_agentic_rag/frontend"
+TUI_PASTE_SETTLE_SECONDS = 0.2
 SKILL_TURNS = (
     "/skill:grill-me State one risk in changing a CLI contract.",
     "/skill:grill-me Challenge that answer.",
@@ -412,6 +414,49 @@ def _read_http_records_after(path: Path, line_offset: int) -> list[dict]:
     return records
 
 
+def _outcomes_http_contract(body: dict) -> bool:
+    counts = [body.get(key) for key in ("total", "accepted", "reverted", "rejected")]
+    if not all(
+        isinstance(value, int) and not isinstance(value, bool) and value >= 0
+        for value in counts
+    ):
+        return False
+    total, accepted, reverted, rejected = counts
+    if total != accepted + reverted + rejected:
+        return False
+    rates = [body.get(key) for key in ("accept_rate", "revert_rate")]
+    if not all(
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and 0 <= value <= 1
+        for value in rates
+    ):
+        return False
+    expected_accept = accepted / total if total else 0.0
+    expected_revert = reverted / total if total else 0.0
+    return (
+        abs(rates[0] - expected_accept) <= 0.001
+        and abs(rates[1] - expected_revert) <= 0.001
+    )
+
+
+def _grounded_question_http_contract(record: dict, response_body: dict) -> bool:
+    request_body = record.get("request", {}).get("body", {})
+    sources = response_body.get("sources")
+    return (
+        isinstance(request_body, dict)
+        and request_body.get("question") == GROUNDING_QUESTION
+        and isinstance(request_body.get("working_memory"), dict)
+        and not any(key in request_body for key in ("instruction", "prompt"))
+        and response_body.get("grounded") is True
+        and isinstance(response_body.get("answer"), str)
+        and bool(response_body["answer"].strip())
+        and isinstance(sources, list)
+        and bool(sources)
+        and all(isinstance(source, dict) and source.get("file") for source in sources)
+    )
+
+
 def _surface_http_contract(command: str, record: dict) -> bool:
     response = record.get("response", {})
     status = response.get("status")
@@ -419,36 +464,14 @@ def _surface_http_contract(command: str, record: dict) -> bool:
     if not isinstance(status, int) or not 200 <= status < 300 or not isinstance(body, dict):
         return False
     if command == "/init":
-        return (
-            isinstance(body.get("repo"), str)
-            and bool(body["repo"].strip())
-            and isinstance(body.get("wiki"), str)
-            and bool(body["wiki"].strip())
+        return all(
+            isinstance(body.get(key), str) and bool(body[key].strip())
+            for key in ("repo", "wiki")
         )
     if command == "/outcomes":
-        counts = [body.get(key) for key in ("total", "accepted", "reverted", "rejected")]
-        if not all(
-            isinstance(value, int) and not isinstance(value, bool) and value >= 0
-            for value in counts
-        ):
-            return False
-        total, accepted, reverted, rejected = counts
-        if total != accepted + reverted + rejected:
-            return False
-        rates = [body.get(key) for key in ("accept_rate", "revert_rate")]
-        if not all(
-            isinstance(value, (int, float))
-            and not isinstance(value, bool)
-            and 0 <= value <= 1
-            for value in rates
-        ):
-            return False
-        expected_accept = accepted / total if total else 0.0
-        expected_revert = reverted / total if total else 0.0
-        return (
-            abs(rates[0] - expected_accept) <= 0.001
-            and abs(rates[1] - expected_revert) <= 0.001
-        )
+        return _outcomes_http_contract(body)
+    if command == GROUNDING_QUESTION:
+        return _grounded_question_http_contract(record, body)
     return False
 
 
@@ -501,7 +524,9 @@ def tui_turn_receipt(
             time.sleep(0.25)
             submitted = f"{turn} " if turn.startswith("/") else turn
             os.write(fd, submitted.encode())
-            time.sleep(0.1)
+            # The inherited composer suppresses Enter for 120 ms after a paste burst.
+            # Cross that boundary deliberately instead of depending on runner scheduling.
+            time.sleep(TUI_PASTE_SETTLE_SECONDS)
             os.write(fd, b"\r")
             visible = _read_until(fd, observed, (f"you  {turn}",), ready_deadline)
             visible = _read_until(fd, observed, ("› Ask Estelle",), ready_deadline)
