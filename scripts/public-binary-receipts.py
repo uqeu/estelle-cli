@@ -52,6 +52,7 @@ READ_SURFACES = [
 
 READ_SURFACE_HTTP_ROUTES = {
     "/init": "/wiki",
+    "/outcomes": "/outcomes",
 }
 
 FAILURE_MARKERS = (
@@ -423,6 +424,30 @@ def _surface_http_contract(command: str, record: dict) -> bool:
             and bool(body["repo"].strip())
             and isinstance(body.get("wiki"), str)
             and bool(body["wiki"].strip())
+        )
+    if command == "/outcomes":
+        counts = [body.get(key) for key in ("total", "accepted", "reverted", "rejected")]
+        if not all(
+            isinstance(value, int) and not isinstance(value, bool) and value >= 0
+            for value in counts
+        ):
+            return False
+        total, accepted, reverted, rejected = counts
+        if total != accepted + reverted + rejected:
+            return False
+        rates = [body.get(key) for key in ("accept_rate", "revert_rate")]
+        if not all(
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and 0 <= value <= 1
+            for value in rates
+        ):
+            return False
+        expected_accept = accepted / total if total else 0.0
+        expected_revert = reverted / total if total else 0.0
+        return (
+            abs(rates[0] - expected_accept) <= 0.001
+            and abs(rates[1] - expected_revert) <= 0.001
         )
     return False
 

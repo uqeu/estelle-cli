@@ -297,6 +297,109 @@ def test_init_receipt_accepts_a_nonempty_wiki_from_its_named_http_route() -> Non
         }
 
 
+def test_outcomes_receipt_rejects_an_echo_without_its_named_http_route() -> None:
+    with tempfile.TemporaryDirectory(prefix="estelle-outcomes-route-receipt-") as raw_dir:
+        root = Path(raw_dir)
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        fake_estelle = fake_bin / "estelle"
+        fake_estelle.write_text(
+            "#!/bin/sh\nprintf 'Ask Estelle\\n'\nIFS= read -r command\n"
+            "printf 'you  %s\\n› Ask Estelle\\n' \"$command\"\n",
+            encoding="utf-8",
+        )
+        fake_estelle.chmod(0o755)
+        trace = root / "http.jsonl"
+        trace.write_text("", encoding="utf-8")
+        original_path = os.environ.get("PATH", "")
+        original_trace = os.environ.get("ESTELLE_RECEIPT_PATH")
+        os.environ["PATH"] = f"{fake_bin}{os.pathsep}{original_path}"
+        os.environ["ESTELLE_RECEIPT_PATH"] = str(trace)
+        try:
+            receipt = load_harness().tui_surface_receipt(
+                "/outcomes", "uqeu/estelle", timeout=1
+            )
+        finally:
+            os.environ["PATH"] = original_path
+            if original_trace is None:
+                os.environ.pop("ESTELLE_RECEIPT_PATH", None)
+            else:
+                os.environ["ESTELLE_RECEIPT_PATH"] = original_trace
+        assert receipt["pass"] is False
+        assert receipt["http_route"] == {
+            "path": "/outcomes",
+            "status": "not observed",
+            "contract": False,
+        }
+
+
+def _fake_outcomes_receipt(body: dict) -> dict:
+    with tempfile.TemporaryDirectory(prefix="estelle-outcomes-contract-") as raw_dir:
+        root = Path(raw_dir)
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        fake_estelle = fake_bin / "estelle"
+        record = json.dumps(
+            {
+                "request": {"path": "/outcomes"},
+                "response": {"status": 200, "body": body},
+            },
+            separators=(",", ":"),
+        )
+        fake_estelle.write_text(
+            "#!/bin/sh\nprintf 'Ask Estelle\\n'\nIFS= read -r command\n"
+            f"printf '%s\\n' '{record}' >> \"$ESTELLE_RECEIPT_PATH\"\n"
+            "printf 'you  %s\\nOUTCOMES RECEIPT\\n› Ask Estelle\\n' \"$command\"\n",
+            encoding="utf-8",
+        )
+        fake_estelle.chmod(0o755)
+        trace = root / "http.jsonl"
+        trace.write_text("", encoding="utf-8")
+        original_path = os.environ.get("PATH", "")
+        original_trace = os.environ.get("ESTELLE_RECEIPT_PATH")
+        os.environ["PATH"] = f"{fake_bin}{os.pathsep}{original_path}"
+        os.environ["ESTELLE_RECEIPT_PATH"] = str(trace)
+        try:
+            return load_harness().tui_surface_receipt(
+                "/outcomes", "uqeu/estelle", timeout=1
+            )
+        finally:
+            os.environ["PATH"] = original_path
+            if original_trace is None:
+                os.environ.pop("ESTELLE_RECEIPT_PATH", None)
+            else:
+                os.environ["ESTELLE_RECEIPT_PATH"] = original_trace
+
+
+def test_outcomes_receipt_accepts_an_honest_empty_account_contract() -> None:
+    receipt = _fake_outcomes_receipt(
+        {
+            "total": 0,
+            "accepted": 0,
+            "reverted": 0,
+            "rejected": 0,
+            "accept_rate": 0.0,
+            "revert_rate": 0.0,
+        }
+    )
+    assert receipt["pass"] is True
+    assert receipt["http_route"] == {
+        "path": "/outcomes",
+        "status": 200,
+        "contract": True,
+    }
+
+
+def test_outcomes_receipt_rejects_a_fieldless_200() -> None:
+    receipt = _fake_outcomes_receipt({})
+    assert receipt["pass"] is False
+    assert receipt["http_route"] == {
+        "path": "/outcomes",
+        "status": 200,
+        "contract": False,
+    }
+
+
 def test_failed_receipt_diagnostics_name_the_surface_without_dumping_its_body() -> None:
     harness = load_harness()
     report = {
@@ -752,6 +855,9 @@ def main() -> int:
     test_tui_surface_fails_closed()
     test_init_receipt_rejects_an_echo_without_its_named_http_route()
     test_init_receipt_accepts_a_nonempty_wiki_from_its_named_http_route()
+    test_outcomes_receipt_rejects_an_echo_without_its_named_http_route()
+    test_outcomes_receipt_accepts_an_honest_empty_account_contract()
+    test_outcomes_receipt_rejects_a_fieldless_200()
     test_failed_receipt_diagnostics_name_the_surface_without_dumping_its_body()
     test_complete_harness_writes_every_receipt()
     test_repository_size_receipt()
