@@ -47,11 +47,11 @@ jobs:
           lockfile="${RUNNER_TEMP}/awesome-llm-apps/rag_tutorials/multimodal_agentic_rag/frontend/package-lock.json"
           test -f "$lockfile"
           printf '\n' >> "$lockfile"
-          git -C "${RUNNER_TEMP}/awesome-llm-apps" diff --quiet -- \
-            rag_tutorials/multimodal_agentic_rag/frontend/package-lock.json && {
+          if git -C "${RUNNER_TEMP}/awesome-llm-apps" diff --quiet -- \
+            rag_tutorials/multimodal_agentic_rag/frontend/package-lock.json; then
               echo "public receipt: lockfile fixture did not produce a measured diff" >&2
               exit 1
-            }
+          fi
       - name: Drive the installed public binary against production
         id: public_receipts
         continue-on-error: true
@@ -87,7 +87,7 @@ jobs:
           gh release upload "$ESTELLE_VERSION" \
             "${RUNNER_TEMP}/public-binary-receipts.json" --clobber
       - name: Fail closed after preserving the receipt
-        if: always() && steps.public_receipts.outcome != 'success'
+        if: always() && steps.public_receipts.outcome == 'failure'
         run: |
           echo "public receipt: one or more installed-binary contracts failed; inspect the uploaded receipt" >&2
           exit 1
