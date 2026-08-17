@@ -50,6 +50,10 @@ READ_SURFACES = [
     "/sessions",
 ]
 
+READ_SURFACE_HTTP_ROUTES = {
+    "/init": "/wiki",
+}
+
 FAILURE_MARKERS = (
     "Estelle rejected the stored credential.",
     "Estelle returned HTTP ",
@@ -391,6 +395,60 @@ def _read_until(
     return visible
 
 
+def _read_http_records_after(path: Path, line_offset: int) -> list[dict]:
+    if not path.exists():
+        return []
+    records = []
+    for line in path.read_text(encoding="utf-8").splitlines()[line_offset:]:
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records
+
+
+def _surface_http_contract(command: str, record: dict) -> bool:
+    response = record.get("response", {})
+    status = response.get("status")
+    body = response.get("body", {})
+    if not isinstance(status, int) or not 200 <= status < 300 or not isinstance(body, dict):
+        return False
+    if command == "/init":
+        return (
+            isinstance(body.get("repo"), str)
+            and bool(body["repo"].strip())
+            and isinstance(body.get("wiki"), str)
+            and bool(body["wiki"].strip())
+        )
+    return False
+
+
+def _wait_for_surface_http_receipt(
+    command: str,
+    path: Path,
+    line_offset: int,
+    deadline: float,
+) -> dict[str, object]:
+    expected_path = READ_SURFACE_HTTP_ROUTES[command]
+    while time.monotonic() < deadline:
+        for record in _read_http_records_after(path, line_offset):
+            request = record.get("request", {})
+            if request.get("path") != expected_path:
+                continue
+            response = record.get("response", {})
+            return {
+                "path": expected_path,
+                "status": response.get("status", "not observed"),
+                "contract": _surface_http_contract(command, record),
+            }
+        time.sleep(0.05)
+    return {"path": expected_path, "status": "not observed", "contract": False}
+
+
 def tui_turn_receipt(
     turn: str,
     repo: str,
@@ -404,6 +462,13 @@ def tui_turn_receipt(
     os.kill(pid, signal.SIGWINCH)
     observed = bytearray()
     visible = ""
+    raw_trace = os.environ.get("ESTELLE_RECEIPT_PATH")
+    http_trace = (
+        Path(raw_trace)
+        if raw_trace and turn in READ_SURFACE_HTTP_ROUTES
+        else None
+    )
+    trace_offset = _trace_line_count(http_trace) or 0
     try:
         ready_deadline = time.monotonic() + timeout
         visible = _read_until(fd, observed, ("Ask Estelle",), ready_deadline)
@@ -415,12 +480,24 @@ def tui_turn_receipt(
             os.write(fd, b"\r")
             visible = _read_until(fd, observed, (f"you  {turn}",), ready_deadline)
             visible = _read_until(fd, observed, ("› Ask Estelle",), ready_deadline)
+        http_route = None
+        if http_trace is not None:
+            http_route = _wait_for_surface_http_receipt(
+                turn, http_trace, trace_offset, ready_deadline
+            )
+            visible = _read_until(
+                fd, observed, ("receipt-output-drained",), time.monotonic() + 0.25
+            )
         passed = (
             f"you  {turn}" in visible
             and "› Ask Estelle" in visible
             and not any(marker in visible for marker in FAILURE_MARKERS)
+            and (http_route is None or http_route["contract"] is True)
         )
-        return {"sent": turn, "came_back": visible.strip(), "pass": passed}
+        receipt = {"sent": turn, "came_back": visible.strip(), "pass": passed}
+        if http_route is not None:
+            receipt["http_route"] = http_route
+        return receipt
     finally:
         _terminate_pty(pid, fd)
 

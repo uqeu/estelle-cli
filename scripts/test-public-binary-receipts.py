@@ -224,6 +224,79 @@ def test_tui_surface_fails_closed() -> None:
         assert "HTTP 404" in receipt["came_back"]
 
 
+def test_init_receipt_rejects_an_echo_without_its_named_http_route() -> None:
+    with tempfile.TemporaryDirectory(prefix="estelle-init-route-receipt-") as raw_dir:
+        root = Path(raw_dir)
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        fake_estelle = fake_bin / "estelle"
+        fake_estelle.write_text(
+            "#!/bin/sh\nprintf 'Ask Estelle\\n'\nIFS= read -r command\n"
+            "printf 'you  %s\\n› Ask Estelle\\n' \"$command\"\n",
+            encoding="utf-8",
+        )
+        fake_estelle.chmod(0o755)
+        trace = root / "http.jsonl"
+        trace.write_text("", encoding="utf-8")
+        original_path = os.environ.get("PATH", "")
+        original_trace = os.environ.get("ESTELLE_RECEIPT_PATH")
+        os.environ["PATH"] = f"{fake_bin}{os.pathsep}{original_path}"
+        os.environ["ESTELLE_RECEIPT_PATH"] = str(trace)
+        try:
+            receipt = load_harness().tui_surface_receipt(
+                "/init", "uqeu/estelle", timeout=1
+            )
+        finally:
+            os.environ["PATH"] = original_path
+            if original_trace is None:
+                os.environ.pop("ESTELLE_RECEIPT_PATH", None)
+            else:
+                os.environ["ESTELLE_RECEIPT_PATH"] = original_trace
+        assert receipt["pass"] is False
+        assert receipt["http_route"] == {
+            "path": "/wiki",
+            "status": "not observed",
+            "contract": False,
+        }
+
+
+def test_init_receipt_accepts_a_nonempty_wiki_from_its_named_http_route() -> None:
+    with tempfile.TemporaryDirectory(prefix="estelle-init-route-receipt-ok-") as raw_dir:
+        root = Path(raw_dir)
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        fake_estelle = fake_bin / "estelle"
+        fake_estelle.write_text(
+            "#!/bin/sh\nprintf 'Ask Estelle\\n'\nIFS= read -r command\n"
+            "printf '%s\\n' '{\"request\":{\"path\":\"/wiki\"},\"response\":{\"status\":200,\"body\":{\"repo\":\"uqeu/estelle\",\"wiki\":\"Architecture\"}}}' >> \"$ESTELLE_RECEIPT_PATH\"\n"
+            "printf 'you  %s\\nArchitecture\\n› Ask Estelle\\n' \"$command\"\n",
+            encoding="utf-8",
+        )
+        fake_estelle.chmod(0o755)
+        trace = root / "http.jsonl"
+        trace.write_text("", encoding="utf-8")
+        original_path = os.environ.get("PATH", "")
+        original_trace = os.environ.get("ESTELLE_RECEIPT_PATH")
+        os.environ["PATH"] = f"{fake_bin}{os.pathsep}{original_path}"
+        os.environ["ESTELLE_RECEIPT_PATH"] = str(trace)
+        try:
+            receipt = load_harness().tui_surface_receipt(
+                "/init", "uqeu/estelle", timeout=1
+            )
+        finally:
+            os.environ["PATH"] = original_path
+            if original_trace is None:
+                os.environ.pop("ESTELLE_RECEIPT_PATH", None)
+            else:
+                os.environ["ESTELLE_RECEIPT_PATH"] = original_trace
+        assert receipt["pass"] is True
+        assert receipt["http_route"] == {
+            "path": "/wiki",
+            "status": 200,
+            "contract": True,
+        }
+
+
 def test_failed_receipt_diagnostics_name_the_surface_without_dumping_its_body() -> None:
     harness = load_harness()
     report = {
@@ -677,6 +750,8 @@ def main() -> int:
     test_question_turn_uses_the_same_public_tui_seam()
     test_skill_thread_receipt_keeps_both_turns_in_one_tui_process()
     test_tui_surface_fails_closed()
+    test_init_receipt_rejects_an_echo_without_its_named_http_route()
+    test_init_receipt_accepts_a_nonempty_wiki_from_its_named_http_route()
     test_failed_receipt_diagnostics_name_the_surface_without_dumping_its_body()
     test_complete_harness_writes_every_receipt()
     test_repository_size_receipt()
