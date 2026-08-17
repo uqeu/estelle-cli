@@ -110,6 +110,7 @@ DIFF_SURFACES = ("/review", "/scan")
 SMALL_SWEEP_PATH = "rag_tutorials/multimodal_agentic_rag/frontend"
 TUI_PASTE_SETTLE_SECONDS = 0.2
 PRODUCTION_HEALTH_URL = "https://api.fatelabs.ca/health"
+EXPECTED_PRODUCTION_SURFACE = {"tools_base": 16, "prompts": 246}
 SKILL_TURNS = (
     "/skill:grill-me State one risk in changing a CLI contract.",
     "/skill:grill-me Challenge that answer.",
@@ -164,10 +165,9 @@ def production_build_receipt(before: dict, after: dict) -> dict[str, object]:
     before_build = before.get("build")
     after_build = after.get("build")
     stable = before_build == after_build
-    expected_surface = {"tools_base": 16, "prompts": 246}
     health_contract = all(
         identity.get("build_verified") is True
-        and identity.get("surface") == expected_surface
+        and identity.get("surface") == EXPECTED_PRODUCTION_SURFACE
         and isinstance(identity.get("build"), str)
         and bool(identity["build"])
         for identity in (before, after)
@@ -187,6 +187,45 @@ def production_build_receipt(before: dict, after: dict) -> dict[str, object]:
     }
 
 
+def _verified_production_identity(identity: dict) -> bool:
+    return (
+        identity.get("build_verified") is True
+        and identity.get("surface") == EXPECTED_PRODUCTION_SURFACE
+        and isinstance(identity.get("build"), str)
+        and bool(identity["build"])
+    )
+
+
+def pin_surface_build(
+    run: Callable[[], dict[str, object]],
+    read_identity: Callable[[], dict],
+) -> dict[str, object]:
+    """Score one surface only when both health reads name one verified build."""
+    before = read_identity()
+    receipt = run()
+    after = read_identity()
+    before_build = before.get("build")
+    after_build = after.get("build")
+    crossed = before_build != after_build
+    verified = _verified_production_identity(before) and _verified_production_identity(after)
+    receipt["production_build"] = {
+        "before": before_build,
+        "after": after_build,
+        "verified": verified,
+    }
+    receipt["discarded"] = crossed
+    if crossed or not verified:
+        receipt["pass"] = False
+    return receipt
+
+
+def receipt_summary(receipts: list[dict]) -> dict[str, int]:
+    discarded = sum(receipt.get("discarded") is True for receipt in receipts)
+    passed = sum(receipt.get("pass") is True for receipt in receipts)
+    failed = len(receipts) - passed - discarded
+    return {"passed": passed, "failed": failed, "discarded": discarded}
+
+
 def pin_production_build(
     run: Callable[[], dict[str, object]],
     read_identity: Callable[[], dict],
@@ -198,8 +237,7 @@ def pin_production_build(
     receipts = report["receipts"]
     assert isinstance(receipts, list)
     receipts.append(production_build_receipt(before, after))
-    passed = sum(receipt.get("pass") is True for receipt in receipts)
-    report["summary"] = {"passed": passed, "failed": len(receipts) - passed}
+    report["summary"] = receipt_summary(receipts)
     return report
 
 
@@ -588,6 +626,16 @@ def _typed_fields(body: dict, fields: tuple) -> bool:
     return all(key in body and isinstance(body[key], expected) for key, expected in fields)
 
 
+def _named_session_breakdown(value: object) -> bool:
+    return isinstance(value, list) and all(
+        isinstance(row, dict)
+        and isinstance(row.get("name"), str)
+        and bool(row["name"].strip())
+        and _nonnegative_int(row.get("sessions"))
+        for row in value
+    )
+
+
 def _read_surface_body_contract(command: str, body: dict) -> bool:
     if command == "/init":
         return all(isinstance(body.get(key), str) and body[key].strip() for key in ("repo", "wiki"))
@@ -623,8 +671,13 @@ def _read_surface_body_contract(command: str, body: dict) -> bool:
         )
     if command == "/analytics":
         counts = (body.get("runs"), body.get("sessions"), body.get("turns"))
-        maps = ((key, dict) for key in ("repos", "skills", "outcomes", "events"))
-        return all(_nonnegative_int(value) for value in counts) and _typed_fields(body, tuple(maps))
+        maps = ((key, dict) for key in ("outcomes", "events"))
+        return (
+            all(_nonnegative_int(value) for value in counts)
+            and _named_session_breakdown(body.get("repos"))
+            and _named_session_breakdown(body.get("skills"))
+            and _typed_fields(body, tuple(maps))
+        )
     if command == "/presence":
         return _typed_fields(
             body,
@@ -1034,7 +1087,10 @@ def http_contract_receipt(path: Path) -> tuple[dict[str, object], list[object]]:
 
 
 def run_receipts(
-    expected_version: str, repo: str, timeout: float
+    expected_version: str,
+    repo: str,
+    timeout: float,
+    read_identity: Callable[[], dict] | None = None,
 ) -> dict[str, object]:
     raw_path = os.environ.get("ESTELLE_RECEIPT_PATH")
     http_trace = Path(raw_path) if raw_path else None
@@ -1045,10 +1101,17 @@ def run_receipts(
         first_run_picker_receipt(),
         credential_retention_receipt(repo, timeout),
     ]
-    receipts.extend(
-        tui_surface_receipt(surface, repo, timeout) for surface in READ_SURFACES
+    def surface_receipt(surface: str) -> dict[str, object]:
+        run = lambda: tui_surface_receipt(surface, repo, timeout)
+        return pin_surface_build(run, read_identity) if read_identity is not None else run()
+
+    receipts.extend(surface_receipt(surface) for surface in READ_SURFACES)
+    grounded_run = lambda: tui_turn_receipt(GROUNDING_QUESTION, repo, timeout)
+    receipts.append(
+        pin_surface_build(grounded_run, read_identity)
+        if read_identity is not None
+        else grounded_run()
     )
-    receipts.append(tui_turn_receipt(GROUNDING_QUESTION, repo, timeout))
     receipts.append(tui_turn_receipt(CONVERSATIONAL_QUESTION, repo, timeout))
     receipts.append(tui_skill_thread_receipt(repo, timeout))
     receipts.append(
@@ -1059,21 +1122,18 @@ def run_receipts(
             settle_seconds=2 if http_trace is not None else 0,
         )
     )
-    receipts.extend(
-        tui_surface_receipt(surface, repo, timeout) for surface in DIFF_SURFACES
-    )
+    receipts.extend(surface_receipt(surface) for surface in DIFF_SURFACES)
     receipts.extend(head_surface_receipts(max(timeout, 600)))
     receipts.extend(hook_event_receipts(Path.cwd(), max(timeout, 30)))
     http_records = None
     if http_trace is not None:
         http_receipt, http_records = http_contract_receipt(http_trace)
         receipts.append(http_receipt)
-    passed = sum(receipt["pass"] is True for receipt in receipts)
     report = {
         "expected_version": expected_version,
         "repo": repo,
         "receipts": receipts,
-        "summary": {"passed": passed, "failed": len(receipts) - passed},
+        "summary": receipt_summary(receipts),
     }
     if http_records is not None:
         report["http_contracts"] = http_records
@@ -1117,16 +1177,25 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--health-url", default=PRODUCTION_HEALTH_URL)
     args = parser.parse_args(argv)
+    read_identity = lambda: read_production_identity(args.health_url)
     report = pin_production_build(
-        lambda: run_receipts(args.expected_version, args.repo, args.timeout),
-        lambda: read_production_identity(args.health_url),
+        lambda: run_receipts(
+            args.expected_version,
+            args.repo,
+            args.timeout,
+            read_identity=read_identity,
+        ),
+        read_identity,
     )
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     summary = report["summary"]
-    print(f"public receipts: {summary['passed']} passed, {summary['failed']} failed")
+    print(
+        f"public receipts: {summary['passed']} passed, "
+        f"{summary['failed']} failed, {summary['discarded']} discarded"
+    )
     for diagnostic in failed_receipt_diagnostics(report):
         print(f"public receipt failed: {diagnostic}")
-    return 0 if summary["failed"] == 0 else 1
+    return 0 if summary["failed"] == 0 and summary["discarded"] == 0 else 1
 
 
 if __name__ == "__main__":

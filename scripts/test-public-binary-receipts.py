@@ -161,7 +161,61 @@ def test_pin_production_build_wraps_the_whole_receipt_run() -> None:
         "pin production build for the entire receipt run",
     ]
     assert report["receipts"][-1]["pass"] is False
-    assert report["summary"] == {"passed": 1, "failed": 1}
+    assert report["summary"] == {"passed": 1, "failed": 1, "discarded": 0}
+
+
+def test_surface_build_pin_discards_a_receipt_that_crossed_a_build() -> None:
+    harness = load_harness()
+    identities = iter(
+        [
+            {
+                "build": "f08d5f393fbc",
+                "build_verified": True,
+                "surface": {"tools_base": 16, "prompts": 246},
+            },
+            {
+                "build": "73efb8c7ae7b",
+                "build_verified": True,
+                "surface": {"tools_base": 16, "prompts": 246},
+            },
+        ]
+    )
+
+    receipt = harness.pin_surface_build(
+        lambda: {"sent": "/analytics", "came_back": "real data", "pass": True},
+        lambda: next(identities),
+    )
+
+    assert receipt["pass"] is False
+    assert receipt["discarded"] is True
+    assert receipt["production_build"] == {
+        "before": "f08d5f393fbc",
+        "after": "73efb8c7ae7b",
+        "verified": True,
+    }
+    assert harness.receipt_summary([receipt]) == {"passed": 0, "failed": 0, "discarded": 1}
+
+
+def test_surface_build_pin_keeps_a_receipt_on_one_verified_build() -> None:
+    harness = load_harness()
+    identity = {
+        "build": "73efb8c7ae7b",
+        "build_verified": True,
+        "surface": {"tools_base": 16, "prompts": 246},
+    }
+
+    receipt = harness.pin_surface_build(
+        lambda: {"sent": "/analytics", "came_back": "real data", "pass": True},
+        lambda: identity,
+    )
+
+    assert receipt["pass"] is True
+    assert receipt["discarded"] is False
+    assert receipt["production_build"] == {
+        "before": "73efb8c7ae7b",
+        "after": "73efb8c7ae7b",
+        "verified": True,
+    }
 
 
 def test_installed_version() -> None:
@@ -579,8 +633,8 @@ def test_every_read_surface_requires_its_exact_route_and_semantic_body() -> None
             "runs": 0,
             "sessions": 0,
             "turns": 0,
-            "repos": {},
-            "skills": {},
+            "repos": [],
+            "skills": [],
             "outcomes": {},
             "events": {},
         },
@@ -618,6 +672,29 @@ def test_every_read_surface_requires_its_exact_route_and_semantic_body() -> None
         wrong_route = json.loads(json.dumps(record))
         wrong_route["request"]["path"] = "/wrong"
         assert harness._surface_http_contract(command, wrong_route) is False, command
+
+
+def test_analytics_rejects_vacuous_or_malformed_breakdowns() -> None:
+    harness = load_harness()
+    path = harness.READ_SURFACE_HTTP_ROUTES["/analytics"]
+    base = {
+        "runs": 0,
+        "sessions": 0,
+        "turns": 0,
+        "repos": [],
+        "skills": [],
+        "outcomes": {},
+        "events": {},
+    }
+    for body in (
+        {},
+        {**base, "repos": {}},
+        {**base, "skills": {}},
+        {**base, "repos": [{"name": "repo-without-session-count"}]},
+        {**base, "skills": [{"name": "skill", "sessions": -1}]},
+    ):
+        record = {"request": {"path": path}, "response": {"status": 200, "body": body}}
+        assert harness._surface_http_contract("/analytics", record) is False
 
 
 def test_swept_repo_surfaces_reject_honest_empty_accounts() -> None:
@@ -755,7 +832,7 @@ def test_complete_harness_writes_every_receipt() -> None:
             output.read_text(encoding="utf-8") if output.exists() else "no report",
         )
         report = json.loads(output.read_text(encoding="utf-8"))
-        assert report["summary"] == {"passed": 50, "failed": 0}
+        assert report["summary"] == {"passed": 50, "failed": 0, "discarded": 0}
         assert report["receipts"][4]["after_one_route"] == "retained"
         assert [row["sent"] for row in report["receipts"][5:29]] == EXPECTED_READ_SURFACES
         assert report["receipts"][29]["sent"].startswith("Which file defines")
