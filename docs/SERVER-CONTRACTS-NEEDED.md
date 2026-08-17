@@ -490,6 +490,19 @@ connected, ready, or generating until the two-sided runtime probe passes.
 
 ## 12. Cross-harness session capture - SERVER CONTRACT PRESENT; CLIENT ADAPTERS NOT SHIPPED
 
+**OWNERSHIP HANDOFF — CLI+CONTRACT, 2026-08-17.** The Guardian/server lane is complete at Estelle build
+`14e94682`: the metadata-only route, shared Postgres row, read surfaces, positive capture, explicit no-repo
+non-write, and content-field refusal are built, wired, tested, deployed and production-probed. Everything
+remaining in this section is a **client installation and lifecycle-adapter responsibility in this repository**.
+Do not leave the server row open waiting for this lane, and do not add another server-side session fact owner.
+
+The compatibility decision is intentionally not “ten supported hosts.” Eight hosts expose enough grounded
+lifecycle metadata to build an adapter; Hermes is conditional on an explicit configured or otherwise grounded
+repository; Goose is **incompatible with row admission today** because its lifecycle payload cannot ground
+repo/title. Goose must render that limitation and create no row. Filling absent fields from process cwd,
+directory basename, prompt/transcript content, or generic defaults would fabricate compatibility rather than
+implement it.
+
 **Surface unlocked:** one Estelle Session Diary whether the developer works in Claude Code, Codex, Kimi,
 OpenCode, Pi, Oh My Pi, Goose, Jcode, Hermes, or DeepSeek Harness.
 
