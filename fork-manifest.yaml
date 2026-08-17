@@ -65,13 +65,13 @@
     },
     {
       "path": "estelle-client/src/endpoint.rs",
-      "blob": "3ec99c6bd7ad1b0e39185a404ac8b9ec33a1eeb4",
-      "reason": "the authenticated provider-key and revisioned Orchestra endpoints are named in the closed typed transport inventory"
+      "blob": "ba1bd30458220413379b899f9aca92d115b3a296",
+      "reason": "the authenticated provider-key, revisioned Orchestra, and repo-scoped agent-health endpoints are named in the closed typed transport inventory"
     },
     {
       "path": "estelle-client/src/tests.rs",
-      "blob": "165f0fe5f3d6db72d8067c4f7cb80d1d6c02c9ca",
-      "reason": "the endpoint denominator, provider-key contract, and typed Orchestra start/status HTTP receipts are pinned; receipt recording remains header-free, redacted, exact, and fail closed"
+      "blob": "d06fa87d6c2d3464ba31c6611120717aa3d46be0",
+      "reason": "the endpoint denominator, provider-key contract, typed Orchestra plan floor, and agent-health null/state semantics are pinned; receipt recording remains header-free, redacted, exact, and fail closed"
     },
     {
       "path": "estelle-client/src/lib.rs",
@@ -85,8 +85,8 @@
     },
     {
       "path": "tui/src/commands.rs",
-      "blob": "1528bfdee9324319f2814735a8e2c2867369959f",
-      "reason": "local command ownership remains explicit and /orchestra now routes to the durable start contract instead of the synchronous legacy endpoint"
+      "blob": "73caef82b6e35fea2a4cca5b1e0e2d0f51dfcd05",
+      "reason": "local command ownership remains explicit, /orchestra routes to the durable start contract, and its server-owned plan floor is labelled as neither expected nor final spend"
     },
     {
       "path": "tui/src/doctor.rs",
@@ -100,8 +100,8 @@
     },
     {
       "path": "tui/src/main.rs",
-      "blob": "d8135096939fc7660cbe04001d15ea125563278d",
-      "reason": "the reviewed provider acquisition boundary and Orchestra fleet remain intact while malformed or mismatched installed hook input now names its event and branch and exits non-zero"
+      "blob": "8059802d7ffffd89c82ba0141bfaf816f949328e",
+      "reason": "the reviewed provider acquisition and Orchestra boundaries remain intact while the production pane polls repo-scoped agent health, preserves null counts as unknown, and renders only server-reported state"
     },
     {
       "path": "tui/src/copilot_login.rs",
@@ -125,8 +125,8 @@
     },
     {
       "path": "estelle-client/src/types.rs",
-      "blob": "029e1eacadee61f7606fc28b32eb7e46d7fe6856",
-      "reason": "typed Orchestra request, acceptance, status, and fleet snapshots replay losslessly; the route-specific accepted accessor preserves the existing numeric outcomes response shape"
+      "blob": "3d5f3e8388b5ccf2b0338766e847be398fde4647",
+      "reason": "typed Orchestra snapshots retain the server-owned plan floor, and agent-health snapshots preserve tri-state enablement, nullable counts, freshness, and explicit per-agent state without inference"
     },
     {
       "path": "tui/src/session_server.rs",
