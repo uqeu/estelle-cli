@@ -4,6 +4,7 @@
 //! selected turn environment filesystem for both local and remote turns, with
 //! sandboxing enforced by the explicit filesystem sandbox context.
 use crate::exec::is_likely_sandbox_denied;
+use crate::lsp_write::LspWriteThrough;
 use crate::session::turn_context::TurnEnvironment;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::sandboxing::Approvable;
@@ -226,9 +227,14 @@ impl ToolRuntime<ApplyPatchRequest, ApplyPatchRuntimeOutput> for ApplyPatchRunti
         &mut self,
         req: &ApplyPatchRequest,
         attempt: &SandboxAttempt<'_>,
-        _ctx: &ToolCtx,
+        ctx: &ToolCtx,
     ) -> Result<ApplyPatchRuntimeOutput, ToolError> {
         let started_at = Instant::now();
+        let lsp = LspWriteThrough::prepare(
+            &req.action,
+            req.turn_environment.environment_id == codex_exec_server::LOCAL_ENVIRONMENT_ID,
+        )
+        .await;
         let fs = req.turn_environment.environment.get_filesystem();
         let sandbox = Self::file_system_sandbox_context_for_attempt(req, attempt);
         let mut stdout = Vec::new();
@@ -242,7 +248,7 @@ impl ToolRuntime<ApplyPatchRequest, ApplyPatchRuntimeOutput> for ApplyPatchRunti
             sandbox.as_ref(),
         )
         .await;
-        let stdout = String::from_utf8_lossy(&stdout).into_owned();
+        let mut stdout = String::from_utf8_lossy(&stdout).into_owned();
         let stderr = String::from_utf8_lossy(&stderr).into_owned();
         let failed = result.is_err();
         let exit_code = if failed { 1 } else { 0 };
@@ -251,6 +257,16 @@ impl ToolRuntime<ApplyPatchRequest, ApplyPatchRuntimeOutput> for ApplyPatchRunti
             Err(failure) => failure.into_parts().1,
         };
         self.committed_delta.append(delta);
+        if let Some(receipt) = lsp
+            .committed(&self.committed_delta, ctx.session.clone(), ctx.turn.clone())
+            .await
+        {
+            if !stdout.ends_with('\n') {
+                stdout.push('\n');
+            }
+            stdout.push_str(&receipt);
+            stdout.push('\n');
+        }
         let output = ExecToolCallOutput {
             exit_code,
             stdout: StreamOutput::new(stdout.clone()),

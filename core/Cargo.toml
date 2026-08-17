@@ -107,11 +107,14 @@ symphonia = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = [
+    "io-util",
     "io-std",
     "macros",
     "process",
     "rt-multi-thread",
     "signal",
+    "sync",
+    "time",
 ] }
 tokio-util = { workspace = true, features = ["rt"] }
 tokio-tungstenite = { workspace = true }
