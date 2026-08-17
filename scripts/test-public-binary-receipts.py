@@ -471,6 +471,107 @@ def test_outcomes_receipt_rejects_a_fieldless_200() -> None:
     }
 
 
+def test_every_read_surface_requires_its_exact_route_and_semantic_body() -> None:
+    harness = load_harness()
+    bodies = {
+        "/init": {"repo": "uqeu/estelle", "wiki": "Architecture"},
+        "/graph": {"repo": "uqeu/estelle", "files": 2},
+        "/graph nodes": {
+            "repo": "uqeu/estelle",
+            "files": 2,
+            "nodes": [{"id": "app.py", "path": "app.py"}],
+            "edges": [],
+            "truncated": False,
+        },
+        "/me": {"email": "receipt@example.com", "plan": "ultra", "plan_active": True},
+        "/keys": {"keys": []},
+        "/team": {"team": None},
+        "/team board": {"leaderboard": [], "window": "30d", "metric": "grounded_outcomes"},
+        "/cards": {"cards": [], "folders": {}},
+        "/entities": {"entities": []},
+        "/usage": {"series": []},
+        "/activity": {"by_endpoint": []},
+        "/runs": {"runs": []},
+        "/outcomes": {
+            "total": 0,
+            "accepted": 0,
+            "reverted": 0,
+            "rejected": 0,
+            "accept_rate": 0.0,
+            "revert_rate": 0.0,
+        },
+        "/memories": {
+            "repo": "uqeu/estelle",
+            "memories": [{"source": "app.py", "kind": "code", "chunks": 1}],
+        },
+        "/analytics": {
+            "runs": 0,
+            "sessions": 0,
+            "turns": 0,
+            "repos": {},
+            "skills": {},
+            "outcomes": {},
+            "events": {},
+        },
+        "/audit": {"entries": []},
+        "/requests": {"requests": [], "count": 0},
+        "/presence": {
+            "active": [],
+            "overnight": [],
+            "files_in_use": [],
+            "handoffs": [],
+        },
+        "/leaderboard": {"leaderboard": []},
+        "/marketplace": {"plugins": []},
+        "/automations": {"automations": [], "active": False},
+        "/suites": {"suites": []},
+        "/billing": {
+            "settings": {},
+            "catalog": [],
+            "pricing": {"total_monthly_usd": 0.0, "breakdown": []},
+        },
+        "/sessions": {"sessions": []},
+    }
+    assert set(harness.READ_SURFACES) == set(bodies)
+    assert set(harness.READ_SURFACES).issubset(harness.READ_SURFACE_HTTP_ROUTES)
+    for command, body in bodies.items():
+        expected_path = harness.READ_SURFACE_HTTP_ROUTES[command]
+        record = {
+            "request": {"path": expected_path},
+            "response": {"status": 200, "body": body},
+        }
+        assert harness._surface_http_contract(command, record) is True, command
+        fieldless = json.loads(json.dumps(record))
+        fieldless["response"]["body"] = {}
+        assert harness._surface_http_contract(command, fieldless) is False, command
+        wrong_route = json.loads(json.dumps(record))
+        wrong_route["request"]["path"] = "/wrong"
+        assert harness._surface_http_contract(command, wrong_route) is False, command
+
+
+def test_swept_repo_surfaces_reject_honest_empty_accounts() -> None:
+    harness = load_harness()
+    for command, body in [
+        ("/graph", {"repo": "uqeu/estelle", "files": 0}),
+        (
+            "/graph nodes",
+            {
+                "repo": "uqeu/estelle",
+                "files": 0,
+                "nodes": [],
+                "edges": [],
+                "truncated": False,
+            },
+        ),
+        ("/memories", {"repo": "uqeu/estelle", "memories": []}),
+    ]:
+        record = {
+            "request": {"path": harness.READ_SURFACE_HTTP_ROUTES[command]},
+            "response": {"status": 200, "body": body},
+        }
+        assert harness._surface_http_contract(command, record) is False, command
+
+
 def test_failed_receipt_diagnostics_name_the_surface_without_dumping_its_body() -> None:
     harness = load_harness()
     report = {
@@ -964,6 +1065,8 @@ def main() -> int:
     test_outcomes_receipt_rejects_an_echo_without_its_named_http_route()
     test_outcomes_receipt_accepts_an_honest_empty_account_contract()
     test_outcomes_receipt_rejects_a_fieldless_200()
+    test_every_read_surface_requires_its_exact_route_and_semantic_body()
+    test_swept_repo_surfaces_reject_honest_empty_accounts()
     test_failed_receipt_diagnostics_name_the_surface_without_dumping_its_body()
     test_complete_harness_writes_every_receipt()
     test_repository_size_receipt()

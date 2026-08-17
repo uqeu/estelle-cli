@@ -52,8 +52,46 @@ READ_SURFACES = [
 
 READ_SURFACE_HTTP_ROUTES = {
     "/init": "/wiki",
+    "/graph": "/graph",
+    "/graph nodes": "/graph/nodes",
+    "/me": "/me",
+    "/keys": "/me/keys",
+    "/team": "/me/team",
+    "/team board": "/team/leaderboard",
+    "/cards": "/memory/cards",
+    "/entities": "/entities",
+    "/usage": "/usage",
+    "/activity": "/activity",
+    "/runs": "/runs",
     "/outcomes": "/outcomes",
+    "/memories": "/memories",
+    "/analytics": "/analytics",
+    "/audit": "/audit",
+    "/requests": "/requests",
+    "/presence": "/presence",
+    "/leaderboard": "/leaderboard",
+    "/marketplace": "/marketplace",
+    "/automations": "/automations",
+    "/suites": "/suites",
+    "/billing": "/settings",
+    "/sessions": "/sessions",
     "Which file defines an application entry point in this repository?": "/deep-search",
+}
+
+READ_SURFACE_FIELD_TYPES = {
+    "/keys": (("keys", list),),
+    "/cards": (("cards", list), ("folders", dict)),
+    "/entities": (("entities", list),),
+    "/usage": (("series", list),),
+    "/activity": (("by_endpoint", list),),
+    "/runs": (("runs", list),),
+    "/audit": (("entries", list),),
+    "/requests": (("requests", list),),
+    "/leaderboard": (("leaderboard", list),),
+    "/marketplace": (("plugins", list),),
+    "/automations": (("automations", list), ("active", bool)),
+    "/suites": (("suites", list),),
+    "/sessions": (("sessions", list),),
 }
 
 FAILURE_MARKERS = (
@@ -482,22 +520,78 @@ def _grounded_question_http_contract(record: dict, response_body: dict) -> bool:
     )
 
 
+def _nonnegative_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _typed_fields(body: dict, fields: tuple) -> bool:
+    return all(key in body and isinstance(body[key], expected) for key, expected in fields)
+
+
+def _read_surface_body_contract(command: str, body: dict) -> bool:
+    if command == "/init":
+        return all(isinstance(body.get(key), str) and body[key].strip() for key in ("repo", "wiki"))
+    if command == "/graph":
+        return (
+            isinstance(body.get("repo"), str)
+            and bool(body["repo"].strip())
+            and _nonnegative_int(body.get("files"))
+            and body["files"] > 0
+        )
+    if command == "/graph nodes":
+        return (
+            _read_surface_body_contract("/graph", body)
+            and _typed_fields(body, (("nodes", list), ("edges", list), ("truncated", bool)))
+            and bool(body["nodes"])
+        )
+    if command == "/me":
+        return _typed_fields(body, (("email", str), ("plan", str), ("plan_active", bool))) and bool(
+            body["email"].strip() and body["plan"].strip()
+        )
+    if command == "/team":
+        return "team" in body and (body["team"] is None or isinstance(body["team"], dict))
+    if command == "/team board":
+        return _typed_fields(body, (("leaderboard", list), ("window", str), ("metric", str)))
+    if command == "/outcomes":
+        return _outcomes_http_contract(body)
+    if command == "/memories":
+        return (
+            isinstance(body.get("repo"), str)
+            and bool(body["repo"].strip())
+            and isinstance(body.get("memories"), list)
+            and bool(body["memories"])
+        )
+    if command == "/analytics":
+        counts = (body.get("runs"), body.get("sessions"), body.get("turns"))
+        maps = ((key, dict) for key in ("repos", "skills", "outcomes", "events"))
+        return all(_nonnegative_int(value) for value in counts) and _typed_fields(body, tuple(maps))
+    if command == "/presence":
+        return _typed_fields(
+            body,
+            tuple((key, list) for key in ("active", "overnight", "files_in_use", "handoffs")),
+        )
+    if command == "/billing":
+        envelope = (("settings", dict), ("catalog", list), ("pricing", dict))
+        pricing = (("total_monthly_usd", (int, float)), ("breakdown", list))
+        return _typed_fields(body, envelope) and _typed_fields(
+            body["pricing"], pricing
+        )
+    fields = READ_SURFACE_FIELD_TYPES.get(command, ())
+    return command in READ_SURFACE_FIELD_TYPES and _typed_fields(body, fields)
+
+
 def _surface_http_contract(command: str, record: dict) -> bool:
+    expected_path = READ_SURFACE_HTTP_ROUTES.get(command)
+    if expected_path is None or record.get("request", {}).get("path") != expected_path:
+        return False
     response = record.get("response", {})
     status = response.get("status")
     body = response.get("body", {})
     if not isinstance(status, int) or not 200 <= status < 300 or not isinstance(body, dict):
         return False
-    if command == "/init":
-        return all(
-            isinstance(body.get(key), str) and bool(body[key].strip())
-            for key in ("repo", "wiki")
-        )
-    if command == "/outcomes":
-        return _outcomes_http_contract(body)
     if command == GROUNDING_QUESTION:
         return _grounded_question_http_contract(record, body)
-    return False
+    return _read_surface_body_contract(command, body)
 
 
 def _wait_for_surface_http_receipt(
