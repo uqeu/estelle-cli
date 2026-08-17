@@ -190,6 +190,8 @@ jobs:
             exit 1
           fi
       - name: Drive all 24 read surfaces through bare estelle
+        id: public_receipts
+        continue-on-error: true
         working-directory: ${{ runner.temp }}/awesome-llm-apps
         env:
           ESTELLE_API_KEY: ${{ secrets.ESTELLE_RECEIPT_API_KEY }}
@@ -197,7 +199,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "${ESTELLE_API_KEY:-}" || {
-            echo "public receipt: ESTELLE_RECEIPT_API_KEY is not configured" >&2
+            echo "public receipt: ESTELLE_RECEIPT_API_KEY is absent on ${GITHUB_REPOSITORY}" >&2
             exit 1
           }
           test "$(command -v estelle)" = "${HOME}/.local/bin/estelle"
@@ -206,17 +208,24 @@ jobs:
             --repo Shubhamsaboo/awesome-llm-apps \
             --output "${RUNNER_TEMP}/public-binary-receipts.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
         with:
           name: public-binary-receipts-${{ github.ref_name }}
           path: ${{ runner.temp }}/public-binary-receipts.json
           if-no-files-found: error
       - name: Attach the exact receipt to the public release
+        if: steps.public_receipts.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           gh release upload "$GITHUB_REF_NAME" \
             "${RUNNER_TEMP}/public-binary-receipts.json" --clobber
+      - name: Fail closed after preserving the receipt
+        if: always() && steps.public_receipts.outcome != 'success'
+        run: |
+          echo "public receipt: one or more installed-binary contracts failed; inspect the uploaded receipt" >&2
+          exit 1
 
   publish-npm-shim:
     needs: release

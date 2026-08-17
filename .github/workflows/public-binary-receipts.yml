@@ -1,0 +1,93 @@
+name: public-binary-receipts
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing public release tag to probe
+        required: true
+        default: v0.2.16
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-binary-receipts-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  receipt:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Require an exact released SemVer tag
+        env:
+          ESTELLE_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$' <<<"$ESTELLE_VERSION"
+          gh release view "$ESTELLE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null
+      - name: Install the exact release from its public URL
+        env:
+          ESTELLE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${ESTELLE_VERSION}/install.sh" | sh
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+      - name: Clone a real public repository
+        run: |
+          set -euo pipefail
+          git clone --depth=1 https://github.com/Shubhamsaboo/awesome-llm-apps.git \
+            "${RUNNER_TEMP}/awesome-llm-apps"
+          lockfile="${RUNNER_TEMP}/awesome-llm-apps/rag_tutorials/multimodal_agentic_rag/frontend/package-lock.json"
+          test -f "$lockfile"
+          printf '\n' >> "$lockfile"
+          git -C "${RUNNER_TEMP}/awesome-llm-apps" diff --quiet -- \
+            rag_tutorials/multimodal_agentic_rag/frontend/package-lock.json && {
+              echo "public receipt: lockfile fixture did not produce a measured diff" >&2
+              exit 1
+            }
+      - name: Drive the installed public binary against production
+        id: public_receipts
+        continue-on-error: true
+        working-directory: ${{ runner.temp }}/awesome-llm-apps
+        env:
+          ESTELLE_API_KEY: ${{ secrets.ESTELLE_RECEIPT_API_KEY }}
+          ESTELLE_RECEIPT_PATH: ${{ runner.temp }}/public-http-receipts.jsonl
+          ESTELLE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          test -n "${ESTELLE_API_KEY:-}" || {
+            echo "public receipt: ESTELLE_RECEIPT_API_KEY is absent on ${GITHUB_REPOSITORY}" >&2
+            exit 1
+          }
+          test "$(command -v estelle)" = "${HOME}/.local/bin/estelle"
+          python3 "${GITHUB_WORKSPACE}/scripts/public-binary-receipts.py" \
+            --expected-version "$ESTELLE_VERSION" \
+            --repo Shubhamsaboo/awesome-llm-apps \
+            --output "${RUNNER_TEMP}/public-binary-receipts.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: public-binary-receipts-${{ inputs.version }}
+          path: ${{ runner.temp }}/public-binary-receipts.json
+          if-no-files-found: error
+      - name: Attach a fully green receipt to the public release
+        if: steps.public_receipts.outcome == 'success'
+        env:
+          ESTELLE_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "$ESTELLE_VERSION" \
+            "${RUNNER_TEMP}/public-binary-receipts.json" --clobber
+      - name: Fail closed after preserving the receipt
+        if: always() && steps.public_receipts.outcome != 'success'
+        run: |
+          echo "public receipt: one or more installed-binary contracts failed; inspect the uploaded receipt" >&2
+          exit 1
