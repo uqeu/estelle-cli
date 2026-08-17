@@ -65,18 +65,18 @@
     },
     {
       "path": "estelle-client/src/endpoint.rs",
-      "blob": "ba1bd30458220413379b899f9aca92d115b3a296",
-      "reason": "the authenticated provider-key, revisioned Orchestra, and repo-scoped agent-health endpoints are named in the closed typed transport inventory"
+      "blob": "10667c39a56924755a97413304f486bdc38a364d",
+      "reason": "the closed typed transport inventory adds only the server-owned GitHub connection-status and proposed-PR read surfaces alongside the previously reviewed provider-key, Orchestra, and agent-health routes"
     },
     {
       "path": "estelle-client/src/tests.rs",
-      "blob": "d06fa87d6c2d3464ba31c6611120717aa3d46be0",
-      "reason": "the endpoint denominator, provider-key contract, typed Orchestra plan floor, and agent-health null/state semantics are pinned; receipt recording remains header-free, redacted, exact, and fail closed"
+      "blob": "09db3afa408b4411e1084d89e0473db7faa1b082",
+      "reason": "the endpoint denominator and typed account GitHub contracts pin nullable connection state, absent gate reasons, opaque pagination, and exact GET calls while the receipt recorder remains header-free, redacted, exact, and fail closed"
     },
     {
       "path": "estelle-client/src/lib.rs",
-      "blob": "95213720482479466741cf500da5a61b30cd57e8",
-      "reason": "the shared authenticated HTTP seam exposes typed Orchestra start/status calls while sanitized append-only receipts remain structurally header-free and recorder I/O failure still fails the request"
+      "blob": "046e6ad9af1de21c0c1ae7b27de31126d5d6863c",
+      "reason": "the shared authenticated HTTP seam exposes typed GitHub-status and proposed-PR reads in addition to Orchestra while sanitized append-only receipts remain structurally header-free and recorder I/O failure still fails the request"
     },
     {
       "path": "tui/src/claude_import.rs",
@@ -90,8 +90,8 @@
     },
     {
       "path": "tui/src/doctor.rs",
-      "blob": "af3ac8ffd12bee524a35ca590245878029068fba",
-      "reason": "credential diagnostics render Estelle, plan, Copilot, provider-key, and local-endpoint presence and remedies only, with no credential value or provider network probe"
+      "blob": "cdc055951aae19d599ee44c2b6068984b148918d",
+      "reason": "doctor reports measured local hardware and exact configured-model fit without selecting a model; credential status inspects only environment presence and file metadata, labels the blocking OS secure store unprobed, and renders no credential value"
     },
     {
       "path": "tui/src/login.rs",
@@ -100,8 +100,8 @@
     },
     {
       "path": "tui/src/main.rs",
-      "blob": "8059802d7ffffd89c82ba0141bfaf816f949328e",
-      "reason": "the reviewed provider acquisition and Orchestra boundaries remain intact while the production pane polls repo-scoped agent health, preserves null counts as unknown, and renders only server-reported state"
+      "blob": "7e1bfb07eec279fe551ec923168824b1c61d7f8c",
+      "reason": "the production pane renders only server-reported GitHub connection and proposed-PR state, preserving null as unknown, while first-run provider selection adds a measured machine summary and leaves server Affinity as the serving-model owner"
     },
     {
       "path": "tui/src/copilot_login.rs",
@@ -110,8 +110,8 @@
     },
     {
       "path": "tui/src/local_provider.rs",
-      "blob": "ae99e8cd6a8f0c7bf9fe2e02e6a45c955501577b",
-      "reason": "explicit local/custom endpoint acquisition persists a mode-0600 snapshot, omits keys only for catalog-approved local hosts, and renders no submitted key or connection claim"
+      "blob": "04821906806575abc6f466265b8ea26edd9f15f0",
+      "reason": "local acquisition stores exact bundled non-secret model metadata separately at mode 0600, never retains an unknown raw model name, recomputes fit from current hardware, and labels throughput estimated and server Affinity authoritative"
     },
     {
       "path": "tui/src/provider_catalog.rs",
@@ -125,8 +125,8 @@
     },
     {
       "path": "estelle-client/src/types.rs",
-      "blob": "3d5f3e8388b5ccf2b0338766e847be398fde4647",
-      "reason": "typed Orchestra snapshots retain the server-owned plan floor, and agent-health snapshots preserve tri-state enablement, nullable counts, freshness, and explicit per-agent state without inference"
+      "blob": "10a6f3e828b76491e3138021d4246ac112df580d",
+      "reason": "account GitHub response types preserve nullable connection state, absent gate reasons, server-issued URLs and opaque cursors without deriving a client verdict; Orchestra and agent-health semantics remain unchanged"
     },
     {
       "path": "tui/src/session_server.rs",
