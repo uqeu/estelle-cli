@@ -754,6 +754,32 @@ def run_receipts(
     return report
 
 
+def failed_receipt_diagnostics(report: dict[str, object]) -> list[str]:
+    """Name failed contracts without copying production response bodies into logs."""
+    diagnostics = []
+    receipts = report.get("receipts", [])
+    assert isinstance(receipts, list)
+    for receipt in receipts:
+        assert isinstance(receipt, dict)
+        if receipt.get("pass") is True:
+            continue
+        label = str(receipt.get("event") or receipt.get("sent") or "unnamed receipt")
+        came_back = str(receipt.get("came_back", ""))
+        marker = next((item for item in FAILURE_MARKERS if item in came_back), None)
+        if marker is not None:
+            reason = marker.rstrip()
+        elif receipt.get("exit_code") not in (None, 0):
+            reason = f"exited with code {receipt['exit_code']}"
+        elif came_back.startswith("timed out after "):
+            reason = came_back
+        elif receipt.get("sent") == "inspect sanitized HTTP trace":
+            reason = came_back
+        else:
+            reason = "expected receipt contract not observed"
+        diagnostics.append(f"{label}: {reason}")
+    return diagnostics
+
+
 def main(argv: list[str]) -> int:
     if argv == ["--list"]:
         print(json.dumps(READ_SURFACES))
@@ -768,6 +794,8 @@ def main(argv: list[str]) -> int:
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     summary = report["summary"]
     print(f"public receipts: {summary['passed']} passed, {summary['failed']} failed")
+    for diagnostic in failed_receipt_diagnostics(report):
+        print(f"public receipt failed: {diagnostic}")
     return 0 if summary["failed"] == 0 else 1
 
 

@@ -224,6 +224,35 @@ def test_tui_surface_fails_closed() -> None:
         assert "HTTP 404" in receipt["came_back"]
 
 
+def test_failed_receipt_diagnostics_name_the_surface_without_dumping_its_body() -> None:
+    harness = load_harness()
+    report = {
+        "receipts": [
+            {
+                "sent": "/graph",
+                "came_back": "Estelle returned HTTP 404: private response body",
+                "pass": False,
+            },
+            {
+                "sent": "estelle hook welcome --event SessionStart",
+                "event": "SessionStart/welcome",
+                "came_back": "exited with code 1 and no stdout/stderr",
+                "exit_code": 1,
+                "pass": False,
+            },
+            {"sent": "/me", "came_back": "working", "pass": True},
+        ]
+    }
+
+    diagnostics = harness.failed_receipt_diagnostics(report)
+
+    assert diagnostics == [
+        "/graph: Estelle returned HTTP",
+        "SessionStart/welcome: exited with code 1",
+    ]
+    assert "private response body" not in "\n".join(diagnostics)
+
+
 def test_complete_harness_writes_every_receipt() -> None:
     with tempfile.TemporaryDirectory(prefix="estelle-public-full-") as raw_dir:
         root = Path(raw_dir)
@@ -648,6 +677,7 @@ def main() -> int:
     test_question_turn_uses_the_same_public_tui_seam()
     test_skill_thread_receipt_keeps_both_turns_in_one_tui_process()
     test_tui_surface_fails_closed()
+    test_failed_receipt_diagnostics_name_the_surface_without_dumping_its_body()
     test_complete_harness_writes_every_receipt()
     test_repository_size_receipt()
     test_erasure_gate_receipt()
