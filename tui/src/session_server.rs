@@ -35,7 +35,7 @@ const SESSION_SOCKET_MODE: u32 = 0o600;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum ClientFrame {
+pub(crate) enum ClientFrame {
     Attach {
         repo: String,
         root: PathBuf,
@@ -332,6 +332,12 @@ pub(crate) struct SessionHandle {
 }
 
 impl SessionHandle {
+    #[cfg(test)]
+    pub(crate) fn test_channel() -> (Self, mpsc::UnboundedReceiver<ClientFrame>) {
+        let (frames, receiver) = mpsc::unbounded_channel();
+        (Self { frames }, receiver)
+    }
+
     pub(crate) fn send(&self, request: ClientRequest) -> io::Result<()> {
         self.frames
             .send(ClientFrame::Request { request })

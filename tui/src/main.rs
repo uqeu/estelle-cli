@@ -7195,6 +7195,50 @@ mod tests {
     }
 
     #[test]
+    fn five_worker_tabs_render_and_closing_one_sends_only_a_view_switch() {
+        let mut app = test_app();
+        let (session, mut frames) = session_server::SessionHandle::test_channel();
+        app.session = Some(session);
+        app.session_id = "worker-3".to_string();
+        app.session_tabs = (1..=5)
+            .map(|index| session_server::SessionSummary {
+                id: format!("worker-{index}"),
+                active: true,
+                turn_count: 0,
+            })
+            .collect();
+        app.active = Some(ActiveRequest {
+            id: 73,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+
+        let before = rendered_frame_at_size(&app, Instant::now(), 160, 30);
+        for index in 1..=5 {
+            assert!(before.contains(&format!("worker-{index}")));
+        }
+
+        app.close_session_tab();
+
+        assert!(app.hidden_session_tabs.contains("worker-3"));
+        assert_eq!(app.session_id, "worker-4");
+        assert!(matches!(
+            frames.try_recv(),
+            Ok(session_server::ClientFrame::Switch { session_id }) if session_id == "worker-4"
+        ));
+        assert!(
+            frames.try_recv().is_err(),
+            "closing a view must not send a cancel request"
+        );
+        let after = rendered_frame_at_size(&app, Instant::now(), 160, 30);
+        assert!(!after.contains("worker-3"));
+        for index in [1, 2, 4, 5] {
+            assert!(after.contains(&format!("worker-{index}")));
+        }
+    }
+
+    #[test]
     fn provider_login_parses_the_provider_and_optional_routing_metadata() {
         let args = Args::try_parse_from([
             "estelle",
