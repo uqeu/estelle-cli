@@ -692,6 +692,10 @@ struct PickerSurface {
 
 impl PickerSurface {
     fn login() -> Self {
+        Self::login_with_machine(estelle_machine::machine().summary_line())
+    }
+
+    fn login_with_machine(machine: String) -> Self {
         Self {
             title: "Connect Estelle".to_string(),
             rows: vec![
@@ -720,8 +724,9 @@ impl PickerSurface {
                 },
                 PickerRow {
                     label: "Local model".to_string(),
-                    detail: "LM Studio · Ollama · any OpenAI-compatible endpoint · no token bill"
-                        .to_string(),
+                    detail: format!(
+                        "{machine} · LM Studio · Ollama · any OpenAI-compatible endpoint · no token bill"
+                    ),
                     action: PickerAction::OpenLocalLogin,
                 },
             ],
@@ -9348,6 +9353,8 @@ mod tests {
         assert_eq!(picker.rows[4].label, "Local model");
         assert!(picker.rows[4].detail.contains("LM Studio"));
         assert!(picker.rows[4].detail.contains("Ollama"));
+        assert!(picker.rows[4].detail.contains("This machine"));
+        assert!(picker.rows[4].detail.contains("RAM"));
     }
 
     #[test]
@@ -9386,6 +9393,8 @@ mod tests {
         assert!(rendered.contains("CONNECT ESTELLE"));
         assert!(rendered.contains("grounds your coding agent in your real codebase"));
         assert!(rendered.contains("never bills you for model tokens"));
+        assert!(rendered.contains("This machine"));
+        assert!(rendered.contains("RAM"));
         assert!(!rendered.contains("ASK ESTELLE"));
         assert!(!rendered.contains("Run estelle login"));
     }

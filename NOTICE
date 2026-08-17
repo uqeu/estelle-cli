@@ -10,6 +10,11 @@ OpenAI Codex includes code derived from Ratatui
 Copyright (c) 2016-2022 Florian Dehau and
 Copyright (c) 2023-2025 The Ratatui Developers.
 
+This product includes llmfit-core
+(https://github.com/AlexsJones/llmfit), Copyright (c) 2026 Alex Jones,
+licensed under the MIT License. The complete license is in
+licenses/llmfit-MIT.txt.
+
 The planned Estelle CLI grafts also reference the following projects. No source
 from these projects is included in P0:
 

@@ -44,6 +44,7 @@ members = [
     "exec-server/tests/support",
     "execpolicy",
     "estelle-client",
+    "estelle-machine",
     "estelle-acp",
     "estelle-mcp",
     "ext/agent",
@@ -176,6 +177,7 @@ codex-exec-server = { path = "exec-server" }
 codex-exec-server-test-support = { path = "exec-server/tests/support" }
 codex-execpolicy = { path = "execpolicy" }
 estelle-client = { path = "estelle-client" }
+estelle-machine = { path = "estelle-machine" }
 codex-extension-api = { path = "ext/extension-api" }
 codex-extension-items = { path = "ext/items" }
 codex-goal-extension = { path = "ext/goal" }
@@ -331,6 +333,7 @@ keyring = { version = "3.6", default-features = false }
 landlock = "0.4.4"
 lazy_static = "1"
 libc = "0.2.182"
+llmfit-core = "=1.1.9"
 # Keep SQLx's bundled SQLite on a version containing the WAL-reset corruption fix:
 # https://www.sqlite.org/wal.html#the_wal_reset_bug
 libsqlite3-sys = { version = "0.37", default-features = false }

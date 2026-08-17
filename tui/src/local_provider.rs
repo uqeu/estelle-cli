@@ -7,6 +7,7 @@ use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 
+use serde::Deserialize;
 use serde::Serialize;
 use zeroize::Zeroizing;
 
@@ -23,10 +24,33 @@ struct LocalProviderSnapshot<'a> {
     api_key: Option<&'a str>,
 }
 
+#[derive(Deserialize, Serialize)]
+struct LocalModelProfile {
+    model: Option<estelle_machine::Model>,
+    unavailable_reason: Option<LocalModelUnavailable>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum LocalModelUnavailable {
+    NoModelSupplied,
+    ExactMetadataUnavailable,
+}
+
 fn store_path() -> io::Result<PathBuf> {
     dirs::home_dir()
         .map(|home| home.join(".estelle/providers/local.json"))
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "home directory is unavailable"))
+}
+
+fn model_profile_path(store: &Path) -> io::Result<PathBuf> {
+    let parent = store.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "local provider store has no parent",
+        )
+    })?;
+    Ok(parent.join("local-model.json"))
 }
 
 pub(crate) fn configured_present() -> bool {
@@ -35,6 +59,13 @@ pub(crate) fn configured_present() -> bool {
 
 pub(crate) fn logout() -> io::Result<bool> {
     let path = store_path()?;
+    let profile = model_profile_path(&path)?;
+    let removed_store = remove_if_present(&path)?;
+    let removed_profile = remove_if_present(&profile)?;
+    Ok(removed_store || removed_profile)
+}
+
+fn remove_if_present(path: &Path) -> io::Result<bool> {
     match fs::remove_file(path) {
         Ok(()) => Ok(true),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
@@ -89,6 +120,7 @@ fn persist_and_receipt(
     destination: &Path,
     output: &mut impl Write,
 ) -> io::Result<()> {
+    persist_model_profile(model, destination)?;
     let snapshot = LocalProviderSnapshot {
         provider: route.provider.id,
         base_url: route.base_url.as_deref().unwrap_or_default(),
@@ -117,6 +149,79 @@ fn persist_and_receipt(
         "Endpoint acquisition is complete; provider runtime binding is not yet proven. Run estelle doctor."
     )?;
     output.flush()
+}
+
+fn persist_model_profile(model: Option<&str>, credential_store: &Path) -> io::Result<()> {
+    let requested_model = model.unwrap_or_default().trim().to_string();
+    let (model, unavailable_reason) = if requested_model.is_empty() {
+        (None, Some(LocalModelUnavailable::NoModelSupplied))
+    } else {
+        match estelle_machine::named_model(&requested_model) {
+            Ok(model) => (Some(model), None),
+            Err(_) => (None, Some(LocalModelUnavailable::ExactMetadataUnavailable)),
+        }
+    };
+    provider_store::write_private_json(
+        &LocalModelProfile {
+            model,
+            unavailable_reason,
+        },
+        &model_profile_path(credential_store)?,
+        "local-model.json",
+    )
+}
+
+pub(crate) fn capability_lines(machine: &estelle_machine::Machine) -> Vec<String> {
+    let profile = store_path()
+        .and_then(|path| model_profile_path(&path))
+        .and_then(fs::read)
+        .and_then(|bytes| {
+            serde_json::from_slice::<LocalModelProfile>(&bytes).map_err(io::Error::other)
+        });
+    capability_lines_from(profile, machine)
+}
+
+fn capability_lines_from(
+    profile: io::Result<LocalModelProfile>,
+    machine: &estelle_machine::Machine,
+) -> Vec<String> {
+    let profile = match profile {
+        Ok(profile) => profile,
+        Err(error) => {
+            return vec![format!(
+                "Local fit  not measured · non-secret model profile unavailable ({})",
+                error.kind()
+            )];
+        }
+    };
+    let Some(model) = profile.model else {
+        let reason = match profile.unavailable_reason {
+            Some(LocalModelUnavailable::NoModelSupplied) => "no local model name was supplied",
+            Some(LocalModelUnavailable::ExactMetadataUnavailable) => {
+                "exact bundled metadata unavailable for configured local model"
+            }
+            None => "model metadata unavailable",
+        };
+        return vec![format!("Local fit  not measured · {reason}")];
+    };
+    match estelle_machine::fit(&model, machine) {
+        Ok(fit) => vec![
+            format!(
+                "Local fit  {} · {} · {} · {:.1}/{:.1} GB · estimated {:.1} tok/s",
+                fit.model_name,
+                fit.fit_level.label(),
+                fit.run_mode.label(),
+                fit.memory_required_gb,
+                fit.memory_available_gb,
+                fit.estimated_tokens_per_second,
+            ),
+            format!(
+                "Local fit limit  {} Server Affinity still decides which model serves a task.",
+                fit.estimate_notice
+            ),
+        ],
+        Err(error) => vec![format!("Local fit  not measured · {error}")],
+    }
 }
 
 #[cfg(test)]
@@ -162,5 +267,33 @@ mod tests {
         assert!(receipt.contains("Endpoint configured"));
         assert!(receipt.contains("runtime binding is not yet proven"));
         assert!(!receipt.contains(secret.as_str()));
+
+        let profile = fs::read_to_string(dir.path().join("providers/local-model.json"))
+            .expect("non-secret local model profile");
+        assert!(profile.contains("exact_metadata_unavailable"));
+        assert!(!profile.contains(secret.as_str()));
+
+        let profile: LocalModelProfile = serde_json::from_str(&profile).expect("safe profile");
+        let lines = capability_lines_from(Ok(profile), &estelle_machine::machine()).join("\n");
+        assert!(lines.contains("Local fit  not measured"));
+        assert!(lines.contains("exact bundled metadata unavailable"));
+        assert!(!lines.contains("test-model"));
+        assert!(!lines.contains(secret.as_str()));
+    }
+
+    #[test]
+    fn exact_bundled_model_profile_drives_a_fresh_machine_fit() {
+        let dir = tempdir().expect("tempdir");
+        let destination = dir.path().join("providers/local.json");
+
+        persist_model_profile(Some("Fu01978/Nano-H"), &destination).expect("safe model profile");
+        let bytes = fs::read(dir.path().join("providers/local-model.json")).expect("profile");
+        let profile: LocalModelProfile = serde_json::from_slice(&bytes).expect("profile JSON");
+        let lines = capability_lines_from(Ok(profile), &estelle_machine::machine()).join("\n");
+
+        assert!(lines.contains("Local fit  Fu01978/Nano-H"));
+        assert!(lines.contains("estimated"));
+        assert!(lines.contains("Estimate-based"));
+        assert!(lines.contains("Server Affinity still decides"));
     }
 }
