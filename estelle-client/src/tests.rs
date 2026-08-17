@@ -12,6 +12,7 @@ use wiremock::matchers::body_json;
 use wiremock::matchers::header;
 use wiremock::matchers::method;
 use wiremock::matchers::path;
+use wiremock::matchers::query_param;
 
 use super::*;
 
@@ -21,7 +22,7 @@ fn test_key() -> ApiKey {
 
 #[test]
 fn endpoint_inventory_is_unique_and_matches_the_server_audit() {
-    assert_eq!(API_ENDPOINTS.len(), 75);
+    assert_eq!(API_ENDPOINTS.len(), 77);
     let unique = API_ENDPOINTS
         .iter()
         .map(|spec| spec.path)
@@ -41,6 +42,96 @@ fn endpoint_inventory_is_unique_and_matches_the_server_audit() {
         .expect("the checkpoint hook mode posts here");
     assert_eq!(checkpoint.methods, &[HttpMethod::Post]);
     assert!(!checkpoint.requires_repo);
+}
+
+#[test]
+fn orchestra_live_endpoints_match_the_server_contract() {
+    assert_eq!(Endpoint::OrchestraRun.path(), "orchestra/run");
+    assert_eq!(Endpoint::OrchestraRun.methods(), &[HttpMethod::Post]);
+    assert!(Endpoint::OrchestraRun.requires_repo());
+    assert_eq!(Endpoint::OrchestraStatus.path(), "orchestra/status");
+    assert_eq!(Endpoint::OrchestraStatus.methods(), &[HttpMethod::Get]);
+    assert!(Endpoint::OrchestraStatus.requires_repo());
+}
+
+#[tokio::test]
+async fn orchestra_live_client_starts_then_reads_a_whole_newer_snapshot() {
+    let server = MockServer::start().await;
+    let fleet = serde_json::json!({
+        "id": "job_123", "batch": "1 admitted assignment", "models": ["provider/model-a"],
+        "state": "created", "attempt": "first", "revision": 1, "observed_at": 1000.0,
+        "stale_after_s": 60, "completed": 0, "total": 1, "agents": [{
+            "index": 1, "status": "queued", "attempt": "first", "state_observed_at": 1000.0,
+            "current_action": null, "progress": null,
+            "assignments": {"attempted": null, "completed": null, "lost": null}
+        }]
+    });
+    Mock::given(method("POST"))
+        .and(path("/orchestra/run"))
+        .and(body_json(
+            serde_json::json!({"repo": "acme/api", "task": "inspect auth"}),
+        ))
+        .respond_with(ResponseTemplate::new(202).set_body_json(serde_json::json!({
+            "accepted": true, "job_id": "job_123", "fleet": fleet
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let mut running_fleet = fleet.clone();
+    running_fleet["revision"] = serde_json::json!(2);
+    running_fleet["state"] = serde_json::json!("running");
+    Mock::given(method("GET"))
+        .and(path("/orchestra/status"))
+        .and(query_param("fleet_id", "job_123"))
+        .and(query_param("after_revision", "1"))
+        .and(query_param("wait_s", "20"))
+        .and(query_param("repo", "acme/api"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "fleet": running_fleet
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client =
+        Client::new(&format!("{}/", server.uri()), test_key(), MINIMUM_TIMEOUT).expect("client");
+    let repo = Repo::new("acme/api").expect("repo");
+    let cancel = CancellationToken::new();
+
+    let started = client
+        .orchestra_run(&repo, &OrchestraRunRequest::one("inspect auth"), &cancel)
+        .await
+        .expect("accepted fleet");
+    let current = client
+        .orchestra_status(
+            &repo,
+            &OrchestraStatusQuery::new(&started.job_id, 1),
+            &cancel,
+        )
+        .await
+        .expect("newer fleet");
+
+    assert!(started.accepted && started.fleet.revision == 1);
+    assert_eq!(current.fleet.revision, 2);
+    assert_eq!(current.fleet.agents[0].status, FleetAgentStatus::Queued);
+}
+
+#[test]
+fn orchestra_command_reply_round_trips_through_the_session_protocol() {
+    let reply: CommandReply = serde_json::from_value(serde_json::json!({
+        "accepted": true, "job_id": "job_123", "fleet": {
+            "id": "job_123", "batch": "one", "state": "created", "revision": 1,
+            "observed_at": 1000.0, "stale_after_s": 60, "completed": 0, "total": 1,
+            "agents": [{"index": 1, "status": "queued", "state_observed_at": 1000.0}]
+        }
+    }))
+    .expect("wire reply");
+
+    let encoded = serde_json::to_value(&reply).expect("session encode");
+    let decoded: CommandReply = serde_json::from_value(encoded).expect("session decode");
+
+    assert_eq!(decoded.orchestra_accepted(), Some(true));
+    assert_eq!(decoded.orchestra_job_id(), Some("job_123"));
+    assert_eq!(decoded.fleet.expect("fleet").revision, 1);
 }
 
 #[test]

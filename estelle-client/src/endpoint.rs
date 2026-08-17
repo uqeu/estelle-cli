@@ -74,6 +74,8 @@ endpoints! {
     (Improve, "improve", [Post], true),
     (Work, "work", [Post], true),
     (Orchestra, "orchestra", [Post], true),
+    (OrchestraRun, "orchestra/run", [Post], true),
+    (OrchestraStatus, "orchestra/status", [Get], true),
     (Route, "route", [Post], true),
     (SweepEstimate, "sweep/estimate", [Post], true),
     (GithubSweep, "github/sweep", [Post], false),

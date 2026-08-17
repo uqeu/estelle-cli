@@ -346,6 +346,19 @@ pub struct CommandReply {
 }
 
 impl CommandReply {
+    /// The durable Orchestra acceptance flag. `accepted` is also a numeric outcome count on
+    /// `GET /outcomes`, so it must stay in the raw envelope rather than becoming a shared typed
+    /// field that makes one of the two public response shapes impossible to deserialize.
+    pub fn orchestra_accepted(&self) -> Option<bool> {
+        self.extra.get("accepted").and_then(Value::as_bool)
+    }
+
+    /// The durable Orchestra job identifier. Kept beside `orchestra_accepted` in the raw
+    /// envelope because it only has meaning on the Orchestra run receipt.
+    pub fn orchestra_job_id(&self) -> Option<&str> {
+        self.extra.get("job_id").and_then(Value::as_str)
+    }
+
     /// The `runs` key as typed agent runs — non-empty only when the server sent a LIST
     /// (`/orchestra`, `/runs`). `/analytics` sends a count in the same key; that arm reads it
     /// with `as_u64` instead. Anything unparseable yields an empty vec, never a failed reply.
@@ -645,6 +658,62 @@ pub struct FleetSnapshot {
     pub narrator: Option<FleetObservedText>,
     #[serde(default)]
     pub attempt: FleetAttempt,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct OrchestraRunRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tasks: Vec<String>,
+}
+
+impl OrchestraRunRequest {
+    pub fn one(task: impl Into<String>) -> Self {
+        Self {
+            task: Some(task.into()),
+            tasks: Vec::new(),
+        }
+    }
+
+    pub fn many(tasks: Vec<String>) -> Self {
+        Self { task: None, tasks }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct OrchestraRunResponse {
+    pub accepted: bool,
+    pub job_id: String,
+    pub fleet: FleetSnapshot,
+    #[serde(default)]
+    pub todo: Option<TodoSnapshot>,
+    #[serde(default)]
+    pub decision: Option<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct OrchestraStatusQuery {
+    pub fleet_id: String,
+    pub after_revision: u64,
+    pub wait_s: u64,
+}
+
+impl OrchestraStatusQuery {
+    pub fn new(fleet_id: impl Into<String>, after_revision: u64) -> Self {
+        Self {
+            fleet_id: fleet_id.into(),
+            after_revision,
+            wait_s: 20,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct OrchestraStatusResponse {
+    pub fleet: FleetSnapshot,
+    #[serde(default)]
+    pub todo: Option<TodoSnapshot>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

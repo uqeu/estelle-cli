@@ -643,7 +643,7 @@ pub(crate) fn remote_request(
         "sessions" => get(Endpoint::Sessions, json!({})),
         "resume" => get(Endpoint::Session, json!({"id": argument})),
         "work" => post(Endpoint::Work, json!({"task": argument})),
-        "orchestra" => post(Endpoint::Orchestra, json!({"tasks": [argument]})),
+        "orchestra" => post(Endpoint::OrchestraRun, json!({"task": argument})),
         "gate" | "scan" | "review" => {
             let diff = diff
                 .filter(|value| !value.trim().is_empty())
@@ -4259,7 +4259,7 @@ mod tests {
             ("sessions", estelle_client::Endpoint::Sessions),
             ("resume", estelle_client::Endpoint::Session),
             ("work", estelle_client::Endpoint::Work),
-            ("orchestra", estelle_client::Endpoint::Orchestra),
+            ("orchestra", estelle_client::Endpoint::OrchestraRun),
             ("gate", estelle_client::Endpoint::Gate),
             ("review", estelle_client::Endpoint::Gate),
             ("scan", estelle_client::Endpoint::Scan),

@@ -203,6 +203,26 @@ impl Client {
             .await
     }
 
+    pub async fn orchestra_run(
+        &self,
+        repo: &Repo,
+        request: &OrchestraRunRequest,
+        cancel: &CancellationToken,
+    ) -> Result<OrchestraRunResponse, Error> {
+        self.post_scoped(Endpoint::OrchestraRun, repo, request, cancel)
+            .await
+    }
+
+    pub async fn orchestra_status(
+        &self,
+        repo: &Repo,
+        query: &OrchestraStatusQuery,
+        cancel: &CancellationToken,
+    ) -> Result<OrchestraStatusResponse, Error> {
+        self.get_scoped(Endpoint::OrchestraStatus, repo, query, cancel)
+            .await
+    }
+
     pub async fn get<Q, R>(
         &self,
         endpoint: Endpoint,
