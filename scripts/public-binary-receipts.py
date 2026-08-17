@@ -220,13 +220,23 @@ def command_receipt(
     return receipt
 
 
+def reindex_receipt(timeout: float) -> dict[str, object]:
+    receipt = command_receipt(["estelle", "reindex"], (), timeout)
+    output = str(receipt["came_back"])
+    receipt["pass"] = receipt["exit_code"] == 0 and any(
+        marker in output
+        for marker in ("Memory current", "Estelle memory is already current")
+    )
+    return receipt
+
+
 def head_surface_receipts(timeout: float = 600) -> list[dict[str, object]]:
     return [
         command_receipt(
             ["estelle", "sweep", "--path", SMALL_SWEEP_PATH], ("Repo swept",), timeout
         ),
         command_receipt(["estelle", "sweep"], ("Repo swept",), timeout),
-        command_receipt(["estelle", "reindex"], ("Memory current",), timeout),
+        reindex_receipt(timeout),
     ]
 
 

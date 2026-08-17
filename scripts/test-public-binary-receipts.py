@@ -848,7 +848,7 @@ def test_head_surface_commands_run_through_bare_binary() -> None:
         fake_estelle.write_text(
             "#!/bin/sh\n"
             "if [ \"$1\" = sweep ]; then printf 'Repo swept.\\n'; exit 0; fi\n"
-            "if [ \"$1\" = reindex ]; then printf 'Memory current.\\n'; exit 0; fi\n",
+            "if [ \"$1\" = reindex ]; then printf 'Nothing changed. Estelle memory is already current.\\n'; exit 0; fi\n",
             encoding="utf-8",
         )
         fake_estelle.chmod(0o755)
@@ -856,11 +856,17 @@ def test_head_surface_commands_run_through_bare_binary() -> None:
         os.environ["PATH"] = f"{fake_bin}{os.pathsep}{original_path}"
         try:
             receipts = load_harness().head_surface_receipts(timeout=3)
+            fake_estelle.write_text(
+                "#!/bin/sh\nprintf 'request completed\\n'\n", encoding="utf-8"
+            )
+            false_green = load_harness().reindex_receipt(timeout=3)
         finally:
             os.environ["PATH"] = original_path
         assert len(receipts) == 3
         assert all(receipt["pass"] for receipt in receipts)
         assert receipts[-1]["sent"] == "estelle reindex"
+        assert "already current" in receipts[-1]["came_back"]
+        assert false_green["pass"] is False
 
 
 def test_hook_receipts_drive_every_current_table_row() -> None:
