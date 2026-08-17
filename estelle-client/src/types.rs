@@ -808,6 +808,67 @@ pub enum TodoStatus {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct AgentHealthResponse {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub enabled_absent_reason: Option<String>,
+    #[serde(default)]
+    pub observed_at: Option<f64>,
+    #[serde(default)]
+    pub stale_after_s: Option<u64>,
+    #[serde(default)]
+    pub window_s: Option<u64>,
+    #[serde(default)]
+    pub repo: Option<String>,
+    #[serde(default)]
+    pub counts: Option<AgentHealthCounts>,
+    #[serde(default)]
+    pub agents: Vec<AgentHealthAgent>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct AgentHealthCounts {
+    #[serde(default)]
+    pub reporting: Option<u64>,
+    #[serde(default)]
+    pub degraded: Option<u64>,
+    #[serde(default)]
+    pub silent: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct AgentHealthAgent {
+    pub id: String,
+    #[serde(default)]
+    pub state: AgentHealthState,
+    #[serde(default)]
+    pub state_absent_reason: Option<String>,
+    #[serde(default)]
+    pub events: Option<u64>,
+    #[serde(default)]
+    pub last_seen: Option<f64>,
+    #[serde(default)]
+    pub current_signal: Option<String>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentHealthState {
+    Healthy,
+    Degraded,
+    Silent,
+    Disabled,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct MonitorIssuesResponse {
     #[serde(default)]
     pub issues: Vec<MonitorIssue>,

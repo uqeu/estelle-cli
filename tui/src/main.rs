@@ -471,6 +471,7 @@ enum UiEvent {
     },
     ProdIssues(Result<estelle_client::MonitorIssuesResponse, Error>),
     ProdOverview(Result<estelle_client::MonitorOverviewResponse, Error>),
+    ProdAgentHealth(Result<estelle_client::AgentHealthResponse, Error>),
     Answer {
         id: u64,
         result: Result<AnswerReply, Error>,
@@ -1286,14 +1287,19 @@ struct App {
     prod_panel_visible: bool,
     prod_issues: Option<estelle_client::MonitorIssuesResponse>,
     prod_overview: Option<estelle_client::MonitorOverviewResponse>,
+    prod_agent_health: Option<estelle_client::AgentHealthResponse>,
     prod_issue_error: Option<String>,
     prod_overview_error: Option<String>,
+    prod_agent_health_error: Option<String>,
     prod_issue_next_poll: Option<Instant>,
     prod_overview_next_poll: Option<Instant>,
+    prod_agent_health_next_poll: Option<Instant>,
     prod_issue_in_flight: bool,
     prod_overview_in_flight: bool,
+    prod_agent_health_in_flight: bool,
     prod_issue_failures: u32,
     prod_overview_failures: u32,
+    prod_agent_health_failures: u32,
     prod_issue_since: Option<f64>,
     terminal_focused: bool,
     last_interaction: Instant,
@@ -1468,14 +1474,19 @@ impl App {
             prod_panel_visible: false,
             prod_issues: None,
             prod_overview: None,
+            prod_agent_health: None,
             prod_issue_error: None,
             prod_overview_error: None,
+            prod_agent_health_error: None,
             prod_issue_next_poll: Some(Instant::now()),
             prod_overview_next_poll: Some(Instant::now()),
+            prod_agent_health_next_poll: Some(Instant::now()),
             prod_issue_in_flight: false,
             prod_overview_in_flight: false,
+            prod_agent_health_in_flight: false,
             prod_issue_failures: 0,
             prod_overview_failures: 0,
+            prod_agent_health_failures: 0,
             prod_issue_since: None,
             terminal_focused: true,
             last_interaction: Instant::now(),
@@ -2168,10 +2179,12 @@ impl App {
             self.focus = FocusSurface::Auxiliary;
             self.prod_issue_next_poll = Some(Instant::now());
             self.prod_overview_next_poll = Some(Instant::now());
+            self.prod_agent_health_next_poll = Some(Instant::now());
             self.poll_production_if_due(tx);
         } else {
             self.prod_issue_next_poll = None;
             self.prod_overview_next_poll = None;
+            self.prod_agent_health_next_poll = None;
             if self.focus == FocusSurface::Auxiliary {
                 self.focus = FocusSurface::Composer;
             }
@@ -2230,7 +2243,16 @@ impl App {
         {
             self.prod_overview_in_flight = true;
             self.prod_overview_next_poll = None;
-            spawn_prod_overview_request(client, self.repo.clone(), tx);
+            spawn_prod_overview_request(client.clone(), self.repo.clone(), tx);
+        }
+        if !self.prod_agent_health_in_flight
+            && self
+                .prod_agent_health_next_poll
+                .is_some_and(|deadline| deadline <= now)
+        {
+            self.prod_agent_health_in_flight = true;
+            self.prod_agent_health_next_poll = None;
+            spawn_prod_agent_health_request(client, self.repo.clone(), tx);
         }
     }
 
@@ -3059,6 +3081,33 @@ impl App {
                     );
                 }
             }
+            UiEvent::ProdAgentHealth(result) => {
+                self.prod_agent_health_in_flight = false;
+                match result {
+                    Ok(response) => {
+                        self.prod_agent_health = Some(response);
+                        self.prod_agent_health_error = None;
+                        self.prod_agent_health_failures = 0;
+                    }
+                    Err(error) => {
+                        self.prod_agent_health_error =
+                            Some(format!("agent health unavailable · {error}"));
+                        self.prod_agent_health_failures =
+                            self.prod_agent_health_failures.saturating_add(1);
+                    }
+                }
+                if self.prod_panel_visible {
+                    let inactive = self.production_is_inactive();
+                    self.prod_agent_health_next_poll = Some(
+                        Instant::now()
+                            + production_poll_delay(
+                                Duration::from_secs(30),
+                                self.prod_agent_health_failures,
+                                inactive,
+                            ),
+                    );
+                }
+            }
             UiEvent::Answer { id, result } => {
                 if self.active.as_ref().is_none_or(|active| active.id != id) {
                     return;
@@ -3810,6 +3859,27 @@ fn spawn_prod_overview_request(client: Client, repo: Repo, tx: &mpsc::UnboundedS
             )
             .await;
         let _ = tx.send(UiEvent::ProdOverview(result));
+    });
+}
+
+fn spawn_prod_agent_health_request(
+    client: Client,
+    repo: Repo,
+    tx: &mpsc::UnboundedSender<UiEvent>,
+) {
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        let result = client
+            .get(
+                estelle_client::Endpoint::AgentHealth,
+                &serde_json::json!({
+                    "repo": repo.as_str(),
+                    "window_s": 3600,
+                }),
+                &CancellationToken::new(),
+            )
+            .await;
+        let _ = tx.send(UiEvent::ProdAgentHealth(result));
     });
 }
 
@@ -5306,9 +5376,85 @@ fn production_workspace_lines(app: &App) -> Vec<Line<'static>> {
 
     lines.push(Line::from(""));
     lines.push(heading("AGENT HEALTH".to_string()));
-    lines.push(dim(
-        "State unavailable · no read contract · send POST /agent/events.".to_string(),
-    ));
+    if let Some(error) = &app.prod_agent_health_error {
+        lines.push(Line::styled(
+            error.clone(),
+            Style::default().fg(app.theme.alert()),
+        ));
+        lines.push(dim("The client will retry in the background.".to_string()));
+    } else if let Some(health) = &app.prod_agent_health {
+        match health.enabled {
+            Some(false) => lines.push(dim(
+                "Agent telemetry not enabled · send POST /agent/events after enabling it."
+                    .to_string(),
+            )),
+            None => lines.push(dim(format!(
+                "Agent health unknown · {}",
+                health
+                    .enabled_absent_reason
+                    .as_deref()
+                    .filter(|reason| !reason.trim().is_empty())
+                    .unwrap_or("server returned no reason")
+            ))),
+            Some(true) => {
+                if let Some(counts) = &health.counts {
+                    let count = |value: Option<u64>, label: &str| match value {
+                        Some(value) => format!("{value} {label}"),
+                        None => format!("{label} unknown"),
+                    };
+                    lines.push(Line::from(format!(
+                        "{} · {} · {}",
+                        count(counts.reporting, "reporting"),
+                        count(counts.degraded, "degraded"),
+                        count(counts.silent, "silent")
+                    )));
+                } else {
+                    lines.push(dim(
+                        "Agent counts unavailable · server returned no measurement.".to_string(),
+                    ));
+                }
+                match (health.observed_at, health.stale_after_s) {
+                    (Some(observed_at), Some(stale_after_s)) => lines.push(dim(format!(
+                        "observed {observed_at:.0} · stale threshold {stale_after_s}s"
+                    ))),
+                    _ => lines.push(dim("Snapshot freshness unavailable.".to_string())),
+                }
+                for agent in health.agents.iter().take(3) {
+                    let state = match agent.state {
+                        estelle_client::AgentHealthState::Healthy => "healthy",
+                        estelle_client::AgentHealthState::Degraded => "degraded",
+                        estelle_client::AgentHealthState::Silent => "silent",
+                        estelle_client::AgentHealthState::Disabled => "disabled",
+                        estelle_client::AgentHealthState::Unknown => "unknown",
+                    };
+                    let events = agent
+                        .events
+                        .map(|events| format!("{events}ev"))
+                        .unwrap_or_else(|| "events?".to_string());
+                    let signal = agent
+                        .current_signal
+                        .as_deref()
+                        .filter(|signal| !signal.trim().is_empty())
+                        .or(agent.state_absent_reason.as_deref())
+                        .unwrap_or("signal unavailable");
+                    lines.push(Line::from(format!(
+                        "{state} {} · {events} · {signal}",
+                        agent.id
+                    )));
+                    if let Some(last_seen) = agent.last_seen {
+                        lines.push(dim(format!("       last seen {last_seen:.0}")));
+                    }
+                }
+                if health.agents.len() > 3 {
+                    lines.push(dim(format!("+{} more agents", health.agents.len() - 3)));
+                }
+            }
+        }
+    } else {
+        lines.push(dim(
+            "State unavailable · no read contract · send POST /agent/events.".to_string(),
+        ));
+    }
 
     lines.push(Line::from(""));
     lines.push(heading("ESTELLE STATUS".to_string()));
@@ -8079,6 +8225,77 @@ mod tests {
     }
 
     #[test]
+    fn production_home_renders_agent_health_without_inventing_null_counts() {
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.prod_panel_visible = true;
+        app.prod_agent_health = Some(
+            serde_json::from_value(json!({
+                "enabled": true,
+                "observed_at": 1785203400.0,
+                "stale_after_s": 120,
+                "counts": {"reporting": 7, "degraded": 1, "silent": null},
+                "agents": [{
+                    "id": "checkout-agent",
+                    "state": "degraded",
+                    "events": 19,
+                    "last_seen": 1785203370.0,
+                    "current_signal": "tool timeout"
+                }]
+            }))
+            .expect("agent health"),
+        );
+
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 140, 36);
+        assert!(rendered.contains("7 reporting"), "{rendered}");
+        assert!(rendered.contains("1 degraded"), "{rendered}");
+        assert!(rendered.contains("silent unknown"), "{rendered}");
+        assert!(rendered.contains("checkout-agent"), "{rendered}");
+        assert!(rendered.contains("tool timeout"), "{rendered}");
+        assert!(!rendered.contains("0 silent"), "{rendered}");
+    }
+
+    #[test]
+    fn production_home_names_disabled_and_unknown_agent_measurements() {
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.prod_panel_visible = true;
+        app.prod_agent_health = Some(
+            serde_json::from_value(json!({
+                "enabled": false,
+                "counts": null,
+                "agents": []
+            }))
+            .expect("disabled health"),
+        );
+        let disabled = production_workspace_lines(&app)
+            .into_iter()
+            .flat_map(|line| line.spans)
+            .map(|span| span.content.into_owned())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(disabled.contains("Agent telemetry not enabled"));
+
+        app.prod_agent_health = Some(
+            serde_json::from_value(json!({
+                "enabled": null,
+                "enabled_absent_reason": "event store unavailable",
+                "counts": null,
+                "agents": []
+            }))
+            .expect("unknown health"),
+        );
+        let unknown = production_workspace_lines(&app)
+            .into_iter()
+            .flat_map(|line| line.spans)
+            .map(|span| span.content.into_owned())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(unknown.contains("event store unavailable"));
+        assert!(!unknown.contains("0 reporting"));
+    }
+
+    #[test]
     fn production_and_review_are_auxiliary_rails_that_preserve_the_work_surface() {
         let mut production = test_app();
         production.auth_resolved = true;
@@ -8425,6 +8642,25 @@ mod tests {
             })))
             .mount(&server)
             .await;
+        Mock::given(method("GET"))
+            .and(path("/agent/health"))
+            .and(wiremock::matchers::query_param("repo", "uqeu/estelle"))
+            .and(wiremock::matchers::query_param("window_s", "3600"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "enabled": true,
+                "observed_at": 1785203400.0,
+                "stale_after_s": 120,
+                "counts": {"reporting": 1, "degraded": 1, "silent": 0},
+                "agents": [{
+                    "id": "checkout-agent",
+                    "state": "degraded",
+                    "events": 19,
+                    "last_seen": 1785203370.0,
+                    "current_signal": "tool timeout"
+                }]
+            })))
+            .mount(&server)
+            .await;
         let mut app = test_app();
         app.auth_resolved = true;
         app.prod_panel_visible = true;
@@ -8439,7 +8675,7 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
 
         app.poll_production_if_due(&tx);
-        for _ in 0..2 {
+        for _ in 0..3 {
             let event = tokio::time::timeout(Duration::from_secs(2), rx.recv())
                 .await
                 .expect("monitor request completed")
@@ -8447,13 +8683,15 @@ mod tests {
             app.handle_ui_event(event, &tx);
         }
 
-        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 30);
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 34);
         assert!(rendered.contains("caught · TimeoutError in charge_card"));
         assert!(rendered.contains("billing.py:82"));
         assert!(rendered.contains("drafted repair"), "{rendered}");
         assert!(rendered.contains("awaiting human review"), "{rendered}");
         assert!(rendered.contains("error counts"));
         assert!(rendered.contains("request denominator unavailable"));
+        assert!(rendered.contains("checkout-agent"), "{rendered}");
+        assert!(rendered.contains("tool timeout"), "{rendered}");
         assert!(app.active.is_none());
     }
 

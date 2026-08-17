@@ -102,6 +102,7 @@ endpoints! {
     (GithubIdentityLink, "github/identity/link", [Post], false),
     (GithubRepos, "github/repos", [Get], false),
     (Issues, "issues", [Get], false),
+    (AgentHealth, "agent/health", [Get], false),
     (MonitorOverview, "monitor/overview", [Get], false),
     (MonitorIssues, "monitor/issues", [Get], false),
     (MonitorIssue, "monitor/issue", [Post], false),

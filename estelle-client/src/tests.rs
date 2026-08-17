@@ -22,7 +22,7 @@ fn test_key() -> ApiKey {
 
 #[test]
 fn endpoint_inventory_is_unique_and_matches_the_server_audit() {
-    assert_eq!(API_ENDPOINTS.len(), 77);
+    assert_eq!(API_ENDPOINTS.len(), 78);
     let unique = API_ENDPOINTS
         .iter()
         .map(|spec| spec.path)
@@ -52,6 +52,52 @@ fn orchestra_live_endpoints_match_the_server_contract() {
     assert_eq!(Endpoint::OrchestraStatus.path(), "orchestra/status");
     assert_eq!(Endpoint::OrchestraStatus.methods(), &[HttpMethod::Get]);
     assert!(Endpoint::OrchestraStatus.requires_repo());
+}
+
+#[test]
+fn agent_health_contract_preserves_unknown_counts_and_server_reported_states() {
+    assert_eq!(Endpoint::AgentHealth.path(), "agent/health");
+    assert_eq!(Endpoint::AgentHealth.methods(), &[HttpMethod::Get]);
+    assert!(!Endpoint::AgentHealth.requires_repo());
+
+    let response: AgentHealthResponse = serde_json::from_value(serde_json::json!({
+        "enabled": true,
+        "enabled_absent_reason": null,
+        "observed_at": 1785203400.0,
+        "stale_after_s": 120,
+        "counts": {"reporting": 7, "degraded": 1, "silent": null},
+        "agents": [{
+            "id": "checkout-agent",
+            "state": "degraded",
+            "state_absent_reason": null,
+            "events": 19,
+            "last_seen": 1785203370.0,
+            "current_signal": "tool timeout"
+        }]
+    }))
+    .expect("agent health contract");
+
+    assert_eq!(response.enabled, Some(true));
+    let counts = response.counts.expect("measured counts");
+    assert_eq!(counts.reporting, Some(7));
+    assert_eq!(counts.degraded, Some(1));
+    assert_eq!(counts.silent, None);
+    assert_eq!(response.agents[0].state, AgentHealthState::Degraded);
+    assert_eq!(response.agents[0].events, Some(19));
+
+    let unknown: AgentHealthResponse = serde_json::from_value(serde_json::json!({
+        "enabled": null,
+        "enabled_absent_reason": "event store unavailable",
+        "counts": null,
+        "agents": []
+    }))
+    .expect("unknown health contract");
+    assert_eq!(unknown.enabled, None);
+    assert!(unknown.counts.is_none());
+    assert_eq!(
+        unknown.enabled_absent_reason.as_deref(),
+        Some("event store unavailable")
+    );
 }
 
 #[tokio::test]
