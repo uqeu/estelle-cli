@@ -100,6 +100,33 @@ fn agent_health_contract_preserves_unknown_counts_and_server_reported_states() {
     );
 }
 
+#[test]
+fn orchestra_snapshot_keeps_the_server_owned_plan_floor_classification() {
+    let reply: OrchestraRunResponse = serde_json::from_value(serde_json::json!({
+        "accepted": true,
+        "job_id": "job_123",
+        "fleet": {
+            "id": "job_123",
+            "batch": "one admitted assignment",
+            "state": "created",
+            "observed_at": 1.0,
+            "plan_floor_usd": 0.00447,
+            "plan_floor_basis": "initial worker prompt before grounded context or retries"
+        }
+    }))
+    .expect("typed Orchestra receipt");
+
+    assert_eq!(reply.fleet.plan_floor_usd, Some(0.00447));
+    assert_eq!(
+        reply.fleet.plan_floor_basis,
+        "initial worker prompt before grounded context or retries"
+    );
+    assert_eq!(
+        reply.fleet.plan_floor_line().as_deref(),
+        Some("Plan floor · $0.004470 · not expected or final spend")
+    );
+}
+
 #[tokio::test]
 async fn orchestra_live_client_starts_then_reads_a_whole_newer_snapshot() {
     let server = MockServer::start().await;

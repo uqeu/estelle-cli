@@ -652,12 +652,28 @@ pub struct FleetSnapshot {
     pub completed: Option<u64>,
     #[serde(default)]
     pub total: Option<u64>,
+    /// Plan-time routed-model floor before grounded context, retries, substitutions, or escalation.
+    /// This is never expected or final spend; the completed job's cost receipt owns that fact.
+    #[serde(default)]
+    pub plan_floor_usd: Option<f64>,
+    #[serde(default)]
+    pub plan_floor_basis: String,
     #[serde(default)]
     pub agents: Vec<FleetAgent>,
     #[serde(default)]
     pub narrator: Option<FleetObservedText>,
     #[serde(default)]
     pub attempt: FleetAttempt,
+}
+
+impl FleetSnapshot {
+    /// Render the plan-time floor with its customer-facing limit attached.
+    /// The terminal job result, not this snapshot, owns measured/final spend.
+    pub fn plan_floor_line(&self) -> Option<String> {
+        self.plan_floor_usd
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .map(|floor| format!("Plan floor · ${floor:.6} · not expected or final spend"))
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

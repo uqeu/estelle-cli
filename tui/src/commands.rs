@@ -2361,6 +2361,9 @@ fn fleet_view_lines_at(
     }
     lines.push(format!("Estelle Orchestra · {batch} ×{total_label}"));
     lines.push(format!("Participants · {model_roster}"));
+    if let Some(plan_floor) = fleet.plan_floor_line() {
+        lines.push(plan_floor);
+    }
     lines.push(String::new());
     let cell_width = usize::from(width).saturating_sub(COLUMNS - 1) / COLUMNS;
 
@@ -4414,6 +4417,8 @@ mod tests {
                 "stale_after_s": 60,
                 "completed": 1,
                 "total": 6,
+                "plan_floor_usd": 0.00447,
+                "plan_floor_basis": "initial worker prompt before grounded context or retries",
                 "agents": [
                     {"index": 1, "status": "running", "state_observed_at": 4102444800.0, "current_action": "Checking kill switch invariants"},
                     {"index": 2, "status": "queued", "state_observed_at": 4102444800.0},
@@ -4430,6 +4435,8 @@ mod tests {
 
         assert!(rendered.contains("Estelle Orchestra · Mutation lane detection ×6"));
         assert!(rendered.contains("Participants · K3"));
+        assert!(rendered.contains("Plan floor · $0.004470"));
+        assert!(rendered.contains("not expected or final spend"));
         assert!(rendered.contains("001"));
         assert!(rendered.contains("Checking kill"));
         assert!(rendered.contains("002"));
