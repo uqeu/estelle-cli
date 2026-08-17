@@ -885,6 +885,83 @@ pub enum AgentHealthState {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct GithubStatusResponse {
+    #[serde(default)]
+    pub connected: Option<bool>,
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub login: Option<String>,
+    #[serde(default)]
+    pub observed_at: Option<f64>,
+    #[serde(default)]
+    pub absent_reason: Option<String>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ProposedPrsQuery {
+    pub repo: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
+}
+
+impl ProposedPrsQuery {
+    pub fn first(repo: &crate::Repo) -> Self {
+        Self {
+            repo: repo.as_str().to_string(),
+            cursor: None,
+            limit: Some(50),
+        }
+    }
+
+    pub fn after(mut self, cursor: impl Into<String>) -> Self {
+        self.cursor = Some(cursor.into());
+        self
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ProposedPrsResponse {
+    #[serde(default)]
+    pub prs: Vec<ProposedPr>,
+    #[serde(default)]
+    pub next_cursor: Option<String>,
+    #[serde(default)]
+    pub has_more: bool,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct ProposedPr {
+    pub number: u64,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub repo: String,
+    #[serde(default)]
+    pub issue_key: String,
+    #[serde(default)]
+    pub repair_status: String,
+    #[serde(default)]
+    pub gate: Option<IssueGate>,
+    #[serde(default)]
+    pub gate_absent_reason: Option<String>,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct MonitorIssuesResponse {
     #[serde(default)]
     pub issues: Vec<MonitorIssue>,

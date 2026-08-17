@@ -472,6 +472,10 @@ enum UiEvent {
     ProdIssues(Result<estelle_client::MonitorIssuesResponse, Error>),
     ProdOverview(Result<estelle_client::MonitorOverviewResponse, Error>),
     ProdAgentHealth(Result<estelle_client::AgentHealthResponse, Error>),
+    ProdGithub {
+        status: Result<estelle_client::GithubStatusResponse, Error>,
+        proposed_prs: Result<estelle_client::ProposedPrsResponse, Error>,
+    },
     Answer {
         id: u64,
         result: Result<AnswerReply, Error>,
@@ -1288,18 +1292,25 @@ struct App {
     prod_issues: Option<estelle_client::MonitorIssuesResponse>,
     prod_overview: Option<estelle_client::MonitorOverviewResponse>,
     prod_agent_health: Option<estelle_client::AgentHealthResponse>,
+    prod_github_status: Option<estelle_client::GithubStatusResponse>,
+    prod_proposed_prs: Option<estelle_client::ProposedPrsResponse>,
     prod_issue_error: Option<String>,
     prod_overview_error: Option<String>,
     prod_agent_health_error: Option<String>,
+    prod_github_status_error: Option<String>,
+    prod_proposed_prs_error: Option<String>,
     prod_issue_next_poll: Option<Instant>,
     prod_overview_next_poll: Option<Instant>,
     prod_agent_health_next_poll: Option<Instant>,
+    prod_github_next_poll: Option<Instant>,
     prod_issue_in_flight: bool,
     prod_overview_in_flight: bool,
     prod_agent_health_in_flight: bool,
+    prod_github_in_flight: bool,
     prod_issue_failures: u32,
     prod_overview_failures: u32,
     prod_agent_health_failures: u32,
+    prod_github_failures: u32,
     prod_issue_since: Option<f64>,
     terminal_focused: bool,
     last_interaction: Instant,
@@ -1475,18 +1486,25 @@ impl App {
             prod_issues: None,
             prod_overview: None,
             prod_agent_health: None,
+            prod_github_status: None,
+            prod_proposed_prs: None,
             prod_issue_error: None,
             prod_overview_error: None,
             prod_agent_health_error: None,
+            prod_github_status_error: None,
+            prod_proposed_prs_error: None,
             prod_issue_next_poll: Some(Instant::now()),
             prod_overview_next_poll: Some(Instant::now()),
             prod_agent_health_next_poll: Some(Instant::now()),
+            prod_github_next_poll: Some(Instant::now()),
             prod_issue_in_flight: false,
             prod_overview_in_flight: false,
             prod_agent_health_in_flight: false,
+            prod_github_in_flight: false,
             prod_issue_failures: 0,
             prod_overview_failures: 0,
             prod_agent_health_failures: 0,
+            prod_github_failures: 0,
             prod_issue_since: None,
             terminal_focused: true,
             last_interaction: Instant::now(),
@@ -2180,11 +2198,13 @@ impl App {
             self.prod_issue_next_poll = Some(Instant::now());
             self.prod_overview_next_poll = Some(Instant::now());
             self.prod_agent_health_next_poll = Some(Instant::now());
+            self.prod_github_next_poll = Some(Instant::now());
             self.poll_production_if_due(tx);
         } else {
             self.prod_issue_next_poll = None;
             self.prod_overview_next_poll = None;
             self.prod_agent_health_next_poll = None;
+            self.prod_github_next_poll = None;
             if self.focus == FocusSurface::Auxiliary {
                 self.focus = FocusSurface::Composer;
             }
@@ -2252,7 +2272,16 @@ impl App {
         {
             self.prod_agent_health_in_flight = true;
             self.prod_agent_health_next_poll = None;
-            spawn_prod_agent_health_request(client, self.repo.clone(), tx);
+            spawn_prod_agent_health_request(client.clone(), self.repo.clone(), tx);
+        }
+        if !self.prod_github_in_flight
+            && self
+                .prod_github_next_poll
+                .is_some_and(|deadline| deadline <= now)
+        {
+            self.prod_github_in_flight = true;
+            self.prod_github_next_poll = None;
+            spawn_prod_github_request(client, self.repo.clone(), tx);
         }
     }
 
@@ -3108,6 +3137,51 @@ impl App {
                     );
                 }
             }
+            UiEvent::ProdGithub {
+                status,
+                proposed_prs,
+            } => {
+                self.prod_github_in_flight = false;
+                let mut failed = false;
+                match status {
+                    Ok(response) => {
+                        self.prod_github_status = Some(response);
+                        self.prod_github_status_error = None;
+                    }
+                    Err(error) => {
+                        failed = true;
+                        self.prod_github_status_error =
+                            Some(format!("GitHub connection unavailable · {error}"));
+                    }
+                }
+                match proposed_prs {
+                    Ok(response) => {
+                        self.prod_proposed_prs = Some(response);
+                        self.prod_proposed_prs_error = None;
+                    }
+                    Err(error) => {
+                        failed = true;
+                        self.prod_proposed_prs_error =
+                            Some(format!("Proposed PR feed unavailable · {error}"));
+                    }
+                }
+                self.prod_github_failures = if failed {
+                    self.prod_github_failures.saturating_add(1)
+                } else {
+                    0
+                };
+                if self.prod_panel_visible {
+                    let inactive = self.production_is_inactive();
+                    self.prod_github_next_poll = Some(
+                        Instant::now()
+                            + production_poll_delay(
+                                Duration::from_secs(60),
+                                self.prod_github_failures,
+                                inactive,
+                            ),
+                    );
+                }
+            }
             UiEvent::Answer { id, result } => {
                 if self.active.as_ref().is_none_or(|active| active.id != id) {
                     return;
@@ -3880,6 +3954,22 @@ fn spawn_prod_agent_health_request(
             )
             .await;
         let _ = tx.send(UiEvent::ProdAgentHealth(result));
+    });
+}
+
+fn spawn_prod_github_request(client: Client, repo: Repo, tx: &mpsc::UnboundedSender<UiEvent>) {
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        let cancel = CancellationToken::new();
+        let query = estelle_client::ProposedPrsQuery::first(&repo);
+        let (status, proposed_prs) = tokio::join!(
+            client.github_status(&cancel),
+            client.proposed_prs(&query, &cancel),
+        );
+        let _ = tx.send(UiEvent::ProdGithub {
+            status,
+            proposed_prs,
+        });
     });
 }
 
@@ -5563,8 +5653,99 @@ fn production_workspace_lines(app: &App) -> Vec<Line<'static>> {
 
     lines.push(Line::from(""));
     lines.push(heading("GITHUB".to_string()));
-    lines.push(dim("Connection state not loaded in this pane.".to_string()));
-    lines.push(dim("Run estelle github status.".to_string()));
+    if let Some(error) = &app.prod_github_status_error {
+        lines.push(Line::styled(
+            error.clone(),
+            Style::default().fg(app.theme.alert()),
+        ));
+    } else if let Some(status) = &app.prod_github_status {
+        match status.connected {
+            Some(true) => {
+                let identity = status
+                    .login
+                    .as_deref()
+                    .filter(|login| !login.trim().is_empty())
+                    .map(|login| format!(" · @{login}"))
+                    .unwrap_or_default();
+                lines.push(Line::from(format!("Connected{identity}")));
+                if let Some(observed_at) = status.observed_at {
+                    lines.push(dim(format!("binding observed {observed_at:.0}")));
+                }
+            }
+            Some(false) => {
+                lines.push(dim(
+                    "Not connected · run estelle github connect.".to_string()
+                ));
+                lines.push(dim(
+                    "Proposed PRs are not read without a measured App binding.".to_string(),
+                ));
+            }
+            None => {
+                let reason = status
+                    .absent_reason
+                    .as_deref()
+                    .filter(|reason| !reason.trim().is_empty())
+                    .unwrap_or("server returned no reason");
+                lines.push(dim(format!("Connection unknown · {reason}")));
+                lines.push(dim("Proposed PR state is not inferred.".to_string()));
+            }
+        }
+    } else {
+        lines.push(dim(
+            "Waiting for measured GitHub connection state...".to_string()
+        ));
+    }
+
+    if app
+        .prod_github_status
+        .as_ref()
+        .and_then(|status| status.connected)
+        == Some(true)
+    {
+        if let Some(error) = &app.prod_proposed_prs_error {
+            lines.push(Line::styled(
+                error.clone(),
+                Style::default().fg(app.theme.alert()),
+            ));
+        } else if let Some(response) = &app.prod_proposed_prs {
+            if response.prs.is_empty() {
+                lines.push(dim("No open Estelle-proposed PRs returned.".to_string()));
+            }
+            for pr in response.prs.iter().take(3) {
+                let title = if pr.title.trim().is_empty() {
+                    "untitled PR"
+                } else {
+                    pr.title.as_str()
+                };
+                lines.push(Line::from(format!("#{} · {title}", pr.number)));
+                lines.push(dim(format!("       {}", pr.url)));
+                if let Some(gate) = &pr.gate {
+                    let verified = if gate.verified { " · verified" } else { "" };
+                    lines.push(dim(format!(
+                        "       gate · {} · {} · {} blocker(s){verified}",
+                        gate.state, gate.verdict, gate.blockers
+                    )));
+                } else {
+                    let reason = pr
+                        .gate_absent_reason
+                        .as_deref()
+                        .filter(|reason| !reason.trim().is_empty())
+                        .unwrap_or("server returned no reason");
+                    lines.push(dim(format!("       gate absent · {reason}")));
+                }
+                if !pr.updated_at.trim().is_empty() {
+                    lines.push(dim(format!("       updated {}", pr.updated_at)));
+                }
+            }
+            if response.has_more {
+                lines.push(dim(
+                    "More open proposed PRs exist than this page shows.".to_string()
+                ));
+            }
+        } else {
+            lines.push(dim("Waiting for the proposed-PR feed...".to_string()));
+        }
+    }
     lines
 }
 
@@ -8293,6 +8474,88 @@ mod tests {
             .join("\n");
         assert!(unknown.contains("event store unavailable"));
         assert!(!unknown.contains("0 reporting"));
+    }
+
+    #[test]
+    fn production_home_renders_github_connection_and_pr_gate_without_invention() {
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.prod_panel_visible = true;
+        app.prod_github_status = Some(
+            serde_json::from_value(json!({
+                "connected": true,
+                "provider": "github",
+                "login": "acme-owner",
+                "observed_at": 1785203400.0,
+                "absent_reason": null
+            }))
+            .expect("github status"),
+        );
+        app.prod_proposed_prs = Some(
+            serde_json::from_value(json!({
+                "prs": [{
+                    "number": 17,
+                    "title": "Repair checkout",
+                    "url": "https://github.com/acme/shop/pull/17",
+                    "repo": "acme/shop",
+                    "issue_key": "shop-17",
+                    "repair_status": "pr",
+                    "gate": null,
+                    "gate_absent_reason": "no gate verdict has been recorded for this issue",
+                    "created_at": "2026-08-17T01:02:03Z",
+                    "updated_at": "2026-08-17T02:03:04Z"
+                }],
+                "next_cursor": null,
+                "has_more": false
+            }))
+            .expect("proposed PRs"),
+        );
+
+        let rendered = production_workspace_lines(&app)
+            .into_iter()
+            .flat_map(|line| line.spans)
+            .map(|span| span.content.into_owned())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains("Connected · @acme-owner"), "{rendered}");
+        assert!(rendered.contains("#17 · Repair checkout"), "{rendered}");
+        assert!(
+            rendered.contains("gate absent · no gate verdict has been recorded"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("https://github.com/acme/shop/pull/17"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("verified"), "{rendered}");
+    }
+
+    #[test]
+    fn production_home_keeps_unknown_github_state_unknown() {
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.prod_panel_visible = true;
+        app.prod_github_status = Some(
+            serde_json::from_value(json!({
+                "connected": null,
+                "provider": "github",
+                "login": null,
+                "observed_at": 1785203400.0,
+                "absent_reason": "installation store unavailable: RuntimeError"
+            }))
+            .expect("unknown github status"),
+        );
+
+        let rendered = production_workspace_lines(&app)
+            .into_iter()
+            .flat_map(|line| line.spans)
+            .map(|span| span.content.into_owned())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains("Connection unknown"), "{rendered}");
+        assert!(rendered.contains("RuntimeError"), "{rendered}");
+        assert!(!rendered.contains("Not connected"), "{rendered}");
+        assert!(!rendered.contains("0 proposed"), "{rendered}");
     }
 
     #[test]

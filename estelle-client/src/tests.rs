@@ -22,7 +22,7 @@ fn test_key() -> ApiKey {
 
 #[test]
 fn endpoint_inventory_is_unique_and_matches_the_server_audit() {
-    assert_eq!(API_ENDPOINTS.len(), 78);
+    assert_eq!(API_ENDPOINTS.len(), 80);
     let unique = API_ENDPOINTS
         .iter()
         .map(|spec| spec.path)
@@ -42,6 +42,98 @@ fn endpoint_inventory_is_unique_and_matches_the_server_audit() {
         .expect("the checkpoint hook mode posts here");
     assert_eq!(checkpoint.methods, &[HttpMethod::Post]);
     assert!(!checkpoint.requires_repo);
+}
+
+#[test]
+fn account_github_contract_preserves_unknown_connection_and_absent_gate() {
+    assert_eq!(Endpoint::GithubStatus.path(), "github/status");
+    assert_eq!(Endpoint::GithubStatus.methods(), &[HttpMethod::Get]);
+    assert!(!Endpoint::GithubStatus.requires_repo());
+    assert_eq!(Endpoint::ProposedPrs.path(), "prs");
+    assert_eq!(Endpoint::ProposedPrs.methods(), &[HttpMethod::Get]);
+    assert!(!Endpoint::ProposedPrs.requires_repo());
+
+    let status: GithubStatusResponse = serde_json::from_value(serde_json::json!({
+        "connected": null,
+        "provider": "github",
+        "login": "acme-owner",
+        "observed_at": 1785203400.0,
+        "absent_reason": "installation store unavailable: RuntimeError"
+    }))
+    .expect("GitHub status contract");
+    assert_eq!(status.connected, None);
+    assert_eq!(status.login.as_deref(), Some("acme-owner"));
+    assert_eq!(
+        status.absent_reason.as_deref(),
+        Some("installation store unavailable: RuntimeError")
+    );
+
+    let proposed: ProposedPrsResponse = serde_json::from_value(serde_json::json!({
+        "prs": [{
+            "number": 17,
+            "title": "Repair checkout",
+            "url": "https://github.com/acme/shop/pull/17",
+            "repo": "acme/shop",
+            "issue_key": "shop-17",
+            "repair_status": "pr",
+            "gate": null,
+            "gate_absent_reason": "no gate verdict has been recorded for this issue",
+            "created_at": "2026-08-17T01:02:03Z",
+            "updated_at": "2026-08-17T02:03:04Z"
+        }],
+        "next_cursor": "opaque-next",
+        "has_more": true
+    }))
+    .expect("proposed PR contract");
+    assert_eq!(proposed.prs[0].number, 17);
+    assert!(proposed.prs[0].gate.is_none());
+    assert_eq!(
+        proposed.prs[0].gate_absent_reason.as_deref(),
+        Some("no gate verdict has been recorded for this issue")
+    );
+    assert_eq!(proposed.next_cursor.as_deref(), Some("opaque-next"));
+    assert!(proposed.has_more);
+}
+
+#[tokio::test]
+async fn account_github_client_calls_both_server_owned_read_surfaces() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/github/status"))
+        .and(header("authorization", "Bearer estelle_live_test-only"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "connected": true,
+            "provider": "github",
+            "login": "acme-owner",
+            "observed_at": 1785203400.0,
+            "absent_reason": null
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/prs"))
+        .and(query_param("repo", "acme/shop"))
+        .and(query_param("limit", "50"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "prs": [], "next_cursor": null, "has_more": false
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client =
+        Client::new(&format!("{}/", server.uri()), test_key(), MINIMUM_TIMEOUT).expect("client");
+    let repo = Repo::new("acme/shop").expect("repo");
+    let cancel = CancellationToken::new();
+
+    let status = client.github_status(&cancel).await.expect("status");
+    let proposed = client
+        .proposed_prs(&ProposedPrsQuery::first(&repo), &cancel)
+        .await
+        .expect("proposed PRs");
+
+    assert_eq!(status.connected, Some(true));
+    assert!(proposed.prs.is_empty());
 }
 
 #[test]

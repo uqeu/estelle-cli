@@ -176,6 +176,21 @@ impl Client {
         self.get(Endpoint::Repos, &NoQuery, cancel).await
     }
 
+    pub async fn github_status(
+        &self,
+        cancel: &CancellationToken,
+    ) -> Result<GithubStatusResponse, Error> {
+        self.get(Endpoint::GithubStatus, &NoQuery, cancel).await
+    }
+
+    pub async fn proposed_prs(
+        &self,
+        query: &ProposedPrsQuery,
+        cancel: &CancellationToken,
+    ) -> Result<ProposedPrsResponse, Error> {
+        self.get(Endpoint::ProposedPrs, query, cancel).await
+    }
+
     pub async fn chat_completion(
         &self,
         repo: &Repo,

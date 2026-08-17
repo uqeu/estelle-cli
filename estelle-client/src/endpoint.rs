@@ -101,6 +101,8 @@ endpoints! {
     (GithubIdentityInstallations, "github/identity/installations", [Get], false),
     (GithubIdentityLink, "github/identity/link", [Post], false),
     (GithubRepos, "github/repos", [Get], false),
+    (GithubStatus, "github/status", [Get], false),
+    (ProposedPrs, "prs", [Get], false),
     (Issues, "issues", [Get], false),
     (AgentHealth, "agent/health", [Get], false),
     (MonitorOverview, "monitor/overview", [Get], false),
