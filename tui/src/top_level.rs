@@ -2781,7 +2781,7 @@ fn erasure_gate(action: &str, values: &[String], confirmed: bool) -> Option<Vec<
         .unwrap_or("");
     Some(vec![
         format!(
-            "memory {action} {target} erases across ALL namespaces this account owns — not just this repo."
+            "memory {action} {target} erases across EVERY namespace this account owns — not just this repo."
         ),
         "The server has no repo-scoped erasure today, so the CLI does not imply one.".to_string(),
         "Re-run with --yes to confirm. Nothing was sent.".to_string(),
@@ -5071,7 +5071,7 @@ tests/test_serve.py:88: AssertionError\n\
             .expect("unconfirmed erasure must be blocked");
         let text = blocked.join("\n");
         assert!(
-            text.contains("ALL namespaces"),
+            text.contains("EVERY namespace"),
             "true radius hidden\n{text}"
         );
         assert!(text.contains("--yes"), "no remedy named\n{text}");
