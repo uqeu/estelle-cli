@@ -93,6 +93,77 @@ def test_inventory() -> None:
     assert len(set(surfaces)) == 24
 
 
+def test_production_build_receipt_rejects_a_sha_change() -> None:
+    harness = load_harness()
+    before = {
+        "build": "f08d5f393fbc",
+        "build_verified": True,
+        "surface": {"tools_base": 16, "prompts": 246},
+    }
+    after = {
+        "build": "73efb8c7ae7b",
+        "build_verified": True,
+        "surface": {"tools_base": 16, "prompts": 246},
+    }
+
+    receipt = harness.production_build_receipt(before, after)
+
+    assert receipt == {
+        "sent": "pin production build for the entire receipt run",
+        "came_back": "production build changed: f08d5f393fbc -> 73efb8c7ae7b",
+        "before": "f08d5f393fbc",
+        "after": "73efb8c7ae7b",
+        "pass": False,
+    }
+
+
+def test_production_build_receipt_rejects_an_unverified_stable_sha() -> None:
+    harness = load_harness()
+    identity = {
+        "build": "73efb8c7ae7b",
+        "build_verified": False,
+        "surface": {"tools_base": 16, "prompts": 246},
+    }
+
+    receipt = harness.production_build_receipt(identity, identity)
+
+    assert receipt["pass"] is False
+    assert receipt["came_back"] == "production identity failed the health contract"
+
+
+def test_pin_production_build_wraps_the_whole_receipt_run() -> None:
+    harness = load_harness()
+    identities = iter(
+        [
+            {
+                "build": "f08d5f393fbc",
+                "build_verified": True,
+                "surface": {"tools_base": 16, "prompts": 246},
+            },
+            {
+                "build": "73efb8c7ae7b",
+                "build_verified": True,
+                "surface": {"tools_base": 16, "prompts": 246},
+            },
+        ]
+    )
+
+    report = harness.pin_production_build(
+        lambda: {
+            "receipts": [{"sent": "existing contract", "pass": True}],
+            "summary": {"passed": 1, "failed": 0},
+        },
+        lambda: next(identities),
+    )
+
+    assert [row["sent"] for row in report["receipts"]] == [
+        "existing contract",
+        "pin production build for the entire receipt run",
+    ]
+    assert report["receipts"][-1]["pass"] is False
+    assert report["summary"] == {"passed": 1, "failed": 1}
+
+
 def test_installed_version() -> None:
     with tempfile.TemporaryDirectory(prefix="estelle-public-receipt-") as raw_dir:
         fake_bin = Path(raw_dir) / "bin"
@@ -641,6 +712,17 @@ def test_complete_harness_writes_every_receipt() -> None:
         for index in range(100):
             (root / f"module-{index}.py").write_text("pass\n", encoding="utf-8")
             (root / f"module-{index}.ts").write_text("export {};\n", encoding="utf-8")
+        health = root / "health.json"
+        health.write_text(
+            json.dumps(
+                {
+                    "build": "stable-test-build",
+                    "build_verified": True,
+                    "surface": {"tools_base": 16, "prompts": 246},
+                }
+            ),
+            encoding="utf-8",
+        )
         output = root / "receipts.json"
         environment = os.environ.copy()
         environment["PATH"] = f"{fake_bin}{os.pathsep}{environment.get('PATH', '')}"
@@ -657,6 +739,8 @@ def test_complete_harness_writes_every_receipt() -> None:
                 str(output),
                 "--timeout",
                 "2",
+                "--health-url",
+                health.as_uri(),
             ],
             check=False,
             capture_output=True,
@@ -671,7 +755,7 @@ def test_complete_harness_writes_every_receipt() -> None:
             output.read_text(encoding="utf-8") if output.exists() else "no report",
         )
         report = json.loads(output.read_text(encoding="utf-8"))
-        assert report["summary"] == {"passed": 49, "failed": 0}
+        assert report["summary"] == {"passed": 50, "failed": 0}
         assert report["receipts"][4]["after_one_route"] == "retained"
         assert [row["sent"] for row in report["receipts"][5:29]] == EXPECTED_READ_SURFACES
         assert report["receipts"][29]["sent"].startswith("Which file defines")
@@ -680,7 +764,14 @@ def test_complete_harness_writes_every_receipt() -> None:
         assert len(report["receipts"][32]["sent"]) == 26
         assert [row["sent"] for row in report["receipts"][33:35]] == ["/review", "/scan"]
         assert report["receipts"][37]["sent"] == "estelle reindex"
-        assert report["receipts"][-1]["event"] == "UserPromptSubmit/context"
+        assert report["receipts"][-2]["event"] == "UserPromptSubmit/context"
+        assert report["receipts"][-1] == {
+            "sent": "pin production build for the entire receipt run",
+            "came_back": "production build stayed stable-test-build",
+            "before": "stable-test-build",
+            "after": "stable-test-build",
+            "pass": True,
+        }
         assert all(row["pass"] for row in report["receipts"])
 
 

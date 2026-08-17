@@ -17,6 +17,8 @@ import sys
 import termios
 import tempfile
 import time
+import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -107,6 +109,7 @@ CONVERSATIONAL_QUESTION = "hi"
 DIFF_SURFACES = ("/review", "/scan")
 SMALL_SWEEP_PATH = "rag_tutorials/multimodal_agentic_rag/frontend"
 TUI_PASTE_SETTLE_SECONDS = 0.2
+PRODUCTION_HEALTH_URL = "https://api.fatelabs.ca/health"
 SKILL_TURNS = (
     "/skill:grill-me State one risk in changing a CLI contract.",
     "/skill:grill-me Challenge that answer.",
@@ -154,6 +157,63 @@ PASSIVE_TUI_ROUTES = frozenset(
         "/prs",
     }
 )
+
+
+def production_build_receipt(before: dict, after: dict) -> dict[str, object]:
+    """Fail the aggregate receipt when production changes beneath the run."""
+    before_build = before.get("build")
+    after_build = after.get("build")
+    stable = before_build == after_build
+    expected_surface = {"tools_base": 16, "prompts": 246}
+    health_contract = all(
+        identity.get("build_verified") is True
+        and identity.get("surface") == expected_surface
+        and isinstance(identity.get("build"), str)
+        and bool(identity["build"])
+        for identity in (before, after)
+    )
+    if not stable:
+        detail = f"production build changed: {before_build} -> {after_build}"
+    elif not health_contract:
+        detail = "production identity failed the health contract"
+    else:
+        detail = f"production build stayed {before_build}"
+    return {
+        "sent": "pin production build for the entire receipt run",
+        "came_back": detail,
+        "before": before_build,
+        "after": after_build,
+        "pass": stable and health_contract,
+    }
+
+
+def pin_production_build(
+    run: Callable[[], dict[str, object]],
+    read_identity: Callable[[], dict],
+) -> dict[str, object]:
+    """Measure production identity on both sides of the complete receipt run."""
+    before = read_identity()
+    report = run()
+    after = read_identity()
+    receipts = report["receipts"]
+    assert isinstance(receipts, list)
+    receipts.append(production_build_receipt(before, after))
+    passed = sum(receipt.get("pass") is True for receipt in receipts)
+    report["summary"] = {"passed": passed, "failed": len(receipts) - passed}
+    return report
+
+
+def read_production_identity(url: str) -> dict:
+    """Read bounded public health metadata without credentials or response logging."""
+    try:
+        with urllib.request.urlopen(url, timeout=10) as response:
+            payload = response.read(65_537)
+        if len(payload) > 65_536:
+            return {"error": "health response exceeded 65536 bytes"}
+        parsed = json.loads(payload)
+        return parsed if isinstance(parsed, dict) else {"error": "health response was not an object"}
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return {"error": type(exc).__name__}
 
 
 def installed_version_receipt(expected_tag: str) -> dict[str, object]:
@@ -1055,8 +1115,12 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--repo", required=True)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--timeout", type=float, default=30)
+    parser.add_argument("--health-url", default=PRODUCTION_HEALTH_URL)
     args = parser.parse_args(argv)
-    report = run_receipts(args.expected_version, args.repo, args.timeout)
+    report = pin_production_build(
+        lambda: run_receipts(args.expected_version, args.repo, args.timeout),
+        lambda: read_production_identity(args.health_url),
+    )
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     summary = report["summary"]
     print(f"public receipts: {summary['passed']} passed, {summary['failed']} failed")
