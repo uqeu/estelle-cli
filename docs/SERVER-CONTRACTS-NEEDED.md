@@ -25,14 +25,15 @@ the CLI does not create a second control plane while filling in its interactive 
 | Working memory | The client collects changed, staged and non-ignored untracked Git files (`cli-rs/tui/src/top_level.rs:706-726`) and sends the bounded current prompt separately from Repo graph (`cli-rs/tui/src/main.rs:1664-1703`). The server persists `messages[:-1]`, not the current ask (`scripts/estelle_server.py:907-915`). | No new settings or memory endpoint is required. Working memory remains a client-owned, per-turn input; the UI must disclose that it is sent to Estelle's BYOK answer path while not merged into the team Repo graph. |
 | Monitor | The client reaches cursor-paginated `GET /issues` and `GET /monitor/overview` (`cli-rs/tui/src/main.rs:2033-2055`, `cli-rs/tui/src/main.rs:2083-2098`). | Production app/service identity is not present in an issue row (`src/estelle/serve/api_issues_feed.py:54-95`) or the overview envelope (`src/estelle/serve/api_monitor.py:424-463`). A future app selector needs an explicit server field; repo, culprit, or transaction must not be relabelled as app identity. |
 
-## 1. Repair patch on production issues - BLOCKS proposed-diff review
+## 1. Repair patch on production issues - SHIPPED and production-probed
 
 **Surface unlocked:** selecting a production issue opens the existing read-only proposed-repair diff pane.
 
-**Today:** `GET /issues` exposes repair status and an optional PR, but not the patch. The pane can say that a
-draft exists; it cannot show what Estelle proposes to change.
+**Today:** `GET /issues` exposes the persisted gate-evaluated patch, and the production pane renders that
+exact unified diff read-only. The client never reconstructs a patch from repair prose, a changed path, or a
+PR URL.
 
-Extend each issue's `repair` object:
+Each issue's `repair` object:
 
 ```json
 {
@@ -42,7 +43,7 @@ Extend each issue's `repair` object:
     "pr": null,
     "patch": {
       "format": "unified_diff",
-      "base_sha": "8e17a9952",
+      "base_sha": "8e17a9952a0c35ed59d8c433bdbcbd7e83f26844",
       "text": "diff --git a/billing/charge.rs b/billing/charge.rs\n...",
       "observed_at": 1785203400.0
     },
@@ -54,14 +55,28 @@ Extend each issue's `repair` object:
 - `patch` is `null | RepairPatch`; it is never an empty object or empty string.
 - `format` is currently only `unified_diff`.
 - `base_sha` is the exact Git object the patch applies to.
-- `text` is the exact patch evaluated by the repair gate and, if a PR exists, the patch proposed by that PR.
+- `text` is the exact patch evaluated by the repair gate.
 - `observed_at` is Unix epoch seconds for this patch revision.
 - When `patch` is null, `patch_absent_reason` is required and non-empty. Values are stable codes plus optional
   prose, for example `not_proposed`, `expired`, `not_persisted`, or `unavailable`.
 - A patch is read-only in the issue feed. Applying it remains the existing explicit `/apply` path.
 
+**PR limit:** the current apply receipt does not carry GitHub's exact remote base and diff. A row whose repair
+opened a PR therefore returns `patch: null` with `patch_absent_reason: "not_persisted"`; it does not relabel
+the local `/work` draft as the bytes GitHub serves. Close that absence only with a GitHub read-back.
+
 **Missing-field rendering:** `repair.patch == null` keeps the production pane's honest status line and adds
 `diff unavailable - <patch_absent_reason>`. It never opens a blank diff pane.
+
+**Production receipt (2026-08-17):** public CLI `v0.2.14` swept the real `pallets/flask` source surface
+(`25 files`, `340 KB`) at Git SHA `d318b683471101618febed18996405ad26462110`. An OTLP event with exact
+`service.name=pallets/flask` bound `sessions.py:open_session` even though the repo was beyond the monitor's
+12-repo fallback budget. `GET /issues?since=1786939547&limit=5` returned one row with
+`repair.status=proposed`, `repair.pr=null`, `patch.format=unified_diff`, that full 40-character base SHA,
+`3032` patch bytes, `patch_absent_reason=null`, and a `verified-blocked` gate with four blockers. The negative
+controls were an unauthenticated `unknown api key` response and an unbound event whose patch remained null
+with `not_proposed`. Full-tree sweeps of Estelle and Starlette were separately refused by the secret scanner
+before storage; no scanner finding was enumerated or weakened.
 
 ## 2. Estelle Orchestra live view - BLOCKS the live grid
 
