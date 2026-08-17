@@ -612,6 +612,35 @@ def test_hook_receipts_drive_every_current_table_row() -> None:
         ]
 
 
+def test_hook_receipts_fail_closed_on_one_silent_nonzero() -> None:
+    with tempfile.TemporaryDirectory(prefix="estelle-hook-receipt-fail-") as raw_dir:
+        root = Path(raw_dir)
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        fake_estelle = fake_bin / "estelle"
+        fake_estelle.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = install-hooks ]; then printf 'full session lifecycle\\n'; exit 0; fi\n"
+            "if [ \"$1\" = hook ] && [ \"$2\" = welcome ]; then exit 1; fi\n"
+            "if [ \"$1\" = hook ]; then exit 0; fi\n",
+            encoding="utf-8",
+        )
+        fake_estelle.chmod(0o755)
+        (root / "README.md").write_text("receipt fixture\n", encoding="utf-8")
+        original_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{fake_bin}{os.pathsep}{original_path}"
+        try:
+            receipts = load_harness().hook_event_receipts(root, timeout=3)
+        finally:
+            os.environ["PATH"] = original_path
+
+        failed = [receipt for receipt in receipts if not receipt["pass"]]
+        assert len(failed) == 1
+        assert failed[0]["event"] == "SessionStart/welcome"
+        assert failed[0]["exit_code"] == 1
+        assert failed[0]["came_back"] == "exited with code 1 and no stdout/stderr"
+
+
 def main() -> int:
     test_inventory()
     test_installed_version()
@@ -628,6 +657,7 @@ def main() -> int:
     test_http_contract_receipt_proves_hidden_fields()
     test_head_surface_commands_run_through_bare_binary()
     test_hook_receipts_drive_every_current_table_row()
+    test_hook_receipts_fail_closed_on_one_silent_nonzero()
 
     print("public receipt test: all 24 audited read surfaces are mandatory")
     return 0

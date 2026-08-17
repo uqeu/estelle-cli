@@ -294,7 +294,12 @@ enum Command {
         base: Option<String>,
     },
     /// Estelle's harness hook runtime (P4).
-    Hook { mode: Option<String> },
+    Hook {
+        mode: Option<String>,
+        /// Installed event identity, used to make failures attributable.
+        #[arg(long)]
+        event: Option<String>,
+    },
     /// Install Estelle's harness hooks (P4).
     InstallHooks,
     /// Remove Estelle's harness hooks (P4).

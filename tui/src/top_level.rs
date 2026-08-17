@@ -92,7 +92,15 @@ pub(crate) async fn run(command: Command, repo: Repo, root: &Path) -> Result<Vec
         Command::Connect { client, .. } => Ok(connect_lines(client.as_deref().unwrap_or("cursor"))),
         Command::Serve { .. } => Err("serve is handled by the session runtime".to_string()),
         Command::Remove => remove_editor_configs(root),
-        Command::Hook { mode } => run_hook(mode.as_deref().unwrap_or("ground"), &repo, root).await,
+        Command::Hook { mode, event } => {
+            run_hook(
+                mode.as_deref().unwrap_or("ground"),
+                event.as_deref(),
+                &repo,
+                root,
+            )
+            .await
+        }
         Command::InstallHooks => install_hooks(),
         Command::UninstallHooks => uninstall_hooks(),
         Command::Acp => Err("ACP is handled by the protocol runtime".to_string()),
@@ -140,26 +148,68 @@ struct GroundVerdict {
     detail: String,
 }
 
-async fn run_hook(mode: &str, repo: &Repo, root: &Path) -> Result<Vec<String>, String> {
+async fn run_hook(
+    mode: &str,
+    expected_event: Option<&str>,
+    repo: &Repo,
+    root: &Path,
+) -> Result<Vec<String>, String> {
+    let event = hook_event_label(mode, expected_event, None);
     let mut input = String::new();
     std::io::stdin()
         .read_to_string(&mut input)
-        .map_err(|error| format!("could not read hook input: {error}"))?;
-    run_hook_with(mode, &input, repo, root).await
+        .map_err(|error| {
+            hook_failure(
+                &event,
+                mode,
+                "input-read",
+                "readable JSON hook payload on stdin",
+                &error.to_string(),
+            )
+        })?;
+    run_hook_with(mode, expected_event, &input, repo, root).await
 }
 
 async fn run_hook_with(
     mode: &str,
+    expected_event: Option<&str>,
     input: &str,
     repo: &Repo,
     root: &Path,
 ) -> Result<Vec<String>, String> {
-    let Ok(payload) = serde_json::from_str::<HookPayload>(input) else {
-        return Ok(Vec::new());
-    };
+    let fallback_event = hook_event_label(mode, expected_event, None);
+    let payload = serde_json::from_str::<HookPayload>(input).map_err(|error| {
+        hook_failure(
+            &fallback_event,
+            mode,
+            "input-json",
+            "valid JSON hook payload on stdin",
+            &error.to_string(),
+        )
+    })?;
+    let payload_event = payload.hook_event_name.trim();
+    let event = hook_event_label(mode, expected_event, Some(payload_event));
+    if payload_event.is_empty() {
+        return Err(hook_failure(
+            &event,
+            mode,
+            "event-missing",
+            &format!("hook_event_name={event} in the host payload"),
+            "the payload did not identify the event that fired",
+        ));
+    }
+    if expected_event.is_some_and(|expected| expected != payload_event) {
+        return Err(hook_failure(
+            &event,
+            mode,
+            "event-mismatch",
+            &format!("hook_event_name={event} in the host payload"),
+            &format!("host sent hook_event_name={payload_event}"),
+        ));
+    }
     // Every arm here is a mode the installer table can declare — the dispatch test walks the
     // table so a declared mode can never error "unknown mode" at runtime.
-    match mode {
+    let result = match mode {
         "ground" => ground_hook(&payload, repo).await,
         "guard" => Ok(guard_hook(&payload)),
         "shift" => Ok(file_shift_hook(&payload, repo, root).await),
@@ -172,7 +222,40 @@ async fn run_hook_with(
             "unknown hook mode {mode:?}; expected one of: {}",
             hook_modes().join(", ")
         )),
+    };
+    result.map_err(|error| hook_failure(&event, mode, "execute", hook_execution_need(mode), &error))
+}
+
+fn hook_event_label(mode: &str, expected: Option<&str>, payload: Option<&str>) -> String {
+    expected
+        .filter(|event| !event.trim().is_empty())
+        .or_else(|| payload.filter(|event| !event.trim().is_empty()))
+        .unwrap_or(match mode {
+            "ground" | "guard" => "PreToolUse",
+            "shift" | "sync" | "distil" => "PostToolUse",
+            "welcome" => "SessionStart",
+            "context" => "UserPromptSubmit",
+            "checkpoint" => "Stop|PreCompact|SessionEnd",
+            _ => "unknown",
+        })
+        .to_string()
+}
+
+fn hook_execution_need(mode: &str) -> &'static str {
+    match mode {
+        "ground" | "sync" | "context" => "a valid Estelle credential and a reachable Estelle API",
+        "checkpoint" => "a readable transcript and writable local session state",
+        "welcome" => "readable local session state and repository history",
+        "shift" => "a reachable local Estelle session server",
+        "guard" | "distil" => "a valid host hook payload",
+        _ => "an installed Estelle hook mode",
     }
+}
+
+fn hook_failure(event: &str, mode: &str, branch: &str, needed: &str, detail: &str) -> String {
+    format!(
+        "Estelle hook failed: event={event} mode={mode} branch={branch} needed={needed}; detail={detail}"
+    )
 }
 
 /// PreToolUse on Bash: warn on the classic destructive commands. Advisory, never blocking —
@@ -1173,7 +1256,7 @@ fn estelle_hook_groups(host: HookHost, runner: &str) -> Vec<(String, Value)> {
         .map(|row| {
             let mut handler = json!({
                 "type": "command",
-                "command": format!("{runner} hook {}", row.mode),
+                "command": format!("{runner} hook {} --event {}", row.mode, row.event),
                 "timeout": hook_timeout(host, row),
                 "statusMessage": format!("Estelle {}", row.mode),
             });
@@ -4041,7 +4124,7 @@ tests/test_serve.py:88: AssertionError\n\
                     group["hooks"].as_array().is_some_and(|handlers| {
                         handlers.iter().any(|handler| {
                             handler["command"].as_str()
-                                == Some(format!("estelle hook {mode}").as_str())
+                                == Some(format!("estelle hook {mode} --event {event}").as_str())
                         })
                     })
                 })
@@ -4100,7 +4183,7 @@ tests/test_serve.py:88: AssertionError\n\
                     group["hooks"].as_array().is_some_and(|handlers| {
                         handlers.iter().any(|handler| {
                             handler["command"].as_str()
-                                == Some(format!("estelle hook {mode}").as_str())
+                                == Some(format!("estelle hook {mode} --event {event}").as_str())
                         })
                     })
                 })
@@ -4188,17 +4271,43 @@ tests/test_serve.py:88: AssertionError\n\
             // An empty payload is silent for every mode WITHOUT touching the network, which is
             // exactly what makes this a safe non-vacuity guard: a declared mode that errored
             // "unknown mode" at runtime would fail here.
-            let result = run_hook_with(row.mode, "{}", &repo, root.path()).await;
+            let payload = json!({"hook_event_name": row.event}).to_string();
+            let result =
+                run_hook_with(row.mode, Some(row.event), &payload, &repo, root.path()).await;
             assert!(
                 !matches!(&result, Err(error) if error.contains("unknown hook mode")),
                 "table mode {} has no dispatch arm: {result:?}",
                 row.mode
             );
         }
-        let bogus = run_hook_with("nonsense", "{}", &repo, root.path()).await;
+        let bogus = run_hook_with(
+            "nonsense",
+            Some("SessionStart"),
+            r#"{"hook_event_name":"SessionStart"}"#,
+            &repo,
+            root.path(),
+        )
+        .await;
         assert!(
             matches!(&bogus, Err(error) if error.contains("unknown hook mode")),
             "an undeclared mode must still fail loud: {bogus:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_start_malformed_input_names_event_branch_and_need() {
+        let root = tempfile::tempdir().expect("hook root");
+        let repo = Repo::default();
+
+        let error = run_hook_with("welcome", None, "{not json", &repo, root.path())
+            .await
+            .expect_err("malformed SessionStart input must fail closed");
+
+        assert!(error.contains("event=SessionStart"), "{error}");
+        assert!(error.contains("branch=input-json"), "{error}");
+        assert!(
+            error.contains("needed=valid JSON hook payload on stdin"),
+            "{error}"
         );
     }
 

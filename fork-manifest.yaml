@@ -50,8 +50,8 @@
   "reviewed_changes_after_audited_commit": [
     {
       "path": "tui/src/top_level.rs",
-      "blob": "f0fba324737e9f7e5edc4d407afa911bcd3e1826",
-      "reason": "N-01 GitHub handoff remains origin-bound; hook parity keeps standalone oracles, while the installed PostToolUse shift hook reports bounded read/edit activity only to the owner-only local session transport"
+      "blob": "7b4ec1b507f2711b0ad8a70469d21f742a4691ee",
+      "reason": "N-01 GitHub handoff remains origin-bound; installed hook commands now carry their declared event into structured fail-closed diagnostics, while the PostToolUse shift hook still reports bounded read/edit activity only to the owner-only local session transport"
     },
     {
       "path": ".github/workflows/release.yml",
@@ -65,18 +65,18 @@
     },
     {
       "path": "estelle-client/src/endpoint.rs",
-      "blob": "2c1bee48709734fdb9cbb020de481065b3830e39",
-      "reason": "the authenticated provider-key endpoint is named in the closed typed transport inventory"
+      "blob": "3ec99c6bd7ad1b0e39185a404ac8b9ec33a1eeb4",
+      "reason": "the authenticated provider-key and revisioned Orchestra endpoints are named in the closed typed transport inventory"
     },
     {
       "path": "estelle-client/src/tests.rs",
-      "blob": "90e74080ac0d2ee8aeedcded05a061df022b537b",
-      "reason": "the endpoint denominator and exact POST /key method/auth contract are pinned; explicit HTTP receipts are proven header-free, redacted, exact on method/path/body/status/response, and fail closed on write failure"
+      "blob": "165f0fe5f3d6db72d8067c4f7cb80d1d6c02c9ca",
+      "reason": "the endpoint denominator, provider-key contract, and typed Orchestra start/status HTTP receipts are pinned; receipt recording remains header-free, redacted, exact, and fail closed"
     },
     {
       "path": "estelle-client/src/lib.rs",
-      "blob": "32f324860f6dd544a25bc036745e1f05e6efa382",
-      "reason": "an explicit ESTELLE_RECEIPT_PATH adds a sanitized append-only request/response proof at the shared HTTP seam; authorization headers are structurally absent and recorder I/O failure fails the request"
+      "blob": "95213720482479466741cf500da5a61b30cd57e8",
+      "reason": "the shared authenticated HTTP seam exposes typed Orchestra start/status calls while sanitized append-only receipts remain structurally header-free and recorder I/O failure still fails the request"
     },
     {
       "path": "tui/src/claude_import.rs",
@@ -85,8 +85,8 @@
     },
     {
       "path": "tui/src/commands.rs",
-      "blob": "e4a4ea031ff08a0f7b3cf0761b976219ae131f77",
-      "reason": "local login/logout/whoami/doctor ownership and autonomy labels are explicit; serve/connect join the closed top-level command inventory"
+      "blob": "1528bfdee9324319f2814735a8e2c2867369959f",
+      "reason": "local command ownership remains explicit and /orchestra now routes to the durable start contract instead of the synchronous legacy endpoint"
     },
     {
       "path": "tui/src/doctor.rs",
@@ -100,8 +100,8 @@
     },
     {
       "path": "tui/src/main.rs",
-      "blob": "0d8b3a9ffe1345b7a9f594dfa4f307b5881eeac5",
-      "reason": "shell, slash, and picker login surfaces share the reviewed provider catalog and one acquisition dispatcher; the first-run menu explains the two-credential boundary before any prompt"
+      "blob": "d8135096939fc7660cbe04001d15ea125563278d",
+      "reason": "the reviewed provider acquisition boundary and Orchestra fleet remain intact while malformed or mismatched installed hook input now names its event and branch and exits non-zero"
     },
     {
       "path": "tui/src/copilot_login.rs",
@@ -125,13 +125,13 @@
     },
     {
       "path": "estelle-client/src/types.rs",
-      "blob": "b3a8f69bec600d35fee7ca5ae7b43f1657b649fe",
-      "reason": "typed server responses gain lossless serialization for replay across the owner-only local session transport; no endpoint or egress destination changes"
+      "blob": "029e1eacadee61f7606fc28b32eb7e46d7fe6856",
+      "reason": "typed Orchestra request, acceptance, status, and fleet snapshots replay losslessly; the route-specific accepted accessor preserves the existing numeric outcomes response shape"
     },
     {
       "path": "tui/src/session_server.rs",
-      "blob": "c0dccef91facbb09b5bb1ca4147267acc120e2d2",
-      "reason": "the jcode-inspired local session owner uses a 0700 directory, 0600 socket and startup lock; it confines bounded read sets and file-shift notices to matching repository roots, while named sessions remain independent across client disconnects"
+      "blob": "bf245c58c8857dd64c66150aaf9f689456ebbe38",
+      "reason": "the owner-only local session transport keeps polling the server-owned fleet across client disconnects, publishes strictly newer whole snapshots, and replays terminal state without cancelling paid work"
     },
     {
       "path": "tui/src/status/tests.rs",

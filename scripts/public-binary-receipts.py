@@ -185,9 +185,12 @@ def command_receipt(
     output = "\n".join(
         part.strip() for part in (result.stdout, result.stderr) if part.strip()
     )
+    if not output and result.returncode != 0:
+        output = f"exited with code {result.returncode} and no stdout/stderr"
     receipt = {
         "sent": sent,
         "came_back": output,
+        "exit_code": result.returncode,
         "pass": result.returncode == 0 and all(marker in output for marker in required),
     }
     if input_text is not None:
@@ -212,11 +215,11 @@ def _hook_specs(root: Path, transcript: Path) -> list[tuple[str, str, dict]]:
         "transcript_path": str(transcript),
     }
     return [
-        ("PreToolUse/ground", "ground", {**common, "tool_name": "Write", "tool_input": {"file_path": "receipt_probe.py", "content": "def receipt_probe():\n    return 1\n"}}),
-        ("PreToolUse/guard", "guard", {**common, "tool_name": "Bash", "tool_input": {"command": "chmod -R 777 /"}}),
-        ("PostToolUse/shift", "shift", {**common, "tool_name": "Read", "tool_input": {"file_path": "README.md"}}),
-        ("PostToolUse/sync", "sync", {**common, "tool_name": "Write", "tool_input": {"file_path": "README.md"}}),
-        ("PostToolUse/distil", "distil", {**common, "tool_name": "Bash", "tool_response": {"stdout": "tests/a.py::test_one PASSED\ntests/a.py::test_two PASSED\n"}}),
+        ("PreToolUse/ground", "ground", {**common, "hook_event_name": "PreToolUse", "tool_name": "Write", "tool_input": {"file_path": "receipt_probe.py", "content": "def receipt_probe():\n    return 1\n"}}),
+        ("PreToolUse/guard", "guard", {**common, "hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "chmod -R 777 /"}}),
+        ("PostToolUse/shift", "shift", {**common, "hook_event_name": "PostToolUse", "tool_name": "Read", "tool_input": {"file_path": "README.md"}}),
+        ("PostToolUse/sync", "sync", {**common, "hook_event_name": "PostToolUse", "tool_name": "Write", "tool_input": {"file_path": "README.md"}}),
+        ("PostToolUse/distil", "distil", {**common, "hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_response": {"stdout": "tests/a.py::test_one PASSED\ntests/a.py::test_two PASSED\n"}}),
         ("Stop/checkpoint", "checkpoint", {**checkpoints, "hook_event_name": "Stop"}),
         ("PreCompact/checkpoint", "checkpoint", {**checkpoints, "hook_event_name": "PreCompact"}),
         ("SessionEnd/checkpoint", "checkpoint", {**checkpoints, "hook_event_name": "SessionEnd"}),
@@ -242,7 +245,10 @@ def hook_event_receipts(root: Path, timeout: float = 30) -> list[dict[str, objec
     receipts[0]["event"] = "install/current-table"
     for event, mode, payload in _hook_specs(root, transcript):
         receipt = command_receipt(
-            ["estelle", "hook", mode], (), timeout, json.dumps(payload)
+            ["estelle", "hook", mode, "--event", payload["hook_event_name"]],
+            (),
+            timeout,
+            json.dumps(payload),
         )
         receipt["event"] = event
         receipts.append(receipt)
