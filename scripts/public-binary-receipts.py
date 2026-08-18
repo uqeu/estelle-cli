@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 import pty
 import select
 import shutil
 import signal
+import sqlite3
 import struct
 import subprocess
 import sys
@@ -106,6 +108,10 @@ FAILURE_MARKERS = (
 )
 GROUNDING_QUESTION = "Which file defines an application entry point in this repository?"
 CONVERSATIONAL_QUESTION = "hi"
+SESSION_RESUME_TITLE = "Receipt parser context"
+SESSION_RESUME_PRIOR_QUESTION = "Keep the cobalt owl marker"
+SESSION_RESUME_PRIOR_ANSWER = "The cobalt owl marker is retained"
+SESSION_RESUME_QUESTION = "Which file defines an application entry point in this repository?"
 DIFF_SURFACES = ("/review", "/scan")
 SMALL_SWEEP_PATH = "rag_tutorials/multimodal_agentic_rag/frontend"
 TUI_PASTE_SETTLE_SECONDS = 0.2
@@ -300,6 +306,207 @@ def repository_size_receipt(
         "pass": python_files >= minimum_per_language
         and typescript_files >= minimum_per_language,
     }
+
+
+def write_opencode_history_fixture(
+    home: Path,
+    repository: Path,
+    title: str,
+    question: str,
+    answer: str,
+) -> Path:
+    """Create the current OpenCode SQLite shape under a disposable receipt HOME."""
+    data_home = home / ".local" / "share" / "opencode"
+    data_home.mkdir(parents=True, exist_ok=True)
+    database = data_home / "opencode.db"
+    database.unlink(missing_ok=True)
+    now_ms = time.time_ns() // 1_000_000
+    connection = sqlite3.connect(database)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE session (
+                id TEXT PRIMARY KEY, directory TEXT NOT NULL, title TEXT NOT NULL,
+                time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL
+            );
+            CREATE TABLE session_message (
+                id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL,
+                seq INTEGER NOT NULL, time_created INTEGER NOT NULL, data TEXT NOT NULL
+            );
+            """
+        )
+        connection.execute(
+            "INSERT INTO session (id, directory, title, time_created, time_updated) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("ses_estelle_receipt", str(repository.resolve()), title, now_ms, now_ms),
+        )
+        connection.executemany(
+            "INSERT INTO session_message "
+            "(id, session_id, type, seq, time_created, data) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                (
+                    "msg_estelle_receipt_user",
+                    "ses_estelle_receipt",
+                    "user",
+                    1,
+                    now_ms,
+                    json.dumps({"text": question, "files": [], "agents": []}),
+                ),
+                (
+                    "msg_estelle_receipt_assistant",
+                    "ses_estelle_receipt",
+                    "assistant",
+                    2,
+                    now_ms + 1,
+                    json.dumps(
+                        {
+                            "agent": "build",
+                            "model": {"providerID": "receipt", "modelID": "receipt"},
+                            "content": [
+                                {"type": "text", "id": "txt_receipt", "text": answer}
+                            ],
+                        }
+                    ),
+                ),
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    return database
+
+
+def write_claude_history_fixture(
+    home: Path,
+    repository: Path,
+    title: str,
+    question: str,
+    answer: str,
+) -> Path:
+    source = home / ".claude" / "projects" / "receipt" / "session.jsonl"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = "2026-08-18T00:00:00Z"
+    records = [
+        {"type": "custom-title", "customTitle": title},
+        {
+            "type": "user",
+            "cwd": str(repository.resolve()),
+            "timestamp": timestamp,
+            "message": {"content": question},
+        },
+        {
+            "type": "assistant",
+            "cwd": str(repository.resolve()),
+            "timestamp": timestamp,
+            "message": {"content": answer},
+        },
+    ]
+    source.write_text(
+        "".join(f"{json.dumps(record, separators=(',', ':'))}\n" for record in records),
+        encoding="utf-8",
+    )
+    return source
+
+
+def write_codex_history_fixture(
+    home: Path,
+    repository: Path,
+    title: str,
+    question: str,
+    answer: str,
+) -> Path:
+    del title
+    thread_id = "00000000-0000-4000-8000-000000000013"
+    timestamp = "2026-08-18T00:00:00Z"
+    source = (
+        home
+        / ".codex"
+        / "sessions"
+        / "2026"
+        / "08"
+        / "18"
+        / f"rollout-2026-08-18T00-00-00-{thread_id}.jsonl"
+    )
+    source.parent.mkdir(parents=True, exist_ok=True)
+    records = [
+        {
+            "timestamp": timestamp,
+            "ordinal": 0,
+            "type": "session_meta",
+            "payload": {
+                "session_id": thread_id,
+                "id": thread_id,
+                "timestamp": timestamp,
+                "cwd": str(repository.resolve()),
+                "originator": "public-receipt",
+                "cli_version": "public-receipt",
+                "source": "cli",
+                "model_provider": "public-receipt",
+                "history_mode": "paginated",
+            },
+        },
+        {
+            "timestamp": timestamp,
+            "ordinal": 1,
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message",
+                "message": question,
+                "kind": "plain",
+            },
+        },
+        {
+            "timestamp": timestamp,
+            "ordinal": 2,
+            "type": "event_msg",
+            "payload": {
+                "type": "agent_message",
+                "message": answer,
+                "phase": None,
+                "memory_citation": None,
+            },
+        },
+    ]
+    source.write_text(
+        "".join(f"{json.dumps(record, separators=(',', ':'))}\n" for record in records),
+        encoding="utf-8",
+    )
+    return source
+
+
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def session_resume_http_contract(record: dict, source_label: str = "OpenCode") -> bool:
+    request = record.get("request", {})
+    response = record.get("response", {})
+    request_body = request.get("body", {})
+    response_body = response.get("body", {})
+    working_memory = request_body.get("working_memory", {})
+    context = working_memory.get("session_context")
+    sources = response_body.get("sources")
+    expected_title = (
+        SESSION_RESUME_PRIOR_QUESTION
+        if source_label == "Codex"
+        else SESSION_RESUME_TITLE
+    )
+    return (
+        request.get("path") == "/deep-search"
+        and request_body.get("question") == SESSION_RESUME_QUESTION
+        and isinstance(context, str)
+        and f"Imported {source_label} session: {expected_title}" in context
+        and f"User: {SESSION_RESUME_PRIOR_QUESTION}" in context
+        and f"Assistant: {SESSION_RESUME_PRIOR_ANSWER}" in context
+        and response.get("status") == 200
+        and response_body.get("grounded") is True
+        and isinstance(response_body.get("answer"), str)
+        and bool(response_body["answer"].strip())
+        and isinstance(sources, list)
+        and bool(sources)
+        and all(isinstance(source, dict) and source.get("file") for source in sources)
+    )
 
 
 def erasure_gate_receipt() -> dict[str, object]:
@@ -574,6 +781,259 @@ def _read_until(
             observed.extend(chunk)
             visible = rendered_screen(observed, rows=50, columns=160)
     return visible
+
+
+def _wait_for_process_line(
+    process: subprocess.Popen[str], marker: str, deadline: float
+) -> str:
+    assert process.stdout is not None
+    lines = []
+    while time.monotonic() < deadline and process.poll() is None:
+        ready, _, _ = select.select([process.stdout], [], [], 0.1)
+        if not ready:
+            continue
+        line = process.stdout.readline()
+        if not line:
+            break
+        lines.append(line.rstrip())
+        if marker in line:
+            break
+    return "\n".join(lines)
+
+
+def _probe_imported_source(
+    source_name: str,
+    source_label: str,
+    source_path: Path,
+    repo: str,
+    repository_root: Path,
+    socket: Path,
+    environment: dict[str, str],
+    trace_path: Path,
+    timeout: float,
+) -> dict[str, object]:
+    source_before = _sha256_file(source_path)
+    trace_offset = _trace_line_count(trace_path) or 0
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.chdir(repository_root)
+        os.execvpe(
+            "estelle",
+            [
+                "estelle",
+                "--repo",
+                repo,
+                "connect",
+                "--socket",
+                str(socket),
+                "--session",
+                f"receipt-{source_name}",
+                "--from",
+                source_name,
+            ],
+            environment,
+        )
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 160, 0, 0))
+    os.kill(pid, signal.SIGWINCH)
+    observed = bytearray()
+    visible = ""
+    http_record = None
+    try:
+        deadline = time.monotonic() + timeout
+        visible = _read_until(
+            fd,
+            observed,
+            (SESSION_RESUME_PRIOR_ANSWER,),
+            deadline,
+        )
+        imported_visible = (
+            SESSION_RESUME_PRIOR_QUESTION in visible
+            and SESSION_RESUME_PRIOR_ANSWER in visible
+        )
+        if imported_visible:
+            os.write(fd, SESSION_RESUME_QUESTION.encode())
+            time.sleep(TUI_PASTE_SETTLE_SECONDS)
+            os.write(fd, b"\r")
+            visible = _read_until(
+                fd,
+                observed,
+                (f"you  {SESSION_RESUME_QUESTION}",),
+                deadline,
+            )
+            visible = _read_until(fd, observed, ("› Ask Estelle",), deadline)
+        while time.monotonic() < deadline and http_record is None:
+            for record in _read_http_records_after(trace_path, trace_offset):
+                question = record.get("request", {}).get("body", {}).get("question")
+                if question == SESSION_RESUME_QUESTION:
+                    http_record = record
+                    break
+            if http_record is None:
+                time.sleep(0.05)
+        source_after = _sha256_file(source_path)
+        source_unchanged = source_after == source_before
+        http_pass = isinstance(http_record, dict) and session_resume_http_contract(
+            http_record, source_label
+        )
+        return {
+            "source": source_label,
+            "came_back": visible.strip(),
+            "source_sha256_before": source_before,
+            "source_sha256_after": source_after,
+            "source_unchanged": source_unchanged,
+            "http_route": {"path": "/deep-search", "contract": http_pass},
+            "pass": imported_visible and source_unchanged and http_pass,
+        }
+    finally:
+        _terminate_pty(pid, fd)
+
+
+def session_resume_receipt(
+    repo: str,
+    repository_root: Path,
+    timeout: float = 30,
+) -> dict[str, object]:
+    """Probe OpenCode history import through installed serve/connect and production HTTP."""
+    raw_trace = os.environ.get("ESTELLE_RECEIPT_PATH")
+    with tempfile.TemporaryDirectory(prefix="estelle-session-resume-") as raw_home:
+        home = Path(raw_home)
+        trace_path = Path(raw_trace) if raw_trace else home / "session-resume-http.jsonl"
+        other_repository = home / "different-repository"
+        other_repository.mkdir()
+        environment = os.environ.copy()
+        environment["HOME"] = str(home)
+        environment["ESTELLE_RECEIPT_PATH"] = str(trace_path)
+        socket = home / ".estelle" / "session.sock"
+        negative_database = write_opencode_history_fixture(
+            home,
+            other_repository,
+            SESSION_RESUME_TITLE,
+            SESSION_RESUME_PRIOR_QUESTION,
+            SESSION_RESUME_PRIOR_ANSWER,
+        )
+        negative_before = _sha256_file(negative_database)
+        negative = subprocess.run(
+            [
+                "estelle",
+                "--repo",
+                repo,
+                "connect",
+                "--socket",
+                str(socket),
+                "--session",
+                "receipt-negative",
+                "--from",
+                "opencode",
+            ],
+            cwd=repository_root,
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        negative_output = "\n".join(
+            part.strip() for part in (negative.stdout, negative.stderr) if part.strip()
+        )
+        negative_unchanged = _sha256_file(negative_database) == negative_before
+        negative_pass = (
+            negative.returncode != 0
+            and "no recent history matched the current repository" in negative_output
+            and negative_unchanged
+        )
+
+        sources = [
+            (
+                "codex",
+                "Codex",
+                write_codex_history_fixture(
+                    home,
+                    repository_root,
+                    SESSION_RESUME_TITLE,
+                    SESSION_RESUME_PRIOR_QUESTION,
+                    SESSION_RESUME_PRIOR_ANSWER,
+                ),
+            ),
+            (
+                "claude-code",
+                "Claude Code",
+                write_claude_history_fixture(
+                    home,
+                    repository_root,
+                    SESSION_RESUME_TITLE,
+                    SESSION_RESUME_PRIOR_QUESTION,
+                    SESSION_RESUME_PRIOR_ANSWER,
+                ),
+            ),
+            (
+                "opencode",
+                "OpenCode",
+                write_opencode_history_fixture(
+                    home,
+                    repository_root,
+                    SESSION_RESUME_TITLE,
+                    SESSION_RESUME_PRIOR_QUESTION,
+                    SESSION_RESUME_PRIOR_ANSWER,
+                ),
+            ),
+        ]
+        server: subprocess.Popen[str] | None = None
+        server_output = ""
+        try:
+            server = subprocess.Popen(
+                ["estelle", "serve", "--socket", str(socket)],
+                cwd=repository_root,
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            server_output = _wait_for_process_line(
+                server,
+                "Estelle session server listening at",
+                time.monotonic() + timeout,
+            )
+            if "Estelle session server listening at" not in server_output:
+                return {
+                    "sent": "estelle connect --from codex|claude-code|opencode",
+                    "came_back": server_output or "session server did not become ready",
+                    "negative_control": negative_pass,
+                    "pass": False,
+                }
+            source_receipts = [
+                _probe_imported_source(
+                    source_name,
+                    source_label,
+                    source_path,
+                    repo,
+                    repository_root,
+                    socket,
+                    environment,
+                    trace_path,
+                    timeout,
+                )
+                for source_name, source_label, source_path in sources
+            ]
+            return {
+                "sent": "estelle connect --from codex|claude-code|opencode",
+                "came_back": {
+                    receipt["source"]: receipt["came_back"] for receipt in source_receipts
+                },
+                "sources": source_receipts,
+                "negative_control": {
+                    "different_repository_rejected": negative_pass,
+                    "source_unchanged": negative_unchanged,
+                },
+                "pass": negative_pass
+                and all(receipt["pass"] is True for receipt in source_receipts),
+            }
+        finally:
+            if server is not None and server.poll() is None:
+                server.terminate()
+                try:
+                    server.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    server.kill()
+                    server.wait(timeout=2)
 
 
 def _read_http_records_after(path: Path, line_offset: int) -> list[dict]:
@@ -1118,10 +1578,17 @@ def run_receipts(
         first_run_picker_receipt(),
         credential_retention_receipt(repo, timeout),
     ]
+
     def surface_receipt(surface: str) -> dict[str, object]:
         run = lambda: tui_surface_receipt(surface, repo, timeout)
         return pin_surface_build(run, read_identity) if read_identity is not None else run()
 
+    resume_run = lambda: session_resume_receipt(repo, Path.cwd(), timeout)
+    receipts.append(
+        pin_surface_build(resume_run, read_identity)
+        if read_identity is not None
+        else resume_run()
+    )
     receipts.extend(surface_receipt(surface) for surface in READ_SURFACES)
     grounded_run = lambda: tui_turn_receipt(GROUNDING_QUESTION, repo, timeout)
     receipts.append(

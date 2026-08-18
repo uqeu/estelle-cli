@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import importlib.util
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -763,6 +764,27 @@ def test_complete_harness_writes_every_receipt() -> None:
             "fi\n"
             "if [ \"$1\" = sweep ]; then printf 'Repo swept.\\n'; exit 0; fi\n"
             "if [ \"$1\" = reindex ]; then printf 'Memory current.\\n'; exit 0; fi\n"
+            "if [ \"$1\" = serve ]; then\n"
+            "  mkdir -p \"$HOME/.estelle\"; : > \"$HOME/.estelle/receipt-server-ready\"\n"
+            "  printf 'Estelle session server listening at receipt.sock\\n'\n"
+            "  trap 'exit 0' TERM INT; while :; do sleep 1; done\n"
+            "fi\n"
+            "case \"$*\" in\n"
+            "  *connect*--from*)\n"
+            "    if [ ! -f \"$HOME/.estelle/receipt-server-ready\" ]; then\n"
+            "      printf 'no recent history matched the current repository\\n' >&2; exit 1\n"
+            "    fi\n"
+            "    label='OpenCode'; title='Receipt parser context'\n"
+            "    case \"$*\" in\n"
+            "      *--from*codex*) label='Codex'; title='Keep the cobalt owl marker' ;;\n"
+            "      *--from*claude-code*) label='Claude Code' ;;\n"
+            "    esac\n"
+            "    printf 'Keep the cobalt owl marker\\nThe cobalt owl marker is retained\\nAsk Estelle\\n'\n"
+            "    IFS= read -r command\n"
+            "    printf '%s\\n' \"{\\\"request\\\":{\\\"path\\\":\\\"/deep-search\\\",\\\"body\\\":{\\\"question\\\":\\\"Which file defines an application entry point in this repository?\\\",\\\"working_memory\\\":{\\\"session_context\\\":\\\"Imported $label session: $title\\\\nUser: Keep the cobalt owl marker\\\\nAssistant: The cobalt owl marker is retained\\\"}}},\\\"response\\\":{\\\"status\\\":200,\\\"body\\\":{\\\"answer\\\":\\\"app.py\\\",\\\"grounded\\\":true,\\\"sources\\\":[{\\\"file\\\":\\\"app.py\\\",\\\"line\\\":1}]}}}\" >> \"$ESTELLE_RECEIPT_PATH\"\n"
+            "    printf 'you  %s\\n› Ask Estelle\\n' \"$command\"; exit 0\n"
+            "    ;;\n"
+            "esac\n"
             "if [ \"$1\" = install-hooks ]; then printf 'full session lifecycle\\n'; exit 0; fi\n"
             "if [ \"$1\" = hook ]; then\n"
             "  payload=$(cat)\n"
@@ -831,7 +853,7 @@ def test_complete_harness_writes_every_receipt() -> None:
             text=True,
             env=environment,
             cwd=root,
-            timeout=40,
+            timeout=60,
         )
         assert result.returncode == 0, (
             result.stdout,
@@ -839,15 +861,23 @@ def test_complete_harness_writes_every_receipt() -> None:
             output.read_text(encoding="utf-8") if output.exists() else "no report",
         )
         report = json.loads(output.read_text(encoding="utf-8"))
-        assert report["summary"] == {"passed": 51, "failed": 0, "discarded": 0}
+        assert report["summary"] == {"passed": 52, "failed": 0, "discarded": 0}
         assert report["receipts"][4]["after_one_route"] == "retained"
-        assert [row["sent"] for row in report["receipts"][5:29]] == EXPECTED_READ_SURFACES
-        assert report["receipts"][29]["sent"].startswith("Which file defines")
-        assert report["receipts"][30]["sent"] == "hi"
-        assert report["receipts"][31]["processes_started"] == 1
-        assert len(report["receipts"][32]["sent"]) == 26
-        assert [row["sent"] for row in report["receipts"][33:35]] == ["/review", "/scan"]
-        assert report["receipts"][37]["sent"] == "estelle reindex"
+        assert report["receipts"][5]["sent"] == (
+            "estelle connect --from codex|claude-code|opencode"
+        )
+        assert [row["source"] for row in report["receipts"][5]["sources"]] == [
+            "Codex",
+            "Claude Code",
+            "OpenCode",
+        ]
+        assert [row["sent"] for row in report["receipts"][6:30]] == EXPECTED_READ_SURFACES
+        assert report["receipts"][30]["sent"].startswith("Which file defines")
+        assert report["receipts"][31]["sent"] == "hi"
+        assert report["receipts"][32]["processes_started"] == 1
+        assert len(report["receipts"][33]["sent"]) == 26
+        assert [row["sent"] for row in report["receipts"][34:36]] == ["/review", "/scan"]
+        assert report["receipts"][38]["sent"] == "estelle reindex"
         assert report["receipts"][-3]["event"] == "UserPromptSubmit/context"
         assert report["receipts"][-2]["event"] == "SessionStart/welcome malformed-negative-control"
         assert report["receipts"][-2]["exit_code"] == 1
@@ -1273,6 +1303,110 @@ def test_hook_receipts_require_a_malformed_input_negative_control() -> None:
         assert negative[0]["pass"] is False, "exit 0 on malformed input must make the receipt red"
 
 
+def test_opencode_fixture_names_the_exact_repository_and_complete_turn() -> None:
+    harness = load_harness()
+    with tempfile.TemporaryDirectory(prefix="estelle-opencode-receipt-") as raw_dir:
+        root = Path(raw_dir)
+        repository = root / "awesome-llm-apps"
+        repository.mkdir()
+        database = harness.write_opencode_history_fixture(
+            root,
+            repository,
+            "Receipt parser context",
+            "Keep the cobalt owl marker",
+            "The cobalt owl marker is retained",
+        )
+
+        connection = sqlite3.connect(database)
+        try:
+            session = connection.execute(
+                "SELECT directory, title FROM session"
+            ).fetchone()
+            messages = connection.execute(
+                "SELECT type, data FROM session_message ORDER BY seq"
+            ).fetchall()
+        finally:
+            connection.close()
+
+        assert session == (str(repository.resolve()), "Receipt parser context")
+        assert [role for role, _ in messages] == ["user", "assistant"]
+        assert json.loads(messages[0][1])["text"] == "Keep the cobalt owl marker"
+        assert json.loads(messages[1][1])["content"][0]["text"] == (
+            "The cobalt owl marker is retained"
+        )
+
+        claude = harness.write_claude_history_fixture(
+            root,
+            repository,
+            "Receipt parser context",
+            "Keep the cobalt owl marker",
+            "The cobalt owl marker is retained",
+        )
+        claude_records = [json.loads(line) for line in claude.read_text().splitlines()]
+        assert [record["type"] for record in claude_records] == [
+            "custom-title",
+            "user",
+            "assistant",
+        ]
+        assert claude_records[1]["cwd"] == str(repository.resolve())
+
+        codex = harness.write_codex_history_fixture(
+            root,
+            repository,
+            "Receipt parser context",
+            "Keep the cobalt owl marker",
+            "The cobalt owl marker is retained",
+        )
+        codex_records = [json.loads(line) for line in codex.read_text().splitlines()]
+        assert [record["type"] for record in codex_records] == [
+            "session_meta",
+            "event_msg",
+            "event_msg",
+        ]
+        assert codex_records[0]["payload"]["cwd"] == str(repository.resolve())
+
+
+def test_session_resume_contract_requires_imported_context_and_grounded_response() -> None:
+    harness = load_harness()
+    record = {
+        "request": {
+            "path": "/deep-search",
+            "body": {
+                "question": harness.SESSION_RESUME_QUESTION,
+                "working_memory": {
+                    "session_context": (
+                        "Imported OpenCode session: Receipt parser context\n"
+                        "User: Keep the cobalt owl marker\n"
+                        "Assistant: The cobalt owl marker is retained"
+                    )
+                },
+            },
+        },
+        "response": {
+            "status": 200,
+            "body": {
+                "answer": "The application entry point is app.py.",
+                "grounded": True,
+                "sources": [{"file": "app.py", "line": 1}],
+            },
+        },
+    }
+
+    assert harness.session_resume_http_contract(record) is True
+    for label, title in (
+        ("Codex", "Keep the cobalt owl marker"),
+        ("Claude Code", "Receipt parser context"),
+    ):
+        record["request"]["body"]["working_memory"]["session_context"] = (
+            f"Imported {label} session: {title}\n"
+            "User: Keep the cobalt owl marker\n"
+            "Assistant: The cobalt owl marker is retained"
+        )
+        assert harness.session_resume_http_contract(record, label) is True
+    record["request"]["body"]["working_memory"]["session_context"] = ""
+    assert harness.session_resume_http_contract(record) is False
+
+
 def main() -> int:
     test_inventory()
     test_installed_version()
@@ -1302,6 +1436,8 @@ def main() -> int:
     test_hook_receipts_drive_every_current_table_row()
     test_hook_receipts_fail_closed_on_one_silent_nonzero()
     test_hook_receipts_require_a_malformed_input_negative_control()
+    test_opencode_fixture_names_the_exact_repository_and_complete_turn()
+    test_session_resume_contract_requires_imported_context_and_grounded_response()
 
     print("public receipt test: all 24 audited read surfaces are mandatory")
     return 0
