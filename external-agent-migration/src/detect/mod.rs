@@ -389,17 +389,22 @@ impl ExternalAgentConfigService {
         }
 
         if scope.is_home() {
-            let sessions = self.source.recent_sessions(
-                &self.external_agent_home,
-                &self.codex_home,
-                self.session_import_limits,
-            )?;
+            let sessions = self
+                .source
+                .recent_sessions(
+                    &self.external_agent_home,
+                    &self.codex_home,
+                    self.session_import_limits,
+                )
+                .await?;
             if !sessions.is_empty() {
                 items.push(ExternalAgentConfigMigrationItem {
                     item_type: ExternalAgentConfigMigrationItemType::Sessions,
                     description: format!(
                         "Migrate recent sessions from {}",
-                        self.external_agent_home.join("projects").display()
+                        self.source
+                            .session_detection_path(&self.external_agent_home, &self.codex_home,)
+                            .display()
                     ),
                     cwd: None,
                     details: Some(MigrationDetails {

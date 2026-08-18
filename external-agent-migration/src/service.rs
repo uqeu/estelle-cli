@@ -138,7 +138,7 @@ impl ExternalAgentConfigService {
     }
 
     #[cfg(test)]
-    fn new_for_test(codex_home: PathBuf, external_agent_home: PathBuf) -> Self {
+    pub(crate) fn new_for_test(codex_home: PathBuf, external_agent_home: PathBuf) -> Self {
         let source = ExternalAgentSource::default();
         let connector_metadata_roots = source.connector_metadata_roots(&external_agent_home);
         Self {
@@ -161,7 +161,10 @@ impl ExternalAgentConfigService {
             Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(err) => return Err(err),
         };
-        let projects_root = match fs::canonicalize(self.external_agent_home.join("projects")) {
+        let session_root = self
+            .source
+            .session_source_root(&self.external_agent_home, &self.codex_home);
+        let projects_root = match fs::canonicalize(session_root) {
             Ok(projects_root) => projects_root,
             Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(err) => return Err(err),

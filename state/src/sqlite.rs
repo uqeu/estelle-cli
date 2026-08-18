@@ -26,6 +26,21 @@ use std::path::PathBuf;
 use std::time::Duration;
 use std::time::Instant;
 
+/// Open an existing third-party SQLite database without creating or modifying it.
+///
+/// This keeps read-only consumers on the workspace's audited SQLite constructor path.
+pub async fn open_read_only_sqlite(path: &Path) -> Result<SqlitePool, Error> {
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(false)
+        .read_only(true)
+        .log_statements(LevelFilter::Off);
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+}
+
 const LOGS_DB_FILENAME: &str = "logs_2.sqlite";
 const GOALS_DB_FILENAME: &str = "goals_1.sqlite";
 const MEMORIES_DB_FILENAME: &str = "memories_1.sqlite";
