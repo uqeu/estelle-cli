@@ -70,7 +70,8 @@ fn contract(command: &Command) -> Contract {
         | Command::UninstallHooks
         | Command::Acp
         | Command::Mcp { .. }
-        | Command::McpServer => Contract::Local,
+        | Command::McpServer
+        | Command::Upgrade { .. } => Contract::Local,
         Command::Init { .. }
         | Command::Sweep { .. }
         | Command::Reindex { .. }
@@ -1459,7 +1460,8 @@ async fn run_authenticated(
         | Command::UninstallHooks
         | Command::Acp
         | Command::Mcp { .. }
-        | Command::McpServer => Err("local command reached the remote dispatcher".to_string()),
+        | Command::McpServer
+        | Command::Upgrade { .. } => Err("local command reached the remote dispatcher".to_string()),
     }
 }
 

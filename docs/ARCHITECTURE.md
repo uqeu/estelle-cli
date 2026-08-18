@@ -124,7 +124,8 @@ an interactive append through the controlling terminal, never edits without a ye
 new shell is required. The public command is:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/uqeu/estelle-cli/main/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/uqeu/estelle-cli/releases/latest/download/install.sh | sh
 ```
 
 The legacy npm package is not allowed to keep executing abandoned JavaScript. Each published version is a

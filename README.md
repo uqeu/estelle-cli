@@ -13,7 +13,8 @@ live in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/SCORECARD.md`](do
 Install the latest Rust release with:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/uqeu/estelle-cli/main/install.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/uqeu/estelle-cli/releases/latest/download/install.sh | sh
 ```
 
 The installer detects the platform, downloads from the Estelle-owned release repository by default, verifies

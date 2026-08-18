@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "estelle": {
+      "type": "http",
+      "url": "https://api.fatelabs.ca/mcp",
+      "headers": {
+        "Authorization": "Bearer ${ESTELLE_API_KEY}"
+      }
+    }
+  }
+}

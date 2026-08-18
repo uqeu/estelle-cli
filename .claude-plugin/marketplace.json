@@ -1,0 +1,28 @@
+{
+  "name": "fatelabs",
+  "owner": {
+    "name": "Fate Labs",
+    "email": "khai@fatelabs.ca",
+    "url": "https://fatelabs.ca"
+  },
+  "metadata": {
+    "description": "Fate Labs' Claude Code plugins. Estelle is the trust layer under your AI coding agents.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "estelle",
+      "source": "./estelle-plugin",
+      "description": "Code memory + the grounding gate, always on. Grounds every model in your real codebase and refuses to ship what isn't true.",
+      "version": "0.2.20",
+      "category": "development",
+      "keywords": [
+        "mcp",
+        "code-review",
+        "memory",
+        "grounding",
+        "hallucination"
+      ]
+    }
+  ]
+}

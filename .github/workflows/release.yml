@@ -31,6 +31,15 @@ jobs:
           test "$tag" = "v$version"
           shim_version=$(node -p "require('./npm-shim/package.json').version")
           test "$tag" = "v$shim_version"
+          # The plugin door states the version twice more. Four writers of one derived fact is how
+          # the manifest sat at 0.1.0 while the CLI shipped 0.2.20 — caught only because this check
+          # was extended to look. A tag may not disagree with any of them.
+          plugin_version=$(node -p "require('./estelle-plugin/.claude-plugin/plugin.json').version")
+          test "$tag" = "v$plugin_version"
+          market_version=$(node -p "require('./.claude-plugin/marketplace.json').plugins[0].version")
+          test "$tag" = "v$market_version"
+      - name: Prove the plugin door's identity and version agreement
+        run: python3 scripts/test-plugin-identity.py
       - name: Prove checksum-first installer behavior
         run: ./scripts/test-installer.sh
       - name: Prove release archives are byte-reproducible

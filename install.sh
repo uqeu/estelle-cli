@@ -1,5 +1,18 @@
 #!/bin/sh
 # Install the published Estelle Rust CLI after verifying its release checksum.
+#
+# ONE OWNER OF THE PUBLISHED INSTALL URL. This file on `main` is the SOURCE.
+# The one URL customers are ever given is the RELEASE ASSET:
+#
+#   https://github.com/uqeu/estelle-cli/releases/latest/download/install.sh
+#
+# Do NOT publish or document https://raw.githubusercontent.com/.../main/install.sh.
+# Both served the identical 5,233-byte script on 2026-08-18, which is exactly how
+# a two-owner violation looks the day before it bites: raw/main ships the instant
+# someone pushes, with no tag, no review and no rollback point, while this script
+# fetches its binaries from `releases/${RELEASE_PATH}`. Serving the script from a
+# branch while the binaries come from a release is how the two silently disagree
+# about archive names or checksums. Cutting a release ships both together.
 set -eu
 
 REPOSITORY=${ESTELLE_RELEASE_REPOSITORY:-uqeu/estelle-cli}

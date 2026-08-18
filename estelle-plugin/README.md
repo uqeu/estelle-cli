@@ -1,0 +1,91 @@
+# `plugin:fatelabs:estelle`
+
+The Claude Code plugin that wraps Estelle's hosted MCP server.
+
+## 🔴 THREE DOORS, IN THIS ORDER. Pick the first one that fits.
+
+Until now nobody could tell which to use, so here is the whole story in one place. All three end at the
+same hosted server — `https://api.fatelabs.ca/mcp` — and none of them runs Estelle on your machine.
+
+| # | door | command | when |
+|---|---|---|---|
+| **1** | **`estelle init`** — *the path* | `estelle init` | **Default.** Writes the MCP config for every editor you have installed, so one command covers Claude Code, Cursor, Cline, Zed and the rest. |
+| **2** | **the remote URL** — *the manual fallback* | `claude mcp add --transport http estelle https://api.fatelabs.ca/mcp --header "Authorization: Bearer $ESTELLE_KEY"` | When you want to write the entry yourself, script it, or you are not installing the CLI. |
+| **3** | **this plugin** — *a third convenience* | `/plugin marketplace add uqeu/estelle-cli` then `/plugin install estelle@fatelabs` | Claude Code only. Bundles the server entry so a teammate does not have to paste a URL. |
+
+**Door 1 is the recommendation.** Door 2 is what door 1 writes for you, and it is verified working
+end-to-end: a valid key returns a full `initialize` with tools and prompts, and a bogus key returns
+`-32001`. Door 3 is the same entry, delivered by Claude Code's plugin system.
+
+Install the CLI (doors 1 and 3 both assume it for real work):
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/uqeu/estelle-cli/releases/latest/download/install.sh | sh
+```
+
+## 🔴 The installed name is `plugin:fatelabs:estelle`, and it is TWO fields in TWO files
+
+The format is `plugin:<marketplace>:<plugin>` — the same shape as `plugin:stripe:stripe` and
+`plugin:vercel:vercel` in a live `/mcp` listing.
+
+| file | field | value |
+|---|---|---|
+| `estelle-plugin/.claude-plugin/plugin.json` | `name` | **`estelle`** |
+| `.claude-plugin/marketplace.json` (this repo's ROOT) | `name` | **`fatelabs`** |
+
+⚠️ **`name` is also the SKILL NAMESPACE.** Every playbook becomes `/estelle:<name>`. Changing it later
+renames every command a customer has learned, so it is pinned by `scripts/test-plugin-identity.py`
+rather than left to a careful reader.
+
+## 🔴 WHY THIS LIVES IN `uqeu/estelle-cli` AND NOT WHERE THE DOCS USED TO SAY
+
+The manifest previously declared `repository: "https://github.com/fatelabs/estelle"`. **That repository
+does not exist** — the authenticated GitHub API returns 404 for it. `uqeu/estelle` exists and is
+**private**. `uqeu/estelle-cli` is the only PUBLIC repository, so it is the only place a marketplace
+listing can live: `/plugin marketplace add` has to clone it as an anonymous user.
+
+The ship-order note that said *"`/plugin marketplace add fatelabs/estelle`"* was therefore describing a
+command that could never have worked. The marketplace **name** is still `fatelabs` — that is a field
+inside `marketplace.json`, independent of the repo path a user types — so the installed name is
+unchanged.
+
+## ⚠️ "Local MCPs" in the `/mcp` menu means CONFIG-SCOPED, not locally hosted
+
+This cost a day. Estelle appeared under *"Local MCPs"* and it was read as a hosting problem. It is not:
+that heading means **scoped to a project's config**, and we were there only because we had been added
+with `claude mcp add` (which writes `~/.claude.json`) instead of `/plugin install`. Our server entry is
+already `{"type":"http","url":"https://api.fatelabs.ca/mcp"}` — the same class as Stripe's.
+
+## ⚠️ STATUS: SHIPS WITHOUT HOOKS, ON PURPOSE
+
+| | Codex | Claude Code |
+|---|---|---|
+| manifest | ✅ `.codex-plugin/plugin.json` | ✅ `estelle-plugin/.claude-plugin/plugin.json` |
+| server entry | ✅ inline `mcpServers` | ✅ `.mcp.json` |
+| marketplace listing | — | ✅ `.claude-plugin/marketplace.json` (this repo's root) |
+| hooks | ✅ generated | ⛔ **absent** |
+
+⛔ **`hooks/hooks.json` is NOT hand-written here, and that is the point.** The hook contract has ONE
+owner. The moment this bundle contains a hand-copied hook table, that defect is reopened with a
+customer-facing blast radius: our customers would run different rules than our tests. The bundle ships
+**without hooks and says so** rather than forking them. Hooks arrive here generated, or not at all.
+
+⚠️ So this plugin delivers the **server entry** only. `estelle install-hooks` (door 1) is what puts the
+always-on hooks in place — another reason door 1 is the recommendation.
+
+## 🔴 The version is not written here twice
+
+`version` in `plugin.json` and in `marketplace.json` must equal the workspace version in `Cargo.toml`
+and the `npm-shim/package.json` version. That is four copies of one fact, so it is enforced rather than
+remembered: `.github/workflows/release.yml` refuses to cut a release unless the tag matches **all** of
+them, and `scripts/test-plugin-identity.py` checks them against each other on every run.
+
+## Developing
+
+```bash
+claude --plugin-dir ./estelle-plugin       # load it
+/reload-plugins                             # iterate
+claude plugin validate ./estelle-plugin     # run before anything ships
+python3 scripts/test-plugin-identity.py     # identity + version agreement
+```

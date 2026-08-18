@@ -16,6 +16,7 @@ mod session_server;
 #[cfg(test)]
 mod test_gallery;
 mod top_level;
+mod version_check;
 
 use std::collections::BTreeSet;
 use std::collections::HashMap;
@@ -101,6 +102,7 @@ use ratatui::widgets::GraphType;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
 use serde_json::Value;
+use codex_utils_home_dir::find_codex_home;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command as TokioCommand;
 use tokio::sync::mpsc;
@@ -322,6 +324,14 @@ enum Command {
     },
     /// Serve Estelle's MCP tools to external harnesses over stdio.
     McpServer,
+    /// Report whether this CLI is behind the newest published release.
+    ///
+    /// Prints the install command; it never runs it. Tell, then let them run it.
+    Upgrade {
+        /// Ignore the once-a-day cache and ask GitHub now.
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 struct TerminalSession;
@@ -6867,9 +6877,66 @@ async fn command_failure(message: impl std::fmt::Display) -> ExitCode {
     ExitCode::FAILURE
 }
 
+async fn run_upgrade(force: bool) -> ExitCode {
+    let Ok(home) = find_codex_home() else {
+        return command_failure("could not resolve CODEX_HOME to check for updates").await;
+    };
+    let home = home.into_path_buf();
+    let status = if force {
+        version_check::check_ignoring_cache(&home).await
+    } else {
+        version_check::check(&home).await
+    };
+    let mut stdout = tokio::io::stdout();
+    let line = match status {
+        version_check::Status::Behind { .. } => match version_check::notice(status) {
+            Some(message) => message,
+            None => return command_failure("version check produced no message").await,
+        },
+        version_check::Status::UpToDate => match version_check::running_version() {
+            Some(running) => format!("estelle {running} is the newest published release.\n"),
+            None => return command_failure("this build has no parseable version").await,
+        },
+        // Could not answer. Say that, and do not exit 0 pretending otherwise.
+        version_check::Status::Unknown => {
+            return command_failure(format!(
+                "Could not determine the newest release. Install or update manually with:\n\n  {}",
+                version_check::INSTALL_COMMAND
+            ))
+            .await;
+        }
+    };
+    if stdout.write_all(line.as_bytes()).await.is_ok() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+/// Say it once, before the command runs, and only for plain-stdio invocations —
+/// the TUI takes the alternate screen and would wipe the line. Silent on every
+/// path except "you are behind": see `version_check::notice`.
+async fn emit_version_notice() {
+    let Ok(home) = find_codex_home() else {
+        return;
+    };
+    let status = version_check::check(&home.into_path_buf()).await;
+    let Some(message) = version_check::notice(status) else {
+        return;
+    };
+    let mut stderr = tokio::io::stderr();
+    let _ = stderr.write_all(message.as_bytes()).await;
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = Args::parse();
+    if let Some(Command::Upgrade { check }) = args.command {
+        return run_upgrade(check).await;
+    }
+    if args.command.is_some() {
+        emit_version_notice().await;
+    }
     if let Some(Command::Login {
         chatgpt,
         provider,
