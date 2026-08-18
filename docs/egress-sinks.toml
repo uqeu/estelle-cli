@@ -1,7 +1,7 @@
 schema_version = 1
 audit_date = "2026-08-15"
 audit_state = "source census recorded; call-site exhaustion and process-tree runtime canary remain open"
-released_sink_count = 15
+released_sink_count = 16
 latent_sink_count = 5
 
 [[sink]]
@@ -223,6 +223,17 @@ confirmation = "plugin install action"
 destination = "Git, npm registry, or ChatGPT remote catalogue"
 data = "plugin metadata and downloaded bundle bytes"
 disposition = "latent whole-workspace sink; Sites absent locally, remote-catalog exclusion unproven"
+
+[[sink]]
+id = "cli-version-check"
+reachability = "released"
+source_file = "tui/src/version_check.rs"
+source_symbol = "fetch_latest"
+trigger = "automatic before any subcommand, at most once per 24h (cached); forced by `estelle upgrade --check`"
+confirmation = "no per-call confirmation; suppressed entirely by ESTELLE_NO_VERSION_CHECK"
+destination = "https://api.github.com/repos/uqeu/estelle-cli/releases/latest"
+data = "none beyond the request itself; the User-Agent carries the running CLI version. No account, credential, repo, prompt or file content is sent, and the request is unauthenticated."
+disposition = "keep; FIRST released destination that is not api.fatelabs.ca, so it widens the egress surface by one host. Bounded: 3s timeout, 256KB response cap, GET only, response parsed as a version or discarded."
 
 [[primitive_census]]
 id = "released-tui-browser-open"

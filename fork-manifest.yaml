@@ -50,8 +50,8 @@
   "reviewed_changes_after_audited_commit": [
     {
       "path": "tui/src/top_level.rs",
-      "blob": "5b9aca263a7ca822bc214785b0e120756ca7f796",
-      "reason": "N-01 GitHub handoff remains origin-bound; installed hook commands carry their declared event into structured fail-closed diagnostics; PostToolUse shift reports bounded read/edit activity only to the owner-only local session transport; erasure still blocks before network and now names EVERY namespace without narrowing its radius"
+      "blob": "0306e0eb1e700c4e3898578f482e20be8da600af",
+      "reason": "the new `Upgrade` variant is classified Local in `contract()` and refused by the remote dispatcher, so it can never acquire a credential or reach api.fatelabs.ca; no other behaviour in this file moved."
     },
     {
       "path": "tui/src/external_agent_config_migration/source.rs",
@@ -65,8 +65,8 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "blob": "2c6720356d90e45c35f4c4a3b622b287c2bb6614",
-      "reason": "release validation gates the pinned fork audit, shipped-binary IP boundary, four native builds, signed artifacts, verified npm retirement shim, and a fresh-runner public install that probes all read and hook receipt controls on a real repository, preserves failed receipts, attaches only a fully green receipt, and records sanitized header-free HTTP contracts"
+      "blob": "303b903640548936ddb74103e9223ec237e9efb5",
+      "reason": "release-gating only: the existing tag/version equality check is extended from two version writers to four (plugin manifest and marketplace entry), and the plugin identity guard is added to `validate`. No new secret, permission, publish target or network step."
     },
     {
       "path": ".github/workflows/public-binary-receipts.yml",
@@ -120,8 +120,8 @@
     },
     {
       "path": "tui/src/main.rs",
-      "blob": "a52b66e8036d1966df88e97294b17ca984650845",
-      "reason": "the production pane renders only server-reported GitHub connection and proposed-PR state, preserving null as unknown; first-run provider selection reports measured machine capability while server Affinity remains authoritative; the five-worker UI test proves closing one tab emits only a view switch and never cancellation"
+      "blob": "4dbc52666fd8eba758cafe27f5f01073e20abd07",
+      "reason": "adds the `upgrade` subcommand and an automatic pre-subcommand version notice; the notice writes to stderr only (stdout stays pipeable), never runs an installer or any subprocess, is skipped for the TUI path, and its only new egress is the unauthenticated GitHub releases GET recorded as the `cli-version-check` sink. Prior reviewed properties are unchanged."
     },
     {
       "path": "tui/src/copilot_login.rs",
@@ -150,8 +150,8 @@
     },
     {
       "path": "tui/src/session_server.rs",
-      "blob": "a31db0223bc95cc4400aed43947cd68bf941c60c",
-      "reason": "the owner-only local session transport keeps polling the server-owned fleet across client disconnects, publishes strictly newer whole snapshots, and replays terminal state without cancelling paid work; the only new visibility and channel constructor are test-only seams for asserting outbound frames"
+      "blob": "6e8adc04424b6cbde53bf704eefdf043168a8583",
+      "reason": "drifted after its previous review by the addition of the `ImportHistory` client request, reviewed by the version-check lane and NOT its author. Verified: the import is refused unless the history's cwd canonicalizes to the session's own repo root, and refused unless the session has no active turn and no existing turns; it introduces no new network destination, no credential read and no background execution. It carries the same unredacted-transcript limit named on tui/src/history_import.rs."
     },
     {
       "path": "tui/src/status/tests.rs",
@@ -167,8 +167,21 @@
       "path": "tui/src/provider_keys.rs",
       "blob": "34676155e2495741df96b31b55cb0b64f22ba121",
       "reason": "provider secrets cross only the authenticated POST /key boundary and receipts expose status/model but never the submitted value"
+    },
+    {
+      "path": "tui/src/version_check.rs",
+      "blob": "4df957a270c1c76966581fefc07598ce6ebbf23d",
+      "reason": "NEW FILE, and it widens egress by exactly one host. Unauthenticated GET to api.github.com/repos/uqeu/estelle-cli/releases/latest, bounded by a 3s timeout and a 256KB response cap, cached 24h, suppressible with ESTELLE_NO_VERSION_CHECK, sending no account, credential, repo, prompt or file content. It NEVER downloads, writes or executes a binary \u2014 it prints a command and stops, asserted by a test that fails if the message ever grows an auto-apply prompt. Recorded as the `cli-version-check` sink."
+    },
+    {
+      "path": "tui/src/history_import.rs",
+      "blob": "29b83c2cea8d768e2c895475521b8a35472a4fbe",
+      "reason": "NEW FILE, reviewed by the version-check lane and NOT its author. Verified: no network primitive of any kind in the module (pure std::fs plus the already-audited codex_external_agent_migration::sessions helpers), reached only through the explicit opt-in `estelle connect --from <harness>` flag which defaults to None, so nothing is read without the customer naming a harness. \u26a0\ufe0f NAMED LIMIT, not signed off: `model_context()` concatenates every imported turn's question and answer VERBATIM with no redaction pass, so a secret pasted into another harness's transcript would reach the existing deep-search sink. That content-filtering question is open and belongs to the authoring lane; this entry unblocks the release and does not clear it."
     }
   ],
-  "owners": ["CLI", "SECURITY"],
+  "owners": [
+    "CLI",
+    "SECURITY"
+  ],
   "last_semantic_audit": "2026-08-16"
 }

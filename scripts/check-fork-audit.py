@@ -86,7 +86,7 @@ def verify_provenance(manifest: dict) -> None:
             fail(f"reviewed high-risk blob drifted: {path} is {actual}, manifest says {row['blob']}")
 
 
-def verify_egress() -> None:
+def verify_egress() -> dict:
     with EGRESS.open("rb") as handle:
         data = tomllib.load(handle)
     sinks = data.get("sink", [])
@@ -130,14 +130,21 @@ def verify_egress() -> None:
         observed = sum(path.read_text(encoding="utf-8").count(row["needle"]) for path in files)
         if observed != row["expected_occurrences"]:
             fail(f"primitive census {row['id']} changed: {observed} != {row['expected_occurrences']}")
+    return data
 
 
 def main() -> None:
     manifest = load_json_yaml(MANIFEST)
     verify_provenance(manifest)
-    verify_egress()
+    census = verify_egress()
     digest = hashlib.sha256(MANIFEST.read_bytes()).hexdigest()
-    print(f"fork_audit=PASS manifest_sha256={digest} released=15 latent=5")
+    # Read the counts back out of the verified census. They used to be LITERALS in this line, which
+    # meant the PASS report would keep saying "released=15" after the 16th sink landed — a guard that
+    # checks a number correctly and then prints a stale one is still publishing a false claim.
+    print(
+        f"fork_audit=PASS manifest_sha256={digest} "
+        f"released={census['released_sink_count']} latent={census['latent_sink_count']}"
+    )
 
 
 if __name__ == "__main__":

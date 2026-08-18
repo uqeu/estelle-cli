@@ -6,3 +6,7 @@
 
 # Value of CARGO_TARGET_DIR when using .devcontainer/devcontainer.json.
 /target-arm64/
+
+# macOS junk. Left untracked these still entered the fork audit's high-risk census via
+# `git ls-files --others`, so a Finder visit to network-proxy/ could block a release.
+.DS_Store
