@@ -191,7 +191,10 @@ mod tests {
             ExternalAgentSource::from_migration_source(Some("opencode")),
             ExternalAgentSource::Ope
         );
-        assert_eq!(ExternalAgentSource::Ope.config_dir(), ".local/share/opencode");
+        assert_eq!(
+            ExternalAgentSource::Ope.config_dir(),
+            ".local/share/opencode"
+        );
 
         let root = TempDir::new().expect("tempdir");
         let external_agent_home = root.path().join(".local/share/opencode");
