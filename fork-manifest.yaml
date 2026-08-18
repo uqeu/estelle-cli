@@ -54,6 +54,16 @@
       "reason": "N-01 GitHub handoff remains origin-bound; installed hook commands carry their declared event into structured fail-closed diagnostics; PostToolUse shift reports bounded read/edit activity only to the owner-only local session transport; erasure still blocks before network and now names EVERY namespace without narrowing its radius"
     },
     {
+      "path": "tui/src/external_agent_config_migration/source.rs",
+      "blob": "8767f331e7a4990ec278cd5c41761256c1eb23b1",
+      "reason": "the local /import source picker adds OpenCode as a third explicit choice; it only selects an app-server migration source and introduces no network destination, credential read, or background execution"
+    },
+    {
+      "path": "tui/src/external_agent_config_migration/snapshots/codex_tui__external_agent_config_migration__source__tests__external_agent_config_source_prompt.snap",
+      "blob": "b380a0aeb7908f252f1ab7e16ba182201d9063e2",
+      "reason": "the reviewed terminal snapshot proves OpenCode is visible as the third explicit local import source without changing the prompt's action or adding an implicit migration"
+    },
+    {
       "path": ".github/workflows/release.yml",
       "blob": "2c6720356d90e45c35f4c4a3b622b287c2bb6614",
       "reason": "release validation gates the pinned fork audit, shipped-binary IP boundary, four native builds, signed artifacts, verified npm retirement shim, and a fresh-runner public install that probes all read and hook receipt controls on a real repository, preserves failed receipts, attaches only a fully green receipt, and records sanitized header-free HTTP contracts"
