@@ -50,13 +50,23 @@
   "reviewed_changes_after_audited_commit": [
     {
       "path": "tui/src/top_level.rs",
-      "blob": "7b4ec1b507f2711b0ad8a70469d21f742a4691ee",
-      "reason": "N-01 GitHub handoff remains origin-bound; installed hook commands now carry their declared event into structured fail-closed diagnostics, while the PostToolUse shift hook still reports bounded read/edit activity only to the owner-only local session transport"
+      "blob": "5b9aca263a7ca822bc214785b0e120756ca7f796",
+      "reason": "N-01 GitHub handoff remains origin-bound; installed hook commands carry their declared event into structured fail-closed diagnostics; PostToolUse shift reports bounded read/edit activity only to the owner-only local session transport; erasure still blocks before network and now names EVERY namespace without narrowing its radius"
     },
     {
       "path": ".github/workflows/release.yml",
-      "blob": "22b13b46e2fb1c887970e5766de1a356482de4c8",
-      "reason": "release validation gates the pinned fork audit, shipped-binary IP boundary, four native builds, signed artifacts, verified npm retirement shim, and a fresh-runner public install that fail-closed probes all 24 read surfaces plus deep review and whole-lockfile scan on a real repository while recording a sanitized header-free HTTP contract receipt"
+      "blob": "2c6720356d90e45c35f4c4a3b622b287c2bb6614",
+      "reason": "release validation gates the pinned fork audit, shipped-binary IP boundary, four native builds, signed artifacts, verified npm retirement shim, and a fresh-runner public install that probes all read and hook receipt controls on a real repository, preserves failed receipts, attaches only a fully green receipt, and records sanitized header-free HTTP contracts"
+    },
+    {
+      "path": ".github/workflows/public-binary-receipts.yml",
+      "blob": "b9c3f67e424d18549a0ccb4c65dd1b721b43f618",
+      "reason": "the manual receipt rerun accepts only an existing exact SemVer release, installs from that versioned public URL, requires the repository-scoped secret by presence only, probes the installed binary against a real public repository, preserves failed receipts, and attaches only a fully green receipt"
+    },
+    {
+      "path": ".github/workflows/public-five-worker-receipt.yml",
+      "blob": "3e20b240c0740ee3eb041b0ef774d28f0e63b53a",
+      "reason": "the manual five-worker receipt accepts only an existing exact SemVer release, installs from its public URL, requires the repository-scoped secret by presence only, drives five installed-binary sessions on a real-size public repository, and preserves failures without deploying a service"
     },
     {
       "path": "tui/src/session_gap.rs",
@@ -100,8 +110,8 @@
     },
     {
       "path": "tui/src/main.rs",
-      "blob": "7e1bfb07eec279fe551ec923168824b1c61d7f8c",
-      "reason": "the production pane renders only server-reported GitHub connection and proposed-PR state, preserving null as unknown, while first-run provider selection adds a measured machine summary and leaves server Affinity as the serving-model owner"
+      "blob": "a52b66e8036d1966df88e97294b17ca984650845",
+      "reason": "the production pane renders only server-reported GitHub connection and proposed-PR state, preserving null as unknown; first-run provider selection reports measured machine capability while server Affinity remains authoritative; the five-worker UI test proves closing one tab emits only a view switch and never cancellation"
     },
     {
       "path": "tui/src/copilot_login.rs",
@@ -130,8 +140,8 @@
     },
     {
       "path": "tui/src/session_server.rs",
-      "blob": "bf245c58c8857dd64c66150aaf9f689456ebbe38",
-      "reason": "the owner-only local session transport keeps polling the server-owned fleet across client disconnects, publishes strictly newer whole snapshots, and replays terminal state without cancelling paid work"
+      "blob": "a31db0223bc95cc4400aed43947cd68bf941c60c",
+      "reason": "the owner-only local session transport keeps polling the server-owned fleet across client disconnects, publishes strictly newer whole snapshots, and replays terminal state without cancelling paid work; the only new visibility and channel constructor are test-only seams for asserting outbound frames"
     },
     {
       "path": "tui/src/status/tests.rs",
