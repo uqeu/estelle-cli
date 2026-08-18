@@ -280,14 +280,20 @@ mod tests {
                 latest: v(0, 2, 21)
             }
         );
-        assert_eq!(compare(Some(v(0, 2, 21)), Some(v(0, 2, 21))), Status::UpToDate);
+        assert_eq!(
+            compare(Some(v(0, 2, 21)), Some(v(0, 2, 21))),
+            Status::UpToDate
+        );
     }
 
     #[test]
     fn a_newer_local_build_is_not_behind() {
         // The workspace is routinely bumped ahead of the published release.
         // That developer must not be nagged to "update" to an older version.
-        assert_eq!(compare(Some(v(0, 2, 21)), Some(v(0, 2, 20))), Status::UpToDate);
+        assert_eq!(
+            compare(Some(v(0, 2, 21)), Some(v(0, 2, 20))),
+            Status::UpToDate
+        );
     }
 
     #[test]
@@ -321,7 +327,10 @@ mod tests {
         // Tell, then let them run it. If this ever reads like a prompt to
         // auto-apply, the consent property has been lost.
         for forbidden in ["[y/N]", "Installing", "Updating now", "press enter"] {
-            assert!(!message.contains(forbidden), "must not auto-apply: {message}");
+            assert!(
+                !message.contains(forbidden),
+                "must not auto-apply: {message}"
+            );
         }
     }
 
@@ -330,8 +339,11 @@ mod tests {
         // Task 3's decision, pinned. The release asset is canonical because a
         // human cuts the release; raw.githubusercontent.com/main ships the
         // instant someone pushes, with no gate and no rollback point.
-        assert!(INSTALL_COMMAND
-            .contains("https://github.com/uqeu/estelle-cli/releases/latest/download/install.sh"));
+        assert!(
+            INSTALL_COMMAND.contains(
+                "https://github.com/uqeu/estelle-cli/releases/latest/download/install.sh"
+            )
+        );
         assert!(!INSTALL_COMMAND.contains("raw.githubusercontent.com"));
         assert!(INSTALL_COMMAND.contains("--proto '=https'"));
         assert!(INSTALL_COMMAND.contains("--tlsv1.2"));
@@ -352,7 +364,10 @@ mod tests {
         store_latest(home, "v0.2.20", now);
         assert_eq!(cached_latest(home, now), Some(v(0, 2, 20)));
         // Inside the window.
-        assert_eq!(cached_latest(home, now + CHECK_TTL.as_secs()), Some(v(0, 2, 20)));
+        assert_eq!(
+            cached_latest(home, now + CHECK_TTL.as_secs()),
+            Some(v(0, 2, 20))
+        );
         // Past it.
         assert_eq!(cached_latest(home, now + CHECK_TTL.as_secs() + 1), None);
     }
@@ -373,8 +388,11 @@ mod tests {
         let home = dir.path();
         std::fs::write(cache_path(home), "{ not json").expect("write");
         assert_eq!(cached_latest(home, 1), None);
-        std::fs::write(cache_path(home), r#"{"checked_at_unix":1,"latest_tag":"garbage"}"#)
-            .expect("write");
+        std::fs::write(
+            cache_path(home),
+            r#"{"checked_at_unix":1,"latest_tag":"garbage"}"#,
+        )
+        .expect("write");
         assert_eq!(cached_latest(home, 1), None);
     }
 

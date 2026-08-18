@@ -120,7 +120,7 @@
     },
     {
       "path": "tui/src/main.rs",
-      "blob": "4dbc52666fd8eba758cafe27f5f01073e20abd07",
+      "blob": "d86aace932da8685a5bac7f73875ca2fdcf845c3",
       "reason": "adds the `upgrade` subcommand and an automatic pre-subcommand version notice; the notice writes to stderr only (stdout stays pipeable), never runs an installer or any subprocess, is skipped for the TUI path, and its only new egress is the unauthenticated GitHub releases GET recorded as the `cli-version-check` sink. Prior reviewed properties are unchanged."
     },
     {
@@ -170,7 +170,7 @@
     },
     {
       "path": "tui/src/version_check.rs",
-      "blob": "4df957a270c1c76966581fefc07598ce6ebbf23d",
+      "blob": "5b701cded5c259459b8b088fb0cc2478130542fc",
       "reason": "NEW FILE, and it widens egress by exactly one host. Unauthenticated GET to api.github.com/repos/uqeu/estelle-cli/releases/latest, bounded by a 3s timeout and a 256KB response cap, cached 24h, suppressible with ESTELLE_NO_VERSION_CHECK, sending no account, credential, repo, prompt or file content. It NEVER downloads, writes or executes a binary \u2014 it prints a command and stops, asserted by a test that fails if the message ever grows an auto-apply prompt. Recorded as the `cli-version-check` sink."
     },
     {
