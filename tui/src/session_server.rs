@@ -80,6 +80,9 @@ pub(crate) enum ClientRequest {
     AcknowledgeFileShifts {
         through: u64,
     },
+    ImportHistory {
+        history: crate::history_import::ImportedHistory,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -257,6 +260,7 @@ struct SessionState {
     file_shifts: Vec<FileShiftNotice>,
     next_file_shift_id: u64,
     fleet: Option<estelle_client::FleetSnapshot>,
+    imported_context: Option<String>,
     events: broadcast::Sender<ServerMessage>,
 }
 
@@ -273,6 +277,7 @@ impl SessionState {
             file_shifts: Vec::new(),
             next_file_shift_id: 1,
             fleet: None,
+            imported_context: None,
             events,
         }
     }
@@ -758,11 +763,83 @@ async fn handle_request(
     client: Client,
 ) {
     match request {
+        ClientRequest::ImportHistory { history } => {
+            let root = {
+                let state = session.lock().await;
+                state.root.clone()
+            };
+            let history_cwd = tokio::fs::canonicalize(&history.cwd)
+                .await
+                .unwrap_or_else(|_| history.cwd.clone());
+            if history_cwd != root {
+                reject(
+                    &session,
+                    0,
+                    "imported history belongs to a different repository".to_string(),
+                )
+                .await;
+                return;
+            }
+            let import_result = {
+                let mut state = session.lock().await;
+                if state.active.is_some() || !state.turns.is_empty() {
+                    Err(state.events.clone())
+                } else {
+                    let source = history.source.label();
+                    state.imported_context = Some(history.model_context());
+                    state.turns = history
+                        .turns
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, turn)| SessionTurn {
+                            id: u64::try_from(index).unwrap_or(u64::MAX).saturating_add(1),
+                            input: SessionInput::Question {
+                                question: turn.question,
+                            },
+                            outcome: SessionOutcome::Answer {
+                                answer: WireAnswer {
+                                    text: format!(
+                                        "Imported from {source} · {}\n\n{}",
+                                        history.title, turn.answer
+                                    ),
+                                    grounded: None,
+                                    degraded: false,
+                                    sources: Vec::new(),
+                                    working_paths: Vec::new(),
+                                },
+                            },
+                        })
+                        .collect();
+                    Ok(state.events.clone())
+                }
+            };
+            let events = match import_result {
+                Ok(events) => events,
+                Err(events) => {
+                    let _ = events.send(ServerMessage::Rejected {
+                        id: 0,
+                        message: "history import requires a new empty session".to_string(),
+                    });
+                    return;
+                }
+            };
+            let snapshot = session_snapshot(&session, &sessions).await;
+            let _ = events.send(snapshot);
+        }
         ClientRequest::Ask {
             id,
             question,
             session_context,
         } => {
+            let imported_context = {
+                let state = session.lock().await;
+                state.imported_context.clone()
+            };
+            let session_context = match (imported_context, session_context) {
+                (Some(imported), Some(current)) => Some(format!("{imported}\n\n{current}")),
+                (Some(imported), None) => Some(imported),
+                (None, current) => current,
+            };
             let input = SessionInput::Question {
                 question: question.clone(),
             };
@@ -1253,6 +1330,9 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use crate::history_import::ExternalHistorySource;
+    use crate::history_import::ImportedHistory;
+    use crate::history_import::ImportedTurn;
     use estelle_client::ApiKey;
     use estelle_client::Client;
     use estelle_client::Repo;
@@ -1291,6 +1371,166 @@ mod tests {
             "agents": []
         }))
         .expect("fleet")
+    }
+
+    #[tokio::test]
+    async fn imported_history_replays_and_feeds_the_next_server_owned_turn() {
+        let api = MockServer::start().await;
+        let imported_context = [
+            "Imported OpenCode session: Parser repair",
+            "User: Fix the parser",
+            "Assistant: Parser fixed.",
+        ]
+        .join("\n");
+        Mock::given(method("POST"))
+            .and(path("/deep-search"))
+            .and(body_json(serde_json::json!({
+                "repo": "fatelabs/estelle",
+                "question": "Continue parser repair with regression tests",
+                "working_memory": {
+                    "files": [],
+                    "session_context": imported_context,
+                }
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "answer": "The regression is covered.",
+                "grounded": true,
+                "sources": [{"file": "src/parser.rs", "line": 7}]
+            })))
+            .expect(1)
+            .mount(&api)
+            .await;
+        let client = Client::new(
+            &format!("{}/", api.uri()),
+            ApiKey::new("test-key").expect("key"),
+            Duration::from_secs(120),
+        )
+        .expect("client");
+        let runtime = tempfile::tempdir().expect("runtime directory");
+        let root = tempfile::tempdir().expect("working tree");
+        let socket = runtime.path().join("session.sock");
+        let shutdown = CancellationToken::new();
+        let server = SessionServer::bind(socket.clone(), client)
+            .await
+            .expect("bind session server");
+        let server_task = tokio::spawn(server.run(shutdown.clone()));
+        let mut connection = SessionConnection::connect_named(
+            &socket,
+            Repo::new("fatelabs/estelle").expect("repo"),
+            root.path().to_path_buf(),
+            "parser-repair",
+        )
+        .await
+        .expect("connect session");
+        let _initial = connection.next().await.expect("initial snapshot");
+        connection
+            .send(ClientRequest::ImportHistory {
+                history: ImportedHistory {
+                    source: ExternalHistorySource::OpenCode,
+                    title: "Parser repair".to_string(),
+                    cwd: root.path().to_path_buf(),
+                    source_path: root.path().join("opencode.db"),
+                    source_sha256: "fixture-sha".to_string(),
+                    turns: vec![ImportedTurn {
+                        question: "Fix the parser".to_string(),
+                        answer: "Parser fixed.".to_string(),
+                    }],
+                },
+            })
+            .await
+            .expect("import history");
+        let ServerMessage::Snapshot { turns, .. } =
+            connection.next().await.expect("import snapshot")
+        else {
+            panic!("import did not emit a snapshot");
+        };
+        assert_eq!(turns.len(), 1);
+        assert!(matches!(
+            &turns[0].outcome,
+            SessionOutcome::Answer { answer }
+                if answer.text.contains("Imported from OpenCode")
+                    && answer.text.contains("Parser fixed.")
+                    && answer.grounded.is_none()
+        ));
+
+        connection
+            .send(ClientRequest::Ask {
+                id: 9,
+                question: "Continue parser repair with regression tests".to_string(),
+                session_context: None,
+            })
+            .await
+            .expect("continue imported session");
+        loop {
+            if matches!(
+                connection.next().await.expect("session event"),
+                ServerMessage::Completed { turn } if turn.id == 9
+            ) {
+                break;
+            }
+        }
+
+        shutdown.cancel();
+        server_task
+            .await
+            .expect("server task")
+            .expect("server exit");
+    }
+
+    #[tokio::test]
+    async fn imported_history_for_another_repository_fails_closed() {
+        let client = Client::new(
+            "http://127.0.0.1:9/",
+            ApiKey::new("test-key").expect("key"),
+            Duration::from_secs(120),
+        )
+        .expect("client");
+        let runtime = tempfile::tempdir().expect("runtime directory");
+        let root = tempfile::tempdir().expect("working tree");
+        let other = tempfile::tempdir().expect("other working tree");
+        let socket = runtime.path().join("session.sock");
+        let shutdown = CancellationToken::new();
+        let server = SessionServer::bind(socket.clone(), client)
+            .await
+            .expect("bind session server");
+        let server_task = tokio::spawn(server.run(shutdown.clone()));
+        let mut connection = SessionConnection::connect_named(
+            &socket,
+            Repo::new("fatelabs/estelle").expect("repo"),
+            root.path().to_path_buf(),
+            "main",
+        )
+        .await
+        .expect("connect session");
+        let _initial = connection.next().await.expect("initial snapshot");
+        connection
+            .send(ClientRequest::ImportHistory {
+                history: ImportedHistory {
+                    source: ExternalHistorySource::OpenCode,
+                    title: "Wrong repository".to_string(),
+                    cwd: other.path().to_path_buf(),
+                    source_path: other.path().join("opencode.db"),
+                    source_sha256: "fixture-sha".to_string(),
+                    turns: vec![ImportedTurn {
+                        question: "Do not import me".to_string(),
+                        answer: "Different tree".to_string(),
+                    }],
+                },
+            })
+            .await
+            .expect("send mismatched history");
+
+        assert!(matches!(
+            connection.next().await.expect("rejection"),
+            ServerMessage::Rejected { id: 0, message }
+                if message.contains("different repository")
+        ));
+
+        shutdown.cancel();
+        server_task
+            .await
+            .expect("server task")
+            .expect("server exit");
     }
 
     #[tokio::test]

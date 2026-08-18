@@ -22,6 +22,19 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
+/// Detect recent sessions in OpenCode's current SQLite store without modifying it.
+pub async fn detect_recent_ope_sessions(
+    external_agent_home: &Path,
+    codex_home: &Path,
+) -> io::Result<Vec<ExternalAgentSessionMigration>> {
+    detect_recent_ope_sessions_with_limits(
+        external_agent_home,
+        codex_home,
+        ExternalAgentSessionImportLimits::default(),
+    )
+    .await
+}
+
 pub(crate) async fn detect_recent_ope_sessions_with_limits(
     external_agent_home: &Path,
     codex_home: &Path,

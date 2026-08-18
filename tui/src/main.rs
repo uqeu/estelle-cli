@@ -4,6 +4,7 @@ mod claude_import;
 mod commands;
 mod copilot_login;
 mod doctor;
+mod history_import;
 mod hook_distil;
 mod hook_guard;
 mod local_provider;
@@ -73,6 +74,7 @@ use estelle_client::Source;
 use estelle_client::is_secret_shaped;
 use estelle_client::mask_secret;
 use futures::StreamExt;
+use history_import::ExternalHistorySource;
 use ratatui::Frame;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -254,6 +256,9 @@ enum Command {
         /// Named server-owned session to create or attach.
         #[arg(long, default_value = "main", value_name = "NAME")]
         session: String,
+        /// Import the most recent matching harness history before attaching.
+        #[arg(long = "from", value_enum, value_name = "HARNESS")]
+        history_source: Option<ExternalHistorySource>,
     },
     /// Remove Estelle from local editor configurations.
     #[command(visible_aliases = ["disconnect", "off"])]
@@ -6630,12 +6635,17 @@ async fn run(
     args: Args,
     session_socket: Option<PathBuf>,
     session_id: Option<String>,
+    history_source: Option<ExternalHistorySource>,
 ) -> io::Result<()> {
     let connected = session_socket.is_some();
     // The attached terminal is a transport/rendering client. It neither resolves nor owns the
     // Estelle credential; only `serve` does. This also keeps keychain prompts out of reconnects.
     let initial_credential = (!connected).then(resolve_credential);
     let mut app = App::new(args);
+    let imported_history = match history_source {
+        Some(source) => Some(history_import::load_latest_history(source, &app.root).await?),
+        None => None,
+    };
     let session_connection = match session_socket {
         Some(socket) => Some(
             session_server::SessionConnection::connect_named(
@@ -6663,6 +6673,9 @@ async fn run(
     let (tx, mut rx) = mpsc::unbounded_channel();
     if let Some(connection) = session_connection {
         let (handle, mut session_events) = connection.start();
+        if let Some(history) = imported_history {
+            handle.send(session_server::ClientRequest::ImportHistory { history })?;
+        }
         app.session = Some(handle);
         let session_tx = tx.clone();
         tokio::spawn(async move {
@@ -6949,6 +6962,7 @@ async fn main() -> ExitCode {
         client: None,
         socket,
         session,
+        history_source,
     }) = args.command.clone()
     {
         let socket = match socket
@@ -6960,7 +6974,7 @@ async fn main() -> ExitCode {
         };
         let mut tui_args = args;
         tui_args.command = None;
-        return match run(tui_args, Some(socket), Some(session)).await {
+        return match run(tui_args, Some(socket), Some(session), history_source).await {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => command_failure(error).await,
         };
@@ -7071,7 +7085,7 @@ async fn main() -> ExitCode {
             ExitCode::FAILURE
         };
     }
-    match run(args, None, None).await {
+    match run(args, None, None, None).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(_) => ExitCode::FAILURE,
     }
@@ -7117,6 +7131,7 @@ mod tests {
                 client: None,
                 socket: None,
                 session,
+                history_source: None,
             })
             if session == "payments"
         ));
@@ -7261,6 +7276,29 @@ mod tests {
                 model: Some(model),
                 label: Some(label),
             }) if provider == "anthropic" && model == "claude-opus" && label == "production"
+        ));
+    }
+
+    #[test]
+    fn connect_names_the_external_history_source_explicitly() {
+        let args = Args::try_parse_from([
+            "estelle",
+            "connect",
+            "--from",
+            "opencode",
+            "--session",
+            "parser-repair",
+        ])
+        .expect("connect from OpenCode");
+
+        assert!(matches!(
+            args.command,
+            Some(Command::Connect {
+                client: None,
+                socket: None,
+                session,
+                history_source: Some(ExternalHistorySource::OpenCode),
+            }) if session == "parser-repair"
         ));
     }
 

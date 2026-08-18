@@ -5428,6 +5428,7 @@ dependencies = [
  "codex-connectors",
  "codex-core-plugins",
  "codex-exec-server",
+ "codex-external-agent-migration",
  "codex-features",
  "codex-feedback",
  "codex-file-search",

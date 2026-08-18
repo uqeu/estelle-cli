@@ -19,6 +19,7 @@ pub use crate::detect::sessions::ImportedSessionConnectorAttribution;
 pub use crate::detect::sessions::detect_imported_cla_session_connectors;
 pub use crate::detect::sessions::detect_recent_cla_sessions;
 pub use crate::detect::sessions::detect_recent_cur_sessions;
+pub use crate::detect::sessions::detect_recent_ope_sessions;
 pub use append::ExistingSessionAppend;
 pub use append::append_existing_session;
 use export::load_session_for_import_with_content_sha256;
