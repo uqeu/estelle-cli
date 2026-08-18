@@ -420,6 +420,23 @@ def hook_event_receipts(root: Path, timeout: float = 30) -> list[dict[str, objec
         )
         receipt["event"] = event
         receipts.append(receipt)
+    malformed = command_receipt(
+        ["estelle", "hook", "welcome", "--event", "SessionStart"],
+        (),
+        timeout,
+        "{not json",
+    )
+    malformed["event"] = "SessionStart/welcome malformed-negative-control"
+    malformed["pass"] = malformed["exit_code"] != 0 and all(
+        marker in str(malformed["came_back"])
+        for marker in (
+            "event=SessionStart",
+            "mode=welcome",
+            "branch=input-json",
+            "needed=valid JSON hook payload on stdin",
+        )
+    )
+    receipts.append(malformed)
     return receipts
 
 

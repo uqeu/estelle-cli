@@ -1163,7 +1163,14 @@ def test_hook_receipts_drive_every_current_table_row() -> None:
         fake_estelle.write_text(
             "#!/bin/sh\n"
             "if [ \"$1\" = install-hooks ]; then printf 'full session lifecycle\\n'; exit 0; fi\n"
-            "if [ \"$1\" = hook ]; then printf '{\"mode\":\"%s\"}\\n' \"$2\"; exit 0; fi\n",
+            "if [ \"$1\" = hook ]; then\n"
+            "  payload=$(cat)\n"
+            "  if [ \"$payload\" = '{not json' ]; then\n"
+            "    printf 'event=SessionStart mode=welcome branch=input-json needed=valid JSON hook payload on stdin\\n'\n"
+            "    exit 1\n"
+            "  fi\n"
+            "  printf '{\"mode\":\"%s\"}\\n' \"$2\"; exit 0\n"
+            "fi\n",
             encoding="utf-8",
         )
         fake_estelle.chmod(0o755)
@@ -1174,7 +1181,7 @@ def test_hook_receipts_drive_every_current_table_row() -> None:
             receipts = load_harness().hook_event_receipts(root, timeout=3)
         finally:
             os.environ["PATH"] = original_path
-        assert len(receipts) == 11
+        assert len(receipts) == 12
         assert all(receipt["pass"] for receipt in receipts)
         assert [receipt["event"] for receipt in receipts[1:]] == [
             "PreToolUse/ground",
@@ -1187,6 +1194,7 @@ def test_hook_receipts_drive_every_current_table_row() -> None:
             "SessionEnd/checkpoint",
             "SessionStart/welcome",
             "UserPromptSubmit/context",
+            "SessionStart/welcome malformed-negative-control",
         ]
 
 
@@ -1199,8 +1207,15 @@ def test_hook_receipts_fail_closed_on_one_silent_nonzero() -> None:
         fake_estelle.write_text(
             "#!/bin/sh\n"
             "if [ \"$1\" = install-hooks ]; then printf 'full session lifecycle\\n'; exit 0; fi\n"
-            "if [ \"$1\" = hook ] && [ \"$2\" = welcome ]; then exit 1; fi\n"
-            "if [ \"$1\" = hook ]; then exit 0; fi\n",
+            "if [ \"$1\" = hook ]; then\n"
+            "  payload=$(cat)\n"
+            "  if [ \"$payload\" = '{not json' ]; then\n"
+            "    printf 'event=SessionStart mode=welcome branch=input-json needed=valid JSON hook payload on stdin\\n'\n"
+            "    exit 1\n"
+            "  fi\n"
+            "  if [ \"$2\" = welcome ]; then exit 1; fi\n"
+            "  exit 0\n"
+            "fi\n",
             encoding="utf-8",
         )
         fake_estelle.chmod(0o755)
@@ -1217,6 +1232,36 @@ def test_hook_receipts_fail_closed_on_one_silent_nonzero() -> None:
         assert failed[0]["event"] == "SessionStart/welcome"
         assert failed[0]["exit_code"] == 1
         assert failed[0]["came_back"] == "exited with code 1 and no stdout/stderr"
+
+
+def test_hook_receipts_require_a_malformed_input_negative_control() -> None:
+    with tempfile.TemporaryDirectory(prefix="estelle-hook-receipt-malformed-") as raw_dir:
+        root = Path(raw_dir)
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        fake_estelle = fake_bin / "estelle"
+        fake_estelle.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = install-hooks ]; then printf 'full session lifecycle\\n'; exit 0; fi\n"
+            "if [ \"$1\" = hook ]; then cat >/dev/null; exit 0; fi\n",
+            encoding="utf-8",
+        )
+        fake_estelle.chmod(0o755)
+        (root / "README.md").write_text("receipt fixture\n", encoding="utf-8")
+        original_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{fake_bin}{os.pathsep}{original_path}"
+        try:
+            receipts = load_harness().hook_event_receipts(root, timeout=3)
+        finally:
+            os.environ["PATH"] = original_path
+
+        negative = [
+            receipt
+            for receipt in receipts
+            if receipt.get("event") == "SessionStart/welcome malformed-negative-control"
+        ]
+        assert len(negative) == 1, "the installed binary receipt never sent malformed hook input"
+        assert negative[0]["pass"] is False, "exit 0 on malformed input must make the receipt red"
 
 
 def main() -> int:
@@ -1247,6 +1292,7 @@ def main() -> int:
     test_head_surface_commands_run_through_bare_binary()
     test_hook_receipts_drive_every_current_table_row()
     test_hook_receipts_fail_closed_on_one_silent_nonzero()
+    test_hook_receipts_require_a_malformed_input_negative_control()
 
     print("public receipt test: all 24 audited read surfaces are mandatory")
     return 0
