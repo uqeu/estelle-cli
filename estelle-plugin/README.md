@@ -1,4 +1,4 @@
-# `plugin:fatelabs:estelle`
+# The Estelle plugin for Claude Code
 
 The Claude Code plugin that wraps Estelle's hosted MCP server.
 
@@ -24,19 +24,32 @@ curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/uqeu/estelle-cli/releases/latest/download/install.sh | sh
 ```
 
-## 🔴 The installed name is `plugin:fatelabs:estelle`, and it is TWO fields in TWO files
+## 🔴 THERE ARE TWO IDENTIFIERS, AND WE HAD WRITTEN DOWN A THIRD THAT DOES NOT EXIST
 
-The format is `plugin:<marketplace>:<plugin>` — the same shape as `plugin:stripe:stripe` and
-`plugin:vercel:vercel` in a live `/mcp` listing.
+This repo asserted the installed name was `plugin:<marketplace>:<plugin>` = `plugin:fatelabs:estelle`,
+reasoning from `plugin:stripe:stripe` in a live `/mcp` listing. **That example cannot distinguish the
+readings**, because Stripe's marketplace, plugin and MCP server are all called `stripe`. Ours are not,
+so installing it settled the question.
+
+**MEASURED 2026-08-18**, installing this bundle into a `HOME` with no prior config:
+
+| | value | shape |
+|---|---|---|
+| install id (`claude plugin install`) | **`estelle@fatelabs`** | `<plugin>@<marketplace>` |
+| MCP server (`claude mcp list`) | **`plugin:estelle:estelle`** | `plugin:<plugin>:<server>` |
+
+**The marketplace name never appears in the MCP name, and `plugin:fatelabs:estelle` appears nowhere at
+all.** A pin written from an ambiguous example held a false value until someone ran it.
 
 | file | field | value |
 |---|---|---|
 | `estelle-plugin/.claude-plugin/plugin.json` | `name` | **`estelle`** |
+| `estelle-plugin/.mcp.json` | server key | **`estelle`** |
 | `.claude-plugin/marketplace.json` (this repo's ROOT) | `name` | **`fatelabs`** |
 
-⚠️ **`name` is also the SKILL NAMESPACE.** Every playbook becomes `/estelle:<name>`. Changing it later
-renames every command a customer has learned, so it is pinned by `scripts/test-plugin-identity.py`
-rather than left to a careful reader.
+⚠️ **The plugin `name` is also the SKILL NAMESPACE.** Every playbook becomes `/estelle:<name>`.
+Changing it later renames every command a customer has learned, so all three are pinned by
+`scripts/test-plugin-identity.py` rather than left to a careful reader.
 
 ## 🔴 WHY THIS LIVES IN `uqeu/estelle-cli` AND NOT WHERE THE DOCS USED TO SAY
 
@@ -47,8 +60,16 @@ listing can live: `/plugin marketplace add` has to clone it as an anonymous user
 
 The ship-order note that said *"`/plugin marketplace add fatelabs/estelle`"* was therefore describing a
 command that could never have worked. The marketplace **name** is still `fatelabs` — that is a field
-inside `marketplace.json`, independent of the repo path a user types — so the installed name is
-unchanged.
+inside `marketplace.json`, independent of the repo path a user types — so the install id
+`estelle@fatelabs` is unchanged.
+
+**PROVEN FROM A CLEAN MACHINE**, not from this laptop: in a `HOME` with no `~/.claude.json` (so the
+founder's existing working remote entry could not mask a broken plugin),
+`claude plugin marketplace add uqeu/estelle-cli` cloned anonymously over HTTPS and validated,
+`claude plugin install estelle@fatelabs` installed at `gitCommitSha c8ea2ba46`, and `claude mcp list`
+registered `plugin:estelle:estelle -> https://api.fatelabs.ca/mcp (HTTP)`. With no key set, the server
+answered `-32001 "unknown or missing Estelle API key"` — **its own refusal, which is the proof the door
+reaches it**; a broken plugin returns no server at all.
 
 ## ⚠️ "Local MCPs" in the `/mcp` menu means CONFIG-SCOPED, not locally hosted
 

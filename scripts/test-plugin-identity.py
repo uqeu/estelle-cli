@@ -27,9 +27,25 @@ PLUGIN = ROOT / "estelle-plugin"
 #: construction and could never catch a rename.
 PLUGIN_NAME = "estelle"
 MARKETPLACE_NAME = "fatelabs"
-INSTALLED_NAME = f"plugin:{MARKETPLACE_NAME}:{PLUGIN_NAME}"
+MCP_SERVER_NAME = "estelle"
 MCP_URL = "https://api.fatelabs.ca/mcp"
 REPOSITORY = "https://github.com/uqeu/estelle-cli"
+
+#: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.
+#:
+#: It asserted the installed name was `plugin:<marketplace>:<plugin>` = `plugin:fatelabs:estelle`,
+#: reasoning from `plugin:stripe:stripe` in a live /mcp listing. That example cannot distinguish the
+#: readings, because Stripe's marketplace, plugin and server are all called "stripe".
+#:
+#: MEASURED 2026-08-18 by installing this bundle into a HOME with no prior config
+#: (marketplace `fatelabs`, plugin `estelle`, server `estelle`):
+#:     claude plugin install  ->  estelle@fatelabs          <- <plugin>@<marketplace>
+#:     claude mcp list        ->  plugin:estelle:estelle    <- plugin:<plugin>:<server>
+#: The marketplace name does NOT appear in the MCP name, and `plugin:fatelabs:estelle` appears
+#: nowhere at all. Only a real install could tell these apart, which is why a pin written from an
+#: ambiguous example held a false value until someone ran it.
+INSTALL_ID = f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"
+MCP_NAME = f"plugin:{PLUGIN_NAME}:{MCP_SERVER_NAME}"
 
 failures: list[str] = []
 
@@ -65,7 +81,19 @@ check("plugin name is the pinned skill namespace",
       manifest["name"] == PLUGIN_NAME, f"{manifest['name']!r} != {PLUGIN_NAME!r}")
 check("marketplace name is pinned",
       marketplace["name"] == MARKETPLACE_NAME, f"{marketplace['name']!r} != {MARKETPLACE_NAME!r}")
-check("README states the installed name", INSTALLED_NAME in readme)
+check("README states the install id", INSTALL_ID in readme)
+check("README states the MCP name", MCP_NAME in readme)
+# The README is where the correction is EXPLAINED, so it must be allowed to quote the false string.
+# What must never carry it is a file that DEFINES identity, and the README must keep the correction
+# rather than quietly dropping it and leaving the old claim to creep back.
+_identity_files = json.dumps(manifest) + json.dumps(marketplace) + json.dumps(mcp)
+check("no identity file carries the falsified plugin:fatelabs:estelle",
+      "plugin:fatelabs:estelle" not in _identity_files)
+# Whitespace-normalised: the phrase legitimately wraps across lines in Markdown, and a check that
+# breaks on a re-wrap is a check that will be deleted rather than satisfied.
+_readme_flat = " ".join(readme.split())
+check("README keeps the correction rather than silently dropping it",
+      "appears nowhere at all" in _readme_flat)
 
 # ── the manifest must point at a repo that EXISTS and is PUBLIC ───────────────
 # It declared https://github.com/fatelabs/estelle, which 404s. `uqeu/estelle` is private, so a
@@ -93,10 +121,13 @@ check("plugin.json is the ONLY file in .claude-plugin/", inside == ["plugin.json
 
 # ── the server entry is the HOSTED one, and carries no credential ─────────────
 servers = mcp["mcpServers"]
-check("one server, named for the plugin", list(servers) == [PLUGIN_NAME], str(list(servers)))
-entry = servers[PLUGIN_NAME]
-check("server is remote http", entry.get("type") == "http")
-check("server url is the hosted endpoint", entry.get("url") == MCP_URL)
+check("one server, with the pinned name", list(servers) == [MCP_SERVER_NAME], str(list(servers)))
+# Read it back defensively: a renamed key must produce a NAMED clause failure, not a KeyError that
+# aborts the run before the remaining clauses are ever evaluated. A guard that crashes reports
+# "something broke"; a guard that fails reports WHICH promise broke.
+entry = servers.get(MCP_SERVER_NAME) or {}
+check("server is remote http", entry.get("type") == "http", str(entry.get("type")))
+check("server url is the hosted endpoint", entry.get("url") == MCP_URL, str(entry.get("url")))
 check("authorization EXPANDS from the environment, never a literal key",
       entry.get("headers", {}).get("Authorization") == "Bearer ${ESTELLE_API_KEY}")
 check("nothing unexplained rides along", set(entry) == {"type", "url", "headers"}, str(set(entry)))
@@ -118,4 +149,4 @@ if failures:
         print(f"  - {f}", file=sys.stderr)
     sys.exit(1)
 
-print(f"✅ plugin identity and version agreement hold ({INSTALLED_NAME} @ {owner_version})")
+print(f"✅ identity and version agreement hold — install {INSTALL_ID}, MCP {MCP_NAME}, v{owner_version}")
