@@ -37,7 +37,6 @@ use tokio::io::BufReader;
 use tokio::process::Child;
 use tokio::process::ChildStdin;
 use tokio::process::Command;
-use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 
 const INLINE_WAIT: Duration = Duration::from_millis(500);
@@ -271,7 +270,7 @@ async fn collect_diagnostics(clients: &mut Vec<LspClient>, budget: Duration) -> 
 
 struct LspClient {
     child: Child,
-    input: Arc<Mutex<ChildStdin>>,
+    input: ChildStdin,
     messages: mpsc::UnboundedReceiver<Value>,
     next_id: AtomicU64,
     documents: Vec<WrittenDocument>,
@@ -306,7 +305,7 @@ impl LspClient {
         tokio::spawn(read_messages(output, tx));
         let mut client = Self {
             child,
-            input: Arc::new(Mutex::new(input)),
+            input,
             messages,
             next_id: AtomicU64::new(1),
             documents,
@@ -329,7 +328,7 @@ impl LspClient {
             .await?;
         client.wait_for_response(id, Duration::from_secs(5)).await?;
         client.notify("initialized", json!({})).await?;
-        for document in &client.documents {
+        for document in client.documents.clone() {
             if let Some(content) = &document.old_content {
                 client
                     .notify(
@@ -369,7 +368,7 @@ impl LspClient {
             )
             .await?;
         }
-        for document in &self.documents {
+        for document in self.documents.clone() {
             let Some((kind, content)) = changes.get(&document.path) else {
                 continue;
             };
@@ -536,7 +535,7 @@ impl LspClient {
         })?
     }
 
-    async fn answer_server_request(&self, message: &Value) -> io::Result<()> {
+    async fn answer_server_request(&mut self, message: &Value) -> io::Result<()> {
         let Some(id) = message.get("id") else {
             return Ok(());
         };
@@ -553,25 +552,24 @@ impl LspClient {
             .await
     }
 
-    async fn request(&self, method: &str, params: Value) -> io::Result<u64> {
+    async fn request(&mut self, method: &str, params: Value) -> io::Result<u64> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.write(json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }))
             .await?;
         Ok(id)
     }
 
-    async fn notify(&self, method: &str, params: Value) -> io::Result<()> {
+    async fn notify(&mut self, method: &str, params: Value) -> io::Result<()> {
         self.write(json!({ "jsonrpc": "2.0", "method": method, "params": params }))
             .await
     }
 
-    async fn write(&self, message: Value) -> io::Result<()> {
+    async fn write(&mut self, message: Value) -> io::Result<()> {
         let body = serde_json::to_vec(&message).map_err(io::Error::other)?;
         let header = format!("Content-Length: {}\r\n\r\n", body.len());
-        let mut input = self.input.lock().await;
-        input.write_all(header.as_bytes()).await?;
-        input.write_all(&body).await?;
-        input.flush().await
+        self.input.write_all(header.as_bytes()).await?;
+        self.input.write_all(&body).await?;
+        self.input.flush().await
     }
 
     async fn shutdown(mut self) {
