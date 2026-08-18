@@ -764,7 +764,14 @@ def test_complete_harness_writes_every_receipt() -> None:
             "if [ \"$1\" = sweep ]; then printf 'Repo swept.\\n'; exit 0; fi\n"
             "if [ \"$1\" = reindex ]; then printf 'Memory current.\\n'; exit 0; fi\n"
             "if [ \"$1\" = install-hooks ]; then printf 'full session lifecycle\\n'; exit 0; fi\n"
-            "if [ \"$1\" = hook ]; then printf '{\"mode\":\"%s\"}\\n' \"$2\"; exit 0; fi\n"
+            "if [ \"$1\" = hook ]; then\n"
+            "  payload=$(cat)\n"
+            "  if [ \"$payload\" = '{not json' ]; then\n"
+            "    printf 'event=SessionStart mode=welcome branch=input-json needed=valid JSON hook payload on stdin\\n'\n"
+            "    exit 1\n"
+            "  fi\n"
+            "  printf '{\"mode\":\"%s\"}\\n' \"$2\"; exit 0\n"
+            "fi\n"
             "if [ -f \"$HOME/.estelle/auth.json\" ]; then\n"
             "  printf 'Ask Estelle\\nrejected on a background poll. It was NOT removed\\n› Ask Estelle\\n'\n"
             "  IFS= read -r command; rm \"$HOME/.estelle/auth.json\"\n"
@@ -832,7 +839,7 @@ def test_complete_harness_writes_every_receipt() -> None:
             output.read_text(encoding="utf-8") if output.exists() else "no report",
         )
         report = json.loads(output.read_text(encoding="utf-8"))
-        assert report["summary"] == {"passed": 50, "failed": 0, "discarded": 0}
+        assert report["summary"] == {"passed": 51, "failed": 0, "discarded": 0}
         assert report["receipts"][4]["after_one_route"] == "retained"
         assert [row["sent"] for row in report["receipts"][5:29]] == EXPECTED_READ_SURFACES
         assert report["receipts"][29]["sent"].startswith("Which file defines")
@@ -841,7 +848,9 @@ def test_complete_harness_writes_every_receipt() -> None:
         assert len(report["receipts"][32]["sent"]) == 26
         assert [row["sent"] for row in report["receipts"][33:35]] == ["/review", "/scan"]
         assert report["receipts"][37]["sent"] == "estelle reindex"
-        assert report["receipts"][-2]["event"] == "UserPromptSubmit/context"
+        assert report["receipts"][-3]["event"] == "UserPromptSubmit/context"
+        assert report["receipts"][-2]["event"] == "SessionStart/welcome malformed-negative-control"
+        assert report["receipts"][-2]["exit_code"] == 1
         assert report["receipts"][-1] == {
             "sent": "pin production build for the entire receipt run",
             "came_back": "production build stayed stable-test-build",
