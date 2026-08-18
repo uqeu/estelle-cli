@@ -10,13 +10,14 @@ P2 accepts §§5.1, 5.2 and 5.7. `estelle login` reads a key without echoing it,
 stores a verified key; 401/403/404 store nothing; a transport or 5xx failure stores the key but says it
 could not be verified. A failure to ask is not evidence that the key is bad.
 
-The default store adopts Codex's maintained `codex-keyring-store` + `codex-secrets` path. The API key is
-encrypted in `~/.estelle/secrets/estelle_auth.age`; its encryption key is in the OS keyring under the
-`estelle` service. The directory is created as `0700` and ciphertext as `0600`. A legacy
-`~/.estelle/auth.json` remains readable for migration, then is removed after a successful secure write.
-This was not demanded by the port spec, but it follows ADR 0016 directly: the maintained layer made the
-keyring integration effectively free, while the JS CLI left the key in plaintext because building that
-integration alone was not worth its cost.
+Superseded 2026-08-18: the default store is `~/.estelle/auth.json`, created atomically inside a `0700`
+directory with mode `0600`. Reads fail closed when group or world permission bits are present. The previous
+encrypted `~/.estelle/secrets/estelle_auth.age` store still depended on an encryption key in macOS Keychain;
+ad-hoc release signatures changed identity on every build, so Keychain treated each update as a different
+application and repeated its access prompt. The runtime no longer reads that Keychain-backed store. This is
+an intentional non-migration: reading it once to migrate would recreate the prompt being removed. Existing
+users can set `ESTELLE_API_KEY` for the immediate non-persistent path or run `estelle login` once to write the
+new private file. Stable Developer ID signing and notarization remain the correct later distribution fix.
 
 Credential detection is one length-bounded regex shared by input and masking. It finds embedded
 `estelle_live_`, `sk-`, `ghp_`, and `github_pat_` values without matching short lookalikes. The old

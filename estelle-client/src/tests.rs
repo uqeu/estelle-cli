@@ -1,8 +1,6 @@
 use std::collections::HashSet;
-use std::sync::Arc;
 use std::time::Duration;
 
-use codex_keyring_store::tests::MockKeyringStore;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use wiremock::Mock;
@@ -537,32 +535,69 @@ fn credential_file_is_created_with_mode_0600_and_secret_is_masked() {
 }
 
 #[test]
-fn secure_store_round_trips_and_delete_stored_discards_it() {
+fn two_independent_default_stores_share_one_file_without_a_build_identity() {
     let home = tempfile::tempdir().expect("temp home");
     let estelle_home = home.path().join(".estelle");
-    let keyring = Arc::new(MockKeyringStore::default());
-    let store = CredentialStore::new_secure(&estelle_home, keyring);
+    let first_binary = CredentialStore::from_estelle_home(&estelle_home);
+    let second_binary = CredentialStore::from_estelle_home(&estelle_home);
 
-    store.write(&test_key()).expect("write secure credential");
+    first_binary
+        .write(&test_key())
+        .expect("first binary writes");
 
-    assert!(!estelle_home.join("auth.json").exists());
-    assert!(
-        estelle_home
-            .join("secrets")
-            .join("estelle_auth.age")
-            .exists()
-    );
+    assert_eq!(first_binary.path(), second_binary.path());
     assert_eq!(
-        store.resolve().expect("resolve secure credential").source,
-        CredentialSource::SecureStore
+        second_binary.resolve().expect("second binary reads").source,
+        CredentialSource::Stored
     );
+    assert!(second_binary.resolve().is_ok());
+}
 
+#[cfg(unix)]
+#[test]
+fn world_readable_credential_file_is_refused_with_the_required_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = tempfile::tempdir().expect("temp home");
+    let store = CredentialStore::new(home.path().join(".estelle/auth.json"));
+    store.write(&test_key()).expect("write credential");
+    std::fs::set_permissions(store.path(), std::fs::Permissions::from_mode(0o644))
+        .expect("make fixture unsafe");
+
+    assert!(matches!(
+        store.resolve(),
+        Err(Error::InsecureCredentialPermissions { mode: 0o644 })
+    ));
     assert!(
         store
-            .delete_stored(CredentialSource::SecureStore)
-            .expect("delete secure credential")
+            .resolve()
+            .expect_err("world-readable credential must fail closed")
+            .to_string()
+            .contains("0600")
     );
-    assert!(matches!(store.resolve(), Err(Error::NoCredential)));
+}
+
+#[cfg(unix)]
+#[test]
+fn environment_credential_bypasses_persistent_storage_without_reading_it() {
+    use std::ffi::OsString;
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = tempfile::tempdir().expect("temp home");
+    let store = CredentialStore::new(home.path().join(".estelle/auth.json"));
+    store.write(&test_key()).expect("write credential");
+    std::fs::set_permissions(store.path(), std::fs::Permissions::from_mode(0o644))
+        .expect("make stored fixture unreadable by policy");
+
+    let resolved = store
+        .resolve_with_environment(Some(OsString::from("estelle_live_environment-test")))
+        .expect("environment must bypass the persistent backend");
+
+    assert_eq!(resolved.source, CredentialSource::Environment);
+    assert!(matches!(
+        store.resolve_with_environment(None),
+        Err(Error::InsecureCredentialPermissions { mode: 0o644 })
+    ));
 }
 
 #[test]

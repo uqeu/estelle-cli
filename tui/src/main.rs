@@ -3345,10 +3345,7 @@ impl App {
         let Some(auth) = &self.auth else {
             return;
         };
-        if !matches!(
-            auth.source,
-            CredentialSource::Stored | CredentialSource::SecureStore
-        ) {
+        if auth.source != CredentialSource::Stored {
             return;
         }
         self.rejected_routes.insert(route.to_string());

@@ -23,3 +23,6 @@ to `~/.local/bin`. `ESTELLE_RELEASE_REPOSITORY` is an explicit operator/test ove
 root; normal installs must leave it unset. Release `v0.2.4` and this public install path were read back and
 executed successfully on macOS arm64; the exact distribution evidence and unproven product paths are recorded
 in [`docs/SCORECARD.md`](docs/SCORECARD.md).
+
+To bypass credential storage immediately, set `ESTELLE_API_KEY` in the process environment; it takes
+precedence over `~/.estelle/auth.json` and is never persisted by Estelle.

@@ -2,19 +2,12 @@ use std::env;
 use std::fmt;
 use std::fs;
 use std::fs::OpenOptions;
+use std::io::Read;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::LazyLock;
 
-use codex_keyring_store::DefaultKeyringStore;
-use codex_keyring_store::KeyringStore;
-use codex_secrets::LocalSecretsNamespace;
-use codex_secrets::SecretName;
-use codex_secrets::SecretScope;
-use codex_secrets::SecretsBackendKind;
-use codex_secrets::SecretsManager;
 use regex::Regex;
 use serde::Deserialize;
 use serde::Serialize;
@@ -76,7 +69,6 @@ pub fn redact_secrets(value: &str) -> String {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CredentialSource {
     Environment,
-    SecureStore,
     Stored,
 }
 
@@ -89,7 +81,6 @@ pub struct ResolvedCredential {
 #[derive(Clone)]
 pub struct CredentialStore {
     path: PathBuf,
-    secure: Option<SecretsManager>,
 }
 
 impl fmt::Debug for CredentialStore {
@@ -97,7 +88,6 @@ impl fmt::Debug for CredentialStore {
         formatter
             .debug_struct("CredentialStore")
             .field("path", &self.path)
-            .field("secure", &self.secure.is_some())
             .finish()
     }
 }
@@ -105,35 +95,15 @@ impl fmt::Debug for CredentialStore {
 impl CredentialStore {
     pub fn default_location() -> Result<Self, Error> {
         let home = dirs::home_dir().ok_or(Error::NoCredential)?;
-        let estelle_home = home.join(".estelle");
-        Ok(Self::new_secure(
-            estelle_home,
-            Arc::new(DefaultKeyringStore),
-        ))
+        Ok(Self::from_estelle_home(home.join(".estelle")))
     }
 
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self {
-            path: path.into(),
-            secure: None,
-        }
+        Self { path: path.into() }
     }
 
-    pub fn new_secure(
-        estelle_home: impl Into<PathBuf>,
-        keyring_store: Arc<dyn KeyringStore>,
-    ) -> Self {
-        let estelle_home = estelle_home.into();
-        let secure = SecretsManager::new_with_keyring_store_and_namespace(
-            estelle_home.clone(),
-            SecretsBackendKind::Local,
-            keyring_store,
-            LocalSecretsNamespace::EstelleAuth,
-        );
-        Self {
-            path: estelle_home.join("auth.json"),
-            secure: Some(secure),
-        }
+    pub(crate) fn from_estelle_home(estelle_home: impl Into<PathBuf>) -> Self {
+        Self::new(estelle_home.into().join("auth.json"))
     }
 
     pub fn path(&self) -> &Path {
@@ -141,7 +111,14 @@ impl CredentialStore {
     }
 
     pub fn resolve(&self) -> Result<ResolvedCredential, Error> {
-        if let Some(key) = env::var_os("ESTELLE_API_KEY")
+        self.resolve_with_environment(env::var_os("ESTELLE_API_KEY"))
+    }
+
+    pub(crate) fn resolve_with_environment(
+        &self,
+        environment_value: Option<std::ffi::OsString>,
+    ) -> Result<ResolvedCredential, Error> {
+        if let Some(key) = environment_value
             .and_then(|value| value.into_string().ok())
             .and_then(|value| ApiKey::new(value).ok())
         {
@@ -150,21 +127,7 @@ impl CredentialStore {
                 source: CredentialSource::Environment,
             });
         }
-        if let Some(secure) = &self.secure
-            && let Ok(Some(value)) = secure.get(&SecretScope::Global, &credential_name()?)
-        {
-            return Ok(ResolvedCredential {
-                api_key: ApiKey::new(value)?,
-                source: CredentialSource::SecureStore,
-            });
-        }
-        let raw = fs::read(&self.path).map_err(|source| {
-            if source.kind() == std::io::ErrorKind::NotFound {
-                Error::NoCredential
-            } else {
-                Error::CredentialIo(source)
-            }
-        })?;
+        let raw = read_private_file(&self.path)?;
         let stored: StoredCredential =
             serde_json::from_slice(&raw).map_err(|_| Error::MalformedCredential)?;
         Ok(ResolvedCredential {
@@ -174,18 +137,10 @@ impl CredentialStore {
     }
 
     pub fn write(&self, key: &ApiKey) -> Result<(), Error> {
-        if let Some(secure) = &self.secure
-            && secure
-                .set(&SecretScope::Global, &credential_name()?, key.expose())
-                .is_ok()
-        {
-            remove_if_present(&self.path)?;
-            return Ok(());
-        }
-        self.write_legacy_file(key)
+        self.write_private_file(key)
     }
 
-    fn write_legacy_file(&self, key: &ApiKey) -> Result<(), Error> {
+    fn write_private_file(&self, key: &ApiKey) -> Result<(), Error> {
         let parent = self.path.parent().ok_or_else(|| {
             Error::CredentialIo(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -221,14 +176,6 @@ impl CredentialStore {
     /// The legitimate caller has cross-route evidence (repeated rejections across DIFFERENT
     /// routes) and says so out loud before calling this. Callers decide; this only deletes.
     pub fn delete_stored(&self, source: CredentialSource) -> Result<bool, Error> {
-        if source == CredentialSource::SecureStore {
-            let Some(secure) = &self.secure else {
-                return Ok(false);
-            };
-            return secure
-                .delete(&SecretScope::Global, &credential_name()?)
-                .map_err(|error| Error::CredentialStore(error.to_string()));
-        }
         if source != CredentialSource::Stored {
             return Ok(false);
         }
@@ -236,8 +183,34 @@ impl CredentialStore {
     }
 }
 
-fn credential_name() -> Result<SecretName, Error> {
-    SecretName::new("ESTELLE_API_KEY").map_err(|error| Error::CredentialStore(error.to_string()))
+fn read_private_file(path: &Path) -> Result<Vec<u8>, Error> {
+    let mut file = OpenOptions::new().read(true).open(path).map_err(|source| {
+        if source.kind() == std::io::ErrorKind::NotFound {
+            Error::NoCredential
+        } else {
+            Error::CredentialIo(source)
+        }
+    })?;
+    require_private_mode(&file)?;
+    let mut raw = Vec::new();
+    file.read_to_end(&mut raw)?;
+    Ok(raw)
+}
+
+#[cfg(unix)]
+fn require_private_mode(file: &fs::File) -> Result<(), Error> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mode = file.metadata()?.permissions().mode() & 0o777;
+    if mode & 0o077 != 0 {
+        return Err(Error::InsecureCredentialPermissions { mode });
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn require_private_mode(_file: &fs::File) -> Result<(), Error> {
+    Ok(())
 }
 
 fn remove_if_present(path: &Path) -> Result<(), Error> {

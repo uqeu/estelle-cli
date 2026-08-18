@@ -76,6 +76,8 @@ pub enum Error {
     CredentialIo(#[from] std::io::Error),
     #[error("Estelle credential file is malformed")]
     MalformedCredential,
+    #[error("Estelle credential file mode is {mode:04o}; expected 0600 or stricter")]
+    InsecureCredentialPermissions { mode: u32 },
     #[error("Estelle credential storage failed: {0}")]
     CredentialStore(String),
     #[error("the HTTP timeout must be at least 120 seconds")]
