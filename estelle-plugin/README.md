@@ -78,22 +78,19 @@ that heading means **scoped to a project's config**, and we were there only beca
 with `claude mcp add` (which writes `~/.claude.json`) instead of `/plugin install`. Our server entry is
 already `{"type":"http","url":"https://api.fatelabs.ca/mcp"}` — the same class as Stripe's.
 
-## ⚠️ STATUS: SHIPS WITHOUT HOOKS, ON PURPOSE
+## ✅ STATUS: SHIPS THE GENERATED ALWAYS-ON HOOKS
 
 | | Codex | Claude Code |
 |---|---|---|
 | manifest | ✅ `.codex-plugin/plugin.json` | ✅ `estelle-plugin/.claude-plugin/plugin.json` |
 | server entry | ✅ inline `mcpServers` | ✅ `.mcp.json` |
 | marketplace listing | — | ✅ `.claude-plugin/marketplace.json` (this repo's root) |
-| hooks | ✅ generated | ⛔ **absent** |
+| hooks | ✅ generated | ✅ `estelle-plugin/hooks/hooks.json` |
 
-⛔ **`hooks/hooks.json` is NOT hand-written here, and that is the point.** The hook contract has ONE
-owner. The moment this bundle contains a hand-copied hook table, that defect is reopened with a
-customer-facing blast radius: our customers would run different rules than our tests. The bundle ships
-**without hooks and says so** rather than forking them. Hooks arrive here generated, or not at all.
-
-⚠️ So this plugin delivers the **server entry** only. `estelle install-hooks` (door 1) is what puts the
-always-on hooks in place — another reason door 1 is the recommendation.
+⛔ **`hooks/hooks.json` is GENERATED, not hand-written.** The hook contract still has one owner: the
+installer's hook configuration. The marketplace package carries that generated artifact verbatim, and
+the identity guard refuses a package that drops it. `estelle install-hooks` remains door 1 for users
+who want the same hooks across editors rather than only inside Claude Code.
 
 ## 🔴 The version is not written here twice
 

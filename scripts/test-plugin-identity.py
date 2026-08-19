@@ -74,6 +74,7 @@ marketplace = load(ROOT / ".claude-plugin" / "marketplace.json")
 mcp = load(PLUGIN / ".mcp.json")
 shim = load(ROOT / "npm-shim" / "package.json")
 readme = (PLUGIN / "README.md").read_text(encoding="utf-8")
+hooks_path = PLUGIN / "hooks" / "hooks.json"
 owner_version = workspace_version()
 
 # ── identity ──────────────────────────────────────────────────────────────────
@@ -118,6 +119,17 @@ if entries:
 # ── layout: a stray file here is the top reason `claude plugin validate` fails ─
 inside = sorted(p.name for p in (PLUGIN / ".claude-plugin").iterdir())
 check("plugin.json is the ONLY file in .claude-plugin/", inside == ["plugin.json"], str(inside))
+
+# ── the marketplace package must include the always-on hook half ──────────────
+check("published plugin contains generated hooks/hooks.json", hooks_path.is_file())
+if hooks_path.is_file():
+    hooks = load(hooks_path)
+    check("hook package is labelled GENERATED", "GENERATED" in hooks.get("description", ""))
+    check("hook package covers every supported Claude event",
+          set(hooks.get("hooks", {})) == {
+              "PostToolUse", "PreCompact", "PreToolUse", "SessionEnd",
+              "SessionStart", "Stop", "UserPromptSubmit",
+          }, str(sorted(hooks.get("hooks", {}))))
 
 # ── the server entry is the HOSTED one, and carries no credential ─────────────
 servers = mcp["mcpServers"]

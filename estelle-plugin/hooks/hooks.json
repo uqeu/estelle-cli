@@ -1,0 +1,115 @@
+{
+  "description": "Estelle — memory + the grounding gate, always on. GENERATED from the CLI's installer (`npx -y @fatelabs/estelle@0 plugin-hooks`); do not edit — edit cli/bin/hook.js and regenerate. These hooks execute commands on the customer's machine: the runner is pinned to a major (ADR 0015), every settings write is backup-before-write and refuses an unparseable file.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @fatelabs/estelle@0 hook ground",
+            "timeout": 15,
+            "statusMessage": "Estelle hook ground"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @fatelabs/estelle@0 hook guard",
+            "timeout": 10,
+            "statusMessage": "Estelle hook guard"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @fatelabs/estelle@0 hook sync",
+            "timeout": 20,
+            "async": true,
+            "statusMessage": "Estelle hook sync"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @fatelabs/estelle@0 hook distil",
+            "timeout": 10,
+            "statusMessage": "Estelle hook distil"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @fatelabs/estelle@0 hook checkpoint",
+            "timeout": 30,
+            "async": true,
+            "statusMessage": "Estelle hook checkpoint"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @fatelabs/estelle@0 hook checkpoint",
+            "timeout": 30,
+            "statusMessage": "Estelle hook checkpoint"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @fatelabs/estelle@0 hook checkpoint",
+            "timeout": 30,
+            "statusMessage": "Estelle hook checkpoint"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @fatelabs/estelle@0 hook welcome",
+            "timeout": 5,
+            "statusMessage": "Estelle hook welcome"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @fatelabs/estelle@0 hook context",
+            "timeout": 10,
+            "statusMessage": "Estelle hook context"
+          }
+        ]
+      }
+    ]
+  }
+}
