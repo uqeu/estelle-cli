@@ -31,7 +31,7 @@ jobs:
             "${RUNNER_TEMP}/typescript"
           git clone --depth=1 https://github.com/golang/example.git \
             "${RUNNER_TEMP}/go"
-          git clone --depth=1 https://github.com/misitebao/wails-template-vue.git \
+          git clone --depth=1 https://github.com/gzuidhof/tygo.git \
             "${RUNNER_TEMP}/mixed"
           test "$(git -C "${RUNNER_TEMP}/typescript" ls-files '*.ts' '*.tsx' | wc -l)" -gt 0
           test "$(git -C "${RUNNER_TEMP}/go" ls-files '*.go' | wc -l)" -gt 0

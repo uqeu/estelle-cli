@@ -286,6 +286,7 @@ def setup_receipt(
         "sent": f"installed public binary setup on real {language} repository",
         "came_back": {
             "returncode": result["returncode"],
+            "reason": command_reason(result) if result["returncode"] != 0 else "",
             "question_symbol": symbol,
             "symbol_in_tracked_source": tracked,
             "agent_block_present": BEGIN.encode() in after and END.encode() in after,
