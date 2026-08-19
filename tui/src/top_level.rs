@@ -37,6 +37,8 @@ const GITHUB_LOOPBACK_PORT: u16 = 8788;
 const GITHUB_CALLBACK_PATH: &str = "/github/callback";
 const GITHUB_CALLBACK_TIMEOUT: Duration = Duration::from_secs(300);
 const SYNC_MAX_FILES: usize = 200;
+const INGEST_MAX_FILES: usize = 4_000;
+const INGEST_LANGUAGE_FLOOR: usize = 100;
 const INGEST_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const INGEST_MAX_POLLS: usize = 7_200;
 const SKIP_DIRECTORIES: &[&str] = &[
@@ -62,6 +64,7 @@ fn contract(command: &Command) -> Contract {
     match command {
         Command::Login { .. }
         | Command::Doctor
+        | Command::Brief { .. }
         | Command::Serve { .. }
         | Command::Connect { .. }
         | Command::Remove
@@ -73,6 +76,7 @@ fn contract(command: &Command) -> Contract {
         | Command::McpServer
         | Command::Upgrade { .. } => Contract::Local,
         Command::Init { .. }
+        | Command::Setup { .. }
         | Command::Sweep { .. }
         | Command::Reindex { .. }
         | Command::Github { .. }
@@ -90,6 +94,16 @@ pub(crate) async fn run(command: Command, repo: Repo, root: &Path) -> Result<Vec
     match command {
         Command::Login { .. } => Err("login is handled by the credential reader".to_string()),
         Command::Doctor => Err("doctor is handled by the credential diagnostics".to_string()),
+        Command::Brief {
+            file,
+            create,
+            print,
+            dry_run,
+        } => brief(root, file.as_deref(), create, print, dry_run),
+        Command::Setup {
+            client: _,
+            dry_run: true,
+        } => setup_dry_run(root),
         Command::Connect { client, .. } => Ok(connect_lines(client.as_deref().unwrap_or("cursor"))),
         Command::Serve { .. } => Err("serve is handled by the session runtime".to_string()),
         Command::Remove => remove_editor_configs(root),
@@ -1432,6 +1446,9 @@ async fn run_authenticated(
 ) -> Result<Vec<String>, String> {
     match command {
         Command::Init { client, dry_run } => init(api, root, client.as_deref(), dry_run).await,
+        Command::Setup { client, dry_run } => {
+            setup(api, &repo, root, client.as_deref(), dry_run).await
+        }
         Command::Sweep { path, dry_run } => {
             sweep(api, &repo, path.as_deref().unwrap_or(root), dry_run).await
         }
@@ -1452,6 +1469,7 @@ async fn run_authenticated(
         Command::Gate { base } => gate(api, &repo, root, base.as_deref()).await,
         Command::Login { .. }
         | Command::Doctor
+        | Command::Brief { .. }
         | Command::Serve { .. }
         | Command::Connect { .. }
         | Command::Remove
@@ -1463,6 +1481,70 @@ async fn run_authenticated(
         | Command::McpServer
         | Command::Upgrade { .. } => Err("local command reached the remote dispatcher".to_string()),
     }
+}
+
+fn brief(
+    root: &Path,
+    file: Option<&Path>,
+    create: bool,
+    print: bool,
+    dry_run: bool,
+) -> Result<Vec<String>, String> {
+    if print {
+        return Ok(vec![crate::agent_brief::render_block()]);
+    }
+    let files = match file {
+        Some(file) => vec![file.to_path_buf()],
+        None => {
+            let detected = crate::agent_brief::detected(root);
+            if detected.is_empty() && create {
+                vec![PathBuf::from("AGENTS.md")]
+            } else {
+                detected
+            }
+        }
+    };
+    if files.is_empty() {
+        return Ok(vec![
+            "No agent instruction file exists; nothing was written.".to_string(),
+            "Run estelle brief --create to create AGENTS.md, or --file CLAUDE.md --create."
+                .to_string(),
+        ]);
+    }
+    files
+        .iter()
+        .map(|file| crate::agent_brief::write(root, file, create, dry_run))
+        .map(|outcome| outcome.map(crate::agent_brief::outcome_line))
+        .collect()
+}
+
+fn brief_existing(root: &Path, dry_run: bool) -> Result<Vec<String>, String> {
+    brief(root, None, false, false, dry_run)
+}
+
+fn setup_dry_run(root: &Path) -> Result<Vec<String>, String> {
+    let mut lines = vec![
+        "Setup dry run: login and MCP connection were not attempted; nothing was sent.".to_string(),
+    ];
+    lines.extend(brief(root, None, true, false, true)?);
+    let (files, skipped) = collect_files(root, &[])?;
+    lines.push(format!(
+        "Would sweep {} source files; {} files are outside the local ingest boundary. Nothing was sent.",
+        files.len(),
+        skipped.len()
+    ));
+    lines.push(
+        match crate::setup_flow::proving_question(
+            files
+                .iter()
+                .map(|file| (file.path.clone(), file.content.clone())),
+        ) {
+            Some(question) => format!("Would prove with: {question}"),
+            None => "No TypeScript or Go symbol could be named; no proving question was invented."
+                .to_string(),
+        },
+    );
+    Ok(lines)
 }
 
 #[derive(Serialize)]
@@ -1531,7 +1613,12 @@ fn collect_files(
     };
     let mut files = Vec::new();
     let mut skipped = Vec::new();
-    for path in paths.into_iter().take(4000) {
+    let paths = if named.is_empty() {
+        bounded_inventory(paths)
+    } else {
+        paths.into_iter().take(INGEST_MAX_FILES).collect()
+    };
+    for path in paths {
         let full = if path.is_absolute() {
             path.clone()
         } else {
@@ -1586,6 +1673,35 @@ fn collect_files(
         });
     }
     Ok((files, skipped))
+}
+
+fn bounded_inventory(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    if paths.len() <= INGEST_MAX_FILES {
+        return paths;
+    }
+    let mut selected = BTreeSet::new();
+    for extension in ["ts", "tsx", "go"] {
+        selected.extend(
+            paths
+                .iter()
+                .enumerate()
+                .filter(|(_, path)| {
+                    path.extension().and_then(|value| value.to_str()) == Some(extension)
+                })
+                .map(|(index, _)| index)
+                .take(INGEST_LANGUAGE_FLOOR),
+        );
+    }
+    let remaining = INGEST_MAX_FILES.saturating_sub(selected.len());
+    let fill = (0..paths.len())
+        .filter(|index| !selected.contains(index))
+        .take(remaining)
+        .collect::<Vec<_>>();
+    selected.extend(fill);
+    selected
+        .into_iter()
+        .map(|index| paths[index].clone())
+        .collect()
 }
 
 fn inventory_paths(root: &Path) -> Result<Vec<PathBuf>, String> {
@@ -2948,10 +3064,12 @@ async fn init(
             .collect()
     };
     if selected.is_empty() {
-        return Ok(vec![
+        let mut lines = vec![
             "No supported editor was detected; nothing was written.".to_string(),
             "Run estelle init --client cursor|cline|windsurf|jetbrains|vscode.".to_string(),
-        ]);
+        ];
+        lines.extend(brief_existing(root, dry_run)?);
+        return Ok(lines);
     }
     let bearer = api.api_key.bearer_header_value();
     let key = bearer
@@ -2975,6 +3093,7 @@ async fn init(
         });
     }
     if dry_run {
+        lines.extend(brief_existing(root, true)?);
         return Ok(lines);
     }
     let initialized = api
@@ -2998,7 +3117,97 @@ async fn init(
     lines.push(
         "Estelle answered an MCP initialize request; the connection is verified.".to_string(),
     );
+    lines.extend(brief_existing(root, false)?);
     Ok(lines)
+}
+
+async fn setup(
+    api: &Api,
+    repo: &Repo,
+    root: &Path,
+    client: Option<&str>,
+    dry_run: bool,
+) -> Result<Vec<String>, String> {
+    let mut lines = init(api, root, client, dry_run).await?;
+    lines.extend(brief(root, None, true, false, dry_run)?);
+    let (files, skipped) = collect_files(root, &[])?;
+    let question = crate::setup_flow::proving_question(
+        files
+            .iter()
+            .map(|file| (file.path.clone(), file.content.clone())),
+    );
+    if dry_run {
+        lines.push(format!(
+            "Would sweep {} source files; {} files are outside the local ingest boundary. Nothing was sent.",
+            files.len(),
+            skipped.len()
+        ));
+        lines.push(match question {
+            Some(question) => format!("Would prove with: {question}"),
+            None => "No TypeScript or Go symbol could be named; no proving question was invented."
+                .to_string(),
+        });
+        return Ok(lines);
+    }
+    let question = question.ok_or_else(|| {
+        "the sweep inventory has no named TypeScript or Go symbol; refusing to invent a proving question"
+            .to_string()
+    })?;
+    lines.extend(sweep(api, repo, root, false).await?);
+    lines.push(format!("Proving question: {question}"));
+    lines.extend(ask(api, repo, std::slice::from_ref(&question)).await?);
+    Ok(lines)
+}
+
+pub(crate) fn language_preflight_lines(root: &Path) -> Result<Vec<String>, String> {
+    let inventory = inventory_paths(root)?;
+    let (files, _) = collect_files(root, &[])?;
+    let accepted = files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut ts_present = 0usize;
+    let mut ts_accepted = 0usize;
+    let mut go_present = 0usize;
+    let mut go_accepted = 0usize;
+    for path in inventory {
+        let extension = path.extension().and_then(|value| value.to_str());
+        let path_key = path.to_string_lossy().replace('\\', "/");
+        match extension {
+            Some("ts" | "tsx") => {
+                ts_present += 1;
+                ts_accepted += usize::from(accepted.contains(path_key.as_str()));
+            }
+            Some("go") => {
+                go_present += 1;
+                go_accepted += usize::from(accepted.contains(path_key.as_str()));
+            }
+            _ => {}
+        }
+    }
+    let row = |language: &str, accepted: usize, present: usize| {
+        if present == 0 {
+            format!("Repository {language} ingest preflight  absent")
+        } else if accepted == 0 {
+            format!(
+                "Repository {language} ingest preflight  FAIL · 0/{present} files cross the local ingest boundary"
+            )
+        } else if accepted < present {
+            format!(
+                "Repository {language} ingest preflight  PARTIAL · {accepted}/{present} files cross the local ingest boundary"
+            )
+        } else {
+            format!(
+                "Repository {language} ingest preflight  ready · {accepted}/{present} files cross the local ingest boundary"
+            )
+        }
+    };
+    Ok(vec![
+        "Repository ingest preflight  local file boundary only; server index/runtime not proven"
+            .to_string(),
+        row("TypeScript", ts_accepted, ts_present),
+        row("Go", go_accepted, go_present),
+    ])
 }
 
 fn write_editor_config(path: &Path, top_key: &str, key: &str, dry_run: bool) -> Result<(), String> {
@@ -4880,6 +5089,26 @@ tests/test_serve.py:88: AssertionError\n\
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "main.rs");
         assert!(skipped.is_empty());
+    }
+
+    #[test]
+    fn bounded_inventory_does_not_let_git_order_starve_typescript_behind_go() {
+        let mut paths = (0..INGEST_MAX_FILES)
+            .map(|index| PathBuf::from(format!("backend/{index:04}.go")))
+            .collect::<Vec<_>>();
+        paths.push(PathBuf::from("site/retry_scheduler.ts"));
+
+        let bounded = bounded_inventory(paths);
+
+        assert_eq!(bounded.len(), INGEST_MAX_FILES);
+        assert!(bounded.contains(&PathBuf::from("site/retry_scheduler.ts")));
+        assert_eq!(
+            bounded
+                .iter()
+                .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("go"))
+                .count(),
+            INGEST_MAX_FILES - 1
+        );
     }
 
     #[test]

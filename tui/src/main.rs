@@ -1,5 +1,6 @@
 #![deny(clippy::print_stderr, clippy::print_stdout)]
 
+mod agent_brief;
 mod claude_import;
 mod commands;
 mod copilot_login;
@@ -13,6 +14,7 @@ mod provider_catalog;
 mod provider_keys;
 mod provider_store;
 mod session_server;
+mod setup_flow;
 #[cfg(test)]
 mod test_gallery;
 mod top_level;
@@ -223,6 +225,24 @@ enum Command {
     Doctor,
     /// Configure Estelle for the current repository.
     Init {
+        #[arg(long)]
+        client: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Write or refresh Estelle's managed standing rule in agent instruction files.
+    Brief {
+        #[arg(long, value_name = "PATH")]
+        file: Option<PathBuf>,
+        #[arg(long)]
+        create: bool,
+        #[arg(long)]
+        print: bool,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Configure, brief, sweep, then prove Estelle on a symbol from this repository.
+    Setup {
         #[arg(long)]
         client: Option<String>,
         #[arg(long)]
@@ -6981,6 +7001,17 @@ async fn main() -> ExitCode {
         } else {
             ExitCode::FAILURE
         };
+    }
+    if matches!(args.command, Some(Command::Setup { dry_run: false, .. }))
+        && resolve_credential().is_err()
+    {
+        match login::run().await {
+            Ok(login::LoginOutcome::Rejected) => {
+                return login_failure(&"Estelle rejected the credential").await;
+            }
+            Err(error) => return login_failure(&error).await,
+            Ok(_) => {}
+        }
     }
     if let Some(Command::Serve { socket }) = args.command.clone() {
         let socket = match socket

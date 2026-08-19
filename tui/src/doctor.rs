@@ -52,6 +52,15 @@ pub(crate) fn lines(context: Context) -> Vec<String> {
     if local_configured {
         lines.extend(local_provider::capability_lines(&machine));
     }
+    match std::env::current_dir()
+        .map_err(|error| error.to_string())
+        .and_then(|root| crate::top_level::language_preflight_lines(&root))
+    {
+        Ok(preflight) => lines.extend(preflight),
+        Err(error) => lines.push(format!(
+            "Repository ingest preflight  FAIL · local inventory unavailable: {error}"
+        )),
+    }
     lines
 }
 
@@ -134,6 +143,29 @@ mod tests {
         assert_eq!(
             render_estelle_status(true, false),
             "present · ESTELLE_API_KEY environment; runtime binding not yet proven"
+        );
+    }
+
+    #[test]
+    fn mixed_repo_reports_each_language_and_cannot_hide_a_blocked_go_side() {
+        let root = tempfile::tempdir().expect("repo");
+        std::fs::write(
+            root.path().join("worker.ts"),
+            "export class RetryScheduler {}\n",
+        )
+        .expect("typescript");
+        std::fs::write(root.path().join("worker.go"), vec![b'x'; 400_001]).expect("oversize go");
+        let lines = crate::top_level::language_preflight_lines(root.path()).expect("preflight");
+        assert!(lines.iter().any(|line| {
+            line == "Repository TypeScript ingest preflight  ready · 1/1 files cross the local ingest boundary"
+        }));
+        assert!(lines.iter().any(|line| {
+            line == "Repository Go ingest preflight  FAIL · 0/1 files cross the local ingest boundary"
+        }));
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("server index/runtime not proven"))
         );
     }
 }
