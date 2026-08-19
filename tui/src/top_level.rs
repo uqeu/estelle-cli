@@ -3063,39 +3063,44 @@ async fn init(
             .filter(|config| config.path.exists() || config.path.parent().is_some_and(Path::exists))
             .collect()
     };
+    let mut lines = Vec::new();
     if selected.is_empty() {
-        let mut lines = vec![
+        lines.extend([
             "No supported editor was detected; nothing was written.".to_string(),
             "Run estelle init --client cursor|cline|windsurf|jetbrains|vscode.".to_string(),
-        ];
-        lines.extend(brief_existing(root, dry_run)?);
-        return Ok(lines);
-    }
-    let bearer = api.api_key.bearer_header_value();
-    let key = bearer
-        .strip_prefix("Bearer ")
-        .ok_or_else(|| "credential header could not be formed".to_string())?;
-    let mut lines = Vec::new();
-    for config in selected {
-        write_editor_config(&config.path, config.top_key, key, dry_run)?;
-        lines.push(if dry_run {
-            format!(
-                "{}: would write {}; nothing changed",
-                config.name,
-                config.path.display()
-            )
-        } else {
-            format!(
-                "{}: wrote {} (existing bytes backed up)",
-                config.name,
-                config.path.display()
-            )
-        });
+        ]);
+    } else {
+        let bearer = api.api_key.bearer_header_value();
+        let key = bearer
+            .strip_prefix("Bearer ")
+            .ok_or_else(|| "credential header could not be formed".to_string())?;
+        for config in selected {
+            write_editor_config(&config.path, config.top_key, key, dry_run)?;
+            lines.push(if dry_run {
+                format!(
+                    "{}: would write {}; nothing changed",
+                    config.name,
+                    config.path.display()
+                )
+            } else {
+                format!(
+                    "{}: wrote {} (existing bytes backed up)",
+                    config.name,
+                    config.path.display()
+                )
+            });
+        }
     }
     if dry_run {
         lines.extend(brief_existing(root, true)?);
         return Ok(lines);
     }
+    lines.push(initialize_mcp(api).await?);
+    lines.extend(brief_existing(root, false)?);
+    Ok(lines)
+}
+
+async fn initialize_mcp(api: &Api) -> Result<String, String> {
     let initialized = api
         .post(
             Endpoint::Mcp,
@@ -3112,13 +3117,9 @@ async fn init(
         )
         .await?;
     if initialized.get("result").is_none() {
-        return Err("configs were written, but the MCP initialize reply had no result".to_string());
+        return Err("the MCP initialize reply had no result; connection is unproven".to_string());
     }
-    lines.push(
-        "Estelle answered an MCP initialize request; the connection is verified.".to_string(),
-    );
-    lines.extend(brief_existing(root, false)?);
-    Ok(lines)
+    Ok("Estelle answered an MCP initialize request; the connection is verified.".to_string())
 }
 
 async fn setup(
@@ -3575,6 +3576,62 @@ fn split_flag(values: &[String], flag: &str) -> (Vec<String>, Option<String>) {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[tokio::test]
+    async fn mcp_initialize_needs_a_result_and_names_the_verified_connection() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/mcp"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(json!({"jsonrpc": "2.0", "id": 1, "result": {}})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let key = estelle_client::ApiKey::new("test-key").expect("key");
+        let api = Api {
+            client: Client::new(
+                &format!("{}/", server.uri()),
+                key.clone(),
+                Duration::from_secs(120),
+            )
+            .expect("client"),
+            api_key: key,
+            cancel: CancellationToken::new(),
+        };
+        assert_eq!(
+            initialize_mcp(&api).await.expect("initialize"),
+            "Estelle answered an MCP initialize request; the connection is verified."
+        );
+
+        let missing = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/mcp"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(json!({"jsonrpc": "2.0", "id": 1})),
+            )
+            .mount(&missing)
+            .await;
+        let key = estelle_client::ApiKey::new("test-key").expect("key");
+        let api = Api {
+            client: Client::new(
+                &format!("{}/", missing.uri()),
+                key.clone(),
+                Duration::from_secs(120),
+            )
+            .expect("client"),
+            api_key: key,
+            cancel: CancellationToken::new(),
+        };
+        assert!(
+            initialize_mcp(&api)
+                .await
+                .expect_err("missing result must refuse")
+                .contains("connection is unproven")
+        );
+    }
 
     /// The public CLI repository deliberately does not contain the separate server repository.
     /// Every parity test below therefore carries a Python-produced oracle and always checks Rust

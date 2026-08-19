@@ -50,8 +50,18 @@
   "reviewed_changes_after_audited_commit": [
     {
       "path": "tui/src/top_level.rs",
-      "blob": "0306e0eb1e700c4e3898578f482e20be8da600af",
-      "reason": "the new `Upgrade` variant is classified Local in `contract()` and refused by the remote dispatcher, so it can never acquire a credential or reach api.fatelabs.ca; no other behaviour in this file moved."
+      "blob": "e65cef179a38696ae3455f7a64af63caca70ea3e",
+      "reason": "`brief` is a repository-confined local file transform; `setup` deliberately composes the already-audited authenticated /mcp, /ingest/start, /ingest/progress and /deep-search routes. The 4,000-file bound now reserves TypeScript and Go representation before filling in Git order, and doctor labels its accepted/total inventory as local-only rather than server proof. No new network destination or credential source was added."
+    },
+    {
+      "path": "tui/src/agent_brief.rs",
+      "blob": "0c10e01a8f0e4564a0a9c686ec4ec45d32d8eefb",
+      "reason": "NEW FILE, local filesystem only: writes a bounded managed block to one of sixteen explicit repository-relative instruction paths, refuses absolute/parent/symlink/non-file targets, preserves the original in a .bak, and turns a second run into no write. It has no network or credential primitive."
+    },
+    {
+      "path": "tui/src/setup_flow.rs",
+      "blob": "1159b402f05c08216fe5978f3c183ce1c4bcbe12",
+      "reason": "NEW FILE, pure parser only: derives one proving question from a strong symbol actually present in collected TypeScript or Go source and refuses generic or unparseable input. It performs no file write, network call or credential access."
     },
     {
       "path": "tui/src/external_agent_config_migration/source.rs",
@@ -65,8 +75,8 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "blob": "303b903640548936ddb74103e9223ec237e9efb5",
-      "reason": "release-gating only: the existing tag/version equality check is extended from two version writers to four (plugin manifest and marketplace entry), and the plugin identity guard is added to `validate`. No new secret, permission, publish target or network step."
+      "blob": "1e6499afd6125b9804875d2b8e039cf576d0a12f",
+      "reason": "release validation adds the pure INSTALL receipt tests, then a separate post-release job installs the exact public artifact, clones three named public repositories, passes the existing repository-scoped receipt secret by environment without printing it, drives only the already-audited production routes, preserves the sanitized JSON receipt and attaches it to the same release. It adds no deploy step, secret writer, permission beyond release-asset upload, or destination outside GitHub and api.fatelabs.ca."
     },
     {
       "path": ".github/workflows/public-binary-receipts.yml",
@@ -120,8 +130,8 @@
     },
     {
       "path": "tui/src/doctor.rs",
-      "blob": "cdc055951aae19d599ee44c2b6068984b148918d",
-      "reason": "doctor reports measured local hardware and exact configured-model fit without selecting a model; credential status inspects only environment presence and file metadata, labels the blocking OS secure store unprobed, and renders no credential value"
+      "blob": "2ca571ead3fe6c085d7c7724f4d9df53852be425",
+      "reason": "doctor retains metadata-only credential reporting and adds only repository inventory counts: TypeScript and Go are reported independently as accepted/total with a loud local-only limit, so one blocked side cannot be rendered healthy. No file content, credential value or network result is rendered."
     },
     {
       "path": "tui/src/login.rs",
@@ -130,8 +140,8 @@
     },
     {
       "path": "tui/src/main.rs",
-      "blob": "54e6e8d429b4c1244c4335290d0d451353520af1",
-      "reason": "the reviewed upgrade/version-check behavior and egress are unchanged; Estelle credential rendering now has one stored-file source because the API-key path no longer uses Keychain, while environment credentials remain non-deletable and no credential value is rendered"
+      "blob": "f716da1d0b820a2fbf4dbe26adbb0cae755c4cef",
+      "reason": "the new `brief` and dry-run `setup` surfaces dispatch locally; an actual `setup` invokes the existing masked login only when the existing credential resolver fails, then enters the authenticated compound dispatcher. No credential value is rendered and no new egress destination exists."
     },
     {
       "path": "tui/src/copilot_login.rs",
