@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 import urllib.request
 from pathlib import Path
 
@@ -18,6 +19,7 @@ EXPECTED_SURFACE = {"tools_base": 16, "prompts": 246}
 BEGIN = "<!-- BEGIN ESTELLE — managed block, safe to move, do not edit inside -->"
 END = "<!-- END ESTELLE -->"
 QUESTION = re.compile(r"Proving question: What does `([A-Za-z_][A-Za-z0-9_]*)` do")
+INTER_SURFACE_COOLDOWN_S = 31
 
 
 def run(binary: Path, arguments: list[str], cwd: Path, timeout: int = 1_200) -> dict:
@@ -398,6 +400,7 @@ def main() -> int:
         receipts.append(
             setup_receipt(args.binary, repo, language, trace, customer_line)
         )
+        time.sleep(INTER_SURFACE_COOLDOWN_S)
     mixed_trace = args.trace_dir / "mixed.jsonl"
     os.environ["ESTELLE_RECEIPT_PATH"] = str(mixed_trace)
     receipts.append(mixed_receipt(args.binary, args.mixed, mixed_trace))

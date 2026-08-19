@@ -17,6 +17,9 @@ SPEC.loader.exec_module(MODULE)
 
 
 class PublicInstallReceiptTests(unittest.TestCase):
+    def test_inter_surface_pause_exceeds_the_server_dependency_cooldown(self) -> None:
+        self.assertGreater(MODULE.INTER_SURFACE_COOLDOWN_S, 30)
+
     def test_timed_out_command_becomes_a_failed_receipt_instead_of_erasing_it(self) -> None:
         with mock.patch.object(
             MODULE.subprocess,
