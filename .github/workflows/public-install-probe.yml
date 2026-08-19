@@ -2,6 +2,15 @@ name: Public install probe
 
 on:
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Receipt surfaces to run
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - mixed
 
 permissions:
   contents: write
@@ -56,15 +65,16 @@ jobs:
             --go "${RUNNER_TEMP}/go" \
             --mixed "${RUNNER_TEMP}/mixed" \
             --trace-dir "${RUNNER_TEMP}/install-traces" \
+            --scope "${{ inputs.scope }}" \
             --output "${RUNNER_TEMP}/public-install-receipts.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
-          name: public-install-receipts-${{ steps.release.outputs.tag }}-${{ github.run_id }}
+          name: public-install-receipts-${{ inputs.scope }}-${{ steps.release.outputs.tag }}-${{ github.run_id }}
           path: ${{ runner.temp }}/public-install-receipts.json
           if-no-files-found: error
       - name: Attach the exact receipt to the public release
-        if: steps.install_receipts.outcome == 'success'
+        if: steps.install_receipts.outcome == 'success' && inputs.scope == 'all'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

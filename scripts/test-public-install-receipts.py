@@ -17,6 +17,16 @@ SPEC.loader.exec_module(MODULE)
 
 
 class PublicInstallReceiptTests(unittest.TestCase):
+    def test_mixed_scope_does_not_repeat_terminal_brief_or_setup_receipts(self) -> None:
+        self.assertEqual(
+            MODULE.receipt_plan("mixed"),
+            {"brief": False, "setup": False, "mixed": True},
+        )
+        self.assertEqual(
+            MODULE.receipt_plan("all"),
+            {"brief": True, "setup": True, "mixed": True},
+        )
+
     def test_inter_surface_pause_exceeds_the_server_dependency_cooldown(self) -> None:
         self.assertGreater(MODULE.INTER_SURFACE_COOLDOWN_S, 30)
 

@@ -99,6 +99,10 @@ def command_reason(result: dict) -> str:
     return output[-1_000:]
 
 
+def receipt_plan(scope: str) -> dict[str, bool]:
+    return {"brief": scope == "all", "setup": scope == "all", "mixed": True}
+
+
 def trace_summary(path: Path, required: set[str]) -> tuple[bool, dict]:
     records = [
         json.loads(line)
@@ -382,25 +386,30 @@ def main() -> int:
     parser.add_argument("--mixed", type=Path, required=True)
     parser.add_argument("--trace-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--scope", choices=("all", "mixed"), default="all")
     args = parser.parse_args()
     args.trace_dir.mkdir(parents=True, exist_ok=True)
     version = run(args.binary, ["--version"], args.typescript, timeout=30)
     before = read_health()
-    receipts = [
-        brief_receipt(args.binary, args.typescript, "Keep cobalt customer content."),
-        brief_receipt(args.binary, args.go, "Keep amber customer content."),
-    ]
-    setup_repositories = [
-        (args.typescript, "TypeScript", "Keep cobalt customer content."),
-        (args.go, "Go", "Keep amber customer content."),
-    ]
-    for repo, language, customer_line in setup_repositories:
-        trace = args.trace_dir / f"setup-{language.lower()}.jsonl"
-        os.environ["ESTELLE_RECEIPT_PATH"] = str(trace)
-        receipts.append(
-            setup_receipt(args.binary, repo, language, trace, customer_line)
-        )
-        time.sleep(INTER_SURFACE_COOLDOWN_S)
+    plan = receipt_plan(args.scope)
+    receipts = []
+    if plan["brief"]:
+        receipts.extend([
+            brief_receipt(args.binary, args.typescript, "Keep cobalt customer content."),
+            brief_receipt(args.binary, args.go, "Keep amber customer content."),
+        ])
+    if plan["setup"]:
+        setup_repositories = [
+            (args.typescript, "TypeScript", "Keep cobalt customer content."),
+            (args.go, "Go", "Keep amber customer content."),
+        ]
+        for repo, language, customer_line in setup_repositories:
+            trace = args.trace_dir / f"setup-{language.lower()}.jsonl"
+            os.environ["ESTELLE_RECEIPT_PATH"] = str(trace)
+            receipts.append(
+                setup_receipt(args.binary, repo, language, trace, customer_line)
+            )
+            time.sleep(INTER_SURFACE_COOLDOWN_S)
     mixed_trace = args.trace_dir / "mixed.jsonl"
     os.environ["ESTELLE_RECEIPT_PATH"] = str(mixed_trace)
     receipts.append(mixed_receipt(args.binary, args.mixed, mixed_trace))
@@ -412,6 +421,7 @@ def main() -> int:
         and before.get("build") == after.get("build")
     )
     report = {
+        "scope": args.scope,
         "version": version["stdout"].strip(),
         "expected_version": expected,
         "repositories": {
