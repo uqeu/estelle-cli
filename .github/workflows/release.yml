@@ -267,11 +267,11 @@ jobs:
       - name: Clone real TypeScript, Go, and mixed repositories
         run: |
           set -euo pipefail
-          git clone --depth=1 https://github.com/Shubhamsaboo/awesome-llm-apps.git \
+          git clone --depth=1 https://github.com/sindresorhus/p-queue.git \
             "${RUNNER_TEMP}/typescript"
-          git clone --depth=1 https://github.com/google/go-cmp.git \
+          git clone --depth=1 https://github.com/golang/example.git \
             "${RUNNER_TEMP}/go"
-          git clone --depth=1 --filter=blob:limit=500k https://github.com/coder/coder.git \
+          git clone --depth=1 --filter=blob:limit=500k https://github.com/spotlightify/spotlightify.git \
             "${RUNNER_TEMP}/mixed"
           test "$(git -C "${RUNNER_TEMP}/typescript" ls-files '*.ts' '*.tsx' | wc -l)" -gt 0
           test "$(git -C "${RUNNER_TEMP}/go" ls-files '*.go' | wc -l)" -gt 0

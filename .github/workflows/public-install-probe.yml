@@ -1,0 +1,78 @@
+name: Public install probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  public-install-receipts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Resolve and install the latest public release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name)"
+          test -n "$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/install.sh" | sh
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+      - name: Clone zero-finding real TypeScript, Go, and mixed repositories
+        run: |
+          set -euo pipefail
+          git clone --depth=1 https://github.com/sindresorhus/p-queue.git \
+            "${RUNNER_TEMP}/typescript"
+          git clone --depth=1 https://github.com/golang/example.git \
+            "${RUNNER_TEMP}/go"
+          git clone --depth=1 --filter=blob:limit=500k https://github.com/spotlightify/spotlightify.git \
+            "${RUNNER_TEMP}/mixed"
+          test "$(git -C "${RUNNER_TEMP}/typescript" ls-files '*.ts' '*.tsx' | wc -l)" -gt 0
+          test "$(git -C "${RUNNER_TEMP}/go" ls-files '*.go' | wc -l)" -gt 0
+          test "$(git -C "${RUNNER_TEMP}/mixed" ls-files '*.ts' '*.tsx' | wc -l)" -gt 0
+          test "$(git -C "${RUNNER_TEMP}/mixed" ls-files '*.go' | wc -l)" -gt 0
+      - name: Drive INSTALL through the installed public binary and production
+        id: install_receipts
+        continue-on-error: true
+        env:
+          ESTELLE_API_KEY: ${{ secrets.ESTELLE_RECEIPT_API_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${ESTELLE_API_KEY:-}" || {
+            echo "INSTALL receipt: ESTELLE_RECEIPT_API_KEY is absent on ${GITHUB_REPOSITORY}" >&2
+            exit 1
+          }
+          test "$(command -v estelle)" = "${HOME}/.local/bin/estelle"
+          python3 scripts/public-install-receipts.py \
+            --binary "${HOME}/.local/bin/estelle" \
+            --expected-version "${{ steps.release.outputs.tag }}" \
+            --typescript "${RUNNER_TEMP}/typescript" \
+            --go "${RUNNER_TEMP}/go" \
+            --mixed "${RUNNER_TEMP}/mixed" \
+            --trace-dir "${RUNNER_TEMP}/install-traces" \
+            --output "${RUNNER_TEMP}/public-install-receipts.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: public-install-receipts-${{ steps.release.outputs.tag }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/public-install-receipts.json
+          if-no-files-found: error
+      - name: Attach the exact receipt to the public release
+        if: steps.install_receipts.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ steps.release.outputs.tag }}" \
+            "${RUNNER_TEMP}/public-install-receipts.json" --clobber
+      - name: Fail closed after preserving the receipt
+        if: always() && steps.install_receipts.outcome != 'success'
+        run: |
+          echo "INSTALL receipt: one or more installed-binary contracts failed; inspect the uploaded receipt" >&2
+          exit 1

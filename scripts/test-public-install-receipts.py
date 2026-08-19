@@ -76,6 +76,62 @@ class PublicInstallReceiptTests(unittest.TestCase):
             self.assertTrue(passed)
             self.assertTrue(summary["terminal_ingest"])
 
+    def test_trace_keeps_only_the_safe_error_reason_not_secret_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            trace = Path(temporary) / "trace.jsonl"
+            trace.write_text(json.dumps({
+                "request": {"path": "/ingest/start"},
+                "response": {
+                    "status": 422,
+                    "body": {
+                        "error": {
+                            "code": 422,
+                            "type": "unsafe_ingest",
+                            "message": "ingest refused: findings present; no files were stored",
+                        },
+                        "secret_findings": [
+                            {"path": "must-not-escape.ts", "line": 7, "shape": "hidden"}
+                        ],
+                    },
+                },
+            }) + "\n")
+            passed, summary = MODULE.trace_summary(trace, {"/ingest/start"})
+            self.assertFalse(passed)
+            self.assertEqual(summary["errors"], {
+                "/ingest/start": [{
+                    "status": 422,
+                    "code": 422,
+                    "type": "unsafe_ingest",
+                    "message": "ingest refused: findings present; no files were stored",
+                }]
+            })
+            self.assertNotIn("must-not-escape", json.dumps(summary))
+
+    def test_mixed_sweep_accepts_sync_or_terminal_background_not_started_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            trace = Path(temporary) / "trace.jsonl"
+            trace.write_text(json.dumps({
+                "request": {"path": "/sync"}, "response": {"status": 200}
+            }) + "\n")
+            passed, summary = MODULE.sweep_trace_summary(trace)
+            self.assertTrue(passed)
+            self.assertEqual(summary["sweep_transport"], "sync")
+
+            rows = [
+                {"request": {"path": "/ingest/start"}, "response": {"status": 200}},
+                {"request": {"path": "/ingest/progress"},
+                 "response": {"status": 200, "body": {"state": "ingesting"}}},
+            ]
+            trace.write_text("".join(json.dumps(row) + "\n" for row in rows))
+            passed, summary = MODULE.sweep_trace_summary(trace)
+            self.assertFalse(passed)
+            self.assertEqual(summary["sweep_transport"], "background-incomplete")
+            rows[-1]["response"]["body"]["state"] = "done"
+            trace.write_text("".join(json.dumps(row) + "\n" for row in rows))
+            passed, summary = MODULE.sweep_trace_summary(trace)
+            self.assertTrue(passed)
+            self.assertEqual(summary["sweep_transport"], "background-terminal")
+
     def test_setup_accepts_sync_or_terminal_background_sweep_but_not_started_only(self) -> None:
         common = [
             {"request": {"path": "/mcp"}, "response": {"status": 200}},

@@ -80,6 +80,7 @@ def trace_summary(path: Path, required: set[str]) -> tuple[bool, dict]:
         if line.strip()
     ]
     statuses: dict[str, list[int]] = {}
+    errors: dict[str, list[dict]] = {}
     terminal_ingest = False
     for record in records:
         request = record.get("request", {})
@@ -88,6 +89,16 @@ def trace_summary(path: Path, required: set[str]) -> tuple[bool, dict]:
         status = response.get("status")
         if isinstance(route, str) and isinstance(status, int):
             statuses.setdefault(route, []).append(status)
+            body = response.get("body", {})
+            error = body.get("error", {}) if isinstance(body, dict) else {}
+            if status >= 400 and isinstance(error, dict):
+                safe = {"status": status}
+                for field in ("code", "type"):
+                    if isinstance(error.get(field), (int, str)):
+                        safe[field] = error[field]
+                if error.get("type") == "unsafe_ingest" and isinstance(error.get("message"), str):
+                    safe["message"] = error["message"]
+                errors.setdefault(route, []).append(safe)
         if (
             route == "/ingest/progress"
             and isinstance(status, int)
@@ -101,7 +112,31 @@ def trace_summary(path: Path, required: set[str]) -> tuple[bool, dict]:
     )
     if "/ingest/progress" in required:
         passed = passed and terminal_ingest
-    return passed, {"statuses": statuses, "terminal_ingest": terminal_ingest}
+    return passed, {
+        "statuses": statuses,
+        "errors": errors,
+        "terminal_ingest": terminal_ingest,
+    }
+
+
+def sweep_trace_summary(path: Path) -> tuple[bool, dict]:
+    _, summary = trace_summary(path, set())
+    statuses = summary["statuses"]
+    sync = any(200 <= status < 300 for status in statuses.get("/sync", []))
+    background = (
+        any(200 <= status < 300 for status in statuses.get("/ingest/start", []))
+        and summary["terminal_ingest"]
+    )
+    if sync:
+        transport = "sync"
+    elif background:
+        transport = "background-terminal"
+    elif "/ingest/start" in statuses:
+        transport = "background-incomplete"
+    else:
+        transport = "absent"
+    summary["sweep_transport"] = transport
+    return sync or background, summary
 
 
 def setup_trace_summary(path: Path) -> tuple[bool, dict]:
@@ -249,7 +284,7 @@ def mixed_receipt(binary: Path, repo: Path, trace: Path) -> dict:
     trace.unlink(missing_ok=True)
     sweep = run(binary, ["sweep"], repo)
     try:
-        remote, statuses = trace_summary(trace, {"/ingest/start", "/ingest/progress"})
+        remote, statuses = sweep_trace_summary(trace)
     except (OSError, json.JSONDecodeError) as error:
         remote, statuses = False, {"trace_error": [type(error).__name__]}
     with tempfile.TemporaryDirectory(prefix="estelle-doctor-control-") as temporary:
