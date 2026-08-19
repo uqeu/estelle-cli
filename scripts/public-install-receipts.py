@@ -87,6 +87,16 @@ def build_window(before: dict, after: dict) -> dict:
     }
 
 
+def command_reason(result: dict) -> str:
+    """Keep a bounded, actionable tail without serialising an entire command transcript."""
+    output = "\n".join(
+        value.strip()
+        for value in (result.get("stdout", ""), result.get("stderr", ""))
+        if isinstance(value, str) and value.strip()
+    )
+    return output[-1_000:]
+
+
 def trace_summary(path: Path, required: set[str]) -> tuple[bool, dict]:
     records = [
         json.loads(line)
@@ -154,7 +164,7 @@ def sweep_trace_summary(path: Path) -> tuple[bool, dict]:
 
 
 def setup_trace_summary(path: Path) -> tuple[bool, dict]:
-    common, summary = trace_summary(path, {"/mcp", "/deep-search"})
+    common, summary = trace_summary(path, {"/mcp", "/v1/chat/completions"})
     statuses = summary["statuses"]
     sync = any(200 <= status < 300 for status in statuses.get("/sync", []))
     background = (
@@ -345,6 +355,7 @@ def mixed_receipt(binary: Path, repo: Path, trace: Path) -> dict:
                 line for line in doctor["stdout"].splitlines() if "ingest preflight" in line
             ],
             "sweep_returncode": sweep["returncode"],
+            "sweep_reason": command_reason(sweep),
             "remote_statuses": statuses,
             "matched_negative_control": matched_control,
             "production_build": production,

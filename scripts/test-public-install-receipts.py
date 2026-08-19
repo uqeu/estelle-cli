@@ -135,7 +135,7 @@ class PublicInstallReceiptTests(unittest.TestCase):
     def test_setup_accepts_sync_or_terminal_background_sweep_but_not_started_only(self) -> None:
         common = [
             {"request": {"path": "/mcp"}, "response": {"status": 200}},
-            {"request": {"path": "/deep-search"}, "response": {"status": 200}},
+            {"request": {"path": "/v1/chat/completions"}, "response": {"status": 200}},
         ]
         with tempfile.TemporaryDirectory() as temporary:
             trace = Path(temporary) / "trace.jsonl"
@@ -192,6 +192,13 @@ class PublicInstallReceiptTests(unittest.TestCase):
         self.assertTrue(crossed["discarded"])
         self.assertEqual(crossed["before"], "before-sha")
         self.assertEqual(crossed["after"], "after-sha")
+
+    def test_failed_command_reason_is_bounded_and_keeps_the_actionable_tail(self) -> None:
+        result = {"stdout": "prefix\n" + "x" * 2_000, "stderr": "capacity refused"}
+        reason = MODULE.command_reason(result)
+        self.assertLessEqual(len(reason), 1_000)
+        self.assertIn("capacity refused", reason)
+        self.assertNotIn("prefix", reason)
 
 
 if __name__ == "__main__":
