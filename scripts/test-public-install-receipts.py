@@ -17,6 +17,15 @@ SPEC.loader.exec_module(MODULE)
 
 
 class PublicInstallReceiptTests(unittest.TestCase):
+    def test_mixed_doctor_accepts_truthful_ready_rows_with_both_language_counts(self) -> None:
+        output = "\n".join([
+            "Repository ingest preflight  local file boundary only; server index/runtime not proven",
+            "Repository TypeScript ingest preflight  ready · 15/15 files cross the local ingest boundary",
+            "Repository Go ingest preflight  ready · 34/34 files cross the local ingest boundary",
+        ])
+        self.assertTrue(MODULE.mixed_doctor_positive(output))
+        self.assertFalse(MODULE.mixed_doctor_positive(output.replace("Repository Go", "Repository Rust")))
+
     def test_mixed_scope_does_not_repeat_terminal_brief_or_setup_receipts(self) -> None:
         self.assertEqual(
             MODULE.receipt_plan("mixed"),

@@ -103,6 +103,22 @@ def receipt_plan(scope: str) -> dict[str, bool]:
     return {"brief": scope == "all", "setup": scope == "all", "mixed": True}
 
 
+def mixed_doctor_positive(output: str) -> bool:
+    if "server index/runtime not proven" not in output:
+        return False
+    for language in ("TypeScript", "Go"):
+        match = re.search(
+            rf"Repository {language} ingest preflight  (?:ready|PARTIAL) · (\d+)/(\d+) files cross",
+            output,
+        )
+        if not match:
+            return False
+        crossed, total = (int(value) for value in match.groups())
+        if crossed < 1 or total < crossed:
+            return False
+    return True
+
+
 def trace_summary(path: Path, required: set[str]) -> tuple[bool, dict]:
     records = [
         json.loads(line)
@@ -339,14 +355,7 @@ def mixed_receipt(binary: Path, repo: Path, trace: Path) -> dict:
         healthy = run(binary, ["doctor"], control, timeout=120)
         (control / "worker.go").write_bytes(b"x" * 400_001)
         failed = run(binary, ["doctor"], control, timeout=120)
-    positive = all(
-        marker in doctor["stdout"]
-        for marker in [
-            "Repository TypeScript ingest preflight  PARTIAL",
-            "Repository Go ingest preflight  PARTIAL",
-            "server index/runtime not proven",
-        ]
-    )
+    positive = mixed_doctor_positive(doctor["stdout"])
     matched_control = all(
         [
             "Repository TypeScript ingest preflight  ready · 1/1" in healthy["stdout"],
