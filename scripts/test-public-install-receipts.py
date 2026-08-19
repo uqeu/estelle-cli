@@ -178,6 +178,21 @@ class PublicInstallReceiptTests(unittest.TestCase):
         self.assertFalse(MODULE.verified_health({**healthy, "surface": {"tools_base": 16}}))
         self.assertFalse(MODULE.verified_health({**healthy, "build_verified": False}))
 
+    def test_each_surface_discards_a_cross_build_window(self) -> None:
+        healthy = {
+            "build": "before-sha",
+            "build_verified": True,
+            "surface": {"tools_base": 16, "prompts": 246},
+        }
+        stable = MODULE.build_window(healthy, dict(healthy))
+        self.assertTrue(stable["stable_and_verified"])
+        self.assertFalse(stable["discarded"])
+        crossed = MODULE.build_window(healthy, {**healthy, "build": "after-sha"})
+        self.assertFalse(crossed["stable_and_verified"])
+        self.assertTrue(crossed["discarded"])
+        self.assertEqual(crossed["before"], "before-sha")
+        self.assertEqual(crossed["after"], "after-sha")
+
 
 if __name__ == "__main__":
     unittest.main()

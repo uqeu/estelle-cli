@@ -73,6 +73,20 @@ def verified_health(value: dict) -> bool:
     )
 
 
+def build_window(before: dict, after: dict) -> dict:
+    stable = (
+        verified_health(before)
+        and verified_health(after)
+        and before.get("build") == after.get("build")
+    )
+    return {
+        "before": before.get("build"),
+        "after": after.get("build"),
+        "stable_and_verified": stable,
+        "discarded": not stable,
+    }
+
+
 def trace_summary(path: Path, required: set[str]) -> tuple[bool, dict]:
     records = [
         json.loads(line)
@@ -243,6 +257,7 @@ def brief_receipt(binary: Path, repo: Path, customer_line: str) -> dict:
 def setup_receipt(
     binary: Path, repo: Path, language: str, trace: Path, customer_line: str
 ) -> dict:
+    before_health = read_health()
     trace.unlink(missing_ok=True)
     instruction = repo / "CLAUDE.md"
     before = instruction.read_bytes()
@@ -256,6 +271,7 @@ def setup_receipt(
         remote, statuses = setup_trace_summary(trace)
     except (OSError, json.JSONDecodeError) as error:
         remote, statuses = False, {"trace_error": [type(error).__name__]}
+    production = build_window(before_health, read_health())
     return {
         "sent": f"installed public binary setup on real {language} repository",
         "came_back": {
@@ -267,19 +283,25 @@ def setup_receipt(
             "instruction_file_unchanged": before == after,
             "second_write_refused": "already current; nothing written" in result["stdout"],
             "remote_statuses": statuses,
+            "production_build": production,
         },
-        "pass": result["returncode"] == 0
-        and tracked
-        and remote
-        and before == after
-        and customer_line.encode() in after
-        and BEGIN.encode() in after
-        and END.encode() in after
-        and "already current; nothing written" in result["stdout"],
+        "discarded": production["discarded"],
+        "pass": (
+            result["returncode"] == 0
+            and tracked
+            and remote
+            and before == after
+            and customer_line.encode() in after
+            and BEGIN.encode() in after
+            and END.encode() in after
+            and "already current; nothing written" in result["stdout"]
+            and production["stable_and_verified"]
+        ),
     }
 
 
 def mixed_receipt(binary: Path, repo: Path, trace: Path) -> dict:
+    before_health = read_health()
     doctor = run(binary, ["doctor"], repo, timeout=120)
     trace.unlink(missing_ok=True)
     sweep = run(binary, ["sweep"], repo)
@@ -287,6 +309,7 @@ def mixed_receipt(binary: Path, repo: Path, trace: Path) -> dict:
         remote, statuses = sweep_trace_summary(trace)
     except (OSError, json.JSONDecodeError) as error:
         remote, statuses = False, {"trace_error": [type(error).__name__]}
+    production = build_window(before_health, read_health())
     with tempfile.TemporaryDirectory(prefix="estelle-doctor-control-") as temporary:
         control = Path(temporary)
         subprocess.run(["git", "init", "--quiet"], cwd=control, check=True)
@@ -316,7 +339,7 @@ def mixed_receipt(binary: Path, repo: Path, trace: Path) -> dict:
         ]
     )
     return {
-        "sent": "real coder/coder mixed sweep plus one-side-failed doctor control",
+        "sent": "real mixed TypeScript+Go sweep plus one-side-failed doctor control",
         "came_back": {
             "doctor_rows": [
                 line for line in doctor["stdout"].splitlines() if "ingest preflight" in line
@@ -324,12 +347,15 @@ def mixed_receipt(binary: Path, repo: Path, trace: Path) -> dict:
             "sweep_returncode": sweep["returncode"],
             "remote_statuses": statuses,
             "matched_negative_control": matched_control,
+            "production_build": production,
         },
+        "discarded": production["discarded"],
         "pass": doctor["returncode"] == 0
         and sweep["returncode"] == 0
         and positive
         and matched_control
-        and remote,
+        and remote
+        and production["stable_and_verified"],
     }
 
 
@@ -384,6 +410,14 @@ def main() -> int:
             "stable_and_verified": build_stable,
         },
         "receipts": receipts,
+    }
+    report["summary"] = {
+        "passed": sum(receipt.get("pass") is True for receipt in receipts),
+        "failed": sum(
+            receipt.get("pass") is not True and receipt.get("discarded") is not True
+            for receipt in receipts
+        ),
+        "discarded": sum(receipt.get("discarded") is True for receipt in receipts),
     }
     report["pass"] = (
         version["returncode"] == 0
