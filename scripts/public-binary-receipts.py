@@ -512,6 +512,17 @@ def _session_question_matches(question: object) -> bool:
     )
 
 
+def _completed_session_record(records: list[dict], source_label: str) -> dict | None:
+    return next(
+        (
+            record
+            for record in records
+            if session_resume_http_contract(record, source_label)
+        ),
+        None,
+    )
+
+
 def erasure_gate_receipt() -> dict[str, object]:
     arguments = ["estelle", "memory", "forget", "receipt-sentinel"]
     result = subprocess.run(
@@ -879,11 +890,9 @@ def _probe_imported_source(
             )
             visible = _read_until(fd, observed, ("› Ask Estelle",), deadline)
         while time.monotonic() < deadline and http_record is None:
-            for record in _read_http_records_after(trace_path, trace_offset):
-                question = record.get("request", {}).get("body", {}).get("question")
-                if _session_question_matches(question):
-                    http_record = record
-                    break
+            http_record = _completed_session_record(
+                _read_http_records_after(trace_path, trace_offset), source_label
+            )
             if http_record is None:
                 time.sleep(0.05)
         source_after = _sha256_file(source_path)
@@ -1516,11 +1525,14 @@ def _terminal_head_response(record: dict) -> bool:
     if isinstance(status, int) and 200 <= status < 300:
         return True
     body = response.get("body", {})
+    blocked = body.get("blocked") if isinstance(body, dict) else None
     return (
         request.get("path") == "/ingest/start"
         and status == 422
         and isinstance(body, dict)
-        and body.get("blocked") is True
+        and isinstance(blocked, int)
+        and not isinstance(blocked, bool)
+        and blocked > 0
         and body.get("indexed") == 0
         and body.get("chunks") == 0
     )

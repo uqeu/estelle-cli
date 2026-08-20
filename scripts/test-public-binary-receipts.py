@@ -1209,7 +1209,7 @@ def test_head_contract_accepts_a_terminal_unsafe_ingest_refusal() -> None:
             "request": {"path": "/ingest/start", "body": {"head": "b" * 40}},
             "response": {
                 "status": 422,
-                "body": {"blocked": True, "indexed": 0, "chunks": 0},
+                "body": {"blocked": 20, "indexed": 0, "chunks": 0},
             },
         }
     )
@@ -1217,6 +1217,9 @@ def test_head_contract_accepts_a_terminal_unsafe_ingest_refusal() -> None:
     stored_mutant = json.loads(json.dumps(records))
     stored_mutant[-1]["response"]["body"]["indexed"] = 1
     assert harness._head_contract(stored_mutant) is False
+    unblocked_mutant = json.loads(json.dumps(records))
+    unblocked_mutant[-1]["response"]["body"]["blocked"] = 0
+    assert harness._head_contract(unblocked_mutant) is False
 
 
 def test_head_contract_ignores_unrelated_non_object_request_bodies() -> None:
@@ -1492,6 +1495,31 @@ def test_session_resume_contract_requires_imported_context_and_a_server_response
     assert harness.session_resume_http_contract(record) is False
 
 
+def test_session_trace_waits_past_an_early_incomplete_record() -> None:
+    harness = load_harness()
+    complete = {
+        "request": {
+            "path": "/deep-search",
+            "body": {
+                "question": harness.SESSION_RESUME_QUESTION.rstrip("?"),
+                "working_memory": {
+                    "session_context": (
+                        "Imported OpenCode session: Keep the cobalt owl marker\n"
+                        "User: Keep the cobalt owl marker\n"
+                        "Assistant: The cobalt owl marker is retained"
+                    )
+                },
+            },
+        },
+        "response": {"status": 200, "body": {"answer": "src/main.tsx"}},
+    }
+    incomplete = json.loads(json.dumps(complete))
+    incomplete["response"]["body"]["answer"] = ""
+    assert harness._completed_session_record(
+        [incomplete, complete], "OpenCode"
+    ) == complete
+
+
 def test_session_receipt_matches_the_tui_normalized_question() -> None:
     harness = load_harness()
     assert harness._session_question_matches(harness.SESSION_RESUME_QUESTION) is True
@@ -1558,6 +1586,7 @@ def main() -> int:
     test_hook_receipts_require_a_malformed_input_negative_control()
     test_opencode_fixture_names_the_exact_repository_and_complete_turn()
     test_session_resume_contract_requires_imported_context_and_a_server_response()
+    test_session_trace_waits_past_an_early_incomplete_record()
     test_session_receipt_matches_the_tui_normalized_question()
     test_unsafe_sweep_refusal_is_the_negative_control()
 
