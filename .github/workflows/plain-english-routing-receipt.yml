@@ -1,0 +1,62 @@
+name: plain-English routing receipt
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing public release tag to measure
+        required: true
+        default: v0.2.24
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plain-English-routing-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Require and install the exact public release
+        env:
+          ESTELLE_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$' <<<"$ESTELLE_VERSION"
+          gh release view "$ESTELLE_VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${ESTELLE_VERSION}/install.sh" | sh
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+      - name: Clone the real public repository
+        run: |
+          set -euo pipefail
+          git clone --depth=1 https://github.com/Shubhamsaboo/awesome-llm-apps.git \
+            "${RUNNER_TEMP}/awesome-llm-apps"
+          test "$(git -C "${RUNNER_TEMP}/awesome-llm-apps" ls-files '*.py' | wc -l)" -gt 100
+          test "$(git -C "${RUNNER_TEMP}/awesome-llm-apps" ls-files '*.ts' '*.tsx' | wc -l)" -gt 100
+      - name: Measure ten plain-English turns through the installed binary
+        env:
+          ESTELLE_API_KEY: ${{ secrets.ESTELLE_RECEIPT_API_KEY }}
+          ESTELLE_RECEIPT_PATH: ${{ runner.temp }}/plain-English-http.jsonl
+        working-directory: ${{ runner.temp }}/awesome-llm-apps
+        run: |
+          set -euo pipefail
+          test -n "${ESTELLE_API_KEY:-}" || {
+            echo "plain-English receipt: ESTELLE_RECEIPT_API_KEY is absent on ${GITHUB_REPOSITORY}" >&2
+            exit 1
+          }
+          test "$(command -v estelle)" = "${HOME}/.local/bin/estelle"
+          python3 "${GITHUB_WORKSPACE}/scripts/plain-english-routing-receipt.py" \
+            --repo Shubhamsaboo/awesome-llm-apps \
+            --output "${RUNNER_TEMP}/plain-English-routing-receipt.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: plain-English-routing-${{ inputs.version }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/plain-English-routing-receipt.json
+          if-no-files-found: error

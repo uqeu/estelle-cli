@@ -48,6 +48,8 @@ jobs:
         run: python3 scripts/test-ip-boundary.py
       - name: Prove the public-binary receipt harness
         run: python3 scripts/test-public-binary-receipts.py
+      - name: Prove the plain-English routing instrument
+        run: python3 scripts/test-plain-english-routing-receipt.py
       - name: Prove the public INSTALL receipt harness
         run: python3 scripts/test-public-install-receipts.py
       - name: Verify fork provenance and egress census
