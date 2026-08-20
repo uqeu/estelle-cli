@@ -1520,6 +1520,12 @@ def test_session_trace_waits_past_an_early_incomplete_record() -> None:
     ) == complete
 
 
+def test_session_trace_gets_completion_grace_after_a_slow_tui() -> None:
+    harness = load_harness()
+    assert harness._session_trace_deadline(100.0, now=101.0) == 111.0
+    assert harness._session_trace_deadline(120.0, now=101.0) == 120.0
+
+
 def test_session_receipt_matches_the_tui_normalized_question() -> None:
     harness = load_harness()
     assert harness._session_question_matches(harness.SESSION_RESUME_QUESTION) is True
@@ -1587,6 +1593,7 @@ def main() -> int:
     test_opencode_fixture_names_the_exact_repository_and_complete_turn()
     test_session_resume_contract_requires_imported_context_and_a_server_response()
     test_session_trace_waits_past_an_early_incomplete_record()
+    test_session_trace_gets_completion_grace_after_a_slow_tui()
     test_session_receipt_matches_the_tui_normalized_question()
     test_unsafe_sweep_refusal_is_the_negative_control()
 

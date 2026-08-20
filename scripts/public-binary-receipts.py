@@ -523,6 +523,11 @@ def _completed_session_record(records: list[dict], source_label: str) -> dict | 
     )
 
 
+def _session_trace_deadline(original_deadline: float, *, now: float | None = None) -> float:
+    observed = time.monotonic() if now is None else now
+    return max(original_deadline, observed + 10.0)
+
+
 def erasure_gate_receipt() -> dict[str, object]:
     arguments = ["estelle", "memory", "forget", "receipt-sentinel"]
     result = subprocess.run(
@@ -889,7 +894,8 @@ def _probe_imported_source(
                 deadline,
             )
             visible = _read_until(fd, observed, ("› Ask Estelle",), deadline)
-        while time.monotonic() < deadline and http_record is None:
+        trace_deadline = _session_trace_deadline(deadline)
+        while time.monotonic() < trace_deadline and http_record is None:
             http_record = _completed_session_record(
                 _read_http_records_after(trace_path, trace_offset), source_label
             )
