@@ -10,6 +10,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 
@@ -362,6 +363,32 @@ def test_grounded_question_requires_both_request_and_response_evidence() -> None
     ungrounded = json.loads(json.dumps(record))
     ungrounded["response"]["body"]["grounded"] = False
     assert harness._surface_http_contract(harness.GROUNDING_QUESTION, ungrounded) is False
+
+
+def test_arbitrary_turn_wait_ignores_passive_startup_routes() -> None:
+    harness = load_harness()
+    with tempfile.TemporaryDirectory(prefix="estelle-active-http-") as raw_dir:
+        path = Path(raw_dir) / "trace.jsonl"
+        path.write_text(
+            json.dumps(
+                {"request": {"path": "/overview"}, "response": {"status": 200}}
+            )
+            + "\n"
+            + json.dumps(
+                {"request": {"path": "/deep-search"}, "response": {"status": 200}}
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        assert harness._wait_for_active_http_receipt(
+            path, 0, time.monotonic() + 0.2
+        ) == {"path": "/deep-search", "status": 200}
+        assert harness._wait_for_active_http_receipt(
+            path, 1, time.monotonic() + 0.05
+        ) == {"path": "/deep-search", "status": 200}
+        assert harness._wait_for_active_http_receipt(
+            path, 2, time.monotonic()
+        ) == {"path": "not observed", "status": "not observed"}
 
 
 def test_skill_thread_receipt_keeps_both_turns_in_one_tui_process() -> None:
@@ -1477,6 +1504,7 @@ def main() -> int:
     test_question_turn_uses_the_same_public_tui_seam()
     test_tui_turn_waits_past_the_composer_paste_suppression_window()
     test_grounded_question_requires_both_request_and_response_evidence()
+    test_arbitrary_turn_wait_ignores_passive_startup_routes()
     test_skill_thread_receipt_keeps_both_turns_in_one_tui_process()
     test_tui_surface_fails_closed()
     test_init_receipt_rejects_an_echo_without_its_named_http_route()

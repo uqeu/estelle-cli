@@ -102,7 +102,12 @@ def _active_records(harness, trace: Path, offset: int) -> list[dict]:
 
 def run_turn(harness, prompt: str, repo: str, trace: Path, timeout: float) -> dict:
     offset = harness._trace_line_count(trace) or 0
-    tui = harness.tui_turn_receipt(prompt, repo, timeout)
+    tui = harness.tui_turn_receipt(
+        prompt,
+        repo,
+        timeout,
+        wait_for_active_http=not prompt.startswith("/receipt-route-that-does-not-exist"),
+    )
     records = _active_records(harness, trace, offset)
     paths = [record.get("request", {}).get("path") for record in records]
     statuses = [record.get("response", {}).get("status") for record in records]

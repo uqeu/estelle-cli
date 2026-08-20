@@ -1223,10 +1223,30 @@ def _wait_for_surface_http_receipt(
     return {"path": expected_path, "status": "not observed", "contract": False}
 
 
+def _wait_for_active_http_receipt(
+    path: Path,
+    line_offset: int,
+    deadline: float,
+) -> dict[str, object]:
+    while time.monotonic() < deadline:
+        for record in _read_http_records_after(path, line_offset):
+            request_path = record.get("request", {}).get("path")
+            if request_path in PASSIVE_TUI_ROUTES:
+                continue
+            if isinstance(request_path, str):
+                return {
+                    "path": request_path,
+                    "status": record.get("response", {}).get("status", "not observed"),
+                }
+        time.sleep(0.05)
+    return {"path": "not observed", "status": "not observed"}
+
+
 def tui_turn_receipt(
     turn: str,
     repo: str,
     timeout: float = 30,
+    wait_for_active_http: bool = False,
 ) -> dict[str, object]:
     assert turn.strip() == turn and turn
     pid, fd = pty.fork()
@@ -1237,9 +1257,10 @@ def tui_turn_receipt(
     observed = bytearray()
     visible = ""
     raw_trace = os.environ.get("ESTELLE_RECEIPT_PATH")
+    expected_http_path = READ_SURFACE_HTTP_ROUTES.get(turn)
     http_trace = (
         Path(raw_trace)
-        if raw_trace and turn in READ_SURFACE_HTTP_ROUTES
+        if raw_trace and (expected_http_path is not None or wait_for_active_http)
         else None
     )
     trace_offset = _trace_line_count(http_trace) or 0
@@ -1258,9 +1279,14 @@ def tui_turn_receipt(
             visible = _read_until(fd, observed, ("› Ask Estelle",), ready_deadline)
         http_route = None
         if http_trace is not None:
-            http_route = _wait_for_surface_http_receipt(
-                turn, http_trace, trace_offset, ready_deadline
-            )
+            if expected_http_path is not None:
+                http_route = _wait_for_surface_http_receipt(
+                    turn, http_trace, trace_offset, ready_deadline
+                )
+            else:
+                http_route = _wait_for_active_http_receipt(
+                    http_trace, trace_offset, ready_deadline
+                )
             visible = _read_until(
                 fd, observed, ("receipt-output-drained",), time.monotonic() + 0.25
             )
@@ -1268,7 +1294,11 @@ def tui_turn_receipt(
             f"you  {turn}" in visible
             and "› Ask Estelle" in visible
             and not any(marker in visible for marker in FAILURE_MARKERS)
-            and (http_route is None or http_route["contract"] is True)
+            and (
+                http_route is None
+                or "contract" not in http_route
+                or http_route["contract"] is True
+            )
         )
         receipt = {"sent": turn, "came_back": visible.strip(), "pass": passed}
         if http_route is not None:
