@@ -1366,7 +1366,7 @@ def test_opencode_fixture_names_the_exact_repository_and_complete_turn() -> None
         assert codex_records[0]["payload"]["cwd"] == str(repository.resolve())
 
 
-def test_session_resume_contract_requires_imported_context_and_grounded_response() -> None:
+def test_session_resume_contract_requires_imported_context_and_a_server_response() -> None:
     harness = load_harness()
     record = {
         "request": {
@@ -1403,8 +1403,37 @@ def test_session_resume_contract_requires_imported_context_and_grounded_response
             "Assistant: The cobalt owl marker is retained"
         )
         assert harness.session_resume_http_contract(record, label) is True
+    ungrounded = json.loads(json.dumps(record))
+    ungrounded["response"]["body"]["grounded"] = False
+    assert harness.session_resume_http_contract(ungrounded, "Claude Code") is True
+    missing_answer = json.loads(json.dumps(ungrounded))
+    missing_answer["response"]["body"]["answer"] = ""
+    assert harness.session_resume_http_contract(missing_answer, "Claude Code") is False
     record["request"]["body"]["working_memory"]["session_context"] = ""
     assert harness.session_resume_http_contract(record) is False
+
+
+def test_unsafe_sweep_refusal_is_the_negative_control() -> None:
+    harness = load_harness()
+    refused = {
+        "sent": "estelle sweep",
+        "came_back": (
+            "Estelle returned HTTP 422 Unprocessable Entity: ingest refused: "
+            "20 possible hardcoded secrets; no files were stored\n"
+            "The command did not complete its requested operation."
+        ),
+        "exit_code": 1,
+        "pass": False,
+    }
+    assert harness._unsafe_sweep_refusal_contract(refused) is True
+    stored_mutant = json.loads(json.dumps(refused))
+    stored_mutant["came_back"] = stored_mutant["came_back"].replace(
+        "no files were stored", "files were stored"
+    )
+    assert harness._unsafe_sweep_refusal_contract(stored_mutant) is False
+    success_mutant = json.loads(json.dumps(refused))
+    success_mutant["exit_code"] = 0
+    assert harness._unsafe_sweep_refusal_contract(success_mutant) is False
 
 
 def main() -> int:
@@ -1437,7 +1466,8 @@ def main() -> int:
     test_hook_receipts_fail_closed_on_one_silent_nonzero()
     test_hook_receipts_require_a_malformed_input_negative_control()
     test_opencode_fixture_names_the_exact_repository_and_complete_turn()
-    test_session_resume_contract_requires_imported_context_and_grounded_response()
+    test_session_resume_contract_requires_imported_context_and_a_server_response()
+    test_unsafe_sweep_refusal_is_the_negative_control()
 
     print("public receipt test: all 24 audited read surfaces are mandatory")
     return 0

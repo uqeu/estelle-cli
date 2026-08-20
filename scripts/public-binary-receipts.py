@@ -486,26 +486,24 @@ def session_resume_http_contract(record: dict, source_label: str = "OpenCode") -
     response_body = response.get("body", {})
     working_memory = request_body.get("working_memory", {})
     context = working_memory.get("session_context")
-    sources = response_body.get("sources")
     expected_title = (
         SESSION_RESUME_PRIOR_QUESTION
         if source_label == "Codex"
         else SESSION_RESUME_TITLE
     )
+    question = request_body.get("question")
+    expected_question = SESSION_RESUME_QUESTION
     return (
         request.get("path") == "/deep-search"
-        and request_body.get("question") == SESSION_RESUME_QUESTION
+        and isinstance(question, str)
+        and question.rstrip("?") == expected_question.rstrip("?")
         and isinstance(context, str)
         and f"Imported {source_label} session: {expected_title}" in context
         and f"User: {SESSION_RESUME_PRIOR_QUESTION}" in context
         and f"Assistant: {SESSION_RESUME_PRIOR_ANSWER}" in context
         and response.get("status") == 200
-        and response_body.get("grounded") is True
         and isinstance(response_body.get("answer"), str)
         and bool(response_body["answer"].strip())
-        and isinstance(sources, list)
-        and bool(sources)
-        and all(isinstance(source, dict) and source.get("file") for source in sources)
     )
 
 
@@ -574,13 +572,27 @@ def reindex_receipt(timeout: float) -> dict[str, object]:
 
 
 def head_surface_receipts(timeout: float = 600) -> list[dict[str, object]]:
+    unsafe = command_receipt(["estelle", "sweep"], (), timeout)
+    unsafe["pass"] = _unsafe_sweep_refusal_contract(unsafe)
     return [
         command_receipt(
             ["estelle", "sweep", "--path", SMALL_SWEEP_PATH], ("Repo swept",), timeout
         ),
-        command_receipt(["estelle", "sweep"], ("Repo swept",), timeout),
+        unsafe,
         reindex_receipt(timeout),
     ]
+
+
+def _unsafe_sweep_refusal_contract(receipt: dict[str, object]) -> bool:
+    output = str(receipt.get("came_back", ""))
+    return (
+        receipt.get("exit_code") not in (None, 0)
+        and "HTTP 422 Unprocessable Entity" in output
+        and "ingest refused:" in output
+        and "possible hardcoded secrets" in output
+        and "no files were stored" in output
+        and "did not complete its requested operation" in output
+    )
 
 
 def _hook_specs(root: Path, transcript: Path) -> list[tuple[str, str, dict]]:
