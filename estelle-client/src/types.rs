@@ -6,6 +6,32 @@ use serde_json::Value;
 #[derive(Clone, Copy, Debug, Default, Serialize)]
 pub struct NoQuery;
 
+#[derive(Clone, Debug, Serialize)]
+pub struct SuiteDispatchRequest {
+    pub prompt: String,
+}
+
+impl SuiteDispatchRequest {
+    pub fn new(prompt: impl Into<String>) -> Self {
+        Self {
+            prompt: prompt.into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SuiteDispatchResponse {
+    pub dispatch: SuiteDispatch,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SuiteDispatch {
+    pub suite: String,
+    pub action: String,
+    pub confidence: f64,
+    pub reason: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AccountResponse {
     #[serde(default)]

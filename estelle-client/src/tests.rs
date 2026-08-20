@@ -20,7 +20,7 @@ fn test_key() -> ApiKey {
 
 #[test]
 fn endpoint_inventory_is_unique_and_matches_the_server_audit() {
-    assert_eq!(API_ENDPOINTS.len(), 81);
+    assert_eq!(API_ENDPOINTS.len(), 82);
     let unique = API_ENDPOINTS
         .iter()
         .map(|spec| spec.path)
@@ -323,6 +323,42 @@ fn settings_and_global_autonomy_are_registered_with_their_real_methods() {
         &[HttpMethod::Get, HttpMethod::Put]
     );
     assert!(!Endpoint::AgentPresets.requires_repo());
+}
+
+#[tokio::test]
+async fn plain_english_dispatch_posts_the_untouched_prompt_to_the_server_owned_contract() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/turn/route"))
+        .and(body_json(
+            serde_json::json!({"prompt": "Is production up right now"}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "dispatch": {
+                "suite": "monitor",
+                "action": "monitor.uptime",
+                "confidence": 1.0,
+                "reason": "matched production-up"
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client =
+        Client::new(&format!("{}/", server.uri()), test_key(), MINIMUM_TIMEOUT).expect("client");
+
+    let response = client
+        .suite_dispatch(
+            &SuiteDispatchRequest::new("Is production up right now"),
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("dispatch");
+
+    assert_eq!(response.dispatch.suite, "monitor");
+    assert_eq!(response.dispatch.action, "monitor.uptime");
+    assert_eq!(Endpoint::TurnRoute.path(), "turn/route");
+    assert!(!Endpoint::TurnRoute.requires_repo());
 }
 
 #[tokio::test]

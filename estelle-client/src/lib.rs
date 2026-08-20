@@ -220,6 +220,14 @@ impl Client {
             .await
     }
 
+    pub async fn suite_dispatch(
+        &self,
+        request: &SuiteDispatchRequest,
+        cancel: &CancellationToken,
+    ) -> Result<SuiteDispatchResponse, Error> {
+        self.post(Endpoint::TurnRoute, request, cancel).await
+    }
+
     pub async fn orchestra_run(
         &self,
         repo: &Repo,

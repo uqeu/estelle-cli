@@ -75,6 +75,7 @@ use estelle_client::Repo;
 use estelle_client::RepoResolver;
 use estelle_client::ReposResponse;
 use estelle_client::Source;
+use estelle_client::SuiteDispatchRequest;
 use estelle_client::is_secret_shaped;
 use estelle_client::mask_secret;
 use futures::StreamExt;
@@ -3399,11 +3400,33 @@ async fn answer_question(
     session_context: Option<String>,
     cancel: &CancellationToken,
 ) -> Result<AnswerReply, Error> {
-    // ONE model round-trip per question, always through /deep-search: the server owns the
-    // conversational fast path (`utterance.is_conversational`), the scope decision and the
-    // grounding certificate. `AnswerReply.text` is what a human reads — retrieval context is
-    // model INPUT, never assistant output — so the transcript carries the rendered answer only
-    // and provenance is disclosed from the typed `working_paths` field (see /context).
+    // The server classifies the untouched sentence first. The client only binds the returned closed
+    // action to an existing endpoint; it never re-scores words or owns a second suite classifier.
+    // Research still makes exactly one MODEL round-trip through /deep-search after that deterministic
+    // dispatch read. `AnswerReply.text` is what a human reads — retrieval context is model INPUT,
+    // never assistant output — so the transcript carries the rendered answer only and provenance is
+    // disclosed from the typed `working_paths` field (see /context).
+    let dispatch = client
+        .suite_dispatch(&SuiteDispatchRequest::new(&question), cancel)
+        .await?
+        .dispatch;
+
+    if dispatch.action != "research.ask" {
+        return answer_dispatched_suite(client, repo, root, question, dispatch.action, cancel)
+            .await;
+    }
+
+    answer_research_question(client, repo, root, question, session_context, cancel).await
+}
+
+async fn answer_research_question(
+    client: Client,
+    repo: Repo,
+    root: PathBuf,
+    question: String,
+    session_context: Option<String>,
+    cancel: &CancellationToken,
+) -> Result<AnswerReply, Error> {
     //
     // THE RULE: the client sends DATA; the client never authors INSTRUCTIONS. `question` is the
     // user's message verbatim — client prose prepended to it defeats the server's
@@ -3444,6 +3467,134 @@ async fn answer_question(
         sources: response.sources,
         working_paths,
     })
+}
+
+async fn answer_dispatched_suite(
+    client: Client,
+    repo: Repo,
+    root: PathBuf,
+    question: String,
+    action: String,
+    cancel: &CancellationToken,
+) -> Result<AnswerReply, Error> {
+    let (name, reply): (&str, CommandReply) = match action.as_str() {
+        "review.diff" | "guardian.verify_diff" => {
+            let measured = match git_diff(&root, "", cancel).await {
+                Ok(measured) if !measured.patch.trim().is_empty() => measured,
+                _ => {
+                    return Ok(AnswerReply {
+                        text: "I understood the request, but there is no readable local diff to inspect. Nothing was sent to Review or Guardian.".to_string(),
+                        grounded: Some(false),
+                        degraded: true,
+                        sources: Vec::new(),
+                        working_paths: Vec::new(),
+                    });
+                }
+            };
+            let inspected = measured
+                .files
+                .into_iter()
+                .map(|file| file.path)
+                .collect::<Vec<_>>();
+            let (name, reply) = if action == "review.diff" {
+                let reply = client
+                    .post_scoped(
+                        estelle_client::Endpoint::Gate,
+                        &repo,
+                        &serde_json::json!({"diff": measured.patch, "deep": true}),
+                        cancel,
+                    )
+                    .await?;
+                ("review", reply)
+            } else {
+                let reply = client
+                    .post_scoped(
+                        estelle_client::Endpoint::Verify,
+                        &repo,
+                        &serde_json::json!({"answer": measured.patch}),
+                        cancel,
+                    )
+                    .await?;
+                ("verify", reply)
+            };
+            return Ok(answer_from_command(name, reply, inspected));
+        }
+        "affinity.route" => (
+            "routing",
+            client
+                .post_scoped(
+                    estelle_client::Endpoint::Route,
+                    &repo,
+                    &serde_json::json!({"prompt": question}),
+                    cancel,
+                )
+                .await?,
+        ),
+        "monitor.logs" => (
+            "monitor",
+            client
+                .get(
+                    estelle_client::Endpoint::MonitorLogs,
+                    &estelle_client::NoQuery,
+                    cancel,
+                )
+                .await?,
+        ),
+        "monitor.uptime" => (
+            "monitor",
+            client
+                .get(
+                    estelle_client::Endpoint::MonitorUptime,
+                    &estelle_client::NoQuery,
+                    cancel,
+                )
+                .await?,
+        ),
+        "memory.search" => (
+            "grep",
+            client
+                .post_scoped(
+                    estelle_client::Endpoint::Search,
+                    &repo,
+                    &serde_json::json!({"query": question}),
+                    cancel,
+                )
+                .await?,
+        ),
+        "memory.list" => (
+            "memories",
+            client
+                .get_scoped(
+                    estelle_client::Endpoint::Memories,
+                    &repo,
+                    &estelle_client::NoQuery,
+                    cancel,
+                )
+                .await?,
+        ),
+        _ => {
+            return Ok(AnswerReply {
+                text: format!(
+                    "The server returned unsupported dispatch action {action:?}. Nothing else was sent."
+                ),
+                grounded: Some(false),
+                degraded: true,
+                sources: Vec::new(),
+                working_paths: Vec::new(),
+            });
+        }
+    };
+    Ok(answer_from_command(name, reply, Vec::new()))
+}
+
+fn answer_from_command(name: &str, reply: CommandReply, working_paths: Vec<String>) -> AnswerReply {
+    AnswerReply {
+        text: commands::render_remote_reply(name, &reply).join("\n"),
+        grounded: reply.grounded,
+        degraded: reply.degraded,
+        sources: Vec::new(),
+        working_paths,
+    }
 }
 
 /// Crude client-side BANDWIDTH gate — see `answer_question` for why this is not a verdict and
@@ -9768,9 +9919,27 @@ mod tests {
         assert!(rendered.contains("reviewable diff is ready"));
     }
 
+    async fn mount_research_dispatch(server: &MockServer, prompt: &str) {
+        Mock::given(method("POST"))
+            .and(path("/turn/route"))
+            .and(body_json(json!({"prompt": prompt})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "dispatch": {
+                    "suite": "research",
+                    "action": "research.ask",
+                    "confidence": 1.0,
+                    "reason": "matched code-question"
+                }
+            })))
+            .expect(1)
+            .mount(server)
+            .await;
+    }
+
     #[tokio::test]
     async fn grounded_answer_keeps_citations_visible_without_moving_the_composer() {
         let server = MockServer::start().await;
+        mount_research_dispatch(&server, "where does charge fail?").await;
         Mock::given(method("POST"))
             .and(path("/deep-search"))
             .and(body_json(json!({
@@ -9824,6 +9993,105 @@ mod tests {
         assert!(rendered.contains("Ask Estelle"));
     }
 
+    #[tokio::test]
+    async fn plain_english_monitor_request_uses_server_dispatch_then_the_named_read_surface() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/turn/route"))
+            .and(body_json(json!({"prompt": "Is production up right now"})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "dispatch": {
+                    "suite": "monitor",
+                    "action": "monitor.uptime",
+                    "confidence": 1.0,
+                    "reason": "matched production-up"
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/monitor/uptime"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "checks": [{"url": "https://api.fatelabs.ca", "status": "up"}]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = Client::new(
+            &format!("{}/", server.uri()),
+            estelle_client::ApiKey::new("test-key").expect("key"),
+            Duration::from_secs(120),
+        )
+        .expect("client");
+        let root = tempfile::tempdir().expect("working tree");
+
+        let reply = answer_question(
+            client,
+            Repo::new("fatelabs/estelle").expect("repo"),
+            root.path().to_path_buf(),
+            "Is production up right now".to_string(),
+            None,
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("answer");
+
+        assert!(reply.text.contains("api.fatelabs.ca"));
+        assert!(reply.text.contains("up"));
+        let requests = server.received_requests().await.expect("request recording");
+        assert_eq!(
+            requests
+                .iter()
+                .map(|request| request.url.path())
+                .collect::<Vec<_>>(),
+            ["/turn/route", "/monitor/uptime"]
+        );
+    }
+
+    #[tokio::test]
+    async fn ambiguous_plain_english_stops_after_dispatch_and_names_clarification() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/turn/route"))
+            .respond_with(ResponseTemplate::new(422).set_body_json(json!({
+                "error": {
+                    "code": 422,
+                    "message": "clarify which Estelle suite should handle this request"
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = Client::new(
+            &format!("{}/", server.uri()),
+            estelle_client::ApiKey::new("test-key").expect("key"),
+            Duration::from_secs(120),
+        )
+        .expect("client");
+
+        let result = answer_question(
+            client,
+            Repo::new("fatelabs/estelle").expect("repo"),
+            tempfile::tempdir()
+                .expect("working tree")
+                .path()
+                .to_path_buf(),
+            "Help me with this repository".to_string(),
+            None,
+            &CancellationToken::new(),
+        )
+        .await;
+        let Err(error) = result else {
+            panic!("ambiguous dispatch must fail closed")
+        };
+
+        assert!(error.to_string().contains("clarify"));
+        let requests = server.received_requests().await.expect("request recording");
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].url.path(), "/turn/route");
+    }
+
     fn dirty_working_tree() -> tempfile::TempDir {
         let root = tempfile::tempdir().expect("working tree");
         let git = |arguments: &[&str]| {
@@ -9857,6 +10125,7 @@ mod tests {
     #[tokio::test]
     async fn answer_turn_shows_the_answer_only_never_the_retrieval_plumbing() {
         let server = MockServer::start().await;
+        mount_research_dispatch(&server, "what does the changed function return?").await;
         Mock::given(method("POST"))
             .and(path("/deep-search"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -9920,13 +10189,10 @@ mod tests {
         // typed — a contains-check would pass on a wrapper, so this is equality — and working
         // memory rides a separate top-level key as data, never smuggled through prose.
         let requests = server.received_requests().await.expect("request recording");
-        assert_eq!(
-            requests.len(),
-            1,
-            "exactly one model round-trip may fire per question"
-        );
-        assert_eq!(requests[0].url.path(), "/deep-search");
-        let body: Value = serde_json::from_slice(&requests[0].body).expect("json body");
+        assert_eq!(requests.len(), 2, "one dispatch read plus one model call");
+        assert_eq!(requests[0].url.path(), "/turn/route");
+        assert_eq!(requests[1].url.path(), "/deep-search");
+        let body: Value = serde_json::from_slice(&requests[1].body).expect("json body");
         assert_eq!(
             body["question"].as_str(),
             Some("what does the changed function return?"),
@@ -10079,6 +10345,7 @@ mod tests {
     #[tokio::test]
     async fn conversational_question_rides_the_fast_path_with_no_working_memory_upload() {
         let server = MockServer::start().await;
+        mount_research_dispatch(&server, "hi").await;
         Mock::given(method("POST"))
             .and(path("/deep-search"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -10123,15 +10390,17 @@ mod tests {
         assert_eq!(reply.text, "HI SENTINEL ANSWER");
         assert!(reply.working_paths.is_empty());
         // A conversational turn uploads the question ALONE, so the server's is_conversational
-        // fast path can fire; 80 KB of working memory would defeat it. One request, no chat leg.
+        // fast path can fire; 80 KB of working memory would defeat it. One dispatch read, one model
+        // request, and no raw-chat leg.
         let requests = server.received_requests().await.expect("request recording");
         assert_eq!(
             requests.len(),
-            1,
-            "a conversational turn must not fire the raw chat endpoint"
+            2,
+            "dispatch plus deep-search, never raw chat"
         );
-        assert_eq!(requests[0].url.path(), "/deep-search");
-        let body: Value = serde_json::from_slice(&requests[0].body).expect("json body");
+        assert_eq!(requests[0].url.path(), "/turn/route");
+        assert_eq!(requests[1].url.path(), "/deep-search");
+        let body: Value = serde_json::from_slice(&requests[1].body).expect("json body");
         assert_eq!(body["question"].as_str(), Some("hi"));
         assert!(
             body.get("working_memory").is_none(),
@@ -10844,6 +11113,7 @@ mod tests {
         // the pasted file ever occur — the server has zero multimodal handling, and the client
         // must not invent one.
         let server = MockServer::start().await;
+        mount_research_dispatch(&server, "what does this show? /tmp/screenshot-with-key.png").await;
         Mock::given(method("POST"))
             .and(path("/deep-search"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -10873,14 +11143,16 @@ mod tests {
         .expect("answer");
 
         let requests = server.received_requests().await.expect("request recording");
-        assert_eq!(requests.len(), 1);
-        let body: Value = serde_json::from_slice(&requests[0].body).expect("json body");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].url.path(), "/turn/route");
+        assert_eq!(requests[1].url.path(), "/deep-search");
+        let body: Value = serde_json::from_slice(&requests[1].body).expect("json body");
         assert_eq!(
             body["question"].as_str(),
             Some(typed.as_str()),
             "the pasted path text must go verbatim, nothing more"
         );
-        let raw = String::from_utf8_lossy(&requests[0].body);
+        let raw = String::from_utf8_lossy(&requests[1].body);
         let key_count = body
             .as_object()
             .expect("body object")

@@ -758,8 +758,9 @@ fn preset_update_body(argument: &str) -> Result<Value, RouteError> {
     }
     let routing_table = ["plan", "implement", "review"]
         .into_iter()
-        .map(|role| rows.remove(role).expect("all three roles checked"))
-        .collect::<Vec<_>>();
+        .map(|role| rows.remove(role))
+        .collect::<Option<Vec<_>>>()
+        .ok_or(RouteError::InvalidPresetArguments)?;
     Ok(json!({"preset": preset, "routing_table": routing_table}))
 }
 
@@ -2122,6 +2123,17 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                 .map(|reason| format!("  |  {reason}"))
                 .unwrap_or_default()
         )],
+        "monitor" => {
+            let value = reply
+                .extra
+                .get("checks")
+                .or_else(|| reply.extra.get("logs"))
+                .or_else(|| reply.extra.get("issues"));
+            value.map_or_else(
+                || vec!["Monitor returned no rows.".to_string()],
+                |rows| vec![json_scalar(rows)],
+            )
+        }
         "skills" => render_registry(reply.extra.get("skills"), "playbooks", "summary"),
         "tools" | "mcp" => render_registry(
             reply.result.as_ref().and_then(|result| result.get("tools")),
