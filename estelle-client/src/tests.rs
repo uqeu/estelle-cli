@@ -20,7 +20,7 @@ fn test_key() -> ApiKey {
 
 #[test]
 fn endpoint_inventory_is_unique_and_matches_the_server_audit() {
-    assert_eq!(API_ENDPOINTS.len(), 80);
+    assert_eq!(API_ENDPOINTS.len(), 81);
     let unique = API_ENDPOINTS
         .iter()
         .map(|spec| spec.path)
@@ -316,6 +316,13 @@ fn settings_and_global_autonomy_are_registered_with_their_real_methods() {
         &[HttpMethod::Get, HttpMethod::Post]
     );
     assert!(!Endpoint::SettingsSuite.requires_repo());
+
+    assert_eq!(Endpoint::AgentPresets.path(), "agent-presets");
+    assert_eq!(
+        Endpoint::AgentPresets.methods(),
+        &[HttpMethod::Get, HttpMethod::Put]
+    );
+    assert!(!Endpoint::AgentPresets.requires_repo());
 }
 
 #[tokio::test]

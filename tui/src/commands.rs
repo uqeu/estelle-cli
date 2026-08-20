@@ -2,7 +2,7 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 46] = [
+pub(crate) const SESSION_COMMANDS: [&str; 47] = [
     "help",
     "login",
     "logout",
@@ -43,6 +43,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 46] = [
     "undo",
     "mode",
     "routing",
+    "presets",
     "status",
     "skills",
     "tools",
@@ -51,7 +52,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 46] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 46] = [
+const SESSION_HELP: [(&str, &str); 47] = [
     ("help", "what you can do here"),
     (
         "login",
@@ -140,6 +141,10 @@ const SESSION_HELP: [(&str, &str); 46] = [
     ("undo", "reverse the last explicit /apply"),
     ("mode", "read or lower the server autonomy ceiling"),
     ("routing", "show the server's model route and reason"),
+    (
+        "presets",
+        "show or set the server-owned plan/implement/review routing table",
+    ),
     ("status", "endpoint, credential, repo and connection state"),
     ("skills", "browse Estelle playbooks"),
     ("tools", "list every MCP tool Estelle exposes"),
@@ -220,7 +225,7 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 22] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 46] {
+pub(crate) fn session_command_names() -> [&'static str; 47] {
     SESSION_COMMANDS
 }
 
@@ -563,6 +568,7 @@ fn one_edit(left: &str, right: &str) -> bool {
 pub(crate) enum RemoteMethod {
     Get,
     Post,
+    Put,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -577,6 +583,7 @@ pub(crate) struct RemoteRequest {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RouteError {
     MissingDiff,
+    InvalidPresetArguments,
 }
 
 pub(crate) fn remote_request(
@@ -600,6 +607,15 @@ pub(crate) fn remote_request(
             name,
             endpoint,
             method: RemoteMethod::Post,
+            body: Some(body),
+            query: json!({}),
+        }))
+    };
+    let put = |endpoint, body| {
+        Ok(Some(RemoteRequest {
+            name,
+            endpoint,
+            method: RemoteMethod::Put,
             body: Some(body),
             query: json!({}),
         }))
@@ -633,6 +649,8 @@ pub(crate) fn remote_request(
         "leaderboard" => get(Endpoint::Leaderboard, json!({})),
         "billing" => get(Endpoint::BillingCatalog, json!({})),
         "model" if argument.is_empty() => get(Endpoint::Providers, json!({})),
+        "presets" if argument.is_empty() => get(Endpoint::AgentPresets, json!({})),
+        "presets" => put(Endpoint::AgentPresets, preset_update_body(argument)?),
         "grep" => post(Endpoint::Search, json!({"query": argument, "code": true})),
         "skill:" => {
             let mut parts = argument.splitn(2, char::is_whitespace);
@@ -702,6 +720,49 @@ pub(crate) fn remote_request(
     }
 }
 
+fn preset_update_body(argument: &str) -> Result<Value, RouteError> {
+    let mut words = argument.split_whitespace();
+    if words.next() != Some("set") {
+        return Err(RouteError::InvalidPresetArguments);
+    }
+    let preset = words
+        .next()
+        .filter(|value| !value.is_empty())
+        .ok_or(RouteError::InvalidPresetArguments)?;
+    let mut rows = std::collections::BTreeMap::new();
+    for assignment in words {
+        let (role, selection) = assignment
+            .split_once('=')
+            .ok_or(RouteError::InvalidPresetArguments)?;
+        if !matches!(role, "plan" | "implement" | "review") || rows.contains_key(role) {
+            return Err(RouteError::InvalidPresetArguments);
+        }
+        let row = if selection == "auto" {
+            json!({"provider": "*", "task_kind": role, "mode": "auto"})
+        } else {
+            let (provider, model) = selection
+                .split_once(':')
+                .filter(|(provider, model)| !provider.is_empty() && !model.is_empty())
+                .ok_or(RouteError::InvalidPresetArguments)?;
+            json!({
+                "provider": provider,
+                "task_kind": role,
+                "mode": "pinned",
+                "model": model,
+            })
+        };
+        rows.insert(role, row);
+    }
+    if rows.len() != 3 {
+        return Err(RouteError::InvalidPresetArguments);
+    }
+    let routing_table = ["plan", "implement", "review"]
+        .into_iter()
+        .map(|role| rows.remove(role).expect("all three roles checked"))
+        .collect::<Vec<_>>();
+    Ok(json!({"preset": preset, "routing_table": routing_table}))
+}
+
 /// Whole-lockfile CVE attachments for /scan. When the measured diff TOUCHES a lockfile, the
 /// transitive-dep risk changed — and a per-added-line diff scan can't pair (name, version)
 /// across lines, so the server's whole-lockfile path exists (api_intel.py handle_scan).
@@ -751,6 +812,7 @@ pub(crate) fn scan_lockfile_attachments(root: &std::path::Path, diff: &str) -> V
 
 pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandReply) -> Vec<String> {
     match name {
+        "presets" => render_agent_presets(reply),
         "init" => {
             let Some(wiki) = reply
                 .wiki
@@ -2143,6 +2205,102 @@ fn render_graph_nodes_reply(reply: &estelle_client::CommandReply, repo: &str) ->
     lines
 }
 
+fn render_agent_presets(reply: &estelle_client::CommandReply) -> Vec<String> {
+    let Some(bundle) = reply.extra.get("bundle").and_then(Value::as_object) else {
+        return vec![
+            "The server returned no agent-preset bundle; no routing state was inferred."
+                .to_string(),
+        ];
+    };
+    let scalar = |key: &str| {
+        bundle
+            .get(key)
+            .map(json_scalar)
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "not returned".to_string())
+    };
+    let mut lines = vec![format!(
+        "Agent preset: {}  |  schema {}",
+        scalar("name"),
+        scalar("schema_version")
+    )];
+    for role in ["plan", "implement", "review"] {
+        let row = bundle
+            .get("routing_table")
+            .and_then(Value::as_array)
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|row| row.get("task_kind").and_then(Value::as_str) == Some(role))
+            });
+        let mode = row
+            .and_then(|row| row.get("mode"))
+            .and_then(Value::as_str)
+            .unwrap_or("not returned");
+        if mode == "pinned" {
+            let provider = row
+                .and_then(|row| row.get("provider"))
+                .and_then(Value::as_str)
+                .unwrap_or("not returned");
+            let model = row
+                .and_then(|row| row.get("model"))
+                .and_then(Value::as_str)
+                .unwrap_or("not returned");
+            lines.push(format!("{role:<10} PINNED  {provider} / {model}"));
+        } else {
+            lines.push(format!("{role:<10} {}", mode.to_ascii_uppercase()));
+        }
+    }
+    let tools = bundle
+        .get("exposed_tools")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    lines.push(format!(
+        "Tools: {}",
+        if tools.is_empty() {
+            "not returned"
+        } else {
+            &tools
+        }
+    ));
+    lines.push(format!("Autonomy ceiling: {}", scalar("autonomy_ceiling")));
+    lines.push(format!("Context budget: {}", scalar("context_budget")));
+    lines.push(format!("System overlay: {}", scalar("system_overlay")));
+    let presets = reply
+        .extra
+        .get("presets")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|row| row.get("name").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if !presets.is_empty() {
+        lines.push(format!("Available presets: {presets}"));
+    }
+    let configured = reply
+        .extra
+        .get("configured_providers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    lines.push(format!(
+        "Configured providers: {}",
+        if configured.is_empty() {
+            "none"
+        } else {
+            &configured
+        }
+    ));
+    lines
+}
+
 fn render_model_pool(reply: &estelle_client::CommandReply) -> Vec<String> {
     let configured = reply
         .extra
@@ -2712,7 +2870,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_inventory_is_exactly_the_46_accepted_commands() {
+    fn session_inventory_is_exactly_the_47_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
@@ -2756,6 +2914,7 @@ mod tests {
                 "undo",
                 "mode",
                 "routing",
+                "presets",
                 "status",
                 "skills",
                 "tools",
@@ -2898,6 +3057,93 @@ mod tests {
             skill.body,
             Some(json!({"skill": "system-design", "task": "map the auth boundary"}))
         );
+    }
+
+    #[test]
+    fn presets_read_and_write_the_complete_server_owned_role_table() {
+        let read = remote_request("presets", "", None, None)
+            .expect("preset read route")
+            .expect("preset read request");
+        assert_eq!(read.endpoint, estelle_client::Endpoint::AgentPresets);
+        assert_eq!(read.method, RemoteMethod::Get);
+
+        let write = remote_request(
+            "presets",
+            "set coding plan=auto implement=openai:gpt-5.5 review=anthropic:claude-opus",
+            None,
+            None,
+        )
+        .expect("preset write route")
+        .expect("preset write request");
+        assert_eq!(write.endpoint, estelle_client::Endpoint::AgentPresets);
+        assert_eq!(write.method, RemoteMethod::Put);
+        assert_eq!(
+            write.body,
+            Some(json!({
+                "preset": "coding",
+                "routing_table": [
+                    {"provider": "*", "task_kind": "plan", "mode": "auto"},
+                    {"provider": "openai", "task_kind": "implement", "mode": "pinned", "model": "gpt-5.5"},
+                    {"provider": "anthropic", "task_kind": "review", "mode": "pinned", "model": "claude-opus"}
+                ]
+            }))
+        );
+    }
+
+    #[test]
+    fn presets_refuse_a_partial_role_table_before_sending_any_request() {
+        assert_eq!(
+            remote_request(
+                "presets",
+                "set coding plan=auto implement=openai:gpt-5.5",
+                None,
+                None,
+            ),
+            Err(RouteError::InvalidPresetArguments)
+        );
+    }
+
+    #[test]
+    fn presets_render_every_server_field_without_computing_a_pick() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "bundle": {
+                "name": "coding",
+                "schema_version": 1,
+                "routing_table": [
+                    {"provider": "*", "task_kind": "plan", "mode": "auto"},
+                    {"provider": "openai", "task_kind": "implement", "mode": "pinned", "model": "gpt-5.5"},
+                    {"provider": "*", "task_kind": "review", "mode": "auto"}
+                ],
+                "exposed_tools": ["repo_read", "run_tests"],
+                "autonomy_ceiling": "propose",
+                "context_budget": 32000,
+                "system_overlay": "Plan, implement, and review production code."
+            },
+            "presets": [{"name": "coding"}, {"name": "research"}, {"name": "review"}],
+            "configured_providers": ["openai", "anthropic"]
+        }))
+        .expect("agent preset response");
+        let rendered = render_remote_reply("presets", &reply).join("\n");
+        for fact in [
+            "coding",
+            "schema 1",
+            "plan",
+            "AUTO",
+            "implement",
+            "PINNED",
+            "openai",
+            "gpt-5.5",
+            "review",
+            "repo_read",
+            "run_tests",
+            "propose",
+            "32000",
+            "Plan, implement, and review production code.",
+            "research",
+            "anthropic",
+        ] {
+            assert!(rendered.contains(fact), "missing {fact}:\n{rendered}");
+        }
     }
 
     #[test]

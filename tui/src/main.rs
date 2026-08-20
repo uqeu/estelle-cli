@@ -3592,12 +3592,19 @@ async fn execute_remote_command(
         diff,
         pending.last_question.as_deref(),
     )
-    .map_err(|commands::RouteError::MissingDiff| {
-        CommandFailure::Local([
-            format!("/{} found no diff to inspect.", pending.name),
-            "The local working tree and selected comparison are unchanged.".to_string(),
-            "Make a change or pass a base revision, then retry.".to_string(),
-        ])
+    .map_err(|error| {
+        CommandFailure::Local(match error {
+            commands::RouteError::MissingDiff => [
+                format!("/{} found no diff to inspect.", pending.name),
+                "The local working tree and selected comparison are unchanged.".to_string(),
+                "Make a change or pass a base revision, then retry.".to_string(),
+            ],
+            commands::RouteError::InvalidPresetArguments => [
+                "/presets needs one complete server-owned routing table.".to_string(),
+                "Use: /presets set <coding|research|review> plan=<auto|provider:model> implement=<auto|provider:model> review=<auto|provider:model>".to_string(),
+                "No model was selected and nothing was sent.".to_string(),
+            ],
+        })
     })?
     .ok_or_else(|| {
         CommandFailure::Local([
@@ -3671,6 +3678,23 @@ async fn execute_remote_command(
                 ])
             })?;
             client.post(request.endpoint, body, cancel).await
+        }
+        (commands::RemoteMethod::Put, false) => {
+            let body = request.body.as_ref().ok_or_else(|| {
+                CommandFailure::Local([
+                    format!("/{} has no request body.", request.name),
+                    "The command inventory and transport table disagree.".to_string(),
+                    "Report this command name; nothing was sent.".to_string(),
+                ])
+            })?;
+            client.put(request.endpoint, body, cancel).await
+        }
+        (commands::RemoteMethod::Put, true) => {
+            return Err(CommandFailure::Local([
+                format!("/{} cannot PUT a repository-scoped route.", request.name),
+                "The command inventory and transport table disagree.".to_string(),
+                "Report this command name; nothing was sent.".to_string(),
+            ]));
         }
     };
     let reply = result.map_err(CommandFailure::Client)?;
