@@ -19,16 +19,16 @@ ROOT = Path(__file__).resolve().parents[1]
 HARNESS_PATH = ROOT / "scripts" / "public-binary-receipts.py"
 
 CASES = (
-    {"expected_suite": "research", "prompt": "Find the application entry point and cite the file."},
-    {"expected_suite": "research", "prompt": "Research how authentication is implemented in this repository."},
-    {"expected_suite": "review", "prompt": "Review my current changes for merge blockers."},
-    {"expected_suite": "review", "prompt": "Check this diff for security and correctness regressions."},
-    {"expected_suite": "affinity", "prompt": "Which model should plan this implementation task?"},
-    {"expected_suite": "monitor", "prompt": "Show production errors from the last hour."},
-    {"expected_suite": "monitor", "prompt": "Is production up right now?"},
-    {"expected_suite": "guardian", "prompt": "Check whether this patch is grounded in the repository."},
-    {"expected_suite": "memory", "prompt": "What has this repository taught us about authentication?"},
-    {"expected_suite": "memory", "prompt": "Show the memories saved for this repository."},
+    {"expected_suite": "research", "prompt": "Find the application entry point and cite the file"},
+    {"expected_suite": "research", "prompt": "Research how authentication is implemented in this repository"},
+    {"expected_suite": "review", "prompt": "Review my current changes for merge blockers"},
+    {"expected_suite": "review", "prompt": "Check this diff for security and correctness regressions"},
+    {"expected_suite": "affinity", "prompt": "Which model should plan this implementation task"},
+    {"expected_suite": "monitor", "prompt": "Show production errors from the last hour"},
+    {"expected_suite": "monitor", "prompt": "Is production up right now"},
+    {"expected_suite": "guardian", "prompt": "Check whether this patch is grounded in the repository"},
+    {"expected_suite": "memory", "prompt": "What has this repository taught us about authentication"},
+    {"expected_suite": "memory", "prompt": "Show the memories saved for this repository"},
 )
 
 SUITE_ROUTES = {
@@ -73,6 +73,7 @@ def score_cases(cases, observations):
                 "observed_suite": suite,
                 "observed_paths": observation["paths"],
                 "statuses": observation["statuses"],
+                "tui_completed": observation.get("tui_completed", False),
                 "pass": suite == case["expected_suite"],
                 "discarded": observation.get("discarded", False),
                 "production_build": observation.get("production_build"),

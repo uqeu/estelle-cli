@@ -22,6 +22,9 @@ def load_measure():
 def test_ten_requests_cover_every_named_suite() -> None:
     measure = load_measure()
     assert len(measure.CASES) == 10
+    assert all(
+        not case["prompt"].endswith((".", "?", "!")) for case in measure.CASES
+    ), "the TUI normalizes terminal punctuation before rendering its echo"
     assert {case["expected_suite"] for case in measure.CASES} == {
         "research",
         "review",
