@@ -1455,18 +1455,37 @@ def _whole_lockfile_contract(requests: list[dict]) -> bool:
     )
 
 
-def _head_contract(requests: list[dict]) -> bool:
-    routes = {
-        request.get("path")
-        for request in requests
-        if request.get("path") in ("/sync", "/ingest/start", "/reindex")
-        and len(request.get("body", {}).get("head", "")) == 40
-        and all(
-            character in "0123456789abcdef"
-            for character in request.get("body", {}).get("head", "")
-        )
-    }
+def _head_contract(records: list[dict]) -> bool:
+    routes = set()
+    for record in records:
+        request = record.get("request", {})
+        path = request.get("path")
+        head = request.get("body", {}).get("head", "")
+        if (
+            path in ("/sync", "/ingest/start", "/reindex")
+            and len(head) == 40
+            and all(character in "0123456789abcdef" for character in head)
+            and _terminal_head_response(record)
+        ):
+            routes.add(path)
     return routes == {"/sync", "/ingest/start", "/reindex"}
+
+
+def _terminal_head_response(record: dict) -> bool:
+    request = record.get("request", {})
+    response = record.get("response", {})
+    status = response.get("status")
+    if isinstance(status, int) and 200 <= status < 300:
+        return True
+    body = response.get("body", {})
+    return (
+        request.get("path") == "/ingest/start"
+        and status == 422
+        and isinstance(body, dict)
+        and body.get("blocked") is True
+        and body.get("indexed") == 0
+        and body.get("chunks") == 0
+    )
 
 
 def _hook_network_contract(requests: list[dict]) -> bool:
@@ -1550,7 +1569,7 @@ def http_contract_receipt(path: Path) -> tuple[dict[str, object], list[object]]:
         for request in requests
     )
     whole_lockfile = _whole_lockfile_contract(requests)
-    three_heads = _head_contract(requests)
+    three_heads = _head_contract(records)
     hook_network = _hook_network_contract(requests)
     skill_thread = _skill_thread_contract(records)
     proof = (

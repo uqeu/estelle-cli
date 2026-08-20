@@ -1164,6 +1164,30 @@ def test_http_contract_receipt_proves_hidden_fields() -> None:
         assert "three head markers=False" in failed["came_back"]
 
 
+def test_head_contract_accepts_a_terminal_unsafe_ingest_refusal() -> None:
+    harness = load_harness()
+    records = [
+        {
+            "request": {"path": route, "body": {"head": "a" * 40}},
+            "response": {"status": 200, "body": {"ok": True}},
+        }
+        for route in ("/sync", "/reindex")
+    ]
+    records.append(
+        {
+            "request": {"path": "/ingest/start", "body": {"head": "b" * 40}},
+            "response": {
+                "status": 422,
+                "body": {"blocked": True, "indexed": 0, "chunks": 0},
+            },
+        }
+    )
+    assert harness._head_contract(records) is True
+    stored_mutant = json.loads(json.dumps(records))
+    stored_mutant[-1]["response"]["body"]["indexed"] = 1
+    assert harness._head_contract(stored_mutant) is False
+
+
 def test_head_surface_commands_run_through_bare_binary() -> None:
     with tempfile.TemporaryDirectory(prefix="estelle-head-receipt-") as raw_dir:
         fake_bin = Path(raw_dir) / "bin"
@@ -1461,6 +1485,7 @@ def main() -> int:
     test_dropped_commands_stay_local_in_one_installed_tui()
     test_dropped_command_isolation_ignores_only_named_passive_routes()
     test_http_contract_receipt_proves_hidden_fields()
+    test_head_contract_accepts_a_terminal_unsafe_ingest_refusal()
     test_head_surface_commands_run_through_bare_binary()
     test_hook_receipts_drive_every_current_table_row()
     test_hook_receipts_fail_closed_on_one_silent_nonzero()
