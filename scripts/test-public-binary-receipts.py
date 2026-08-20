@@ -1399,7 +1399,7 @@ def test_session_resume_contract_requires_imported_context_and_a_server_response
                 "question": harness.SESSION_RESUME_QUESTION,
                 "working_memory": {
                     "session_context": (
-                        "Imported OpenCode session: Receipt parser context\n"
+                        "Imported OpenCode session: Keep the cobalt owl marker\n"
                         "User: Keep the cobalt owl marker\n"
                         "Assistant: The cobalt owl marker is retained"
                     )
@@ -1420,6 +1420,7 @@ def test_session_resume_contract_requires_imported_context_and_a_server_response
     for label, title in (
         ("Codex", "Keep the cobalt owl marker"),
         ("Claude Code", "Receipt parser context"),
+        ("OpenCode", "Keep the cobalt owl marker"),
     ):
         record["request"]["body"]["working_memory"]["session_context"] = (
             f"Imported {label} session: {title}\n"
@@ -1429,12 +1430,21 @@ def test_session_resume_contract_requires_imported_context_and_a_server_response
         assert harness.session_resume_http_contract(record, label) is True
     ungrounded = json.loads(json.dumps(record))
     ungrounded["response"]["body"]["grounded"] = False
-    assert harness.session_resume_http_contract(ungrounded, "Claude Code") is True
+    assert harness.session_resume_http_contract(ungrounded, "OpenCode") is True
     missing_answer = json.loads(json.dumps(ungrounded))
     missing_answer["response"]["body"]["answer"] = ""
-    assert harness.session_resume_http_contract(missing_answer, "Claude Code") is False
+    assert harness.session_resume_http_contract(missing_answer, "OpenCode") is False
     record["request"]["body"]["working_memory"]["session_context"] = ""
     assert harness.session_resume_http_contract(record) is False
+
+
+def test_session_receipt_matches_the_tui_normalized_question() -> None:
+    harness = load_harness()
+    assert harness._session_question_matches(harness.SESSION_RESUME_QUESTION) is True
+    assert harness._session_question_matches(
+        harness.SESSION_RESUME_QUESTION.rstrip("?")
+    ) is True
+    assert harness._session_question_matches("Which package owns the entry point?") is False
 
 
 def test_unsafe_sweep_refusal_is_the_negative_control() -> None:
@@ -1492,6 +1502,7 @@ def main() -> int:
     test_hook_receipts_require_a_malformed_input_negative_control()
     test_opencode_fixture_names_the_exact_repository_and_complete_turn()
     test_session_resume_contract_requires_imported_context_and_a_server_response()
+    test_session_receipt_matches_the_tui_normalized_question()
     test_unsafe_sweep_refusal_is_the_negative_control()
 
     print("public receipt test: all 24 audited read surfaces are mandatory")

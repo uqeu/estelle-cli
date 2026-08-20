@@ -488,15 +488,13 @@ def session_resume_http_contract(record: dict, source_label: str = "OpenCode") -
     context = working_memory.get("session_context")
     expected_title = (
         SESSION_RESUME_PRIOR_QUESTION
-        if source_label == "Codex"
+        if source_label in ("Codex", "OpenCode")
         else SESSION_RESUME_TITLE
     )
     question = request_body.get("question")
-    expected_question = SESSION_RESUME_QUESTION
     return (
         request.get("path") == "/deep-search"
-        and isinstance(question, str)
-        and question.rstrip("?") == expected_question.rstrip("?")
+        and _session_question_matches(question)
         and isinstance(context, str)
         and f"Imported {source_label} session: {expected_title}" in context
         and f"User: {SESSION_RESUME_PRIOR_QUESTION}" in context
@@ -504,6 +502,13 @@ def session_resume_http_contract(record: dict, source_label: str = "OpenCode") -
         and response.get("status") == 200
         and isinstance(response_body.get("answer"), str)
         and bool(response_body["answer"].strip())
+    )
+
+
+def _session_question_matches(question: object) -> bool:
+    return (
+        isinstance(question, str)
+        and question.rstrip("?") == SESSION_RESUME_QUESTION.rstrip("?")
     )
 
 
@@ -876,7 +881,7 @@ def _probe_imported_source(
         while time.monotonic() < deadline and http_record is None:
             for record in _read_http_records_after(trace_path, trace_offset):
                 question = record.get("request", {}).get("body", {}).get("question")
-                if question == SESSION_RESUME_QUESTION:
+                if _session_question_matches(question):
                     http_record = record
                     break
             if http_record is None:
