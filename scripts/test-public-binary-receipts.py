@@ -1219,6 +1219,25 @@ def test_head_contract_accepts_a_terminal_unsafe_ingest_refusal() -> None:
     assert harness._head_contract(stored_mutant) is False
 
 
+def test_head_contract_ignores_unrelated_non_object_request_bodies() -> None:
+    harness = load_harness()
+    records = [
+        {
+            "request": {"path": route, "body": {"head": "a" * 40}},
+            "response": {"status": 200, "body": {"ok": True}},
+        }
+        for route in ("/sync", "/reindex", "/ingest/start")
+    ]
+    records.insert(
+        0,
+        {
+            "request": {"path": "/me", "body": None},
+            "response": {"status": 200, "body": {}},
+        },
+    )
+    assert harness._head_contract(records) is True
+
+
 def test_head_surface_commands_run_through_bare_binary() -> None:
     with tempfile.TemporaryDirectory(prefix="estelle-head-receipt-") as raw_dir:
         fake_bin = Path(raw_dir) / "bin"
@@ -1532,6 +1551,7 @@ def main() -> int:
     test_dropped_command_isolation_ignores_only_named_passive_routes()
     test_http_contract_receipt_proves_hidden_fields()
     test_head_contract_accepts_a_terminal_unsafe_ingest_refusal()
+    test_head_contract_ignores_unrelated_non_object_request_bodies()
     test_head_surface_commands_run_through_bare_binary()
     test_hook_receipts_drive_every_current_table_row()
     test_hook_receipts_fail_closed_on_one_silent_nonzero()

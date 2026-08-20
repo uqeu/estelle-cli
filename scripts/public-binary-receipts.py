@@ -1494,8 +1494,11 @@ def _head_contract(records: list[dict]) -> bool:
     routes = set()
     for record in records:
         request = record.get("request", {})
+        if not isinstance(request, dict):
+            continue
         path = request.get("path")
-        head = request.get("body", {}).get("head", "")
+        body = request.get("body")
+        head = body.get("head", "") if isinstance(body, dict) else ""
         if (
             path in ("/sync", "/ingest/start", "/reindex")
             and len(head) == 40
