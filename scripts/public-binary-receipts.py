@@ -1168,6 +1168,10 @@ def _read_surface_body_contract(command: str, body: dict) -> bool:
     if command == "/team":
         return "team" in body and (body["team"] is None or isinstance(body["team"], dict))
     if command == "/team board":
+        # A caller outside a team has an honest, useful empty state. Require the explicit `team: null`
+        # discriminator so `{leaderboard: []}` cannot pass merely because the account was never enrolled.
+        if "team" in body and body["team"] is None:
+            return body.get("leaderboard") == []
         return _typed_fields(body, (("leaderboard", list), ("window", str), ("metric", str)))
     if command == "/outcomes":
         return _outcomes_http_contract(body)

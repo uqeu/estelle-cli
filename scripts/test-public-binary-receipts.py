@@ -639,7 +639,7 @@ def test_every_read_surface_requires_its_exact_route_and_semantic_body() -> None
         "/me": {"email": "receipt@example.com", "plan": "ultra", "plan_active": True},
         "/keys": {"keys": []},
         "/team": {"team": None},
-        "/team board": {"leaderboard": [], "window": "30d", "metric": "grounded_outcomes"},
+        "/team board": {"team": None, "leaderboard": []},
         "/cards": {"cards": [], "folders": {}},
         "/entities": {"entities": []},
         "/usage": {"series": []},
@@ -700,6 +700,15 @@ def test_every_read_surface_requires_its_exact_route_and_semantic_body() -> None
         wrong_route = json.loads(json.dumps(record))
         wrong_route["request"]["path"] = "/wrong"
         assert harness._surface_http_contract(command, wrong_route) is False, command
+
+
+def test_team_board_accepts_an_explicit_non_member_empty_but_rejects_a_vacuous_200() -> None:
+    harness = load_harness()
+
+    assert harness._read_surface_body_contract(
+        "/team board", {"team": None, "leaderboard": []}
+    )
+    assert not harness._read_surface_body_contract("/team board", {"leaderboard": []})
 
 
 def test_analytics_rejects_vacuous_or_malformed_breakdowns() -> None:
