@@ -5,14 +5,12 @@ Every row names a source, licence, implementation location, and measured status.
 its row. A status changes only from a probe, never from recollection.
 
 **Status:** ✅ built + wired + public-artifact/prod-proven · 🟡 built, but no public customer artifact proves
-the path · ⬜ decided, not built. **TODAY — 2026-08-16:** `v0.2.11` run `31961123102` completed successfully;
-the read-back verified nine public assets, four archive checksums/member sets, arm64 identity, public
-installer execution, bare-command resolution, and the public npm shim launching byte-identical native
-`0.2.11` bytes with SLSA metadata. On a fresh `awesome-llm-apps` clone, those installed bytes failed closed
-for an unknown provider and an unsafe public HTTP provider base before any secret prompt or request. Public
-`v0.2.10` remains the once-only file-shift proof and `v0.2.9` remains the named-session switch/close and
-detached typed-failure replay proof. Production-authenticated answer success and provider inference are not
-claimed merely because credential acquisition exists; those rows remain separate and honest below.
+the complete path · ⬜ decided, not built. **TODAY — 2026-08-21:** `v0.2.28` run `32500974705` built all
+four targets before its tag; remote read-back matched the tag to candidate `7cd03c283`, nine GitHub assets,
+the public installer, and an npm tarball whose four customer files equal source. Registry propagation took
+5m12s after npm accepted the publish, exceeding the run's one-minute read-back; the verifier now allows five
+minutes. A public artifact now carries within-plan routing, but no real ChatGPT entitlement was present on
+this probe machine, so local plan spend remains separate and yellow below.
 
 ## PORTED — mechanism, source, and licence
 
@@ -44,13 +42,13 @@ claimed merely because credential acquisition exists; those rows remain separate
 | Credential-first launch and contextual five-way `/login` picker, plus `/logout`, presence-only `/whoami`, and context-correct `/doctor` | Fate Labs · Apache-2.0 repository | `tui/src/main.rs`, `tui/src/doctor.rs` | 🟡 |
 | One catalogue-driven login dispatcher shared by shell, slash, and picker surfaces; masked provider-key input, typed `/key` request, secret-free receipts, and fail-closed endpoint policy | Fate Labs · Apache-2.0 repository | `tui/src/main.rs`, `tui/src/provider_catalog.rs`, `tui/src/provider_keys.rs`, `estelle-client/src/endpoint.rs:60` | 🟡 public `v0.2.11`: unknown-provider and unsafe-public-HTTP controls passed on `awesome-llm-apps`; successful acquisition/runtime remains unproved |
 | Four-run autonomy ladder with customer label `accept-edits`, non-main branch/CI/no-merge contract, and auto's reviewable-PR fallback | Fate Labs · Apache-2.0 repository | `tui/src/commands.rs:478`, `tui/src/commands.rs:492`, `tui/src/main.rs:973` | 🟡 |
-| Server-selected routing inside the authenticated ChatGPT plan: provider `/models` census → credential-free Estelle `/route` advisory → exact-list validation → local Responses call with routed effort and receipt | Fate Labs · Apache-2.0 repository | `estelle-client/src/types.rs`, `estelle-acp/src/engine.rs` | 🟡 local: positive routed model/effort and outside-plan/default controls pass; no public artifact or real-plan receipt |
+| Server-selected routing inside the authenticated ChatGPT plan: provider `/models` census → credential-free Estelle `/route` advisory → exact-list validation → local Responses call with routed effort and receipt | Fate Labs · Apache-2.0 repository | `estelle-client/src/types.rs`, `estelle-acp/src/engine.rs` | 🟡 public `v0.2.28`: positive routed model/effort and outside-plan/default controls pass; production Estelle chose only from the supplied list, but no real-plan entitlement/inference receipt exists |
 
 ## SYSTEM DESIGN — established mechanisms applied here
 
 | mechanism | source / licence | implementation | status |
 |---|---|---|---|
-| Reproducible tag-triggered release: exact version gate, target-native builds, normalized archives, checksum manifest, and no manual bypass | Reproducible Builds principles + GitHub Actions · workflow/configuration licences apply; repository code Apache-2.0 | `.github/workflows/release.yml`, `scripts/package-release.sh` | ✅ |
+| Reproducible candidate-first release: exact version/current-main gate, four target-native builds before the immutable tag, normalized archives, checksum manifest, exact-tag resume, and independent npm pack read-back | Reproducible Builds principles + GitHub Actions · workflow/configuration licences apply; repository code Apache-2.0 | `.github/workflows/release.yml`, `scripts/package-release.sh`, `scripts/verify-npm-release.py` | ✅ public `v0.2.28`: exact tag/SHA, nine assets, public installer, npm version and four byte-identical packed files read back |
 | Build provenance tied to downloadable bytes through OIDC rather than a long-lived signing secret | SLSA provenance model + `actions/attest-build-provenance` · Apache-2.0 | `.github/workflows/release.yml:130`, `.github/workflows/release.yml:175` | ✅ |
 | Verify before install, one-member archive, bounded resources, and atomic destination replacement | Standard supply-chain and filesystem transaction pattern · repository code Apache-2.0 | `install.sh`, `npm-shim/install.js` | ✅ |
 | Consent-gated zsh/bash PATH setup with resolved-path output, old-command shadow refusal, final binary identity, clean-shell bare-command proof, and native first-run PTY probe | Shell startup-file conventions + fail-closed release testing · repository code Apache-2.0 | `install.sh`, `scripts/test-installer.sh`, `scripts/probe-first-run.py` | ✅ |

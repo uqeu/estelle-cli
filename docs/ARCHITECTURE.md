@@ -4,17 +4,15 @@
 `uqeu/estelle-cli` repository. The parent repository may index or summarize it, but cannot be the only
 copy: a behaviour change and its architecture record must be reviewable in one CLI commit.
 
-**TODAY — source + public probes, 2026-08-16:** `v0.2.11` release run `31961123102` completed successfully.
-The read-back found nine public assets, verified all four archive checksums and one-member sets, ran and
-installed the arm64 artifact as `estelle 0.2.11`, and resolved the bare command from a clean destination.
-The direct archive, public-installer, and npm-installed native binaries were byte-identical
-(`e30c1aa8…`, 41,354,008 bytes). npm returned SHA-512 integrity and SLSA v1 provenance metadata and its
-packed tarball contained only the four native-launcher files. On a fresh public `awesome-llm-apps` clone
-with 532 Python and 313 TypeScript/TSX files, the installed binary rejected an unknown provider and an
-unsafe public HTTP provider base before any secret prompt or request. This proves the public catalogue's
-fail-closed boundary, not a successful provider login or model runtime. Public `v0.2.10` remains the
-once-only file-shift proof and `v0.2.9` remains the named-session detach/switch/close proof. Independent
-GitHub attestation verification remains unproved outside the successful workflow.
+**TODAY — source + public probes, 2026-08-21:** candidate-first release run `32500974705` built all four
+native targets before creating `v0.2.28`. Remote ref read-back peeled the tag to exact candidate
+`7cd03c283f4fc3507b233ec8bb04263de47d700e`; GitHub returned nine non-draft/non-prerelease assets; public
+installation printed `estelle 0.2.28`; and independent npm view/pack returned 0.2.28 with all four customer
+files byte-identical to `npm-shim/`. npm accepted publication at 17:22:24Z but exposed it at 17:27:36Z, so
+the run's one-minute registry read-back failed honestly; the source verifier now allows five minutes. The
+separate public-install and full public-binary receipt jobs were still running at this read-back and are not
+claimed here. Earlier v0.2.9–v0.2.11 session, file-shift, and provider-boundary receipts remain historical
+evidence rather than being silently attributed to 0.2.28.
 
 ## System boundary
 
@@ -52,7 +50,8 @@ runtime fallback, not proof of plan entitlement, so its models are never adverti
 
 **Current limit:** this bridge is built and locally tested only for the ACP ChatGPT-plan runtime. Claude
 subscription, Kimi, local OpenAI-compatible runtimes, and the custom TUI conversation path do not consume
-this route yet. No public release artifact or real-plan receipt proves this revision yet.
+this route yet. The `v0.2.28` candidate carries the bridge, but only remote publication read-back can make
+that a public-artifact fact; this machine has no ChatGPT-plan credential, so no real-plan receipt is claimed.
 
 ## Entrypoints and owners
 
@@ -67,7 +66,7 @@ this route yet. No public release artifact or real-plan receipt proves this revi
 | ACP adapter | `estelle-acp/` | Editor session protocol backed by the user's selected model credentials |
 | MCP adapter | `estelle-mcp/` | MCP-facing Estelle catalogue; client-provided MCP servers are deliberately rejected |
 | Always-on hooks | `tui/src/top_level.rs`, generated host configuration | One Rust owner generates Claude Code and Codex hook tables; PostToolUse read/edit activity feeds file-shift tracking while Python/Rust decisions remain contract-pinned |
-| Public distribution | `.github/workflows/release.yml`, `install.sh`, `npm-shim/` | Exact SemVer tag to four native archives, checksums, provenance, GitHub Release, and npm retirement shim |
+| Public distribution | `.github/workflows/release.yml`, `install.sh`, `npm-shim/` | Explicit SemVer candidate to four native archives, then an exact-SHA immutable tag, checksums, provenance, GitHub Release, npm retirement shim, and independent registry artifact read-back |
 
 ## Server-owned sessions
 
@@ -116,8 +115,11 @@ jcode's direct-message, broadcast, heartbeat, roster, or Orchestra worker-regist
 
 ## Release pipeline
 
-The tag is the release input. The workflow rejects a tag unless it exactly equals both the Cargo workspace
-version and the npm shim version. Validation then runs four independent gates before any platform build:
+`workflow_dispatch` supplies the intended SemVer, never an already-created tag. For a new release the
+workflow requires the candidate SHA to be current `main`; for a resumed release it requires an existing tag
+to peel to that exact SHA, even if `main` has since advanced. The candidate version must exactly equal both
+the Cargo workspace version and npm shim version. Validation then runs four independent gates before any
+platform build:
 
 1. The shell installer must install all four declared target shapes; print resolved-path, final-version,
    and exact zsh/bash PATH guidance without silent profile mutation; resolve a bare command from a clean
@@ -128,10 +130,12 @@ version and the npm shim version. Validation then runs four independent gates be
    high-risk blob since that audit, and the finite egress census.
 4. Formatting, warning-denied clippy, and locked client/TUI tests must pass in the standalone public repo.
 
-Only then do target-native runners build macOS arm64, macOS x64, Linux x64, and Linux arm64. Each runner
-checks the object-file architecture and executes `estelle --version`. The release job packages exactly one
-binary per archive, writes `SHA256SUMS`, attests every downloadable artifact with GitHub OIDC provenance,
-and creates a versioned GitHub Release. There is no manual release path and no unsigned fallback.
+Only then do target-native runners build macOS arm64, macOS x64, Linux x64, and Linux arm64 under a finite
+120-minute budget derived from the measured Intel tail. Each runner checks the object-file architecture and
+executes `estelle --version`. After all four succeed, the release job creates the annotated exact-SHA tag,
+packages exactly one binary per archive, writes `SHA256SUMS`, attests every downloadable artifact with
+GitHub OIDC provenance, and creates or verifies the versioned GitHub Release. An exact tag/release can resume
+idempotently after a downstream outage. There is no unsigned fallback.
 
 The install script downloads the checksum manifest before the selected archive, validates an exact manifest
 entry, hashes the archive, rejects any member set other than one regular `estelle` file, and atomically
@@ -149,7 +153,9 @@ The legacy npm package is not allowed to keep executing abandoned JavaScript. Ea
 small compatibility launcher: its postinstall downloads the same exact-version native archive, accepts only HTTPS
 GitHub/release-asset redirects, bounds manifest/archive/redirect resources, verifies the checksum and member
 set, and exposes only the verified binary. Its workflow publication is provenance-signed and runs only after
-the GitHub Release job.
+the GitHub Release job. Publication success is read back from the registry independently: `npm view` must
+return the exact version, then `npm pack` must yield customer files byte-identical to the source shim. The
+workflow's own exit code is not publication evidence.
 
 ## Trust and egress boundaries
 
