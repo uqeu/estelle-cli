@@ -41,6 +41,7 @@ EXPECTED_READ_SURFACES = [
     "/marketplace",
     "/automations",
     "/suites",
+    "/presets",
     "/billing",
     "/sessions",
 ]
@@ -92,7 +93,7 @@ def test_inventory() -> None:
     assert result.returncode == 0, result.stderr
     surfaces = json.loads(result.stdout)
     assert surfaces == EXPECTED_READ_SURFACES, surfaces
-    assert len(set(surfaces)) == 24
+    assert len(set(surfaces)) == 25
 
 
 def test_production_build_receipt_rejects_a_sha_change() -> None:
@@ -218,6 +219,26 @@ def test_surface_build_pin_keeps_a_receipt_on_one_verified_build() -> None:
         "after": "73efb8c7ae7b",
         "verified": True,
     }
+
+
+def test_presets_requires_a_named_bundle_and_all_three_roles() -> None:
+    harness = load_harness()
+    complete = {
+        "bundle": {
+            "name": "coding",
+            "routing_table": [
+                {"task_kind": "plan", "mode": "auto"},
+                {"task_kind": "implement", "mode": "auto"},
+                {"task_kind": "review", "mode": "auto"},
+            ],
+        },
+        "presets": [{"name": "coding"}],
+    }
+
+    assert harness._read_surface_body_contract("/presets", complete)
+    assert not harness._read_surface_body_contract(
+        "/presets", {"bundle": {}, "presets": []}
+    )
 
 
 def test_installed_version() -> None:
@@ -678,6 +699,17 @@ def test_every_read_surface_requires_its_exact_route_and_semantic_body() -> None
         "/marketplace": {"plugins": []},
         "/automations": {"automations": [], "active": False},
         "/suites": {"suites": []},
+        "/presets": {
+            "bundle": {
+                "name": "coding",
+                "routing_table": [
+                    {"task_kind": "plan", "mode": "auto"},
+                    {"task_kind": "implement", "mode": "auto"},
+                    {"task_kind": "review", "mode": "auto"},
+                ],
+            },
+            "presets": [{"name": "coding"}],
+        },
         "/billing": {
             "settings": {},
             "catalog": [],
@@ -901,7 +933,7 @@ def test_complete_harness_writes_every_receipt() -> None:
             output.read_text(encoding="utf-8") if output.exists() else "no report",
         )
         report = json.loads(output.read_text(encoding="utf-8"))
-        assert report["summary"] == {"passed": 52, "failed": 0, "discarded": 0}
+        assert report["summary"] == {"passed": 53, "failed": 0, "discarded": 0}
         assert report["receipts"][4]["after_one_route"] == "retained"
         assert report["receipts"][5]["sent"] == (
             "estelle connect --from codex|claude-code|opencode"
@@ -911,13 +943,13 @@ def test_complete_harness_writes_every_receipt() -> None:
             "Claude Code",
             "OpenCode",
         ]
-        assert [row["sent"] for row in report["receipts"][6:30]] == EXPECTED_READ_SURFACES
-        assert report["receipts"][30]["sent"].startswith("Which file defines")
-        assert report["receipts"][31]["sent"] == "hi"
-        assert report["receipts"][32]["processes_started"] == 1
-        assert len(report["receipts"][33]["sent"]) == 26
-        assert [row["sent"] for row in report["receipts"][34:36]] == ["/review", "/scan"]
-        assert report["receipts"][38]["sent"] == "estelle reindex"
+        assert [row["sent"] for row in report["receipts"][6:31]] == EXPECTED_READ_SURFACES
+        assert report["receipts"][31]["sent"].startswith("Which file defines")
+        assert report["receipts"][32]["sent"] == "hi"
+        assert report["receipts"][33]["processes_started"] == 1
+        assert len(report["receipts"][34]["sent"]) == 26
+        assert [row["sent"] for row in report["receipts"][35:37]] == ["/review", "/scan"]
+        assert report["receipts"][39]["sent"] == "estelle reindex"
         assert report["receipts"][-3]["event"] == "UserPromptSubmit/context"
         assert report["receipts"][-2]["event"] == "SessionStart/welcome malformed-negative-control"
         assert report["receipts"][-2]["exit_code"] == 1
@@ -1569,6 +1601,7 @@ def test_unsafe_sweep_refusal_is_the_negative_control() -> None:
 
 def main() -> int:
     test_inventory()
+    test_presets_requires_a_named_bundle_and_all_three_roles()
     test_installed_version()
     test_tui_surface()
     test_question_turn_uses_the_same_public_tui_seam()
@@ -1606,7 +1639,7 @@ def main() -> int:
     test_session_receipt_matches_the_tui_normalized_question()
     test_unsafe_sweep_refusal_is_the_negative_control()
 
-    print("public receipt test: all 24 audited read surfaces are mandatory")
+    print("public receipt test: all 25 audited read surfaces are mandatory")
     return 0
 
 

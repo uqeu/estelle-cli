@@ -50,6 +50,7 @@ READ_SURFACES = [
     "/marketplace",
     "/automations",
     "/suites",
+    "/presets",
     "/billing",
     "/sessions",
 ]
@@ -77,6 +78,7 @@ READ_SURFACE_HTTP_ROUTES = {
     "/marketplace": "/marketplace",
     "/automations": "/automations",
     "/suites": "/suites",
+    "/presets": "/agent-presets",
     "/billing": "/settings",
     "/sessions": "/sessions",
     "Which file defines an application entry point in this repository?": "/deep-search",
@@ -1202,6 +1204,21 @@ def _read_surface_body_contract(command: str, body: dict) -> bool:
         return _typed_fields(body, envelope) and _typed_fields(
             body["pricing"], pricing
         )
+    if command == "/presets":
+        bundle = body.get("bundle")
+        presets = body.get("presets")
+        if not isinstance(bundle, dict) or not isinstance(presets, list) or not presets:
+            return False
+        name = bundle.get("name")
+        routing_table = bundle.get("routing_table")
+        if not isinstance(name, str) or not name.strip() or not isinstance(routing_table, list):
+            return False
+        roles = {
+            row.get("task_kind")
+            for row in routing_table
+            if isinstance(row, dict) and row.get("mode") in ("auto", "pinned")
+        }
+        return roles == {"plan", "implement", "review"}
     fields = READ_SURFACE_FIELD_TYPES.get(command, ())
     return command in READ_SURFACE_FIELD_TYPES and _typed_fields(body, fields)
 
