@@ -20,11 +20,11 @@ use uuid::Uuid;
 
 pub const ADAPTER_NAME: &str = "estelle";
 
-/// One ACP session: its repo, and — on the local engine — the model chosen at session start.
+/// One ACP session: its repo, and — on the local engine — the authenticated plan model census.
 #[derive(Clone)]
 struct Session {
     repo: Repo,
-    model: Option<engine::ModelSelection>,
+    models: Option<engine::ModelPool>,
 }
 
 #[derive(Clone)]
@@ -90,15 +90,15 @@ pub async fn run_stdio(
                         "the ACP working directory does not resolve to a repository",
                     ));
                 };
-                // The model slug is chosen at SESSION START: the backend's own /models list
-                // with the user's credential, falling back to the bundled catalog.
-                let model = match &*new_session_state.engine {
-                    engine::Engine::Local(local) => Some(engine::select_model(local).await),
+                // The provider's authenticated model list is read at SESSION START. Estelle
+                // chooses inside that fixed list per prompt; the credential remains local.
+                let models = match &*new_session_state.engine {
+                    engine::Engine::Local(local) => Some(engine::select_models(local).await),
                     engine::Engine::Server => None,
                 };
                 let session_id = SessionId::new(Uuid::new_v4().to_string());
                 lock_recover(&new_session_state.sessions)
-                    .insert(session_id.clone(), Session { repo, model });
+                    .insert(session_id.clone(), Session { repo, models });
                 responder.respond(NewSessionResponse::new(session_id))
             },
             agent_client_protocol::on_receive_request!(),
@@ -154,7 +154,7 @@ pub async fn run_stdio(
                                 &task_state.engine,
                                 &task_state.http,
                                 &session.repo,
-                                session.model.as_ref(),
+                                session.models.as_ref(),
                                 &question,
                                 &cancel,
                                 &mut emit,

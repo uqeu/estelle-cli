@@ -37,6 +37,23 @@ The binary is the only Estelle door that can spend a customer's local ChatGPT-pl
 Estelle's server receives grounding and product requests; the selected model provider performs inference.
 The CLI must not silently introduce a third destination.
 
+### Plan-local model routing
+
+The ACP ChatGPT-plan path reads the provider's authenticated `GET /models` result once per session and
+sends only those visible model slugs plus the current user message to Estelle `POST /route`. Estelle returns
+the model, tier, effort, and reason; the CLI verifies the model is in the authenticated list, applies the
+returned effort, and spends the plan credential only against `chatgpt.com/backend-api/codex`. The route
+request contains the Estelle key, repository, model names, and user message; it never contains the plan
+access or refresh token. The final local receipt names the selected model, tier, and bounded/redacted reason.
+
+If the provider model census fails, routing fails, Estelle declines, or Estelle names a model outside the
+list, the CLI retains the provider's existing default and says why in the receipt. A bundled catalog is a
+runtime fallback, not proof of plan entitlement, so its models are never advertised as `available`.
+
+**Current limit:** this bridge is built and locally tested only for the ACP ChatGPT-plan runtime. Claude
+subscription, Kimi, local OpenAI-compatible runtimes, and the custom TUI conversation path do not consume
+this route yet. No public release artifact or real-plan receipt proves this revision yet.
+
 ## Entrypoints and owners
 
 | entrypoint | implementation owner | contract |

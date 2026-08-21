@@ -19,6 +19,46 @@ impl SuiteDispatchRequest {
     }
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct PlanRouteRequest {
+    pub available: Vec<String>,
+    pub messages: Vec<PlanRouteMessage>,
+}
+
+impl PlanRouteRequest {
+    pub fn new(available: Vec<String>, prompt: impl Into<String>) -> Self {
+        Self {
+            available,
+            messages: vec![PlanRouteMessage {
+                role: "user".to_string(),
+                content: prompt.into(),
+            }],
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct PlanRouteMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PlanRouteResponse {
+    #[serde(default)]
+    pub routed: bool,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
+    #[serde(default)]
+    pub tier: Option<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SuiteDispatchResponse {
     pub dispatch: SuiteDispatch,

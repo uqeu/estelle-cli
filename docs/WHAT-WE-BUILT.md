@@ -44,6 +44,7 @@ claimed merely because credential acquisition exists; those rows remain separate
 | Credential-first launch and contextual five-way `/login` picker, plus `/logout`, presence-only `/whoami`, and context-correct `/doctor` | Fate Labs · Apache-2.0 repository | `tui/src/main.rs`, `tui/src/doctor.rs` | 🟡 |
 | One catalogue-driven login dispatcher shared by shell, slash, and picker surfaces; masked provider-key input, typed `/key` request, secret-free receipts, and fail-closed endpoint policy | Fate Labs · Apache-2.0 repository | `tui/src/main.rs`, `tui/src/provider_catalog.rs`, `tui/src/provider_keys.rs`, `estelle-client/src/endpoint.rs:60` | 🟡 public `v0.2.11`: unknown-provider and unsafe-public-HTTP controls passed on `awesome-llm-apps`; successful acquisition/runtime remains unproved |
 | Four-run autonomy ladder with customer label `accept-edits`, non-main branch/CI/no-merge contract, and auto's reviewable-PR fallback | Fate Labs · Apache-2.0 repository | `tui/src/commands.rs:478`, `tui/src/commands.rs:492`, `tui/src/main.rs:973` | 🟡 |
+| Server-selected routing inside the authenticated ChatGPT plan: provider `/models` census → credential-free Estelle `/route` advisory → exact-list validation → local Responses call with routed effort and receipt | Fate Labs · Apache-2.0 repository | `estelle-client/src/types.rs`, `estelle-acp/src/engine.rs` | 🟡 local: positive routed model/effort and outside-plan/default controls pass; no public artifact or real-plan receipt |
 
 ## SYSTEM DESIGN — established mechanisms applied here
 
@@ -60,5 +61,5 @@ claimed merely because credential acquisition exists; those rows remain separate
 | mechanism | source / licence | intended owner | status |
 |---|---|---|---|
 | Any-mode question picker using the inherited renderer | OpenAI Codex request-user-input renderer · Apache-2.0 | `tui/src/bottom_pane/request_user_input/` | ⬜ |
-| Claude subscription, ChatGPT plan, and local-model credentials actually serving the custom Estelle conversation runtime | jcode provider/runtime separation precedent · MIT; repository code Apache-2.0 | provider runtime bridge | ⬜ |
+| Claude subscription, Kimi plan, and local-model credentials serving the custom Estelle TUI conversation runtime (the ACP ChatGPT-plan vertical slice is built separately above) | jcode provider/runtime separation precedent · MIT; repository code Apache-2.0 | provider runtime bridge | ⬜ |
 | Mermaid diagrams rendered in the terminal | jcode renderer precedent · MIT | TUI markdown/render pipeline | ⬜ |

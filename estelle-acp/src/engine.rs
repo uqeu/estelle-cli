@@ -33,6 +33,7 @@ use codex_protocol::openai_models::ReasoningEffort;
 use estelle_client::Client;
 use estelle_client::DeepSearchRequest;
 use estelle_client::Endpoint;
+use estelle_client::PlanRouteRequest;
 use estelle_client::Repo;
 use http::HeaderMap;
 use http::HeaderValue;
@@ -55,6 +56,7 @@ pub(crate) const FALLBACK_NOTICE: &str =
     "your ChatGPT plan credential was rejected — answering via the Estelle server instead";
 /// The label the Estelle recall rides in under, above the user's prompt.
 pub(crate) const MEMORY_LABEL: &str = "Estelle memory, authoritative for this repo:";
+const MAX_PLAN_MODELS: usize = 256;
 
 /// Where `estelle login --chatgpt` stores the credential (see tui/src/login.rs).
 pub(crate) fn chatgpt_home() -> Option<PathBuf> {
@@ -68,6 +70,14 @@ pub(crate) struct ModelSelection {
     slug: String,
     instructions: String,
     effort: Option<ReasoningEffort>,
+}
+
+/// Models the provider itself said this plan can call, plus the provider's existing default.
+/// A bundled fallback is deliberately not routable: a local catalog cannot prove entitlement.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ModelPool {
+    default: ModelSelection,
+    available: Vec<ModelSelection>,
 }
 
 pub(crate) enum Engine {
@@ -194,12 +204,25 @@ pub(crate) fn pick_model(models: &[ModelInfo]) -> Option<ModelSelection> {
     models
         .iter()
         .filter(|model| model.visibility == ModelVisibility::List)
+        .take(MAX_PLAN_MODELS)
         .min_by_key(|model| model.priority)
         .map(|model| ModelSelection {
             slug: model.slug.clone(),
             instructions: model.base_instructions.clone(),
             effort: model.default_reasoning_level.clone(),
         })
+}
+
+fn visible_models(models: &[ModelInfo]) -> Vec<ModelSelection> {
+    models
+        .iter()
+        .filter(|model| model.visibility == ModelVisibility::List)
+        .map(|model| ModelSelection {
+            slug: model.slug.clone(),
+            instructions: model.base_instructions.clone(),
+            effort: model.default_reasoning_level.clone(),
+        })
+        .collect()
 }
 
 /// The bundled catalog (models-manager/models.json) — the fallback when GET /models fails.
@@ -219,12 +242,23 @@ pub(crate) fn bundled_model() -> ModelSelection {
     }
 }
 
-/// The session-start model choice: the backend's own list when it answers, bundled otherwise.
-pub(crate) async fn select_model(engine: &ChatGptEngine) -> ModelSelection {
-    match engine.fetch_models().await {
-        Ok(models) => pick_model(&models).unwrap_or_else(bundled_model),
-        Err(_) => bundled_model(),
-    }
+/// The session-start plan census: only the backend's authenticated `/models` response is safe to
+/// advertise to Estelle. A failed/empty census retains the old bundled default but routes nothing.
+pub(crate) async fn select_models(engine: &ChatGptEngine) -> ModelPool {
+    let Ok(models) = engine.fetch_models().await else {
+        return ModelPool {
+            default: bundled_model(),
+            available: Vec::new(),
+        };
+    };
+    let available = visible_models(&models);
+    let Some(default) = pick_model(&models) else {
+        return ModelPool {
+            default: bundled_model(),
+            available: Vec::new(),
+        };
+    };
+    ModelPool { default, available }
 }
 
 /// The one user message: the Estelle recall as a labelled context block ABOVE the prompt.
@@ -319,10 +353,93 @@ pub(crate) enum PromptAnswer {
 }
 
 enum PlanOutcome {
-    Answered,
+    Answered(String),
     Rejected,
     Cancelled,
     Failed(String),
+}
+
+struct RoutedModel {
+    model: ModelSelection,
+    receipt: String,
+}
+
+fn bounded_one_line(value: &str) -> String {
+    let bounded = value.chars().take(240).collect::<String>();
+    bounded.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn default_model(pool: &ModelPool, reason: &str) -> RoutedModel {
+    RoutedModel {
+        model: pool.default.clone(),
+        receipt: format!(
+            "{LOCAL_RECEIPT} · model: {} · routing: {}",
+            pool.default.slug,
+            bounded_one_line(reason)
+        ),
+    }
+}
+
+async fn route_model(
+    http: &Client,
+    repo: &Repo,
+    pool: &ModelPool,
+    question: &str,
+    cancel: &CancellationToken,
+) -> RoutedModel {
+    if pool.available.is_empty() {
+        return default_model(
+            pool,
+            "provider model census unavailable; kept provider default",
+        );
+    }
+    let available = pool
+        .available
+        .iter()
+        .map(|model| model.slug.clone())
+        .collect::<Vec<_>>();
+    let request = PlanRouteRequest::new(available, question);
+    let Ok(route) = http.route_within_plan(repo, &request, cancel).await else {
+        return default_model(pool, "Estelle route unavailable; kept provider default");
+    };
+    if !route.routed {
+        return default_model(pool, "Estelle declined route; kept provider default");
+    }
+    let Some(slug) = route.model.as_deref() else {
+        return default_model(pool, "Estelle route omitted model; kept provider default");
+    };
+    let Some(mut model) = pool
+        .available
+        .iter()
+        .find(|model| model.slug == slug)
+        .cloned()
+    else {
+        return default_model(
+            pool,
+            "Estelle named model outside plan; kept provider default",
+        );
+    };
+    if let Some(effort) = route
+        .effort
+        .as_deref()
+        .filter(|effort| !effort.is_empty())
+        .and_then(|effort| serde_json::from_value(Value::String(effort.to_string())).ok())
+    {
+        model.effort = Some(effort);
+    }
+    let tier = estelle_client::mask_secret(&bounded_one_line(
+        route.tier.as_deref().unwrap_or("unspecified"),
+    ));
+    let reason = estelle_client::mask_secret(&bounded_one_line(
+        route.reason.as_deref().unwrap_or("no reason returned"),
+    ));
+    RoutedModel {
+        receipt: format!(
+            "{LOCAL_RECEIPT} · model: {} · tier: {tier} · reason: {reason}",
+            model.slug
+        ),
+        model,
+    }
 }
 
 /// The local engine path: gather the fuel, call the ChatGPT backend directly, stream the
@@ -331,7 +448,7 @@ async fn answer_via_plan(
     engine: &ChatGptEngine,
     http: &Client,
     repo: &Repo,
-    model: Option<&ModelSelection>,
+    models: Option<&ModelPool>,
     question: &str,
     cancel: &CancellationToken,
     emit: &mut (dyn FnMut(ContentBlock) + Send),
@@ -349,13 +466,20 @@ async fn answer_via_plan(
         Arc::new(auth),
     );
     let bundled;
-    let model = match model {
-        Some(model) => model,
+    let models = match models {
+        Some(models) => models,
         None => {
-            bundled = bundled_model();
+            bundled = ModelPool {
+                default: bundled_model(),
+                available: Vec::new(),
+            };
             &bundled
         }
     };
+    let routed = route_model(http, repo, models, question, cancel).await;
+    if cancel.is_cancelled() {
+        return PlanOutcome::Cancelled;
+    }
     let mut extra_headers = HeaderMap::new();
     extra_headers.insert("originator", HeaderValue::from_static("codex_cli_rs"));
     let options = ResponsesOptions {
@@ -364,7 +488,10 @@ async fn answer_via_plan(
         ..Default::default()
     };
     let mut stream = match client
-        .stream_request(local_request(model, question, recall.as_deref()), options)
+        .stream_request(
+            local_request(&routed.model, question, recall.as_deref()),
+            options,
+        )
         .await
     {
         Ok(stream) => stream,
@@ -378,7 +505,9 @@ async fn answer_via_plan(
         };
         match event {
             Some(Ok(ResponseEvent::OutputTextDelta(delta))) => emit(text(&delta)),
-            Some(Ok(ResponseEvent::Completed { .. })) => return PlanOutcome::Answered,
+            Some(Ok(ResponseEvent::Completed { .. })) => {
+                return PlanOutcome::Answered(routed.receipt);
+            }
             None => {
                 return PlanOutcome::Failed(
                     "ChatGPT response stream ended before response.completed".to_string(),
@@ -420,7 +549,7 @@ pub(crate) async fn answer_prompt(
     engine: &Engine,
     http: &Client,
     repo: &Repo,
-    model: Option<&ModelSelection>,
+    models: Option<&ModelPool>,
     question: &str,
     cancel: &CancellationToken,
     emit: &mut (dyn FnMut(ContentBlock) + Send),
@@ -428,9 +557,9 @@ pub(crate) async fn answer_prompt(
     match engine {
         Engine::Server => answer_via_server(http, repo, question, cancel, emit).await,
         Engine::Local(local) => {
-            match answer_via_plan(local, http, repo, model, question, cancel, emit).await {
-                PlanOutcome::Answered => {
-                    emit(text(LOCAL_RECEIPT));
+            match answer_via_plan(local, http, repo, models, question, cancel, emit).await {
+                PlanOutcome::Answered(receipt) => {
+                    emit(text(&receipt));
                     PromptAnswer::Answered
                 }
                 PlanOutcome::Cancelled => PromptAnswer::Cancelled,
@@ -465,6 +594,7 @@ mod tests {
     use wiremock::Mock;
     use wiremock::MockServer;
     use wiremock::ResponseTemplate;
+    use wiremock::matchers::body_json;
     use wiremock::matchers::method;
     use wiremock::matchers::path;
 
@@ -604,6 +734,27 @@ mod tests {
             .await;
     }
 
+    async fn mock_plan_route(server: &MockServer) {
+        Mock::given(method("POST"))
+            .and(path("/route"))
+            .and(body_json(json!({
+                "repo": "owner/repo",
+                "available": ["mock-best", "mock-worse"],
+                "messages": [{"role": "user", "content": "what retries?"}]
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "routed": true,
+                "provider": "openai",
+                "model": "mock-worse",
+                "effort": "high",
+                "tier": "frontier",
+                "reason": "reasoning request -> mock-worse (best in plan)"
+            })))
+            .expect(1)
+            .mount(server)
+            .await;
+    }
+
     fn estelle_client(server: &MockServer) -> Client {
         Client::new(
             &format!("{}/", server.uri()),
@@ -629,8 +780,8 @@ mod tests {
         question: &str,
     ) -> (PromptAnswer, Vec<ContentBlock>) {
         let client = estelle_client(estelle);
-        let model = match engine {
-            Engine::Local(local) => Some(select_model(local).await),
+        let models = match engine {
+            Engine::Local(local) => Some(select_models(local).await),
             Engine::Server => None,
         };
         let mut blocks = Vec::new();
@@ -638,7 +789,7 @@ mod tests {
             engine,
             &client,
             &Repo::new("owner/repo").expect("repo"),
-            model.as_ref(),
+            models.as_ref(),
             question,
             &CancellationToken::new(),
             &mut |block| blocks.push(block),
@@ -691,20 +842,20 @@ mod tests {
         mock_backend_responses(&backend).await;
         let estelle = MockServer::start().await;
         mock_estelle(&estelle, 200).await;
+        mock_plan_route(&estelle).await;
 
         let engine = Engine::resolve(Some(home.path().to_path_buf()), &backend.uri()).await;
         assert!(matches!(engine, Engine::Local(_)));
         let (outcome, blocks) = answer(&engine, &estelle, "what retries?").await;
 
         assert!(matches!(outcome, PromptAnswer::Answered));
-        assert_eq!(
-            emitted_texts(&blocks),
-            vec![
-                "Hello".to_string(),
-                " back".to_string(),
-                LOCAL_RECEIPT.to_string()
-            ]
-        );
+        let texts = emitted_texts(&blocks);
+        assert_eq!(&texts[..2], &["Hello".to_string(), " back".to_string()]);
+        let receipt = texts.last().expect("local route receipt");
+        assert!(receipt.starts_with(LOCAL_RECEIPT), "{receipt}");
+        assert!(receipt.contains("model: mock-worse"), "{receipt}");
+        assert!(receipt.contains("tier: frontier"), "{receipt}");
+        assert!(receipt.contains("reason: reasoning request"), "{receipt}");
 
         let requests = backend.received_requests().await.expect("requests");
         let models_request = requests
@@ -762,8 +913,12 @@ mod tests {
         );
 
         let body: serde_json::Value = request.body_json().expect("request body");
-        assert_eq!(body["model"], json!("mock-best"));
-        let expected = model_fixture("mock-best", 2, ModelVisibility::List);
+        assert_eq!(
+            body["model"],
+            json!("mock-worse"),
+            "the local call must spend the model Estelle selected inside the real plan list"
+        );
+        let expected = model_fixture("mock-worse", 5, ModelVisibility::List);
         assert_eq!(
             body["instructions"],
             json!(expected.base_instructions),
@@ -781,7 +936,8 @@ mod tests {
         );
         assert_eq!(
             body["reasoning"]["effort"],
-            serde_json::to_value(ReasoningEffort::Low).expect("effort json")
+            serde_json::to_value(ReasoningEffort::High).expect("effort json"),
+            "the server-selected effort must reach the local provider call"
         );
         let input = &body["input"];
         assert_eq!(
@@ -833,7 +989,59 @@ mod tests {
 
         assert!(matches!(outcome, PromptAnswer::Failed(ref error)
             if error.contains("before response.completed")));
-        assert!(!emitted_texts(&blocks).contains(&LOCAL_RECEIPT.to_string()));
+        assert!(
+            !emitted_texts(&blocks)
+                .iter()
+                .any(|line| line.starts_with(LOCAL_RECEIPT))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_route_outside_the_authenticated_plan_is_rejected_before_provider_egress() {
+        let home = tempdir().expect("home");
+        write_chatgpt_auth(home.path(), &valid_access_token(), "refresh-1");
+        let backend = MockServer::start().await;
+        mock_backend_models(
+            &backend,
+            vec![
+                model_fixture("mock-best", 2, ModelVisibility::List),
+                model_fixture("mock-worse", 5, ModelVisibility::List),
+            ],
+        )
+        .await;
+        mock_backend_responses(&backend).await;
+        let estelle = MockServer::start().await;
+        mock_estelle(&estelle, 200).await;
+        Mock::given(method("POST"))
+            .and(path("/route"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "routed": true,
+                "model": "not-in-this-plan",
+                "tier": "frontier",
+                "reason": "contract mutant"
+            })))
+            .expect(1)
+            .mount(&estelle)
+            .await;
+
+        let engine = Engine::resolve(Some(home.path().to_path_buf()), &backend.uri()).await;
+        let (outcome, blocks) = answer(&engine, &estelle, "what retries?").await;
+
+        assert!(matches!(outcome, PromptAnswer::Answered));
+        let requests = backend.received_requests().await.expect("requests");
+        let request = requests
+            .iter()
+            .find(|request| request.url.path() == "/responses")
+            .expect("safe provider default still serves");
+        let body: Value = request.body_json().expect("request body");
+        assert_eq!(body["model"], json!("mock-best"));
+        assert_ne!(body["model"], json!("not-in-this-plan"));
+        assert!(
+            emitted_texts(&blocks)
+                .last()
+                .is_some_and(|line| line.contains("model outside plan")),
+            "the rejected route must be named in the local receipt"
+        );
     }
 
     fn write_chatgpt_auth_token(home: &Path) -> String {
@@ -976,9 +1184,10 @@ mod tests {
         let (outcome, blocks) = answer(&engine, &estelle, "what retries?").await;
 
         assert!(matches!(outcome, PromptAnswer::Answered));
-        assert_eq!(
-            emitted_texts(&blocks).last(),
-            Some(&LOCAL_RECEIPT.to_string())
+        assert!(
+            emitted_texts(&blocks)
+                .last()
+                .is_some_and(|line| line.starts_with(LOCAL_RECEIPT))
         );
         let requests = backend.received_requests().await.expect("requests");
         let request = requests
@@ -1008,7 +1217,7 @@ mod tests {
         mock_estelle(&estelle, 200).await;
 
         let engine = Engine::resolve(Some(home.path().to_path_buf()), &backend.uri()).await;
-        let (outcome, _blocks) = answer(&engine, &estelle, "what retries?").await;
+        let (outcome, blocks) = answer(&engine, &estelle, "what retries?").await;
 
         assert!(matches!(outcome, PromptAnswer::Answered));
         let bundled = pick_model(&bundled_models_response().expect("catalog").models)
@@ -1021,5 +1230,19 @@ mod tests {
         let body: serde_json::Value = request.body_json().expect("request body");
         assert_eq!(body["model"], json!(bundled.slug));
         assert_eq!(body["instructions"], json!(bundled.instructions));
+        assert!(
+            estelle
+                .received_requests()
+                .await
+                .expect("requests")
+                .iter()
+                .all(|request| request.url.path() != "/route"),
+            "a local bundled catalog cannot be presented as plan entitlement"
+        );
+        assert!(
+            emitted_texts(&blocks)
+                .last()
+                .is_some_and(|line| line.contains("provider model census unavailable"))
+        );
     }
 }

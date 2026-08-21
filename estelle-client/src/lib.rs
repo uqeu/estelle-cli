@@ -228,6 +228,16 @@ impl Client {
         self.post(Endpoint::TurnRoute, request, cancel).await
     }
 
+    pub async fn route_within_plan(
+        &self,
+        repo: &Repo,
+        request: &PlanRouteRequest,
+        cancel: &CancellationToken,
+    ) -> Result<PlanRouteResponse, Error> {
+        self.post_scoped(Endpoint::Route, repo, request, cancel)
+            .await
+    }
+
     pub async fn orchestra_run(
         &self,
         repo: &Repo,
