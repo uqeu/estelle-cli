@@ -51,6 +51,12 @@ jobs:
             exit 1
           }
           test "$(command -v estelle)" = "${HOME}/.local/bin/estelle"
+          # Review and Guardian correctly refuse to send an empty diff. Give both suites a real,
+          # harmless tracked-file change so this receipt measures routing instead of fixture absence.
+          fixture_path="$(git ls-files | sed -n '1p')"
+          test -n "$fixture_path"
+          printf '\n# Estelle plain-English routing receipt fixture.\n' >> "$fixture_path"
+          git diff --quiet --exit-code && exit 1
           python3 "${GITHUB_WORKSPACE}/scripts/plain-english-routing-receipt.py" \
             --repo Shubhamsaboo/awesome-llm-apps \
             --output "${RUNNER_TEMP}/plain-English-routing-receipt.json"

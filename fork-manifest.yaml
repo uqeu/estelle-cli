@@ -80,8 +80,8 @@
     },
     {
       "path": ".github/workflows/plain-english-routing-receipt.yml",
-      "blob": "eac7eab67d34df43c9817dd4943acc395c482e18",
-      "reason": "the manual routing receipt accepts one existing exact SemVer release, installs from its versioned GitHub URL, clones one named real public repository, passes the existing receipt key by environment without printing it, and drives ten turns only through the installed binary and api.fatelabs.ca. It has contents:read only and always preserves the sanitized receipt artifact."
+      "blob": "1b7db222dc50c5c40255d0e88aa16d59cc32eb0e",
+      "reason": "the manual routing receipt accepts one existing exact SemVer release, installs from its versioned GitHub URL, clones one named real public repository, creates one harmless tracked-file diff so Review and Guardian are measured rather than refused on an empty fixture, passes the existing receipt key by environment without printing it, and drives ten turns only through the installed binary and api.fatelabs.ca. It has contents:read only and always preserves the sanitized receipt artifact."
     },
     {
       "path": ".github/workflows/public-install-probe.yml",

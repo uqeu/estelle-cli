@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "plain-english-routing-receipt.py"
+WORKFLOW = ROOT / ".github" / "workflows" / "plain-english-routing-receipt.yml"
 
 
 def load_measure():
@@ -82,11 +83,20 @@ def test_one_misrouted_turn_makes_the_complete_receipt_red() -> None:
     assert measure.routing_receipt_pass(True, rows, observations, discarded=0) is False
 
 
+def test_workflow_creates_a_real_diff_for_review_and_guardian() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    fixture = "git diff --quiet --exit-code && exit 1"
+    measure = "scripts/plain-english-routing-receipt.py"
+    assert fixture in workflow
+    assert workflow.index(fixture) < workflow.index(measure)
+
+
 def main() -> int:
     test_ten_requests_cover_every_named_suite()
     test_route_measure_names_failures_instead_of_crediting_deep_search()
     test_instrument_controls_require_one_known_route_and_zero_unknown_routes()
     test_one_misrouted_turn_makes_the_complete_receipt_red()
+    test_workflow_creates_a_real_diff_for_review_and_guardian()
     print("plain-English routing receipt tests passed")
     return 0
 
