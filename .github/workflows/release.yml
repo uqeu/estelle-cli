@@ -67,8 +67,8 @@ jobs:
         run: |
           set -euo pipefail
           cargo fmt --all -- --check
-          cargo clippy --locked -p estelle-client -p estelle-tui --all-targets -- -D warnings
-          cargo test --locked -p estelle-client -p estelle-tui
+          cargo clippy --locked -p estelle-acp -p estelle-client -p estelle-tui --all-targets -- -D warnings
+          cargo test --locked -p estelle-acp -p estelle-client -p estelle-tui
 
   build:
     needs: validate
