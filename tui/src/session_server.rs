@@ -1373,9 +1373,27 @@ mod tests {
         .expect("fleet")
     }
 
+    async fn mount_research_dispatch(server: &MockServer, prompt: &str) {
+        Mock::given(method("POST"))
+            .and(path("/turn/route"))
+            .and(body_json(serde_json::json!({"prompt": prompt})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "dispatch": {
+                    "suite": "research",
+                    "action": "research.ask",
+                    "confidence": 1.0,
+                    "reason": "matched code-question"
+                }
+            })))
+            .expect(1)
+            .mount(server)
+            .await;
+    }
+
     #[tokio::test]
     async fn imported_history_replays_and_feeds_the_next_server_owned_turn() {
         let api = MockServer::start().await;
+        mount_research_dispatch(&api, "Continue parser repair with regression tests").await;
         let imported_context = [
             "Imported OpenCode session: Parser repair",
             "User: Fix the parser",
@@ -1611,6 +1629,7 @@ mod tests {
     #[tokio::test]
     async fn work_survives_client_disconnect_and_is_replayed_on_reconnect() {
         let api = MockServer::start().await;
+        mount_research_dispatch(&api, "where does charge fail?").await;
         Mock::given(method("POST"))
             .and(path("/deep-search"))
             .and(body_json(serde_json::json!({
@@ -1859,6 +1878,7 @@ mod tests {
             ("inspect payments", "payments are isolated"),
             ("inspect retries", "retries are isolated"),
         ] {
+            mount_research_dispatch(&api, question).await;
             Mock::given(method("POST"))
                 .and(path("/deep-search"))
                 .and(body_json(serde_json::json!({
