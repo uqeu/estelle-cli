@@ -75,8 +75,18 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "blob": "1e6499afd6125b9804875d2b8e039cf576d0a12f",
-      "reason": "release validation adds the pure INSTALL receipt tests, then a separate post-release job installs the exact public artifact, clones three named public repositories, passes the existing repository-scoped receipt secret by environment without printing it, drives only the already-audited production routes, preserves the sanitized JSON receipt and attaches it to the same release. It adds no deploy step, secret writer, permission beyond release-asset upload, or destination outside GitHub and api.fatelabs.ca."
+      "blob": "3ad671e87acc22e2859a63769529652ce027c435",
+      "reason": "release validation adds the pure plain-English routing instrument and keeps the INSTALL receipt against three small named public repositories. Post-release jobs install the exact public artifact, pass the existing repository-scoped receipt secret by environment without printing it, drive only typed api.fatelabs.ca routes, preserve sanitized JSON receipts and attach them to the same release. It adds no deploy step, secret writer, permission beyond release-asset upload, or destination outside GitHub, npm and api.fatelabs.ca."
+    },
+    {
+      "path": ".github/workflows/plain-english-routing-receipt.yml",
+      "blob": "eac7eab67d34df43c9817dd4943acc395c482e18",
+      "reason": "the manual routing receipt accepts one existing exact SemVer release, installs from its versioned GitHub URL, clones one named real public repository, passes the existing receipt key by environment without printing it, and drives ten turns only through the installed binary and api.fatelabs.ca. It has contents:read only and always preserves the sanitized receipt artifact."
+    },
+    {
+      "path": ".github/workflows/public-install-probe.yml",
+      "blob": "49429b0129f23c4f07f5384f570895413ada01da",
+      "reason": "the manual INSTALL rerun resolves the public latest release, installs that artifact, clones three named small public repositories, passes the existing receipt key by environment without printing it, and drives only the installed binary and api.fatelabs.ca. Its contents:write permission is used solely to attach a fully green sanitized receipt to the existing release; failures are preserved as Actions artifacts and never attached as green evidence."
     },
     {
       "path": ".github/workflows/public-binary-receipts.yml",
@@ -105,18 +115,18 @@
     },
     {
       "path": "estelle-client/src/endpoint.rs",
-      "blob": "10667c39a56924755a97413304f486bdc38a364d",
-      "reason": "the closed typed transport inventory adds only the server-owned GitHub connection-status and proposed-PR read surfaces alongside the previously reviewed provider-key, Orchestra, and agent-health routes"
+      "blob": "0194c9e927f7bde8b1134e6f987433116a4de98d",
+      "reason": "the closed typed transport inventory adds the server-owned /agent-presets GET/PUT and /turn/route POST contracts alongside the previously reviewed GitHub, provider-key, Orchestra, and agent-health routes; both use the existing api.fatelabs.ca client and add no destination"
     },
     {
       "path": "estelle-client/src/tests.rs",
-      "blob": "0bcbdefdc6990baad96823ad5536441bb2b6785a",
-      "reason": "the endpoint denominator and typed account GitHub contracts remain pinned while the Estelle credential tests prove mode-0600 creation, fail-closed rejection of mode 0644, environment precedence over deliberately unreadable-by-policy storage, and stable cross-build file identity; named mutations of the permission and environment guards fail"
+      "blob": "33800dadcb09d6b83d9d5970588e80dece541f28",
+      "reason": "the endpoint denominator and typed contracts pin the new preset and untouched-prompt dispatch request shapes while the existing Estelle credential tests continue to prove mode-0600 creation, fail-closed rejection of mode 0644, environment precedence over deliberately unreadable-by-policy storage, and stable cross-build file identity"
     },
     {
       "path": "estelle-client/src/lib.rs",
-      "blob": "2f31afe45b4118f89d2d546ad4e7e4ad78f6a8f3",
-      "reason": "the shared authenticated HTTP seam and fail-closed sanitized receipts are unchanged; the credential boundary adds only a typed permission-mode refusal so the UI can say why an unsafe file was rejected without exposing its path or value"
+      "blob": "063d9967c9ceba6251ba3a826b2fa0a8f15fe00e",
+      "reason": "the shared authenticated HTTP seam and fail-closed sanitized receipts are unchanged; suite_dispatch adds only a typed POST through that seam to the closed /turn/route endpoint, while the credential boundary still exposes no path or value"
     },
     {
       "path": "tui/src/claude_import.rs",
@@ -125,8 +135,8 @@
     },
     {
       "path": "tui/src/commands.rs",
-      "blob": "73caef82b6e35fea2a4cca5b1e0e2d0f51dfcd05",
-      "reason": "local command ownership remains explicit, /orchestra routes to the durable start contract, and its server-owned plan floor is labelled as neither expected nor final spend"
+      "blob": "0dfd841f1c5c60032fa068d76e5ccc6616df4eb7",
+      "reason": "local command ownership remains explicit; /presets renders and PUTs one complete server-owned plan/implement/review table, rejects partial tables before transport, and never computes a model choice. Monitor rendering and /orchestra continue to display only server-returned facts through existing typed routes."
     },
     {
       "path": "tui/src/doctor.rs",
@@ -140,8 +150,8 @@
     },
     {
       "path": "tui/src/main.rs",
-      "blob": "f716da1d0b820a2fbf4dbe26adbb0cae755c4cef",
-      "reason": "the new `brief` and dry-run `setup` surfaces dispatch locally; an actual `setup` invokes the existing masked login only when the existing credential resolver fails, then enters the authenticated compound dispatcher. No credential value is rendered and no new egress destination exists."
+      "blob": "b9a7cc7611c877da631c76b4c9444550d934ae86",
+      "reason": "plain-English turns send the untouched prompt to the server-owned /turn/route classifier, then bind its closed action to an already-audited suite endpoint; the client carries no lexical classifier or model resolver, and ambiguous or unsupported actions stop before a second request. Preset PUTs use the existing authenticated client, while `brief` and dry-run `setup` remain local. No credential value is rendered and no new egress destination exists."
     },
     {
       "path": "tui/src/copilot_login.rs",
@@ -165,13 +175,13 @@
     },
     {
       "path": "estelle-client/src/types.rs",
-      "blob": "10a6f3e828b76491e3138021d4246ac112df580d",
-      "reason": "account GitHub response types preserve nullable connection state, absent gate reasons, server-issued URLs and opaque cursors without deriving a client verdict; Orchestra and agent-health semantics remain unchanged"
+      "blob": "67a4b7388ce2625c336140c6c6b2f01f4c2472a9",
+      "reason": "the new suite-dispatch response preserves the server's suite, action, confidence and reason without deriving a client verdict; preset bundle types preserve the complete server-owned role table. Account GitHub, Orchestra and agent-health semantics remain unchanged."
     },
     {
       "path": "tui/src/session_server.rs",
-      "blob": "6e8adc04424b6cbde53bf704eefdf043168a8583",
-      "reason": "drifted after its previous review by the addition of the `ImportHistory` client request, reviewed by the version-check lane and NOT its author. Verified: the import is refused unless the history's cwd canonicalizes to the session's own repo root, and refused unless the session has no active turn and no existing turns; it introduces no new network destination, no credential read and no background execution. It carries the same unredacted-transcript limit named on tui/src/history_import.rs."
+      "blob": "b5e0a45d50584904aa06af4ad0c42ca853a0f282",
+      "reason": "the prior ImportHistory confinement remains unchanged; detached-session fixtures now require the new server-owned /turn/route request before /deep-search and prove the answer still persists across disconnects and named sessions. This is test-only drift and adds no runtime destination, credential read or background execution."
     },
     {
       "path": "tui/src/status/tests.rs",
