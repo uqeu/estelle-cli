@@ -1,6 +1,6 @@
 {
   "name": "@fatelabs/estelle",
-  "version": "0.2.26",
+  "version": "0.2.27",
   "description": "Compatibility launcher for the native Estelle CLI",
   "bin": {
     "estelle": "bin/estelle.js"
