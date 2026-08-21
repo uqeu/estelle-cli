@@ -1,9 +1,19 @@
 name: release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Unpublished release tag, for example v0.2.28"
+        required: true
+        type: string
+
+concurrency:
+  group: estelle-cli-release
+  cancel-in-progress: false
+
+env:
+  ESTELLE_RELEASE_TAG: ${{ inputs.release_tag }}
 
 permissions:
   contents: read
@@ -21,7 +31,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag=${GITHUB_REF_NAME}
+          tag=${ESTELLE_RELEASE_TAG}
           grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$' <<<"$tag"
           version=$(awk '
             /^\[workspace.package\]$/ { in_package=1; next }
@@ -38,6 +48,16 @@ jobs:
           test "$tag" = "v$plugin_version"
           market_version=$(node -p "require('./.claude-plugin/marketplace.json').plugins[0].version")
           test "$tag" = "v$market_version"
+      - name: Require current main and a resumable release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          remote_sha=$(git ls-remote origin "refs/tags/${ESTELLE_RELEASE_TAG}^{}" | awk '{print $1}')
+          if test -n "$remote_sha"; then
+            test "$remote_sha" = "$GITHUB_SHA"
+          fi
       - name: Prove the plugin door's identity and version agreement
         run: python3 scripts/test-plugin-identity.py
       - name: Prove checksum-first installer behavior
@@ -91,7 +111,9 @@ jobs:
             target: aarch64-unknown-linux-gnu
             file_marker: "ARM aarch64"
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    # v0.2.25 reached a valid Intel binary after 66m26s, then the 90m job ceiling
+    # cancelled its native installer proof. The bound remains finite but covers that measured tail.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install Rust target
@@ -110,10 +132,10 @@ jobs:
           python3 scripts/check-ip-boundary.py "$binary"
           description=$(file "$binary")
           grep -F -- "${{ matrix.file_marker }}" <<<"$description"
-          test "$("$binary" --version)" = "estelle ${GITHUB_REF_NAME#v}"
+          test "$("$binary" --version)" = "estelle ${ESTELLE_RELEASE_TAG#v}"
           ESTELLE_TEST_BINARY="$binary" \
             ESTELLE_TEST_TARGET="${{ matrix.target }}" \
-            ESTELLE_TEST_EXPECTED_OUTPUT="estelle ${GITHUB_REF_NAME#v}" \
+            ESTELLE_TEST_EXPECTED_OUTPUT="estelle ${ESTELLE_RELEASE_TAG#v}" \
             ./scripts/test-installer.sh
           mkdir dist
           install -m 0755 "$binary" "dist/estelle-${{ matrix.target }}"
@@ -149,13 +171,27 @@ jobs:
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
           subject-path: release/*
+      - name: Publish the immutable tag only after validation and all native builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          remote_sha=$(git ls-remote origin "refs/tags/${ESTELLE_RELEASE_TAG}^{}" | awk '{print $1}')
+          if test -z "$remote_sha"; then
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git tag -a "$ESTELLE_RELEASE_TAG" "$GITHUB_SHA" -m "Estelle CLI $ESTELLE_RELEASE_TAG"
+            git push origin "refs/tags/${ESTELLE_RELEASE_TAG}"
+            remote_sha=$(git ls-remote origin "refs/tags/${ESTELLE_RELEASE_TAG}^{}" | awk '{print $1}')
+          fi
+          test "$remote_sha" = "$GITHUB_SHA"
       - name: Publish versioned release assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           cat > release-notes.md <<EOF
-          Estelle CLI ${GITHUB_REF_NAME}
+          Estelle CLI ${ESTELLE_RELEASE_TAG}
 
           Install the latest release:
 
@@ -168,14 +204,18 @@ jobs:
 
           Public-binary surface receipts (published after a fresh-runner install and production probe):
 
-              https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/public-binary-receipts.json
+              https://github.com/${GITHUB_REPOSITORY}/releases/download/${ESTELLE_RELEASE_TAG}/public-binary-receipts.json
 
           Public INSTALL receipts on real TypeScript, Go, and mixed repositories:
 
-              https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/public-install-receipts.json
+              https://github.com/${GITHUB_REPOSITORY}/releases/download/${ESTELLE_RELEASE_TAG}/public-install-receipts.json
           EOF
-          gh release create "$GITHUB_REF_NAME" release/* \
-            --verify-tag --title "Estelle CLI $GITHUB_REF_NAME" --notes-file release-notes.md
+          if gh release view "$ESTELLE_RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$ESTELLE_RELEASE_TAG" release/* --clobber
+          else
+            gh release create "$ESTELLE_RELEASE_TAG" release/* \
+              --verify-tag --title "Estelle CLI $ESTELLE_RELEASE_TAG" --notes-file release-notes.md
+          fi
 
   public-binary-receipts:
     needs: release
@@ -187,11 +227,11 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install the exact release from its public URL
         env:
-          ESTELLE_VERSION: ${{ github.ref_name }}
+          ESTELLE_VERSION: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           curl --proto '=https' --tlsv1.2 -fsSL \
-            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/install.sh" | sh
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${ESTELLE_RELEASE_TAG}/install.sh" | sh
           echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
       - name: Clone a real public repository
         run: |
@@ -229,13 +269,13 @@ jobs:
           }
           test "$(command -v estelle)" = "${HOME}/.local/bin/estelle"
           python3 "${GITHUB_WORKSPACE}/scripts/public-binary-receipts.py" \
-            --expected-version "${GITHUB_REF_NAME}" \
+            --expected-version "${ESTELLE_RELEASE_TAG}" \
             --repo Shubhamsaboo/awesome-llm-apps \
             --output "${RUNNER_TEMP}/public-binary-receipts.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
-          name: public-binary-receipts-${{ github.ref_name }}
+          name: public-binary-receipts-${{ inputs.release_tag }}
           path: ${{ runner.temp }}/public-binary-receipts.json
           if-no-files-found: error
       - name: Attach the exact receipt to the public release
@@ -244,7 +284,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release upload "$GITHUB_REF_NAME" \
+          gh release upload "$ESTELLE_RELEASE_TAG" \
             "${RUNNER_TEMP}/public-binary-receipts.json" --clobber
       - name: Fail closed after preserving the receipt
         if: always() && steps.public_receipts.outcome != 'success'
@@ -264,7 +304,7 @@ jobs:
         run: |
           set -euo pipefail
           curl --proto '=https' --tlsv1.2 -fsSL \
-            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/install.sh" | sh
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/${ESTELLE_RELEASE_TAG}/install.sh" | sh
           echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
       - name: Clone real TypeScript, Go, and mixed repositories
         run: |
@@ -293,7 +333,7 @@ jobs:
           test "$(command -v estelle)" = "${HOME}/.local/bin/estelle"
           python3 scripts/public-install-receipts.py \
             --binary "${HOME}/.local/bin/estelle" \
-            --expected-version "${GITHUB_REF_NAME}" \
+            --expected-version "${ESTELLE_RELEASE_TAG}" \
             --typescript "${RUNNER_TEMP}/typescript" \
             --go "${RUNNER_TEMP}/go" \
             --mixed "${RUNNER_TEMP}/mixed" \
@@ -302,7 +342,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
-          name: public-install-receipts-${{ github.ref_name }}
+          name: public-install-receipts-${{ inputs.release_tag }}
           path: ${{ runner.temp }}/public-install-receipts.json
           if-no-files-found: error
       - name: Attach the exact INSTALL receipt to the public release
@@ -311,7 +351,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release upload "$GITHUB_REF_NAME" \
+          gh release upload "$ESTELLE_RELEASE_TAG" \
             "${RUNNER_TEMP}/public-install-receipts.json" --clobber
       - name: Fail closed after preserving the INSTALL receipt
         if: always() && steps.install_receipts.outcome != 'success'
@@ -346,4 +386,11 @@ jobs:
           subject-path: npm-shim/fatelabs-estelle-*.tgz
       - name: Publish the native compatibility launcher
         working-directory: npm-shim
-        run: npm publish --provenance --access public
+        run: |
+          set -euo pipefail
+          version=${ESTELLE_RELEASE_TAG#v}
+          if ! npm view "@fatelabs/estelle@$version" version --prefer-online >/dev/null 2>&1; then
+            npm publish --provenance --access public
+          fi
+      - name: Read the customer npm artifact back from the registry
+        run: python3 scripts/verify-npm-release.py "${ESTELLE_RELEASE_TAG#v}" --expected-directory npm-shim

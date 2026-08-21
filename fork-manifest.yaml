@@ -75,8 +75,8 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "blob": "957e25e08643a196c523e695b22bc2e2d6ddf337",
-      "reason": "release validation adds estelle-acp to the warning-denied clippy and locked test gate, so the local-plan runtime cannot ship behind client/TUI-only greens. The existing routing, install, receipt, build, release and npm jobs are otherwise unchanged; this adds no permission, credential source, deploy step or destination."
+      "blob": "071b336f5dbcb3ae8ba4109398c648d4a9de7591",
+      "reason": "release dispatch now validates and builds the current main candidate before creating its annotated tag, resumes only an exact same-SHA tag, gives the measured Intel tail a finite 120-minute budget, and reads npm version plus packed customer files back after publication. Contents-write, OIDC, GitHub releases, and npm remain the existing permissions and destinations; no credential source or product egress was added."
     },
     {
       "path": ".github/workflows/plain-english-routing-receipt.yml",
