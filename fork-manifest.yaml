@@ -75,8 +75,8 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "blob": "071b336f5dbcb3ae8ba4109398c648d4a9de7591",
-      "reason": "release dispatch now validates and builds the current main candidate before creating its annotated tag, resumes only an exact same-SHA tag, gives the measured Intel tail a finite 120-minute budget, and reads npm version plus packed customer files back after publication. Contents-write, OIDC, GitHub releases, and npm remain the existing permissions and destinations; no credential source or product egress was added."
+      "blob": "b884ee1e974e31252a531cd89b588bddb70dff93",
+      "reason": "release dispatch now validates and builds a new current-main candidate before creating its annotated tag, while an existing exact same-SHA tag remains resumable after main advances; it gives the measured Intel tail a finite 120-minute budget and reads npm version plus packed customer files back after publication. Contents-write, OIDC, GitHub releases, and npm remain the existing permissions and destinations; no credential source or product egress was added."
     },
     {
       "path": ".github/workflows/plain-english-routing-receipt.yml",

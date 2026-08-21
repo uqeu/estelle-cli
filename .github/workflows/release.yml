@@ -53,10 +53,11 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --no-tags origin main
-          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
           remote_sha=$(git ls-remote origin "refs/tags/${ESTELLE_RELEASE_TAG}^{}" | awk '{print $1}')
           if test -n "$remote_sha"; then
             test "$remote_sha" = "$GITHUB_SHA"
+          else
+            test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
           fi
       - name: Prove the plugin door's identity and version agreement
         run: python3 scripts/test-plugin-identity.py

@@ -43,6 +43,13 @@ def write_fixture(root: Path, changed_readme: bool) -> tuple[Path, Path]:
 
 
 def main() -> None:
+    propagation_window = (
+        VERIFY.REGISTRY_READBACK_ATTEMPTS - 1
+    ) * VERIFY.REGISTRY_READBACK_DELAY_SECONDS
+    assert propagation_window >= 300, (
+        "npm explicitly says a new package may take a few minutes to become available; "
+        "the read-back must wait at least five minutes before declaring publication absent"
+    )
     with tempfile.TemporaryDirectory(prefix="estelle-npm-verifier-test-") as temporary:
         root = Path(temporary)
         control_root = root / "control"
