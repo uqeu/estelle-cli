@@ -67,6 +67,15 @@ def test_instrument_controls_require_one_known_route_and_zero_unknown_routes() -
         {"paths": [], "statuses": []},
         {"paths": [], "statuses": []},
     ) is False
+
+
+def test_one_misrouted_turn_makes_the_complete_receipt_red() -> None:
+    measure = load_measure()
+    rows = [{"pass": True} for _ in measure.CASES]
+    observations = [{"tui_completed": True} for _ in measure.CASES]
+    assert measure.routing_receipt_pass(True, rows, observations, discarded=0) is True
+    rows[4]["pass"] = False
+    assert measure.routing_receipt_pass(True, rows, observations, discarded=0) is False
     assert measure.controls_pass(
         {"paths": ["/me"], "statuses": [200]},
         {"paths": ["/deep-search"], "statuses": [200]},
@@ -77,6 +86,7 @@ def main() -> int:
     test_ten_requests_cover_every_named_suite()
     test_route_measure_names_failures_instead_of_crediting_deep_search()
     test_instrument_controls_require_one_known_route_and_zero_unknown_routes()
+    test_one_misrouted_turn_makes_the_complete_receipt_red()
     print("plain-English routing receipt tests passed")
     return 0
 

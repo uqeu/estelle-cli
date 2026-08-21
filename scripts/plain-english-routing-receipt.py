@@ -91,6 +91,17 @@ def controls_pass(positive: dict, negative: dict) -> bool:
     )
 
 
+def routing_receipt_pass(
+    instrument: bool, rows: list[dict], observations: list[dict], discarded: int
+) -> bool:
+    return (
+        instrument
+        and discarded == 0
+        and all(row.get("pass") is True for row in rows)
+        and all(observation.get("tui_completed") is True for observation in observations)
+    )
+
+
 def _active_records(harness, trace: Path, offset: int) -> list[dict]:
     records = harness._read_http_records_after(trace, offset)
     return [
@@ -137,9 +148,7 @@ def run_measure(repo: str, trace: Path, timeout: float, health_url: str) -> dict
     routed = sum(row["pass"] and not row["discarded"] for row in rows)
     discarded = sum(row["discarded"] for row in rows)
     instrument = controls_pass(positive, negative)
-    terminal = instrument and discarded == 0 and all(
-        observation.get("tui_completed") is True for observation in observations
-    )
+    terminal = routing_receipt_pass(instrument, rows, observations, discarded)
     return {
         "repo": repo,
         "instrument": {
