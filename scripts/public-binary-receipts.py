@@ -1317,11 +1317,14 @@ def _wait_for_active_http_receipt(
     path: Path,
     line_offset: int,
     deadline: float,
+    expected_path: str | None = None,
 ) -> dict[str, object]:
     while time.monotonic() < deadline:
         for record in _read_http_records_after(path, line_offset):
             request_path = record.get("request", {}).get("path")
             if request_path in PASSIVE_TUI_ROUTES:
+                continue
+            if expected_path is not None and request_path != expected_path:
                 continue
             if isinstance(request_path, str):
                 return {
@@ -1390,7 +1393,10 @@ def tui_turn_receipt(
                 )
             else:
                 http_route = _wait_for_active_http_receipt(
-                    http_trace, trace_offset, ready_deadline
+                    http_trace,
+                    trace_offset,
+                    ready_deadline,
+                    expected_path=expected_active_path,
                 )
             visible = _read_until(
                 fd, observed, ("receipt-output-drained",), time.monotonic() + 0.25
@@ -1454,7 +1460,10 @@ def tui_skill_thread_receipt(
             screens.append(visible.strip())
             if http_trace is not None:
                 route = _wait_for_active_http_receipt(
-                    http_trace, trace_offset, deadline
+                    http_trace,
+                    trace_offset,
+                    deadline,
+                    expected_path="/skill/run",
                 )
                 http_routes.append(route)
                 passed = passed and _active_http_contract(route, "/skill/run")

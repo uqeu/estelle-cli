@@ -396,6 +396,10 @@ def test_arbitrary_turn_wait_ignores_passive_startup_routes() -> None:
             )
             + "\n"
             + json.dumps(
+                {"request": {"path": "/turn/route"}, "response": {"status": 200}}
+            )
+            + "\n"
+            + json.dumps(
                 {"request": {"path": "/deep-search"}, "response": {"status": 200}}
             )
             + "\n",
@@ -403,12 +407,18 @@ def test_arbitrary_turn_wait_ignores_passive_startup_routes() -> None:
         )
         assert harness._wait_for_active_http_receipt(
             path, 0, time.monotonic() + 0.2
+        ) == {"path": "/turn/route", "status": 200}
+        assert harness._wait_for_active_http_receipt(
+            path,
+            0,
+            time.monotonic() + 0.2,
+            expected_path="/deep-search",
         ) == {"path": "/deep-search", "status": 200}
         assert harness._wait_for_active_http_receipt(
-            path, 1, time.monotonic() + 0.05
+            path, 2, time.monotonic() + 0.05
         ) == {"path": "/deep-search", "status": 200}
         assert harness._wait_for_active_http_receipt(
-            path, 2, time.monotonic()
+            path, 3, time.monotonic()
         ) == {"path": "not observed", "status": "not observed"}
 
 
