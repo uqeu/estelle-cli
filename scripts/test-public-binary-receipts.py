@@ -1208,15 +1208,19 @@ def test_http_contract_receipt_proves_hidden_fields() -> None:
             "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
         )
 
-        receipt, observed = load_harness().http_contract_receipt(path)
+        receipts, observed = load_harness().http_contract_receipts(path)
 
-        assert receipt["pass"] is True
-        assert "deep review" in receipt["came_back"]
-        assert "whole lockfile" in receipt["came_back"]
-        assert "three head markers=True" in receipt["came_back"]
-        assert "hook network rows=True" in receipt["came_back"]
-        assert "skill thread=True" in receipt["came_back"]
-        assert "conversational upload absent=True" in receipt["came_back"]
+        assert len(receipts) == 7
+        assert all(receipt["pass"] is True for receipt in receipts)
+        assert {receipt["sent"] for receipt in receipts} == {
+            "grounded-question data-only request",
+            "deep review request",
+            "whole-lockfile scan request",
+            "three head markers",
+            "hook network rows",
+            "interactive skill thread",
+            "conversational upload suppression",
+        }
         assert observed == records
 
         missing_head = json.loads(json.dumps(records))
@@ -1231,9 +1235,10 @@ def test_http_contract_receipt_proves_hidden_fields() -> None:
             "".join(json.dumps(record) + "\n" for record in missing_head),
             encoding="utf-8",
         )
-        failed, _ = load_harness().http_contract_receipt(path)
-        assert failed["pass"] is False
-        assert "three head markers=False" in failed["came_back"]
+        failed, _ = load_harness().http_contract_receipts(path)
+        failed_by_name = {receipt["sent"]: receipt["pass"] for receipt in failed}
+        assert failed_by_name["three head markers"] is False
+        assert sum(value is False for value in failed_by_name.values()) == 1
 
 
 def test_head_contract_accepts_a_terminal_unsafe_ingest_refusal() -> None:

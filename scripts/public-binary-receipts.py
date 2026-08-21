@@ -1618,7 +1618,16 @@ def _skill_thread_contract(records: list[dict]) -> bool:
     )
 
 
-def http_contract_receipt(path: Path) -> tuple[dict[str, object], list[object]]:
+def http_contract_receipts(path: Path) -> tuple[list[dict[str, object]], list[object]]:
+    names = (
+        "grounded-question data-only request",
+        "deep review request",
+        "whole-lockfile scan request",
+        "three head markers",
+        "hook network rows",
+        "interactive skill thread",
+        "conversational upload suppression",
+    )
     try:
         records = [
             json.loads(line)
@@ -1627,11 +1636,14 @@ def http_contract_receipt(path: Path) -> tuple[dict[str, object], list[object]]:
         ]
     except (OSError, json.JSONDecodeError) as error:
         return (
-            {
-                "sent": "inspect sanitized HTTP trace",
-                "came_back": f"trace unreadable: {type(error).__name__}",
-                "pass": False,
-            },
+            [
+                {
+                    "sent": name,
+                    "came_back": f"trace unreadable: {type(error).__name__}",
+                    "pass": False,
+                }
+                for name in names
+            ],
             [],
         )
     requests = [
@@ -1649,24 +1661,20 @@ def http_contract_receipt(path: Path) -> tuple[dict[str, object], list[object]]:
     three_heads = _head_contract(records)
     hook_network = _hook_network_contract(requests)
     skill_thread = _skill_thread_contract(records)
-    proof = (
-        f"grounded question data-only={separated}; deep review={deep}; "
-        f"whole lockfile={whole_lockfile}; three head markers={three_heads}; "
-        f"hook network rows={hook_network}; skill thread={skill_thread}; "
-        f"conversational upload absent={conversational}"
+    checks = (
+        separated,
+        deep,
+        whole_lockfile,
+        three_heads,
+        hook_network,
+        skill_thread,
+        conversational,
     )
     return (
-        {
-            "sent": "inspect sanitized HTTP trace",
-            "came_back": proof,
-            "pass": separated
-            and conversational
-            and deep
-            and whole_lockfile
-            and three_heads
-            and hook_network
-            and skill_thread,
-        },
+        [
+            {"sent": name, "came_back": f"observed={passed}", "pass": passed}
+            for name, passed in zip(names, checks, strict=True)
+        ],
         records,
     )
 
@@ -1719,8 +1727,8 @@ def run_receipts(
     receipts.extend(hook_event_receipts(Path.cwd(), max(timeout, 30)))
     http_records = None
     if http_trace is not None:
-        http_receipt, http_records = http_contract_receipt(http_trace)
-        receipts.append(http_receipt)
+        http_receipts, http_records = http_contract_receipts(http_trace)
+        receipts.extend(http_receipts)
     report = {
         "expected_version": expected_version,
         "repo": repo,
