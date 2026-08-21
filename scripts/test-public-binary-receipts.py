@@ -412,6 +412,52 @@ def test_arbitrary_turn_wait_ignores_passive_startup_routes() -> None:
         ) == {"path": "not observed", "status": "not observed"}
 
 
+def test_tui_turn_waits_for_the_named_http_route_after_the_composer_returns() -> None:
+    with tempfile.TemporaryDirectory(prefix="estelle-turn-http-wait-") as raw_dir:
+        root = Path(raw_dir)
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        fake_estelle = fake_bin / "estelle"
+        trace = root / "trace.jsonl"
+        fake_estelle.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, os, sys, time\n"
+            "print('Ask Estelle', flush=True)\n"
+            "turn = sys.stdin.readline().strip()\n"
+            "print(f'you  {turn}\\nREVIEW RECEIPT\\n› Ask Estelle', flush=True)\n"
+            "time.sleep(0.3)\n"
+            "with open(os.environ['ESTELLE_RECEIPT_PATH'], 'a', encoding='utf-8') as sink:\n"
+            "    sink.write(json.dumps({'request': {'path': '/gate'}, 'response': {'status': 200}}) + '\\n')\n"
+            "time.sleep(1)\n",
+            encoding="utf-8",
+        )
+        fake_estelle.chmod(0o755)
+        original_path = os.environ.get("PATH", "")
+        original_trace = os.environ.get("ESTELLE_RECEIPT_PATH")
+        os.environ["PATH"] = f"{fake_bin}{os.pathsep}{original_path}"
+        os.environ["ESTELLE_RECEIPT_PATH"] = str(trace)
+        try:
+            receipt = load_harness().tui_turn_receipt(
+                "/review",
+                "uqeu/estelle",
+                timeout=3,
+                expected_active_path="/gate",
+            )
+        finally:
+            os.environ["PATH"] = original_path
+            if original_trace is None:
+                os.environ.pop("ESTELLE_RECEIPT_PATH", None)
+            else:
+                os.environ["ESTELLE_RECEIPT_PATH"] = original_trace
+        assert receipt["pass"] is True
+        assert receipt["http_route"] == {"path": "/gate", "status": 200}
+        harness = load_harness()
+        assert harness._active_http_contract(receipt["http_route"], "/gate") is True
+        assert harness._active_http_contract(receipt["http_route"], "/scan") is False
+        failed_status = dict(receipt["http_route"], status=500)
+        assert harness._active_http_contract(failed_status, "/gate") is False
+
+
 def test_skill_thread_receipt_keeps_both_turns_in_one_tui_process() -> None:
     with tempfile.TemporaryDirectory(prefix="estelle-public-skill-thread-") as raw_dir:
         fake_bin = Path(raw_dir) / "bin"
@@ -442,6 +488,47 @@ def test_skill_thread_receipt_keeps_both_turns_in_one_tui_process() -> None:
         first_pid = screens[0].split("pid=", 1)[1].split()[0]
         second_pid = screens[1].split("pid=", 1)[1].split()[0]
         assert first_pid == second_pid
+
+
+def test_skill_thread_waits_for_both_named_http_records() -> None:
+    with tempfile.TemporaryDirectory(prefix="estelle-skill-http-wait-") as raw_dir:
+        root = Path(raw_dir)
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        trace = root / "trace.jsonl"
+        fake_estelle = fake_bin / "estelle"
+        fake_estelle.write_text(
+            "#!/bin/sh\nprintf 'Ask Estelle\\n'\n"
+            "IFS= read -r first\n"
+            "printf 'you  %s\\nFIRST SKILL REPLY\\n› Ask Estelle\\n' \"$first\"\n"
+            "sleep 0.2\n"
+            "printf '%s\\n' '{\"request\":{\"path\":\"/skill/run\"},\"response\":{\"status\":200}}' >> \"$ESTELLE_RECEIPT_PATH\"\n"
+            "IFS= read -r second\n"
+            "printf 'you  %s\\nSECOND SKILL REPLY\\n› Ask Estelle\\n' \"$second\"\n"
+            "sleep 0.2\n"
+            "printf '%s\\n' '{\"request\":{\"path\":\"/skill/run\"},\"response\":{\"status\":200}}' >> \"$ESTELLE_RECEIPT_PATH\"\n",
+            encoding="utf-8",
+        )
+        fake_estelle.chmod(0o755)
+        original_path = os.environ.get("PATH", "")
+        original_trace = os.environ.get("ESTELLE_RECEIPT_PATH")
+        os.environ["PATH"] = f"{fake_bin}{os.pathsep}{original_path}"
+        os.environ["ESTELLE_RECEIPT_PATH"] = str(trace)
+        try:
+            receipt = load_harness().tui_skill_thread_receipt(
+                "uqeu/estelle", timeout=3
+            )
+        finally:
+            os.environ["PATH"] = original_path
+            if original_trace is None:
+                os.environ.pop("ESTELLE_RECEIPT_PATH", None)
+            else:
+                os.environ["ESTELLE_RECEIPT_PATH"] = original_trace
+        assert receipt["pass"] is True
+        assert receipt["http_routes"] == [
+            {"path": "/skill/run", "status": 200},
+            {"path": "/skill/run", "status": 200},
+        ]
 
 
 def test_tui_surface_fails_closed() -> None:
@@ -1005,8 +1092,13 @@ def test_first_run_picker_receipt() -> None:
             "#!/bin/sh\nprintf 'CONNECT ESTELLE\\n'\n"
             "printf '1 Estelle account\\n2 Claude subscription\\n'\n"
             "stty raw -echo\n"
-            "dd bs=1 count=1 >/dev/null 2>&1\n"
-            "printf 'Estelle key: '\n",
+            "choice=$(dd bs=1 count=1 2>/dev/null)\n"
+            "if [ \"$choice\" = 1 ]; then\n"
+            "  printf '\\033[2J\\033[1;1HEstelle key: '\n"
+            "else\n"
+            "  printf '\\033[2J\\033[1;1HCONNECT ESTELLE\\n'\n"
+            "  printf '1 Estelle account\\n2 Claude subscription\\n'\n"
+            "fi\n",
             encoding="utf-8",
         )
         fake_estelle.chmod(0o755)
@@ -1017,9 +1109,13 @@ def test_first_run_picker_receipt() -> None:
         finally:
             os.environ["PATH"] = original_path
         assert receipt["pass"] is True
-        assert "1 Estelle account" in receipt["came_back"]
-        assert "2 Claude subscription" in receipt["came_back"]
+        assert receipt["positive_control"] is True
+        assert receipt["negative_control"] is True
+        assert "1 Estelle account" in receipt["picker_came_back"]
+        assert "2 Claude subscription" in receipt["picker_came_back"]
         assert "Estelle key:" in receipt["came_back"]
+        assert "CONNECT ESTELLE" in receipt["invalid_came_back"]
+        assert "Estelle key:" not in receipt["invalid_came_back"]
 
 
 def test_credential_retention_receipt_requires_two_named_routes() -> None:
@@ -1613,7 +1709,9 @@ def main() -> int:
     test_tui_turn_waits_past_the_composer_paste_suppression_window()
     test_grounded_question_requires_both_request_and_response_evidence()
     test_arbitrary_turn_wait_ignores_passive_startup_routes()
+    test_tui_turn_waits_for_the_named_http_route_after_the_composer_returns()
     test_skill_thread_receipt_keeps_both_turns_in_one_tui_process()
+    test_skill_thread_waits_for_both_named_http_records()
     test_tui_surface_fails_closed()
     test_init_receipt_rejects_an_echo_without_its_named_http_route()
     test_init_receipt_accepts_a_nonempty_wiki_from_its_named_http_route()

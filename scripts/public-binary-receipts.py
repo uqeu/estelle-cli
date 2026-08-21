@@ -114,7 +114,7 @@ SESSION_RESUME_TITLE = "Receipt parser context"
 SESSION_RESUME_PRIOR_QUESTION = "Keep the cobalt owl marker"
 SESSION_RESUME_PRIOR_ANSWER = "The cobalt owl marker is retained"
 SESSION_RESUME_QUESTION = "Which file defines an application entry point in this repository?"
-DIFF_SURFACES = ("/review", "/scan")
+DIFF_SURFACES = {"/review": "/gate", "/scan": "/scan"}
 SMALL_SWEEP_PATH = "rag_tutorials/multimodal_agentic_rag/frontend"
 TUI_PASTE_SETTLE_SECONDS = 0.2
 PRODUCTION_HEALTH_URL = "https://api.fatelabs.ca/health"
@@ -705,31 +705,66 @@ def _terminate_pty(pid: int, fd: int) -> None:
 def first_run_picker_receipt(timeout: float = 10) -> dict[str, object]:
     environment = os.environ.copy()
     environment.pop("ESTELLE_API_KEY", None)
-    pid, fd = pty.fork()
-    if pid == 0:
-        os.execvpe("estelle", ["estelle"], environment)
-    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 120, 0, 0))
-    os.kill(pid, signal.SIGWINCH)
-    observed = bytearray()
-    try:
-        deadline = time.monotonic() + timeout
-        visible = _read_until(fd, observed, ("CONNECT ESTELLE",), deadline)
-        if "CONNECT ESTELLE" in visible:
-            os.write(fd, b"1")
-            visible = _read_until(fd, observed, ("Estelle key:",), deadline)
-        required = (
-            "CONNECT ESTELLE",
-            "1 Estelle account",
-            "2 Claude subscription",
-            "Estelle key:",
-        )
-        return {
-            "sent": "estelle (without a credential)",
-            "came_back": visible.strip(),
-            "pass": all(marker in visible for marker in required),
-        }
-    finally:
-        _terminate_pty(pid, fd)
+
+    def drive(choice: bytes) -> tuple[str, str]:
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.execvpe("estelle", ["estelle"], environment)
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 120, 0, 0))
+        os.kill(pid, signal.SIGWINCH)
+        observed = bytearray()
+        try:
+            deadline = time.monotonic() + timeout
+            # The boot dither can make a title readable before its choices have settled. A receipt
+            # about numbered selection needs the settled choices, not the first partly drawn frame.
+            picker = _read_until_all(
+                fd,
+                observed,
+                ("CONNECT ESTELLE", "1 Estelle account", "2 Claude subscription"),
+                deadline,
+            )
+            if all(
+                marker in picker
+                for marker in (
+                    "CONNECT ESTELLE",
+                    "1 Estelle account",
+                    "2 Claude subscription",
+                )
+            ):
+                os.write(fd, choice)
+            if choice == b"1":
+                after = _read_until(fd, observed, ("Estelle key:",), deadline)
+            else:
+                # Invalid numbers are ignored, so no new terminal bytes are required. Keep the
+                # settled picker frame as the negative receipt and prove no credential prompt opened.
+                time.sleep(0.25)
+                after = rendered_screen(observed, rows=50, columns=160)
+            return picker, after
+        finally:
+            _terminate_pty(pid, fd)
+
+    picker, prompt = drive(b"1")
+    invalid_picker, invalid_after = drive(b"9")
+    required_picker = (
+        "CONNECT ESTELLE",
+        "1 Estelle account",
+        "2 Claude subscription",
+    )
+    positive = all(marker in picker for marker in required_picker) and "Estelle key:" in prompt
+    negative = (
+        all(marker in invalid_picker for marker in required_picker)
+        and all(marker in invalid_after for marker in required_picker)
+        and "Estelle key:" not in invalid_after
+    )
+    return {
+        "sent": "estelle (without a credential): 1, then invalid 9",
+        "picker_came_back": picker.strip(),
+        "came_back": prompt.strip(),
+        "invalid_came_back": invalid_after.strip(),
+        "positive_control": positive,
+        "negative_control": negative,
+        "pass": positive and negative,
+    }
 
 
 def _write_rejected_fixture(home: Path) -> Path:
@@ -805,6 +840,25 @@ def _read_until(
 ) -> str:
     visible = rendered_screen(observed, rows=50, columns=160)
     while time.monotonic() < deadline and not any(marker in visible for marker in markers):
+        ready, _, _ = select.select([fd], [], [], 0.1)
+        if ready:
+            try:
+                chunk = os.read(fd, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            observed.extend(chunk)
+            visible = rendered_screen(observed, rows=50, columns=160)
+    return visible
+
+
+def _read_until_all(
+    fd: int, observed: bytearray, markers: tuple[str, ...], deadline: float
+) -> str:
+    """Read terminal frames until every marker exists in the same settled frame."""
+    visible = rendered_screen(observed, rows=50, columns=160)
+    while time.monotonic() < deadline and not all(marker in visible for marker in markers):
         ready, _, _ = select.select([fd], [], [], 0.1)
         if ready:
             try:
@@ -1278,11 +1332,21 @@ def _wait_for_active_http_receipt(
     return {"path": "not observed", "status": "not observed"}
 
 
+def _active_http_contract(receipt: dict[str, object], expected_path: str) -> bool:
+    status = receipt.get("status")
+    return (
+        receipt.get("path") == expected_path
+        and isinstance(status, int)
+        and 200 <= status < 300
+    )
+
+
 def tui_turn_receipt(
     turn: str,
     repo: str,
     timeout: float = 30,
     wait_for_active_http: bool = False,
+    expected_active_path: str | None = None,
 ) -> dict[str, object]:
     assert turn.strip() == turn and turn
     pid, fd = pty.fork()
@@ -1296,7 +1360,12 @@ def tui_turn_receipt(
     expected_http_path = READ_SURFACE_HTTP_ROUTES.get(turn)
     http_trace = (
         Path(raw_trace)
-        if raw_trace and (expected_http_path is not None or wait_for_active_http)
+        if raw_trace
+        and (
+            expected_http_path is not None
+            or wait_for_active_http
+            or expected_active_path is not None
+        )
         else None
     )
     trace_offset = _trace_line_count(http_trace) or 0
@@ -1335,6 +1404,14 @@ def tui_turn_receipt(
                 or "contract" not in http_route
                 or http_route["contract"] is True
             )
+            and (
+                expected_active_path is None
+                or http_trace is None
+                or (
+                    http_route is not None
+                    and _active_http_contract(http_route, expected_active_path)
+                )
+            )
         )
         receipt = {"sent": turn, "came_back": visible.strip(), "pass": passed}
         if http_route is not None:
@@ -1355,7 +1432,11 @@ def tui_skill_thread_receipt(
     os.kill(pid, signal.SIGWINCH)
     observed = bytearray()
     screens = []
+    http_routes = []
     passed = True
+    raw_trace = os.environ.get("ESTELLE_RECEIPT_PATH")
+    http_trace = Path(raw_trace) if raw_trace else None
+    trace_offset = _trace_line_count(http_trace) or 0
     try:
         visible = _read_until(
             fd, observed, ("Ask Estelle",), time.monotonic() + timeout
@@ -1371,8 +1452,16 @@ def tui_skill_thread_receipt(
             visible = _read_until(fd, observed, (f"you  {turn}",), deadline)
             visible = _read_until(fd, observed, ("› Ask Estelle",), deadline)
             screens.append(visible.strip())
+            if http_trace is not None:
+                route = _wait_for_active_http_receipt(
+                    http_trace, trace_offset, deadline
+                )
+                http_routes.append(route)
+                passed = passed and _active_http_contract(route, "/skill/run")
+                trace_offset = _trace_line_count(http_trace) or trace_offset
             passed = (
-                f"you  {turn}" in visible
+                passed
+                and f"you  {turn}" in visible
                 and "› Ask Estelle" in visible
                 and not any(marker in visible for marker in FAILURE_MARKERS)
             )
@@ -1380,6 +1469,7 @@ def tui_skill_thread_receipt(
             "sent": list(SKILL_TURNS),
             "came_back": screens,
             "processes_started": 1,
+            "http_routes": http_routes,
             "pass": passed and len(screens) == len(SKILL_TURNS),
         }
     finally:
@@ -1481,10 +1571,15 @@ def dropped_command_receipt(
 
 
 def tui_surface_receipt(
-    command: str, repo: str, timeout: float = 30
+    command: str,
+    repo: str,
+    timeout: float = 30,
+    expected_active_path: str | None = None,
 ) -> dict[str, object]:
     assert command.startswith("/")
-    return tui_turn_receipt(command, repo, timeout)
+    return tui_turn_receipt(
+        command, repo, timeout, expected_active_path=expected_active_path
+    )
 
 
 def _answer_contract(requests: list[dict]) -> bool:
@@ -1706,13 +1801,25 @@ def run_receipts(
         else resume_run()
     )
     receipts.extend(surface_receipt(surface) for surface in READ_SURFACES)
-    grounded_run = lambda: tui_turn_receipt(GROUNDING_QUESTION, repo, timeout)
+    grounded_run = lambda: tui_turn_receipt(
+        GROUNDING_QUESTION,
+        repo,
+        timeout,
+        expected_active_path="/deep-search",
+    )
     receipts.append(
         pin_surface_build(grounded_run, read_identity)
         if read_identity is not None
         else grounded_run()
     )
-    receipts.append(tui_turn_receipt(CONVERSATIONAL_QUESTION, repo, timeout))
+    receipts.append(
+        tui_turn_receipt(
+            CONVERSATIONAL_QUESTION,
+            repo,
+            timeout,
+            expected_active_path="/deep-search",
+        )
+    )
     receipts.append(tui_skill_thread_receipt(repo, timeout))
     receipts.append(
         dropped_command_receipt(
@@ -1722,7 +1829,10 @@ def run_receipts(
             settle_seconds=2 if http_trace is not None else 0,
         )
     )
-    receipts.extend(surface_receipt(surface) for surface in DIFF_SURFACES)
+    receipts.extend(
+        tui_surface_receipt(surface, repo, timeout, expected_active_path=path)
+        for surface, path in DIFF_SURFACES.items()
+    )
     receipts.extend(head_surface_receipts(max(timeout, 600)))
     receipts.extend(hook_event_receipts(Path.cwd(), max(timeout, 30)))
     http_records = None
