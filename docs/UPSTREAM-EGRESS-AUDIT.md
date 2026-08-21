@@ -1,6 +1,6 @@
 # Upstream fork and egress audit
 
-Status: source census recorded on 2026-08-15; runtime process-tree canary and call-site exhaustion remain
+Status: source census updated on 2026-08-20; runtime process-tree canary and call-site exhaustion remain
 open. This document is an inventory, not a claim that the binary cannot reach anything else.
 
 ## Provenance boundary
@@ -23,10 +23,10 @@ the pinned upstream object plus an auditable delta—not shared Git ancestry and
 
 The finite source census is in `docs/egress-sinks.toml`:
 
-- 14 sinks reachable from the custom Estelle entrypoint;
+- 17 sinks reachable from the custom Estelle entrypoint;
 - 5 latent sinks retained in the inherited workspace but not initialized by that entrypoint.
 
-Released reachability includes Estelle API startup/search/hooks, ChatGPT login and ACP, the loopback-only
+Released reachability includes Estelle API startup/search/hooks and the ACP plan-route advisory, ChatGPT login and ACP, the loopback-only
 token endpoint test override, the GitHub browser handoff, citation clicks, explicit shell escape, and explicit
 MCP client/server commands. Latent capability includes the inherited OpenAI update checker/executor,
 analytics, configurable OTLP, and plugin marketplace/remote-bundle machinery.

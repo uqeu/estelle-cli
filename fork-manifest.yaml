@@ -75,8 +75,8 @@
     },
     {
       "path": ".github/workflows/release.yml",
-      "blob": "3ad671e87acc22e2859a63769529652ce027c435",
-      "reason": "release validation adds the pure plain-English routing instrument and keeps the INSTALL receipt against three small named public repositories. Post-release jobs install the exact public artifact, pass the existing repository-scoped receipt secret by environment without printing it, drive only typed api.fatelabs.ca routes, preserve sanitized JSON receipts and attach them to the same release. It adds no deploy step, secret writer, permission beyond release-asset upload, or destination outside GitHub, npm and api.fatelabs.ca."
+      "blob": "957e25e08643a196c523e695b22bc2e2d6ddf337",
+      "reason": "release validation adds estelle-acp to the warning-denied clippy and locked test gate, so the local-plan runtime cannot ship behind client/TUI-only greens. The existing routing, install, receipt, build, release and npm jobs are otherwise unchanged; this adds no permission, credential source, deploy step or destination."
     },
     {
       "path": ".github/workflows/plain-english-routing-receipt.yml",
@@ -125,8 +125,8 @@
     },
     {
       "path": "estelle-client/src/lib.rs",
-      "blob": "063d9967c9ceba6251ba3a826b2fa0a8f15fe00e",
-      "reason": "the shared authenticated HTTP seam and fail-closed sanitized receipts are unchanged; suite_dispatch adds only a typed POST through that seam to the closed /turn/route endpoint, while the credential boundary still exposes no path or value"
+      "blob": "70085340ab94aacecb94b8e6c127a77110da87b9",
+      "reason": "the shared authenticated HTTP seam adds one typed route_within_plan POST to api.fatelabs.ca/route. It carries repository identity, user text, and the provider-authenticated model slugs but never the ChatGPT plan credential; the existing Estelle credential boundary and receipt redaction remain unchanged."
     },
     {
       "path": "tui/src/claude_import.rs",
@@ -175,8 +175,18 @@
     },
     {
       "path": "estelle-client/src/types.rs",
-      "blob": "67a4b7388ce2625c336140c6c6b2f01f4c2472a9",
-      "reason": "the new suite-dispatch response preserves the server's suite, action, confidence and reason without deriving a client verdict; preset bundle types preserve the complete server-owned role table. Account GitHub, Orchestra and agent-health semantics remain unchanged."
+      "blob": "94dc7769403c009baf556f8df81501ca98466a7a",
+      "reason": "the plan-route request and response types preserve the exact available model list plus server-returned model, tier, effort and reason. They contain no plan credential field, and the runtime separately verifies that any selected model was in the authenticated provider census."
+    },
+    {
+      "path": "estelle-acp/src/engine.rs",
+      "blob": "1567e31cc65edd68405b81b55c6f5e7c3c4f111b",
+      "reason": "the explicit ACP ChatGPT-plan path reads the provider's authenticated /models census, sends only bounded model slugs and prompt text to Estelle /route, rejects a returned model outside that exact census, and spends the existing ChatGPT credential only in the local /responses call. Provider and server reasons are bounded/redacted in receipts; routing failure retains the provider default and says why."
+    },
+    {
+      "path": "estelle-acp/src/lib.rs",
+      "blob": "ae5ad7ef6f34dc9905dbb2a468e1f71769c7a5c1",
+      "reason": "ACP sessions retain one fixed authenticated model census from session start and pass it to per-prompt routing. This adds no credential read beyond the already-reviewed local engine resolution and no destination beyond the separately registered Estelle route and ChatGPT provider sinks."
     },
     {
       "path": "tui/src/session_server.rs",

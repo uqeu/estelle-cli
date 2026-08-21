@@ -1,7 +1,7 @@
 schema_version = 1
-audit_date = "2026-08-15"
+audit_date = "2026-08-20"
 audit_state = "source census recorded; call-site exhaustion and process-tree runtime canary remain open"
-released_sink_count = 16
+released_sink_count = 17
 latent_sink_count = 5
 
 [[sink]]
@@ -102,6 +102,17 @@ confirmation = "no per-prompt destination confirmation"
 destination = "https://chatgpt.com/backend-api/codex"
 data = "prompt plus Estelle recall; model catalogue request"
 disposition = "keep; disclosure and real-host proof remain open"
+
+[[sink]]
+id = "acp-plan-route-advisory"
+reachability = "released"
+source_file = "estelle-client/src/lib.rs"
+source_symbol = "route_within_plan"
+trigger = "explicit estelle acp with an authenticated ChatGPT model census followed by a prompt"
+confirmation = "the prompt is explicit; no separate per-route confirmation"
+destination = "https://api.fatelabs.ca/route"
+data = "repository identity, prompt text, and up to 256 provider-authenticated model slugs; never the ChatGPT plan credential"
+disposition = "keep; returned model is advisory and must exactly match the local authenticated census before provider egress"
 
 [[sink]]
 id = "chatgpt-token-endpoint-test-override"
