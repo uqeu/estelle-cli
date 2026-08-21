@@ -67,6 +67,10 @@ def test_instrument_controls_require_one_known_route_and_zero_unknown_routes() -
         {"paths": [], "statuses": []},
         {"paths": [], "statuses": []},
     ) is False
+    assert measure.controls_pass(
+        {"paths": ["/me"], "statuses": [200]},
+        {"paths": ["/deep-search"], "statuses": [200]},
+    ) is False
 
 
 def test_one_misrouted_turn_makes_the_complete_receipt_red() -> None:
@@ -76,10 +80,6 @@ def test_one_misrouted_turn_makes_the_complete_receipt_red() -> None:
     assert measure.routing_receipt_pass(True, rows, observations, discarded=0) is True
     rows[4]["pass"] = False
     assert measure.routing_receipt_pass(True, rows, observations, discarded=0) is False
-    assert measure.controls_pass(
-        {"paths": ["/me"], "statuses": [200]},
-        {"paths": ["/deep-search"], "statuses": [200]},
-    ) is False
 
 
 def main() -> int:
