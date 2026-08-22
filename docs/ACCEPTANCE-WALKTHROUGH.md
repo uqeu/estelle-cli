@@ -126,6 +126,10 @@ To inspect another MCP stdio server from Estelle:
 ```
 
 Every scoped MCP call must use the launch repository even when a foreign caller supplies another `repo`.
+Test the advertised wrapper shape, not only a convenient structured call: call a navigation tool with
+`{"args":"symbol"}` and assert that the hosted result names the launch repository. The matched negative is
+the published v0.2.28 behavior, `default repo; repo identity unavailable`; merely finding a sibling `repo`
+in the adapter request does not prove the hosted dispatcher consumed it.
 
 ## 8. Confirm honest degradations
 

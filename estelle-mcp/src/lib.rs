@@ -160,10 +160,48 @@ pub async fn call_stdio(
 }
 
 fn inject_repo(request: &mut CallToolRequestParams, repo: &Repo) {
-    request
-        .arguments
-        .get_or_insert_with(Default::default)
-        .insert("repo".to_string(), Value::String(repo.as_str().to_string()));
+    let tool = request.name.as_ref();
+    let arguments = request.arguments.get_or_insert_with(Default::default);
+    let Some(Value::String(raw)) = arguments.get("args").cloned() else {
+        arguments.insert("repo".to_string(), Value::String(repo.as_str().to_string()));
+        return;
+    };
+
+    let mut payload = serde_json::from_str::<serde_json::Map<String, Value>>(&raw).ok();
+    if payload.is_none() {
+        payload = launch_scoped_plain_args(tool, raw);
+    }
+    let Some(mut payload) = payload else {
+        // The remote contract accepts structured arguments without the advertised `args` wrapper. Keep
+        // the legacy sibling for tools whose free-text shape has no lossless structured equivalent.
+        arguments.insert("repo".to_string(), Value::String(repo.as_str().to_string()));
+        return;
+    };
+    payload.insert("repo".to_string(), Value::String(repo.as_str().to_string()));
+    arguments.insert(
+        "args".to_string(),
+        Value::String(Value::Object(payload).to_string()),
+    );
+    arguments.remove("repo");
+}
+
+fn launch_scoped_plain_args(tool: &str, raw: String) -> Option<serde_json::Map<String, Value>> {
+    let payload_key = match tool {
+        "find_definition" | "find_usages" => Some("symbol"),
+        "find_references" | "blast_radius" => Some("file"),
+        "locate" => Some("query"),
+        "dependency_path" => Some("q"),
+        "verify" => Some("code"),
+        "estelle_resume" => Some("session_id"),
+        "research_ask" => Some("question"),
+        "import_cycles" | "core_files" | "chokepoints" | "subsystems" | "refactor_order" => None,
+        _ => return None,
+    };
+    let mut payload = serde_json::Map::new();
+    if let Some(key) = payload_key {
+        payload.insert(key.to_string(), Value::String(raw));
+    }
+    Some(payload)
 }
 
 fn decode_rpc_result<R>(response: Value) -> Result<R, McpError>
@@ -188,19 +226,35 @@ mod tests {
     #[test]
     fn scoped_calls_always_carry_the_launch_repo() {
         let repo = Repo::new("uqeu/estelle").unwrap();
-        let mut missing = CallToolRequestParams::new("search");
+        let mut missing = CallToolRequestParams::new("find_definition")
+            .with_arguments(serde_json::from_value(json!({"args": "handle_mcp"})).unwrap());
         inject_repo(&mut missing, &repo);
+        let missing_args = missing.arguments.unwrap();
         assert_eq!(
-            missing.arguments.unwrap().get("repo"),
-            Some(&json!("uqeu/estelle"))
+            serde_json::from_str::<Value>(missing_args["args"].as_str().unwrap()).unwrap(),
+            json!({"symbol": "handle_mcp", "repo": "uqeu/estelle"})
         );
 
-        let mut explicit = CallToolRequestParams::new("search")
-            .with_arguments(serde_json::from_value(json!({"repo": "owner/other"})).unwrap());
+        let mut explicit = CallToolRequestParams::new("gate").with_arguments(
+            serde_json::from_value(json!({
+                "args": "{\"diff\":\"--- a/x\\n+++ b/x\",\"repo\":\"owner/other\"}"
+            }))
+            .unwrap(),
+        );
         inject_repo(&mut explicit, &repo);
+        let explicit_args = explicit.arguments.unwrap();
         assert_eq!(
-            explicit.arguments.unwrap().get("repo"),
-            Some(&json!("uqeu/estelle"))
+            serde_json::from_str::<Value>(explicit_args["args"].as_str().unwrap()).unwrap(),
+            json!({"diff": "--- a/x\n+++ b/x", "repo": "uqeu/estelle"})
+        );
+
+        let mut repo_only = CallToolRequestParams::new("import_cycles")
+            .with_arguments(serde_json::from_value(json!({"args": ""})).unwrap());
+        inject_repo(&mut repo_only, &repo);
+        let repo_only_args = repo_only.arguments.unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(repo_only_args["args"].as_str().unwrap()).unwrap(),
+            json!({"repo": "uqeu/estelle"})
         );
     }
 

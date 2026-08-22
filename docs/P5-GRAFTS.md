@@ -197,8 +197,11 @@ Each new guard was deliberately made wrong before its passing result was accepte
 
 - ACP advertised `load_session`; the capability-contract test failed, then passed after the unsupported
   capability was removed.
-- MCP omitted the scoped `repo`; the forwarding-contract test failed, then passed after absent repo
-  injection was restored. An explicit caller repo is still never overwritten.
+- MCP omitted the scoped `repo`; the original forwarding-contract test failed, then passed after a sibling
+  `repo` injection was restored. A 2026-08-22 published-binary probe proved that test was shallow: the hosted
+  dispatcher ignores the sibling whenever the advertised `args` wrapper exists. The replacement test
+  asserts the JSON inside `args`, overwrites a foreign caller repo with the launch repo, and covers both a
+  plain-symbol and a repo-only tool shape.
 - Working memory used a naive source inventory; its test exposed an unchanged tracked file, then passed
   with changed, staged and untracked Git inventories only.
 - Shift-Tab was matched as the wrong key event; the plan-toggle test failed, then passed on

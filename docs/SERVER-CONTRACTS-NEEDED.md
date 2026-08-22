@@ -323,6 +323,20 @@ and forcibly replaces any caller-supplied `repo` with the repository resolved wh
 real handshake, lists its tools, optionally calls one named tool, then cancels the service. Inside the TUI,
 `/tools` and `/mcp` list Estelle's `/mcp` catalogue only; they do not connect to or invoke external servers.
 
+The remote catalogue advertises one string property, `arguments.args`. Launch-repository enforcement must
+therefore rewrite the JSON carried inside that string, not add a sibling `arguments.repo`: when `args`
+exists, the hosted dispatcher intentionally reads it and ignores sibling fields. Public v0.2.28 made that
+mistake. A production-backed differential returned `default repo; repo identity unavailable` from the
+published binary even with `--repo fatelabs/estelle`, while the corrected local binary returned
+`fatelabs/estelle: currency UNKNOWN` for the same `find_definition` call. The remaining refusal is the
+server graph's missing commit marker, not transport scope. Plain arguments are normalised per tool; JSON
+objects preserve their fields and have any foreign `repo` replaced by the launch repository.
+
+**Known server-owned exception:** `estelle_improve` derives scope by parsing JSON but still sends the whole
+raw JSON string to the improvement engine as its focus. The adapter cannot add repo scope to a plain focus
+without changing that focus. Until the hosted decoder accepts a structured `focus`, this one tool remains
+explicitly unscoped through the bridge rather than being reported fixed.
+
 The server advertises only `tools`. It does not advertise or implement resources, resource templates,
 subscriptions, prompts, completions, logging, progress, request-scoped cancellation, roots, sampling,
 elicitation, or catalogue-change notifications. It has no MCP HTTP/SSE/streamable-HTTP transport, protected
