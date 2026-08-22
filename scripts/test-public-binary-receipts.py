@@ -333,7 +333,11 @@ def test_tui_turn_waits_past_the_composer_paste_suppression_window() -> None:
             "        started = time.monotonic()\n"
             "    if byte in (b'\\r', b'\\n'):\n"
             "        break\n"
-            "    data.extend(byte)\n"
+            "    if byte == b'\\x15':\n"
+            "        data.clear()\n"
+            "    else:\n"
+            "        data.extend(byte)\n"
+            "    print(f'\\033[2J\\033[1;1H› {data.decode()}', end='', flush=True)\n"
             "elapsed = time.monotonic() - started\n"
             "turn = data.decode()\n"
             "if elapsed < 0.18:\n"
@@ -353,6 +357,54 @@ def test_tui_turn_waits_past_the_composer_paste_suppression_window() -> None:
             os.environ["PATH"] = original_path
         assert receipt["pass"] is True
         assert "TIMING RECEIPT" in receipt["came_back"]
+
+
+def test_tui_turn_retypes_after_a_boot_redraw_clears_the_composer() -> None:
+    with tempfile.TemporaryDirectory(prefix="estelle-public-boot-redraw-") as raw_dir:
+        fake_bin = Path(raw_dir) / "bin"
+        fake_bin.mkdir()
+        fake_estelle = fake_bin / "estelle"
+        fake_estelle.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, select, time, tty\n"
+            "tty.setraw(0)\n"
+            "started = time.monotonic()\n"
+            "redrawn = False\n"
+            "data = bytearray()\n"
+            "print('\\033[2J\\033[1;1H› Ask Estelle', end='', flush=True)\n"
+            "while True:\n"
+            "    ready, _, _ = select.select([0], [], [], 0.01)\n"
+            "    if not redrawn and time.monotonic() - started >= 0.35:\n"
+            "        redrawn = True\n"
+            "        data.clear()\n"
+            "        print('\\033[2J\\033[1;1H› Ask Estelle', end='', flush=True)\n"
+            "    if not ready:\n"
+            "        continue\n"
+            "    byte = os.read(0, 1)\n"
+            "    if byte == b'\\x15':\n"
+            "        data.clear()\n"
+            "    elif byte in (b'\\r', b'\\n'):\n"
+            "        if redrawn and data:\n"
+            "            turn = data.decode()\n"
+            "            print(f'\\033[2J\\033[1;1Hyou  {turn}\\nREDRAW RECEIPT\\n› Ask Estelle', end='', flush=True)\n"
+            "            break\n"
+            "        data.clear()\n"
+            "    else:\n"
+            "        data.extend(byte)\n"
+            "    print(f'\\033[2J\\033[1;1H› {data.decode()}', end='', flush=True)\n",
+            encoding="utf-8",
+        )
+        fake_estelle.chmod(0o755)
+        original_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{fake_bin}{os.pathsep}{original_path}"
+        try:
+            receipt = load_harness().tui_turn_receipt(
+                "boot redraw sentinel", "uqeu/estelle", timeout=3
+            )
+        finally:
+            os.environ["PATH"] = original_path
+        assert receipt["pass"] is True
+        assert "REDRAW RECEIPT" in receipt["came_back"]
 
 
 def test_grounded_question_requires_both_request_and_response_evidence() -> None:
@@ -1717,6 +1769,7 @@ def main() -> int:
     test_tui_surface()
     test_question_turn_uses_the_same_public_tui_seam()
     test_tui_turn_waits_past_the_composer_paste_suppression_window()
+    test_tui_turn_retypes_after_a_boot_redraw_clears_the_composer()
     test_grounded_question_requires_both_request_and_response_evidence()
     test_arbitrary_turn_wait_ignores_passive_startup_routes()
     test_tui_turn_waits_for_the_named_http_route_after_the_composer_returns()

@@ -117,6 +117,7 @@ SESSION_RESUME_QUESTION = "Which file defines an application entry point in this
 DIFF_SURFACES = {"/review": "/gate", "/scan": "/scan"}
 SMALL_SWEEP_PATH = "rag_tutorials/multimodal_agentic_rag/frontend"
 TUI_PASTE_SETTLE_SECONDS = 0.2
+TUI_SUBMIT_ATTEMPTS = 3
 PRODUCTION_HEALTH_URL = "https://api.fatelabs.ca/health"
 EXPECTED_PRODUCTION_SURFACE = {"tools_base": 16, "prompts": 246}
 SKILL_TURNS = (
@@ -872,6 +873,56 @@ def _read_until_all(
     return visible
 
 
+def _read_until_occurrences(
+    fd: int,
+    observed: bytearray,
+    marker: str,
+    minimum: int,
+    deadline: float,
+) -> str:
+    assert marker
+    assert minimum > 0
+    visible = rendered_screen(observed, rows=50, columns=160)
+    while time.monotonic() < deadline and visible.count(marker) < minimum:
+        ready, _, _ = select.select([fd], [], [], 0.1)
+        if ready:
+            try:
+                chunk = os.read(fd, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            observed.extend(chunk)
+            visible = rendered_screen(observed, rows=50, columns=160)
+    return visible
+
+
+def _submit_tui_turn(
+    fd: int, observed: bytearray, turn: str, deadline: float
+) -> bool:
+    assert turn.strip() == turn and turn
+    assert deadline > time.monotonic()
+    submitted = f"{turn} " if turn.startswith("/") else turn
+    baseline = rendered_screen(observed, rows=50, columns=160).count(turn)
+    for _attempt in range(TUI_SUBMIT_ATTEMPTS):
+        os.write(fd, b"\x15")
+        os.write(fd, submitted.encode())
+        visible = _read_until_occurrences(
+            fd, observed, turn, baseline + 1, min(deadline, time.monotonic() + 1)
+        )
+        if visible.count(turn) <= baseline:
+            continue
+        stable_until = min(deadline, time.monotonic() + TUI_PASTE_SETTLE_SECONDS)
+        visible = _read_until(
+            fd, observed, ("receipt-composer-stability",), stable_until
+        )
+        if visible.count(turn) <= baseline:
+            continue
+        os.write(fd, b"\r")
+        return True
+    return False
+
+
 def _wait_for_process_line(
     process: subprocess.Popen[str], marker: str, deadline: float
 ) -> str:
@@ -1377,14 +1428,13 @@ def tui_turn_receipt(
         visible = _read_until(fd, observed, ("Ask Estelle",), ready_deadline)
         if "Ask Estelle" in visible:
             time.sleep(0.25)
-            submitted = f"{turn} " if turn.startswith("/") else turn
-            os.write(fd, submitted.encode())
-            # The inherited composer suppresses Enter for 120 ms after a paste burst.
-            # Cross that boundary deliberately instead of depending on runner scheduling.
-            time.sleep(TUI_PASTE_SETTLE_SECONDS)
-            os.write(fd, b"\r")
-            visible = _read_until(fd, observed, (f"you  {turn}",), ready_deadline)
-            visible = _read_until(fd, observed, ("› Ask Estelle",), ready_deadline)
+            if _submit_tui_turn(fd, observed, turn, ready_deadline):
+                visible = _read_until(
+                    fd, observed, (f"you  {turn}",), ready_deadline
+                )
+                visible = _read_until(
+                    fd, observed, ("› Ask Estelle",), ready_deadline
+                )
         http_route = None
         if http_trace is not None:
             if expected_http_path is not None:
@@ -1452,11 +1502,10 @@ def tui_skill_thread_receipt(
             if not passed:
                 break
             deadline = time.monotonic() + timeout
-            os.write(fd, f"{turn} ".encode())
-            time.sleep(TUI_PASTE_SETTLE_SECONDS)
-            os.write(fd, b"\r")
-            visible = _read_until(fd, observed, (f"you  {turn}",), deadline)
-            visible = _read_until(fd, observed, ("› Ask Estelle",), deadline)
+            submitted = _submit_tui_turn(fd, observed, turn, deadline)
+            if submitted:
+                visible = _read_until(fd, observed, (f"you  {turn}",), deadline)
+                visible = _read_until(fd, observed, ("› Ask Estelle",), deadline)
             screens.append(visible.strip())
             if http_trace is not None:
                 route = _wait_for_active_http_receipt(
@@ -1470,6 +1519,7 @@ def tui_skill_thread_receipt(
                 trace_offset = _trace_line_count(http_trace) or trace_offset
             passed = (
                 passed
+                and submitted
                 and f"you  {turn}" in visible
                 and "› Ask Estelle" in visible
                 and not any(marker in visible for marker in FAILURE_MARKERS)
