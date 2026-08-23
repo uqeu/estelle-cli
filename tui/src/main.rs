@@ -116,8 +116,8 @@ const FRAME_INTERVAL: Duration = Duration::from_millis(100);
 // P6's brand palette is intentionally truecolor; the rest of the TUI remains theme-safe ANSI.
 const FATE_BG: Color = Color::from_u32(0xE9_E6_DC);
 const FATE_GHOST: Color = Color::from_u32(0xC8_C2_B3);
-const FATE_INK: Color = Color::from_u32(0x46_43_3B);
-const FATE_RED: Color = Color::from_u32(0xC9_1A_0C);
+const FATE_INK: Color = Color::from_u32(0x1F1C17);
+const FATE_RED: Color = Color::from_u32(0xC52416);
 const FATE_RED_SOFT: Color = Color::from_u32(0xE2_8F_86);
 const BAYER_8: [[u8; 8]; 8] = [
     [0, 32, 8, 40, 2, 34, 10, 42],
@@ -4423,17 +4423,16 @@ fn failure_lines(error: &Error) -> [String; 3] {
     failure_lines_for(&FailureView::from(error))
 }
 
-/// The filled user-turn block, ported from Codex (`style.rs::user_message_style_for`,
-/// `history_cell/messages.rs::UserHistoryCell`): a subtle tint over the terminal's own
-/// background. Under Cream Ink the painted surface is known, so the tint is deterministic;
-/// under Dark the background is inherited (D3), runtime detection decides, and an undetectable
-/// background yields NO fill rather than a guessed one.
+/// The submitted turn is deliberately louder than the answer that follows it. A terminal whose
+/// background cannot be detected used to receive no fill at all, which made the user's own input
+/// nearly disappear on the default dark theme. The product palette is known, so use it directly:
+/// cream over a dark canvas, and the darker cream ghost over the painted cream canvas.
 fn user_turn_style(theme: Theme) -> Style {
-    let terminal_bg = match theme {
-        Theme::CreamInk => Some((0xE9, 0xE6, 0xDC)),
-        Theme::Dark => codex_tui::default_bg(),
+    let background = match theme {
+        Theme::Dark => FATE_BG,
+        Theme::CreamInk => FATE_GHOST,
     };
-    codex_tui::user_message_style_for(terminal_bg)
+    Style::default().fg(FATE_INK).bg(background)
 }
 
 #[cfg(test)]
@@ -4464,9 +4463,15 @@ fn render_transcript_with_citations(
                 text.lines.push(Line::default());
             }
             TranscriptEntry::User(message) => {
+                let turn = user_turn_style(theme);
                 text.lines.push(Line::from(vec![
-                    Span::styled("you  ", Style::default().fg(Color::Gray)),
-                    Span::styled(mask_secret(message), user_turn_style(theme)),
+                    Span::styled(
+                        "› ",
+                        turn.fg(FATE_RED).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled("you  ", turn.add_modifier(Modifier::BOLD)),
+                    Span::styled(mask_secret(message), turn),
+                    Span::styled("  ", turn),
                 ]));
                 text.lines.push(Line::default());
             }
@@ -4783,8 +4788,51 @@ fn status_line(app: &App, now: Instant) -> Line<'static> {
     Line::from(spans)
 }
 
+fn active_turn_line(app: &App, now: Instant) -> Option<Line<'static>> {
+    let active = app.active.as_ref()?;
+    let elapsed = now.saturating_duration_since(active.started).as_secs();
+    let mut spans = vec![
+        Span::styled(
+            "estelle",
+            Style::default()
+                .fg(app.theme.primary())
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            "working",
+            Style::default()
+                .fg(FATE_RED)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(format!("  {}", codex_tui::fmt_elapsed_compact(elapsed))),
+    ];
+    if active.label != "thinking" {
+        spans.push(Span::styled(
+            format!("  ·  {}", active.label),
+            Style::default().fg(app.theme.ghost()),
+        ));
+    }
+    spans.push(Span::styled(
+        "  ·  Esc cancels",
+        Style::default().fg(app.theme.ghost()),
+    ));
+    if elapsed >= 30 {
+        spans.push(Span::styled(
+            "  ·  no response received yet",
+            Style::default().fg(app.theme.ghost()),
+        ));
+    }
+    Some(Line::from(spans))
+}
+
 fn footer_line(app: &App, now: Instant, width: u16) -> Line<'static> {
-    if app.active.is_some() || !app.queue.is_empty() {
+    if app.active.is_some() {
+        // The live status belongs beside the submitted turn, where it remains visible even when
+        // the footer is visually detached from the conversation on a tall terminal.
+        return Line::default();
+    }
+    if !app.queue.is_empty() {
         return status_line(app, now);
     }
     let mut spans = vec![
@@ -6415,8 +6463,19 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         } else {
             transcript_band
         };
-        let transcript =
+        let mut transcript =
             render_transcript_with_citations(&app.transcript, !show_citation_pane, app.theme);
+        if let Some(activity) = active_turn_line(app, now) {
+            if transcript
+                .lines
+                .last()
+                .is_some_and(|line| line.spans.is_empty())
+            {
+                transcript.lines.pop();
+            }
+            transcript.lines.push(activity);
+            transcript.lines.push(Line::default());
+        }
         let paragraph = Paragraph::new(transcript).wrap(Wrap { trim: false });
         let line_count = paragraph.line_count(transcript_root.width);
         let visible = usize::from(transcript_root.height);
@@ -6426,6 +6485,7 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
                 .unwrap_or(u16::MAX);
         let show_ground = !app.has_submitted_question
             && app.transcript.is_empty()
+            && app.active.is_none()
             && app.sweep_progress.is_none()
             && app.gate_modal.is_none()
             && app.fleet.is_none()
@@ -9497,7 +9557,7 @@ mod tests {
 
         let rendered = rendered_frame(&app, started + Duration::from_secs(6));
 
-        assert!(rendered.contains("thinking  6s"));
+        assert!(rendered.contains("estelle  working  6s"));
         assert!(!rendered.contains("cache"));
     }
 
@@ -9515,6 +9575,65 @@ mod tests {
             cancel: CancellationToken::new(),
         });
         insta::assert_snapshot!(rendered_frame(&app, started + Duration::from_secs(93)));
+    }
+
+    #[test]
+    fn active_turn_is_visible_beside_the_prompt_and_disconnect_replaces_it() {
+        let mut app = test_app();
+        let started = Instant::now();
+        app.transcript
+            .push(TranscriptEntry::User("hi".to_string()));
+        app.active = Some(ActiveRequest {
+            id: 4,
+            label: "thinking".to_string(),
+            started,
+            cancel: CancellationToken::new(),
+        });
+
+        let first = rendered_buffer_at_size(&app, started + Duration::from_secs(5), 80, 24);
+        let first_text = test_gallery::buffer_text(&first);
+        let first_lines = first_text.lines().collect::<Vec<_>>();
+        let user_row = first_lines
+            .iter()
+            .position(|line| line.contains("› you  hi"))
+            .expect("the submitted prompt needs a visible pointer");
+        assert!(
+            first_lines
+                .get(user_row + 1)
+                .is_some_and(|line| line.contains("estelle  working  5s")),
+            "live work is not adjacent to the submitted turn:\n{first_text}"
+        );
+        let highlighted = first
+            .content
+            .chunks(80)
+            .find(|row| {
+                row.iter()
+                    .map(ratatui::buffer::Cell::symbol)
+                    .collect::<String>()
+                    .contains("› you  hi")
+            })
+            .expect("submitted prompt row")
+            .iter()
+            .filter(|cell| cell.bg == FATE_BG)
+            .count();
+        assert!(
+            highlighted >= "you  hi".len(),
+            "default-dark user turn did not use the deterministic cream highlight"
+        );
+
+        let next = rendered_frame_at_size(&app, started + Duration::from_secs(6), 80, 24);
+        assert!(next.contains("estelle  working  6s"), "{next}");
+        assert!(!next.contains("estelle  working  5s"), "{next}");
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        app.handle_ui_event(
+            UiEvent::SessionDisconnected("owner process exited".to_string()),
+            &tx,
+        );
+        let failed = rendered_frame_at_size(&app, started + Duration::from_secs(7), 80, 24);
+        assert!(!failed.contains("estelle  working"), "{failed}");
+        assert!(failed.contains("detached from the session server"), "{failed}");
+        assert!(failed.contains("owner process exited"), "{failed}");
     }
 
     #[test]
@@ -11048,7 +11167,7 @@ mod tests {
     }
 
     #[test]
-    fn user_turns_render_as_filled_blocks_ported_from_codex_history_cell() {
+    fn user_turns_render_as_deterministic_branded_blocks() {
         let mut app = test_app();
         app.theme = Theme::CreamInk;
         app.transcript
@@ -11060,9 +11179,7 @@ mod tests {
             sources: Vec::new(),
         });
         let buffer = rendered_buffer_at_size(&app, Instant::now(), 120, 32);
-        let expected_bg = codex_tui::user_message_style_for(Some((0xE9, 0xE6, 0xDC)))
-            .bg
-            .expect("a known terminal background yields a fill");
+        let expected_bg = FATE_GHOST;
         let row_with = |needle: &str| {
             buffer
                 .content
@@ -11082,7 +11199,7 @@ mod tests {
             .count();
         assert!(
             filled >= "trace the charge path".len(),
-            "the user turn did not render as a filled block (ported fill missing)"
+            "the user turn did not render as a deterministic branded block"
         );
         let estelle_row = row_with("at the retry loop.");
         assert!(
@@ -11197,9 +11314,9 @@ mod tests {
         );
 
         // The labels must be distinguishable in the rendered buffer, not merely present in
-        // the model: different ink, and only the assistant label is bold.
+        // the model: different ink, with both speakers named emphatically.
         let buffer = rendered_buffer_at_size(&app, Instant::now(), 120, 32);
-        let label_cell = |needle: &str| {
+        let label_cell = |needle: &str, initial: &str| {
             buffer
                 .content
                 .chunks(120)
@@ -11208,17 +11325,22 @@ mod tests {
                         .iter()
                         .map(ratatui::buffer::Cell::symbol)
                         .collect::<String>();
-                    text.contains(needle).then(|| row[1].clone())
+                    text.contains(needle).then(|| {
+                        row.iter()
+                            .find(|cell| cell.symbol() == initial)
+                            .unwrap_or_else(|| panic!("no {initial:?} label cell in {needle:?}"))
+                            .clone()
+                    })
                 })
                 .unwrap_or_else(|| panic!("no rendered row for {needle:?}"))
         };
-        let user_label = label_cell("you  where does charge fail?");
-        let estelle_label = label_cell("estelle  grounded");
+        let user_label = label_cell("you  where does charge fail?", "y");
+        let estelle_label = label_cell("estelle  grounded", "e");
         assert_ne!(
             user_label.fg, estelle_label.fg,
             "speaker labels share ink and are not glanceable"
         );
-        assert!(!user_label.modifier.contains(Modifier::BOLD));
+        assert!(user_label.modifier.contains(Modifier::BOLD));
         assert!(estelle_label.modifier.contains(Modifier::BOLD));
     }
 
