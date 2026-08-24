@@ -35,6 +35,14 @@ pub struct ComposerCommand {
     pub description: String,
 }
 
+/// Brand colours supplied by an application embedding the complete bottom dock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ComposerPanePalette {
+    pub background: Color,
+    pub focused_border: Color,
+    pub idle_border: Color,
+}
+
 impl ComposerCommand {
     pub fn new(name: impl Into<String>, description: impl Into<String>) -> Self {
         Self {
@@ -212,19 +220,21 @@ impl ComposerInput {
         &self,
         area: Rect,
         buf: &mut Buffer,
-        background: Color,
         title: &str,
         focused: bool,
-        focused_border: Color,
-        idle_border: Color,
+        palette: ComposerPanePalette,
     ) {
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(if focused { focused_border } else { idle_border }))
+            .border_style(Style::default().fg(if focused {
+                palette.focused_border
+            } else {
+                palette.idle_border
+            }))
             .title(format!(" {title} "));
         let inner = block.inner(area);
         block.render(area, buf);
-        self.render_ref_with_background(inner, buf, background);
+        self.render_ref_with_background(inner, buf, palette.background);
     }
 
     /// Return true if a paste-burst detection is currently active.

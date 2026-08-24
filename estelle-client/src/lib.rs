@@ -110,6 +110,8 @@ pub enum Error {
     },
     #[error("Estelle returned an empty response")]
     EmptyResponse,
+    #[error("invalid durable job id")]
+    InvalidJobId,
     #[error("HTTP receipt failed: {0}")]
     ReceiptIo(String),
 }
@@ -176,6 +178,63 @@ impl Client {
 
     pub async fn repos(&self, cancel: &CancellationToken) -> Result<ReposResponse, Error> {
         self.get(Endpoint::Repos, &NoQuery, cancel).await
+    }
+
+    /// Read one caller-bound durable job. The strict locator shape prevents a job id from
+    /// becoming a path/query injection surface; the bearer credential remains the authority.
+    pub async fn job(
+        &self,
+        job_id: &str,
+        cancel: &CancellationToken,
+    ) -> Result<JobSnapshot, Error> {
+        let suffix = job_id.strip_prefix("job_").ok_or(Error::InvalidJobId)?;
+        if suffix.len() != 24
+            || !suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(Error::InvalidJobId);
+        }
+        let request_path = format!("jobs/{job_id}");
+        let url = self.base_url.join(&request_path)?;
+        let request = self
+            .http
+            .get(url)
+            .bearer_auth(self.api_key.expose())
+            .header(
+                "X-Estelle-Client-Protocol",
+                CLIENT_PROTOCOL_VERSION.to_string(),
+            )
+            .header("X-Estelle-Hook-Contract", HOOK_CONTRACT_VERSION.to_string())
+            .header("X-Estelle-Client-Version", env!("CARGO_PKG_VERSION"));
+        let response = tokio::select! {
+            () = cancel.cancelled() => return Err(Error::Cancelled),
+            response = request.send() => response?,
+        };
+        let status = response.status();
+        let bytes = tokio::select! {
+            () = cancel.cancelled() => return Err(Error::Cancelled),
+            bytes = response.bytes() => bytes?,
+        };
+        self.write_receipt_path(
+            &Method::GET,
+            &format!("/{request_path}"),
+            &[],
+            None,
+            status,
+            &bytes,
+        )
+        .await?;
+        if !status.is_success() {
+            return Err(Error::Http {
+                status,
+                message: error_message(&bytes),
+            });
+        }
+        if bytes.is_empty() {
+            return Err(Error::EmptyResponse);
+        }
+        Ok(serde_json::from_slice(&bytes)?)
     }
 
     pub async fn github_status(
@@ -467,6 +526,26 @@ impl Client {
         status: reqwest::StatusCode,
         bytes: &[u8],
     ) -> Result<(), Error> {
+        self.write_receipt_path(
+            method,
+            &format!("/{}", endpoint.path()),
+            query,
+            body,
+            status,
+            bytes,
+        )
+        .await
+    }
+
+    async fn write_receipt_path(
+        &self,
+        method: &Method,
+        request_path: &str,
+        query: &[(String, String)],
+        body: Option<Value>,
+        status: reqwest::StatusCode,
+        bytes: &[u8],
+    ) -> Result<(), Error> {
         let Some(path) = &self.receipt_path else {
             return Ok(());
         };
@@ -475,7 +554,7 @@ impl Client {
         let value = redact_receipt_value(serde_json::json!({
             "request": {
                 "method": method.as_str(),
-                "path": format!("/{}", endpoint.path()),
+                "path": request_path,
                 "query": query,
                 "body": body,
             },

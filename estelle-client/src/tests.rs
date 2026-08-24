@@ -134,6 +134,69 @@ async fn account_github_client_calls_both_server_owned_read_surfaces() {
     assert!(proposed.prs.is_empty());
 }
 
+#[tokio::test]
+async fn durable_job_read_preserves_revisioned_work_progress() {
+    let server = MockServer::start().await;
+    let job_id = "job_0123456789abcdef01234567";
+    Mock::given(method("GET"))
+        .and(path(format!("/jobs/{job_id}")))
+        .and(header("authorization", "Bearer estelle_live_test-only"))
+        .and(header("x-estelle-client-protocol", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "job_id": job_id,
+            "state": "running",
+            "terminal": false,
+            "progress": {
+                "revision": 2,
+                "work": {
+                    "phase": "recall",
+                    "phases": {"scope": 0.4, "recall": 1.2},
+                    "elapsed_s": 1.6
+                }
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client =
+        Client::new(&format!("{}/", server.uri()), test_key(), MINIMUM_TIMEOUT).expect("client");
+
+    let snapshot = client
+        .job(job_id, &CancellationToken::new())
+        .await
+        .expect("caller-bound job snapshot");
+
+    let progress = snapshot.progress.expect("work progress");
+    assert_eq!(progress.revision, 2);
+    assert_eq!(progress.work.phase, "recall");
+    assert_eq!(progress.work.phases.len(), 2);
+    assert!(!snapshot.terminal);
+}
+
+#[tokio::test]
+async fn durable_job_read_rejects_a_path_shaped_locator_before_transport() {
+    let server = MockServer::start().await;
+    let client =
+        Client::new(&format!("{}/", server.uri()), test_key(), MINIMUM_TIMEOUT).expect("client");
+
+    let error = client
+        .job(
+            "job_0123456789abcdef01234567/../../account",
+            &CancellationToken::new(),
+        )
+        .await
+        .expect_err("path-shaped job id must be refused");
+
+    assert!(matches!(error, Error::InvalidJobId));
+    assert!(
+        server
+            .received_requests()
+            .await
+            .expect("requests")
+            .is_empty()
+    );
+}
+
 #[test]
 fn orchestra_live_endpoints_match_the_server_contract() {
     assert_eq!(Endpoint::OrchestraRun.path(), "orchestra/run");

@@ -80,6 +80,7 @@ use estelle_client::mask_secret;
 use estelle_tui::ComposerAction;
 use estelle_tui::ComposerCommand;
 use estelle_tui::ComposerInput;
+use estelle_tui::ComposerPanePalette;
 use estelle_tui::ExternalResumePicker;
 use estelle_tui::ExternalResumeRow;
 use estelle_tui::HistoryTranscriptItem;
@@ -127,7 +128,18 @@ use unicode_width::UnicodeWidthChar;
 
 const FRAME_INTERVAL: Duration = Duration::from_millis(100);
 const SHELL_TIMEOUT: Duration = Duration::from_secs(30);
+const SHELL_TIMEOUT_ENV: &str = "ESTELLE_SHELL_TIMEOUT_SECONDS";
+const MAX_SHELL_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const SHELL_OUTPUT_CAP_BYTES: usize = 64 * 1024;
+const WORK_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const WORK_PHASES: [&str; 6] = [
+    "scope",
+    "recall",
+    "conventions",
+    "prompt",
+    "implement",
+    "gate",
+];
 // P6's brand palette is intentionally truecolor; the rest of the TUI remains theme-safe ANSI.
 const FATE_BG: Color = Color::from_u32(0xE9_E6_DC);
 const FATE_GHOST: Color = Color::from_u32(0xC8_C2_B3);
@@ -382,9 +394,10 @@ impl<S> EventSourceLease<S> {
     }
 
     fn source_mut(&mut self) -> &mut S {
-        self.source
-            .as_mut()
-            .expect("the event source is polled only while the terminal owns stdin")
+        let Some(source) = self.source.as_mut() else {
+            unreachable!("the event source is polled only while the terminal owns stdin")
+        };
+        source
     }
 
     fn pause(&mut self) {
@@ -518,7 +531,10 @@ enum QueuedRequest {
     },
     Command(PendingCommand),
     Sweep,
-    Shell(String),
+    Shell {
+        command: String,
+        timeout: Duration,
+    },
     Apply {
         diff: String,
         reverse: bool,
@@ -593,6 +609,10 @@ enum UiEvent {
         name: &'static str,
         result: Result<RemoteCommandReply, CommandFailure>,
     },
+    WorkProgress {
+        id: u64,
+        progress: estelle_client::WorkProgress,
+    },
     LocalAnswer {
         id: u64,
         name: &'static str,
@@ -616,6 +636,99 @@ struct AnswerReply {
     degraded: bool,
     sources: Vec<Source>,
     working_paths: Vec<String>,
+}
+
+type WorkProgressSink = Arc<dyn Fn(estelle_client::WorkProgress) + Send + Sync>;
+
+#[derive(Clone, Debug)]
+struct WorkProgressView {
+    revision: u64,
+    phase_index: usize,
+    phase: String,
+    phases: Vec<(String, f64)>,
+    elapsed_s: f64,
+    observed_at: Instant,
+}
+
+impl WorkProgressView {
+    fn from_snapshot(progress: &estelle_client::WorkProgress) -> Option<Self> {
+        let phase_index = WORK_PHASES
+            .iter()
+            .position(|phase| *phase == progress.work.phase)?;
+        if !progress.work.elapsed_s.is_finite() || progress.work.elapsed_s < 0.0 {
+            return None;
+        }
+        if !progress.work.phases.contains_key(&progress.work.phase)
+            || progress.work.phases.keys().any(|phase| {
+                WORK_PHASES
+                    .iter()
+                    .position(|expected| expected == phase)
+                    .is_none_or(|index| index > phase_index)
+            })
+        {
+            return None;
+        }
+        let mut phases = Vec::new();
+        for phase in WORK_PHASES {
+            let Some(value) = progress.work.phases.get(phase) else {
+                continue;
+            };
+            let seconds = value.as_f64()?;
+            if !seconds.is_finite() || seconds < 0.0 {
+                return None;
+            }
+            phases.push((phase.to_string(), seconds));
+        }
+        Some(Self {
+            revision: progress.revision,
+            phase_index,
+            phase: progress.work.phase.clone(),
+            phases,
+            elapsed_s: progress.work.elapsed_s,
+            observed_at: Instant::now(),
+        })
+    }
+
+    fn accepts(&self, next: &Self) -> bool {
+        next.revision > self.revision && next.phase_index >= self.phase_index
+    }
+
+    fn line(&self, now: Instant) -> String {
+        let measured = self
+            .phases
+            .iter()
+            .map(|(phase, seconds)| format!("{phase} {seconds:.1}s"))
+            .collect::<Vec<_>>()
+            .join(" · ");
+        let silent_s = now.saturating_duration_since(self.observed_at).as_secs();
+        let stale = if silent_s >= 2 {
+            format!(" · no new phase for {silent_s}s")
+        } else {
+            String::new()
+        };
+        format!(
+            "revision {} · last measured {} · elapsed {:.1}s{}{}",
+            self.revision,
+            self.phase,
+            self.elapsed_s,
+            if measured.is_empty() { "" } else { " · " },
+            measured + &stale
+        )
+    }
+
+    fn phase_track(&self) -> String {
+        WORK_PHASES
+            .iter()
+            .map(|phase| {
+                if self.phases.iter().any(|(measured, _)| measured == phase) {
+                    format!("{phase} ✓")
+                } else {
+                    (*phase).to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" → ")
+    }
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -1405,6 +1518,8 @@ struct App {
     active_model_observed_at: Option<Instant>,
     citations: Vec<Source>,
     sweep_progress: Option<top_level::SweepProgress>,
+    work_progress: Option<WorkProgressView>,
+    shell_timeout: Duration,
     gate_modal: Option<GateModal>,
     fleet: Option<estelle_client::FleetSnapshot>,
     todo: Option<estelle_client::TodoSnapshot>,
@@ -1474,6 +1589,14 @@ fn env_truthy(name: &str) -> bool {
             "1" | "true" | "yes" | "on"
         )
     })
+}
+
+fn shell_timeout_from_value(value: Option<&str>) -> Duration {
+    value
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .filter(|timeout| !timeout.is_zero() && *timeout <= MAX_SHELL_TIMEOUT)
+        .unwrap_or(SHELL_TIMEOUT)
 }
 
 fn whoami_lines(app: &App, local_plan_present: bool) -> Vec<String> {
@@ -1602,6 +1725,10 @@ impl App {
             active_model_observed_at: None,
             citations: Vec::new(),
             sweep_progress: None,
+            work_progress: None,
+            shell_timeout: shell_timeout_from_value(
+                std::env::var(SHELL_TIMEOUT_ENV).ok().as_deref(),
+            ),
             gate_modal: None,
             fleet: None,
             todo: None,
@@ -1683,6 +1810,7 @@ impl App {
         self.transcript_scroll = 0;
         self.dither_wake.clear();
         self.sweep_progress = None;
+        self.work_progress = None;
         if is_secret_shaped(&text) {
             self.transcript
                 .push(TranscriptEntry::User(mask_secret(&text)));
@@ -1718,7 +1846,10 @@ impl App {
                         "A shell command needs text after !, for example !git status.".to_string(),
                     ));
                 } else {
-                    self.queue.push_back(QueuedRequest::Shell(command));
+                    self.queue.push_back(QueuedRequest::Shell {
+                        command,
+                        timeout: self.shell_timeout,
+                    });
                 }
             }
             commands::ParsedInput::Command {
@@ -1979,7 +2110,15 @@ impl App {
                 name: "shell".to_string(),
                 lines: vec![
                     "Run a local command with a leading !, for example !git status.".to_string(),
-                    "It runs on this machine; no Estelle request is sent.".to_string(),
+                    format!(
+                        "Timeout: {}s · override before launch with {SHELL_TIMEOUT_ENV} (1–{}s).",
+                        self.shell_timeout.as_secs(),
+                        MAX_SHELL_TIMEOUT.as_secs()
+                    ),
+                    format!(
+                        "Runs locally, never through autonomy · output cap: {} KiB.",
+                        SHELL_OUTPUT_CAP_BYTES / 1024
+                    ),
                 ],
             }),
             "clear" => self.transcript.clear(),
@@ -2507,12 +2646,13 @@ impl App {
             return;
         };
         match pending {
-            QueuedRequest::Shell(command) => {
-                let (id, cancel) = self.begin_active("shell");
+            QueuedRequest::Shell { command, timeout } => {
+                let (id, cancel) =
+                    self.begin_active(&format!("local shell · timeout {}s", timeout.as_secs()));
                 let tx = tx.clone();
                 let root = self.root.clone();
                 tokio::spawn(async move {
-                    let result = execute_shell(&root, &command, &cancel).await;
+                    let result = execute_shell(&root, &command, &cancel, timeout).await;
                     let _ = tx.send(UiEvent::LocalAnswer {
                         id,
                         name: "shell",
@@ -2642,7 +2782,21 @@ impl App {
                 let (id, cancel) = self.begin_active(&format!("/{name}"));
                 let tx = tx.clone();
                 tokio::spawn(async move {
-                    let result = execute_remote_command(client, repo, root, command, &cancel).await;
+                    let progress_events: Option<WorkProgressSink> = (name == "work").then(|| {
+                        let progress_tx = tx.clone();
+                        Arc::new(move |progress| {
+                            let _ = progress_tx.send(UiEvent::WorkProgress { id, progress });
+                        }) as WorkProgressSink
+                    });
+                    let result = execute_remote_command(
+                        client,
+                        repo,
+                        root,
+                        command,
+                        &cancel,
+                        progress_events,
+                    )
+                    .await;
                     let _ = tx.send(UiEvent::CommandAnswer { id, name, result });
                 });
             }
@@ -3007,6 +3161,12 @@ impl App {
                 if was_current {
                     self.active = None;
                 }
+                if matches!(
+                    &turn.input,
+                    session_server::SessionInput::Command { name, .. } if name == "work"
+                ) {
+                    self.work_progress = None;
+                }
                 self.record_session_turn(turn);
                 if was_current {
                     self.start_next(tx);
@@ -3021,12 +3181,30 @@ impl App {
                     tab.active = false;
                 }
                 if self.active.as_ref().is_some_and(|active| active.id == id) {
+                    if self
+                        .active
+                        .as_ref()
+                        .is_some_and(|active| active.label == "/work")
+                    {
+                        self.work_progress = None;
+                    }
                     self.active = None;
                 }
             }
             session_server::ServerMessage::SweepProgress { id, progress } => {
                 if self.active.as_ref().is_some_and(|active| active.id == id) {
                     self.sweep_progress = Some(progress);
+                }
+            }
+            session_server::ServerMessage::WorkProgress { id, progress } => {
+                if self.active.as_ref().is_some_and(|active| active.id == id)
+                    && let Some(next) = WorkProgressView::from_snapshot(&progress)
+                    && self
+                        .work_progress
+                        .as_ref()
+                        .is_none_or(|current| current.accepts(&next))
+                {
+                    self.work_progress = Some(next);
                 }
             }
             session_server::ServerMessage::Fleet { fleet } => {
@@ -3079,6 +3257,7 @@ impl App {
         self.last_diff = None;
         self.citations.clear();
         self.sweep_progress = None;
+        self.work_progress = None;
         self.fleet = None;
         self.todo = None;
         self.transcript_scroll = 0;
@@ -3461,6 +3640,9 @@ impl App {
                     return;
                 }
                 self.active = None;
+                if name == "work" {
+                    self.work_progress = None;
+                }
                 match result {
                     Ok(result) => self.apply_command_success(name, result),
                     Err(CommandFailure::Client(Error::Cancelled)) => {
@@ -3477,6 +3659,21 @@ impl App {
                     }
                 }
                 self.start_next(tx);
+            }
+            UiEvent::WorkProgress { id, progress } => {
+                if self.active.as_ref().is_none_or(|active| active.id != id) {
+                    return;
+                }
+                let Some(next) = WorkProgressView::from_snapshot(&progress) else {
+                    return;
+                };
+                if self
+                    .work_progress
+                    .as_ref()
+                    .is_none_or(|current| current.accepts(&next))
+                {
+                    self.work_progress = Some(next);
+                }
             }
             UiEvent::LocalAnswer { id, name, result } => {
                 if self.active.as_ref().is_none_or(|active| active.id != id) {
@@ -3945,6 +4142,7 @@ async fn execute_remote_command(
     root: PathBuf,
     pending: PendingCommand,
     cancel: &CancellationToken,
+    work_progress_sink: Option<WorkProgressSink>,
 ) -> Result<RemoteCommandReply, CommandFailure> {
     let measured_diff = if matches!(pending.name, "gate" | "scan" | "review") {
         Some(git_diff(&root, &pending.argument, cancel).await?)
@@ -4065,13 +4263,78 @@ async fn execute_remote_command(
             ]));
         }
     };
-    let reply = result.map_err(CommandFailure::Client)?;
+    let mut reply: CommandReply = result.map_err(CommandFailure::Client)?;
+    if pending.name == "work"
+        && reply
+            .extra
+            .get("accepted")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        && let Some(job_id) = reply
+            .extra
+            .get("job_id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    {
+        reply = poll_work_job(&client, &job_id, cancel, work_progress_sink).await?;
+    }
     Ok(RemoteCommandReply {
         reply,
         inspected_files: measured_diff
             .map(|measured| measured.files)
             .unwrap_or_default(),
     })
+}
+
+async fn poll_work_job(
+    client: &Client,
+    job_id: &str,
+    cancel: &CancellationToken,
+    progress_sink: Option<WorkProgressSink>,
+) -> Result<CommandReply, CommandFailure> {
+    loop {
+        let snapshot = client
+            .job(job_id, cancel)
+            .await
+            .map_err(CommandFailure::Client)?;
+        if let Some(progress) = snapshot.progress
+            && let Some(sink) = &progress_sink
+        {
+            sink(progress);
+        }
+        if snapshot.terminal {
+            if snapshot.state == "done" {
+                let result = snapshot.result.ok_or_else(|| {
+                    CommandFailure::Local([
+                        "/work finished without a result.".to_string(),
+                        format!("Durable job {job_id} reported state=done but no result body."),
+                        "The job was read from the server; retry /work or inspect its server receipt."
+                            .to_string(),
+                    ])
+                })?;
+                return serde_json::from_value(result).map_err(|error| {
+                    CommandFailure::Local([
+                        "/work returned an unreadable terminal result.".to_string(),
+                        error.to_string(),
+                        format!("The durable job is {job_id}; no local result was invented."),
+                    ])
+                });
+            }
+            return Err(CommandFailure::Local([
+                format!("/work stopped in durable state {}.", snapshot.state),
+                if snapshot.reason.trim().is_empty() {
+                    "The server returned no failure reason.".to_string()
+                } else {
+                    snapshot.reason
+                },
+                format!("The caller-bound job read was GET /jobs/{job_id}."),
+            ]));
+        }
+        tokio::select! {
+            () = cancel.cancelled() => return Err(CommandFailure::Client(Error::Cancelled)),
+            () = tokio::time::sleep(WORK_POLL_INTERVAL) => {}
+        }
+    }
 }
 
 struct MeasuredDiff {
@@ -4156,8 +4419,9 @@ async fn execute_shell(
     root: &std::path::Path,
     source: &str,
     cancel: &CancellationToken,
+    timeout: Duration,
 ) -> Result<Vec<String>, String> {
-    execute_shell_with_limits(root, source, cancel, SHELL_TIMEOUT, SHELL_OUTPUT_CAP_BYTES).await
+    execute_shell_with_limits(root, source, cancel, timeout, SHELL_OUTPUT_CAP_BYTES).await
 }
 
 async fn execute_shell_with_limits(
@@ -5055,7 +5319,8 @@ fn observed_model(reply: &CommandReply) -> Option<&str> {
 fn status_line(app: &App, now: Instant) -> Line<'static> {
     if let Some(active) = &app.active {
         let elapsed = now.saturating_duration_since(active.started).as_secs();
-        let label = if elapsed >= 30 {
+        let local_shell = active.label.starts_with("local shell");
+        let label = if elapsed >= 30 && !local_shell {
             "still waiting for Estelle".to_string()
         } else {
             active.label.clone()
@@ -5068,7 +5333,11 @@ fn status_line(app: &App, now: Instant) -> Line<'static> {
             )),
         ];
         if elapsed >= 30 {
-            spans.push(Span::raw("  |  no response received yet"));
+            spans.push(Span::raw(if local_shell {
+                "  |  local command has not exited"
+            } else {
+                "  |  no response received yet"
+            }));
         }
         return Line::from(spans);
     }
@@ -6611,7 +6880,7 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         ])),
         rows[0],
     );
-    let surface_rows = vec![rows[1]];
+    let surface_rows = [rows[1]];
 
     let diff_as_rail = app.diff_panel_visible && area.width >= 110;
     let prod_as_rail = !app.diff_panel_visible
@@ -6747,7 +7016,34 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         } else {
             transcript_band
         };
-        let transcript_root = if let Some(progress) = &app.sweep_progress {
+        let transcript_root = if let Some(progress) = &app.work_progress {
+            let work_rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1),
+                    Constraint::Length(1),
+                    Constraint::Min(1),
+                ])
+                .split(transcript_band);
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled(
+                        "work  ",
+                        Style::default()
+                            .fg(app.theme.primary())
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(progress.line(now), Style::default().fg(Color::Gray)),
+                ])),
+                work_rows[0],
+            );
+            frame.render_widget(
+                Paragraph::new(progress.phase_track())
+                    .style(Style::default().fg(app.theme.ghost())),
+                work_rows[1],
+            );
+            work_rows[2]
+        } else if let Some(progress) = &app.sweep_progress {
             let sweep_rows = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
@@ -6799,6 +7095,7 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         let show_ground = !app.has_submitted_question
             && app.transcript.is_empty()
             && app.sweep_progress.is_none()
+            && app.work_progress.is_none()
             && app.gate_modal.is_none()
             && app.fleet.is_none()
             && !app.todo_visible
@@ -6863,11 +7160,13 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         app.composer.render_bottom_pane(
             rows[2],
             frame.buffer_mut(),
-            app.theme.background(),
             "ASK ESTELLE",
             app.focus == FocusSurface::Composer,
-            app.theme.primary(),
-            app.theme.ghost(),
+            ComposerPanePalette {
+                background: app.theme.background(),
+                focused_border: app.theme.primary(),
+                idle_border: app.theme.ghost(),
+            },
         );
         rows[2]
     };
@@ -7707,6 +8006,184 @@ mod tests {
         });
         app.boot = None;
         app
+    }
+
+    fn work_progress(revision: u64, phase: &str, phases: Value) -> estelle_client::WorkProgress {
+        serde_json::from_value(json!({
+            "revision": revision,
+            "work": {
+                "phase": phase,
+                "phases": phases,
+                "elapsed_s": 1.6
+            }
+        }))
+        .expect("work progress")
+    }
+
+    #[test]
+    fn shell_timeout_is_visible_config_not_a_silent_constant() {
+        assert_eq!(shell_timeout_from_value(None), Duration::from_secs(30));
+        assert_eq!(
+            shell_timeout_from_value(Some("45")),
+            Duration::from_secs(45)
+        );
+        assert_eq!(shell_timeout_from_value(Some("0")), Duration::from_secs(30));
+        assert_eq!(
+            shell_timeout_from_value(Some("1801")),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            shell_timeout_from_value(Some("not-a-number")),
+            Duration::from_secs(30)
+        );
+
+        let mut app = test_app();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        app.shell_timeout = Duration::from_secs(45);
+        assert!(app.handle_local_command("shell", "", &tx));
+        let TranscriptEntry::Command { lines, .. } = app.transcript.last().expect("shell help")
+        else {
+            panic!("expected shell help command")
+        };
+        assert!(lines.iter().any(|line| line.contains("Timeout: 45s")));
+        assert!(lines.iter().any(|line| line.contains(SHELL_TIMEOUT_ENV)));
+        assert!(lines.iter().any(|line| line.contains("output cap: 64 KiB")));
+
+        let now = Instant::now();
+        app.active = Some(ActiveRequest {
+            id: 19,
+            label: "local shell · timeout 45s".to_string(),
+            started: now - Duration::from_secs(35),
+            cancel: CancellationToken::new(),
+        });
+        let status = format!("{:?}", status_line(&app, now));
+        assert!(status.contains("local shell · timeout 45s"));
+        assert!(status.contains("local command has not exited"));
+    }
+
+    #[test]
+    fn work_progress_only_advances_on_newer_non_regressing_snapshots() {
+        let mut app = test_app();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        app.active = Some(ActiveRequest {
+            id: 17,
+            label: "/work".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        app.handle_ui_event(
+            UiEvent::WorkProgress {
+                id: 17,
+                progress: work_progress(2, "recall", json!({"scope": 0.4, "recall": 1.2})),
+            },
+            &tx,
+        );
+        assert_eq!(
+            app.work_progress.as_ref().map(|view| view.revision),
+            Some(2)
+        );
+        assert_eq!(
+            app.work_progress.as_ref().map(|view| view.phase.as_str()),
+            Some("recall")
+        );
+
+        for rejected in [
+            work_progress(2, "conventions", json!({"scope": 0.4, "recall": 1.2})),
+            work_progress(3, "scope", json!({"scope": 2.0})),
+            work_progress(4, "invented", json!({"scope": 2.0})),
+            work_progress(
+                5,
+                "conventions",
+                json!({"scope": 0.4, "recall": 1.2, "conventions": 0.2, "invented": 9.0}),
+            ),
+        ] {
+            app.handle_ui_event(
+                UiEvent::WorkProgress {
+                    id: 17,
+                    progress: rejected,
+                },
+                &tx,
+            );
+        }
+
+        let view = app.work_progress.as_ref().expect("last valid snapshot");
+        assert_eq!((view.revision, view.phase.as_str()), (2, "recall"));
+        assert!(view.phase_track().contains("scope ✓ → recall ✓"));
+        let line = view.line(view.observed_at + Duration::from_secs(3));
+        assert!(line.contains("no new phase for 3s"));
+        assert!(!line.contains('%'));
+        assert!(!line.to_ascii_lowercase().contains("eta"));
+    }
+
+    #[tokio::test]
+    async fn work_receipt_is_polled_to_a_terminal_result_and_emits_progress() {
+        let server = MockServer::start().await;
+        let job_id = "job_0123456789abcdef01234567";
+        Mock::given(method("POST"))
+            .and(path("/work"))
+            .respond_with(ResponseTemplate::new(202).set_body_json(json!({
+                "accepted": true,
+                "job_id": job_id,
+                "poll": format!("GET /jobs/{job_id}")
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("/jobs/{job_id}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "job_id": job_id,
+                "state": "done",
+                "terminal": true,
+                "progress": {
+                    "revision": 6,
+                    "work": {
+                        "phase": "gate",
+                        "phases": {
+                            "scope": 0.4, "recall": 1.2, "conventions": 0.2,
+                            "prompt": 0.1, "implement": 3.0, "gate": 0.7
+                        },
+                        "elapsed_s": 5.6
+                    }
+                },
+                "result": {"answer": "work complete", "diff": "diff --git a/a b/a"}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = Client::new(
+            &format!("{}/", server.uri()),
+            estelle_client::ApiKey::new("test-key").expect("key"),
+            Duration::from_secs(120),
+        )
+        .expect("client");
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink_seen = seen.clone();
+        let sink: WorkProgressSink = Arc::new(move |progress| {
+            sink_seen.lock().expect("progress sink").push(progress);
+        });
+        let pending = PendingCommand {
+            name: "work",
+            argument: "repair parser".to_string(),
+            last_question: None,
+            skill_thread: None,
+        };
+
+        let result = execute_remote_command(
+            client,
+            Repo::new("fatelabs/estelle").expect("repo"),
+            tempfile::tempdir().expect("root").path().to_path_buf(),
+            pending,
+            &CancellationToken::new(),
+            Some(sink),
+        )
+        .await
+        .expect("terminal work reply");
+
+        assert_eq!(result.reply.answer.as_deref(), Some("work complete"));
+        let seen = seen.lock().expect("progress samples");
+        assert_eq!(seen.len(), 1);
+        assert_eq!((seen[0].revision, seen[0].work.phase.as_str()), (6, "gate"));
     }
 
     #[test]
@@ -10748,6 +11225,7 @@ mod tests {
             root.path().to_path_buf(),
             first_pending,
             &CancellationToken::new(),
+            None,
         )
         .await
         .expect("first run");
@@ -10778,6 +11256,7 @@ mod tests {
             root.path().to_path_buf(),
             second_pending,
             &CancellationToken::new(),
+            None,
         )
         .await
         .expect("second run");

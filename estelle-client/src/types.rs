@@ -411,6 +411,42 @@ pub struct CommandReply {
     pub extra: Map<String, Value>,
 }
 
+/// Caller-bound snapshot returned by `GET /jobs/{id}`. Progress stays a typed whole snapshot:
+/// revision gates replacement, while `work` carries the measured phase tally.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct JobSnapshot {
+    pub job_id: String,
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub terminal: bool,
+    #[serde(default)]
+    pub retryable: bool,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub result: Option<Value>,
+    #[serde(default)]
+    pub progress: Option<WorkProgress>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct WorkProgress {
+    pub revision: u64,
+    pub work: WorkPhaseSnapshot,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct WorkPhaseSnapshot {
+    pub phase: String,
+    #[serde(default)]
+    pub phases: Map<String, Value>,
+    #[serde(default)]
+    pub elapsed_s: f64,
+}
+
 impl CommandReply {
     /// The durable Orchestra acceptance flag. `accepted` is also a numeric outcome count on
     /// `GET /outcomes`, so it must stay in the raw envelope rather than becoming a shared typed

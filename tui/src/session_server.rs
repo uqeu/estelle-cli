@@ -108,6 +108,10 @@ pub(crate) enum ServerMessage {
         id: u64,
         progress: crate::top_level::SweepProgress,
     },
+    WorkProgress {
+        id: u64,
+        progress: estelle_client::WorkProgress,
+    },
     Fleet {
         fleet: estelle_client::FleetSnapshot,
     },
@@ -886,11 +890,12 @@ async fn handle_request(
                 name: static_name.to_string(),
                 argument: argument.clone(),
             };
-            let Some((repo, root, cancel, _events)) = begin_work(&session, id, input.clone()).await
+            let Some((repo, root, cancel, events)) = begin_work(&session, id, input.clone()).await
             else {
                 return;
             };
             let follows_orchestra = static_name == "orchestra";
+            let follows_work = static_name == "work";
             let pending = crate::PendingCommand {
                 name: static_name,
                 argument,
@@ -900,8 +905,21 @@ async fn handle_request(
             tokio::spawn(async move {
                 let poll_client = client.clone();
                 let poll_repo = repo.clone();
-                let result =
-                    crate::execute_remote_command(client, repo, root, pending, &cancel).await;
+                let progress_sink: Option<crate::WorkProgressSink> = follows_work.then(|| {
+                    let progress_events = events.clone();
+                    std::sync::Arc::new(move |progress| {
+                        let _ = progress_events.send(ServerMessage::WorkProgress { id, progress });
+                    }) as crate::WorkProgressSink
+                });
+                let result = crate::execute_remote_command(
+                    client,
+                    repo,
+                    root,
+                    pending,
+                    &cancel,
+                    progress_sink,
+                )
+                .await;
                 let result = if follows_orchestra {
                     match result {
                         Ok(reply) => {
