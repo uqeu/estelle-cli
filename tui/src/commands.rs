@@ -175,7 +175,7 @@ const GRAFT_HELP: &[(&str, &str)] = &[
     ("fork", "fork-session ownership status"),
     (
         "compact",
-        "LOCAL-ONLY, inert — removed the day Guardian's server compaction ships",
+        "ask Guardian for a bounded replacement projection",
     ),
     ("goal", "long-running goal ownership status"),
     ("side", "ephemeral side-question ownership status"),
@@ -408,10 +408,6 @@ pub(crate) fn inherited_command_lines(name: &str) -> Option<Vec<String>> {
             "fatelabs.ca",
             "Browser launching is not performed from the TUI without an explicit URL contract.",
         )),
-        "compact" => Some(repointed(
-            "server session memory",
-            "HOLD (founder, 2026-08-07): nothing compacts in this binary today — the local Codex compactor is not part of the Estelle surface, and Guardian's server-side compaction (edges, not paraphrase) is not built yet. This command is kept visible and inert so nobody believes a compaction touched server memory; it comes OUT the day Guardian's ships.",
-        )),
         "task" => Some(repointed(
             "Estelle /orchestra",
             "Use /orchestra <task> to run one server task. The fixed fleet view opens only when the server emits revisioned live state; production does not emit it yet.",
@@ -557,6 +553,64 @@ pub(crate) struct RemoteRequest {
 pub(crate) enum RouteError {
     MissingDiff,
     InvalidPresetArguments,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CompactionView {
+    pub(crate) line: String,
+    pub(crate) status: String,
+    pub(crate) generation_after: u64,
+}
+
+/// Interpret the content-free `/govern` receipt. HTTP 200 is transport success only: blocked and
+/// unchanged projections retain their generation and are rendered as such, never as compaction.
+pub(crate) fn compaction_view(
+    reply: &estelle_client::CommandReply,
+    expected_generation: u64,
+) -> Result<CompactionView, String> {
+    let receipt = reply
+        .extra
+        .get("compaction")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "the server omitted the compaction receipt".to_string())?;
+    let field = |name: &str| receipt.get(name).and_then(Value::as_u64);
+    let status = receipt
+        .get("status")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "the compaction receipt omitted status".to_string())?;
+    let reason = receipt
+        .get("reason")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "the compaction receipt omitted reason".to_string())?;
+    let before = field("generation_before")
+        .ok_or_else(|| "the compaction receipt omitted generation_before".to_string())?;
+    let after = field("generation_after")
+        .ok_or_else(|| "the compaction receipt omitted generation_after".to_string())?;
+    if before != expected_generation {
+        return Err(format!(
+            "the server described generation {before}, but the client requested {expected_generation}"
+        ));
+    }
+    let expected_after = if status == "compacted" {
+        before.saturating_add(1)
+    } else {
+        before
+    };
+    if after != expected_after {
+        return Err(format!(
+            "{status} returned generation {before}→{after}; expected {before}→{expected_after}"
+        ));
+    }
+    if !matches!(status, "blocked" | "unchanged" | "compacted") {
+        return Err(format!("unknown compaction status {status:?}"));
+    }
+    Ok(CompactionView {
+        line: format!("compact {}  {reason}", status.to_ascii_uppercase()),
+        status: status.to_string(),
+        generation_after: after,
+    })
 }
 
 pub(crate) fn remote_request(
@@ -2855,6 +2909,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn blocked_compaction_is_not_rendered_as_http_success() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "governed": [{"role": "user", "content": "original"}],
+            "compaction": {
+                "status": "blocked",
+                "reason": "latest_turn_exceeds_usable_window",
+                "generation_before": 2,
+                "generation_after": 2
+            }
+        }))
+        .expect("govern reply");
+
+        let view = compaction_view(&reply, 2).expect("blocked is a valid receipt");
+
+        assert_eq!(
+            view.line,
+            "compact BLOCKED  latest_turn_exceeds_usable_window"
+        );
+        assert_eq!(view.generation_after, 2);
+    }
+
+    #[test]
+    fn blocked_compaction_cannot_advance_the_generation() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "compaction": {
+                "status": "blocked",
+                "reason": "latest_turn_exceeds_usable_window",
+                "generation_before": 2,
+                "generation_after": 3
+            }
+        }))
+        .expect("govern reply");
+
+        assert!(compaction_view(&reply, 2).is_err());
+    }
+
+    #[test]
     fn session_inventory_is_exactly_the_47_accepted_commands() {
         assert_eq!(
             session_command_names(),
@@ -2993,7 +3084,7 @@ mod tests {
         for (command, _) in GRAFT_HELP {
             let local = matches!(
                 *command,
-                "prod" | "todo" | "settings" | "plan" | "permissions" | "model"
+                "prod" | "todo" | "settings" | "plan" | "permissions" | "model" | "compact"
             );
             let remote = remote_request(command, "task", Some("diff"), Some("question"))
                 .expect("route decision")

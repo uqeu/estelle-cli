@@ -20,7 +20,7 @@ fn test_key() -> ApiKey {
 
 #[test]
 fn endpoint_inventory_is_unique_and_matches_the_server_audit() {
-    assert_eq!(API_ENDPOINTS.len(), 82);
+    assert_eq!(API_ENDPOINTS.len(), 83);
     let unique = API_ENDPOINTS
         .iter()
         .map(|spec| spec.path)
@@ -91,6 +91,13 @@ fn account_github_contract_preserves_unknown_connection_and_absent_gate() {
     );
     assert_eq!(proposed.next_cursor.as_deref(), Some("opaque-next"));
     assert!(proposed.has_more);
+}
+
+#[test]
+fn govern_is_the_unscoped_session_compaction_owner() {
+    assert_eq!(Endpoint::Govern.path(), "govern");
+    assert_eq!(Endpoint::Govern.methods(), &[HttpMethod::Post]);
+    assert!(!Endpoint::Govern.requires_repo());
 }
 
 #[tokio::test]

@@ -104,13 +104,20 @@ does not pass through Estelle autonomy.
 ### Adopted terminal surfaces and live work
 
 The Estelle binary uses the retained upstream `bottom_pane` composer as its sole input surface, feeding it
-Estelle's command catalogue instead of rebuilding chrome in `main.rs`. Transcript adaptation similarly
-uses the retained history-cell renderer for user and model turns while shell output remains a separate,
-visually distinct command cell. The server `/sessions` result opens the retained resume picker and submits
+Estelle's command catalogue instead of rebuilding chrome in `main.rs`. `tui/src/transcript.rs` adapts
+application semantics onto the retained history-cell renderer: file paths, commands, symbols, and links
+receive a theme-safe semantic blue, and shell output is a visually distinct, collapsed `▸` row expanded by
+clicking that exact row. Adjacent equal-style markdown spans are coalesced after wrapping so adoption does
+not fragment plain-text selection/search. The server `/sessions` result opens the retained resume picker and submits
 only the selected server-returned session id; an empty result has no selectable action. The discarded pets,
 OSS-selection, model-migration, and debug-config product surfaces are absent, and the library target is
 `estelle_tui`. Upstream protocol literals that identify the Codex wire format remain unchanged because a
 product rename is not authorization to fork an external protocol.
+
+There is no context-window percentage bar. `/compact` sends the masked caller-owned journal to Guardian's
+`POST /govern` compact mode and treats HTTP 200 as transport evidence only. Blocked and unchanged receipts
+must return an identical `governed` projection and retain their generation; compacted receipts advance by
+exactly one and replace the local journal. Missing, malformed, or contradictory projections fail closed.
 
 `/work` is a durable operation: a 202 receipt names a caller-bound `job_<24 lowercase hex>` locator, then
 both standalone and attached-session clients poll `GET /jobs/{id}` until its remote terminal state. Each

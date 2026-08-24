@@ -176,10 +176,10 @@ may ever fall back to a graft stub again. The same-day class-wide sweep
   planning mode). It does NOT run `/work`'s planning phase: no plan-only contract exists in
   `POST /work` (`{task, path?}` plans AND implements). Repointing `/plan <task>` at a plan-only
   flow is a server contract ask, not something the client may fake.
-- **`/compact`: HELD.** Nothing compacts in this binary — the local Codex compactor is not part
-  of the Estelle surface (the founder's premise that it survives here was wrong). The stub now
-  says so, is marked LOCAL-ONLY/inert in the palette, and is flagged in code to be removed the
-  day Guardian's server-side compaction ships.
+- **`/compact`: REPOINTED.** The CLI posts its masked, caller-owned journal to Guardian's `/govern`
+  compact mode. It validates both receipt generations and the returned projection: blocked/unchanged
+  must return the original journal, while compacted replaces it. HTTP 200 alone never reads as success;
+  the exact blocked reason is surfaced and a contradictory projection fails closed.
 
 ## Measurements
 

@@ -1,0 +1,616 @@
+//! Estelle-owned transcript semantics over the adopted history-cell renderer.
+//!
+//! The history library owns wrapping, markdown and cell layout. This module owns only facts the
+//! generic component cannot infer: speakers, grounding state, secret masking, semantic colour and
+//! which local tool receipts are collapsed.
+
+use std::path::Path;
+
+use crossterm::event::MouseButton;
+use crossterm::event::MouseEvent;
+use crossterm::event::MouseEventKind;
+use estelle_client::Client;
+use estelle_client::CommandReply;
+use estelle_client::Error;
+use estelle_client::Source;
+use estelle_client::mask_secret;
+use estelle_tui::HistoryTranscriptItem;
+use estelle_tui::InteractiveHistoryRow;
+use estelle_tui::RenderedHistoryTranscript;
+use estelle_tui::render_interactive_history_transcript;
+use ratatui::layout::Rect;
+use ratatui::style::Color;
+use ratatui::style::Modifier;
+use ratatui::style::Style;
+use ratatui::text::Line;
+use ratatui::text::Span;
+use serde_json::Value;
+use serde_json::json;
+use tokio_util::sync::CancellationToken;
+
+pub(crate) enum TranscriptEntry {
+    SessionHandoff(Vec<String>),
+    User(String),
+    Answer {
+        text: String,
+        grounded: Option<bool>,
+        degraded: bool,
+        sources: Vec<Source>,
+    },
+    System(String),
+    Command {
+        name: String,
+        lines: Vec<String>,
+    },
+    Tool {
+        label: String,
+        lines: Vec<String>,
+        expanded: bool,
+    },
+    Failure([String; 3]),
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct TranscriptPalette {
+    pub(crate) primary: Color,
+    pub(crate) ghost: Color,
+    pub(crate) semantic: Color,
+    pub(crate) user_background: Option<Color>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ToolClickTarget {
+    pub(crate) entry: usize,
+    pub(crate) area: Rect,
+}
+
+pub(crate) fn visible_tool_targets(
+    rows: Vec<InteractiveHistoryRow>,
+    root: Rect,
+    scroll: u16,
+) -> Vec<ToolClickTarget> {
+    rows.into_iter()
+        .filter_map(|row| {
+            let visible = row.line.checked_sub(usize::from(scroll))?;
+            (visible < usize::from(root.height)).then(|| ToolClickTarget {
+                entry: row.id,
+                area: Rect::new(
+                    root.x,
+                    root.y + u16::try_from(visible).unwrap_or(u16::MAX),
+                    root.width,
+                    1,
+                ),
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn toggle_tool_at(
+    entries: &mut [TranscriptEntry],
+    targets: &[ToolClickTarget],
+    column: u16,
+    row: u16,
+) {
+    let target = targets.iter().find(|target| {
+        column >= target.area.x
+            && column < target.area.x.saturating_add(target.area.width)
+            && row >= target.area.y
+            && row < target.area.y.saturating_add(target.area.height)
+    });
+    if let Some(target) = target
+        && let Some(TranscriptEntry::Tool { expanded, .. }) = entries.get_mut(target.entry)
+    {
+        *expanded = !*expanded;
+    }
+}
+
+pub(crate) fn handle_mouse(
+    entries: &mut [TranscriptEntry],
+    targets: &[ToolClickTarget],
+    scroll: &mut usize,
+    mouse: MouseEvent,
+) {
+    const WHEEL_LINES: usize = 3;
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            toggle_tool_at(entries, targets, mouse.column, mouse.row)
+        }
+        MouseEventKind::ScrollUp => *scroll = scroll.saturating_add(WHEEL_LINES),
+        MouseEventKind::ScrollDown => *scroll = scroll.saturating_sub(WHEEL_LINES),
+        _ => {}
+    }
+}
+
+pub(crate) fn render(
+    entries: &[TranscriptEntry],
+    include_citations: bool,
+    palette: TranscriptPalette,
+    width: u16,
+    cwd: &Path,
+) -> RenderedHistoryTranscript {
+    let mut items = Vec::with_capacity(entries.len());
+    for (index, entry) in entries.iter().enumerate() {
+        match entry {
+            TranscriptEntry::SessionHandoff(lines) => {
+                let mut rendered = vec![Line::styled(
+                    "Since your last session",
+                    Style::default()
+                        .fg(palette.primary)
+                        .add_modifier(Modifier::BOLD),
+                )];
+                rendered.extend(lines.iter().map(|line| {
+                    semantic_line(&mask_secret(line), palette.semantic, Some(Color::Gray))
+                }));
+                items.push(HistoryTranscriptItem::Lines(rendered));
+            }
+            TranscriptEntry::User(message) => items.push(HistoryTranscriptItem::User {
+                heading: vec![Line::styled("you", Style::default().fg(Color::Gray))],
+                message: mask_secret(message),
+                background: palette.user_background,
+                semantic_color: Some(palette.semantic),
+            }),
+            TranscriptEntry::Answer {
+                text,
+                grounded,
+                degraded,
+                sources,
+            } => {
+                let (label, color) = if *degraded {
+                    ("degraded", Color::Yellow)
+                } else if *grounded == Some(true) {
+                    ("grounded", palette.semantic)
+                } else if *grounded == Some(false) {
+                    ("not grounded", Color::Yellow)
+                } else {
+                    ("conversation", Color::Gray)
+                };
+                let heading = vec![Line::from(vec![
+                    Span::styled(
+                        "estelle",
+                        Style::default()
+                            .fg(palette.primary)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("  "),
+                    Span::styled(label, Style::default().fg(color)),
+                ])];
+                let trailing = if include_citations {
+                    sources
+                        .iter()
+                        .map(|source| {
+                            Line::from(vec![
+                                Span::styled("cited  ", Style::default().fg(Color::DarkGray)),
+                                Span::styled(
+                                    source_label(source),
+                                    Style::default().fg(palette.semantic),
+                                ),
+                            ])
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                items.push(HistoryTranscriptItem::Markdown {
+                    heading,
+                    source: mask_secret(text),
+                    trailing,
+                    semantic_color: Some(palette.semantic),
+                });
+            }
+            TranscriptEntry::System(message) => {
+                items.push(HistoryTranscriptItem::Lines(vec![semantic_line(
+                    &mask_secret(message),
+                    palette.semantic,
+                    Some(palette.ghost),
+                )]))
+            }
+            TranscriptEntry::Command { name, lines } => {
+                let mut rendered = vec![Line::from(vec![
+                    Span::styled(
+                        "estelle",
+                        Style::default()
+                            .fg(palette.primary)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("  "),
+                    Span::styled(
+                        format!("/{}", mask_secret(name)),
+                        Style::default().fg(palette.semantic),
+                    ),
+                ])];
+                rendered.extend(lines.iter().map(|line| {
+                    let safe = if name == "skills" {
+                        mask_skill_catalog_line(line)
+                    } else {
+                        mask_secret(line)
+                    };
+                    semantic_line(&safe, palette.semantic, None)
+                }));
+                items.push(HistoryTranscriptItem::Lines(rendered));
+            }
+            TranscriptEntry::Tool {
+                label,
+                lines,
+                expanded,
+            } => items.push(HistoryTranscriptItem::Tool {
+                id: index,
+                label: mask_secret(label),
+                lines: lines
+                    .iter()
+                    .map(|line| {
+                        semantic_line(&mask_secret(line), palette.semantic, Some(Color::Gray))
+                    })
+                    .collect(),
+                expanded: *expanded,
+                semantic_color: palette.semantic,
+            }),
+            TranscriptEntry::Failure(lines) => {
+                let mut rendered = vec![Line::styled(
+                    "estelle  failed",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                )];
+                rendered.extend(
+                    lines
+                        .iter()
+                        .map(|line| semantic_line(&mask_secret(line), palette.semantic, None)),
+                );
+                items.push(HistoryTranscriptItem::Lines(rendered));
+            }
+        }
+    }
+    render_interactive_history_transcript(items, width, cwd)
+}
+
+pub(crate) fn source_label(source: &Source) -> String {
+    source.line.map_or_else(
+        || source.file.clone(),
+        |line| format!("{}:{line}", source.file),
+    )
+}
+
+/// Caller-owned, content-masked journal projection for `/govern` compact mode.
+pub(crate) fn compaction_messages(entries: &[TranscriptEntry]) -> Vec<Value> {
+    let stop = if entries.last().is_some_and(
+        |entry| matches!(entry, TranscriptEntry::User(text) if text.trim() == "/compact"),
+    ) {
+        entries.len().saturating_sub(1)
+    } else {
+        entries.len()
+    };
+    entries[..stop]
+        .iter()
+        .filter_map(|entry| match entry {
+            TranscriptEntry::SessionHandoff(lines) => message("system", lines.join("\n")),
+            TranscriptEntry::User(text) => message("user", text.clone()),
+            TranscriptEntry::Answer { text, .. } => message("assistant", text.clone()),
+            TranscriptEntry::System(text) => message("system", text.clone()),
+            TranscriptEntry::Command { name, lines } => {
+                message("assistant", format!("/{name}\n{}", lines.join("\n")))
+            }
+            TranscriptEntry::Tool { label, lines, .. } => {
+                message("assistant", format!("{label}\n{}", lines.join("\n")))
+            }
+            TranscriptEntry::Failure(lines) => message("assistant", lines.join("\n")),
+        })
+        .collect()
+}
+
+pub(crate) struct CompactionOutcome {
+    pub(crate) replacement: Option<Vec<TranscriptEntry>>,
+    pub(crate) receipt: TranscriptEntry,
+    pub(crate) generation_after: Option<u64>,
+}
+
+/// Validate the content-bearing projection as well as the content-free receipt. A refusal may only
+/// retain the caller's exact journal; a completed compaction must yield a replacement projection.
+pub(crate) fn compaction_outcome(
+    reply: &CommandReply,
+    source: &[Value],
+    generation: u64,
+) -> CompactionOutcome {
+    let failure = |what: &str, why: String, next: &str| CompactionOutcome {
+        replacement: None,
+        receipt: TranscriptEntry::Failure([what.to_string(), why, next.to_string()]),
+        generation_after: None,
+    };
+    let view = match crate::commands::compaction_view(reply, generation) {
+        Ok(view) => view,
+        Err(reason) => {
+            return failure(
+                "The compaction receipt was not safe to apply.",
+                reason,
+                "The caller-owned journal remains active and its generation did not move.",
+            );
+        }
+    };
+    let Some(governed) = reply.extra.get("governed").and_then(Value::as_array) else {
+        return failure(
+            "Compaction returned no replacement projection.",
+            "The content-free receipt exists, but governed is absent or not a list.".to_string(),
+            "Keep the local journal and retry after the server contract is repaired.",
+        );
+    };
+    if matches!(view.status.as_str(), "blocked" | "unchanged") && governed != source {
+        return failure(
+            "Compaction refusal changed the active transcript.",
+            "The server receipt said no replacement, but governed did not equal the caller-owned source."
+                .to_string(),
+            "Keep the local journal and report this contract violation.",
+        );
+    }
+    let replacement = if view.status == "compacted" {
+        match projection_entries(governed) {
+            Ok(entries) => Some(entries),
+            Err(reason) => {
+                return failure(
+                    "Compaction returned an unusable replacement projection.",
+                    reason,
+                    "Keep the local journal and report the malformed governed message.",
+                );
+            }
+        }
+    } else {
+        None
+    };
+    CompactionOutcome {
+        replacement,
+        receipt: TranscriptEntry::System(view.line),
+        generation_after: Some(view.generation_after),
+    }
+}
+
+fn projection_entries(messages: &[Value]) -> Result<Vec<TranscriptEntry>, String> {
+    messages
+        .iter()
+        .enumerate()
+        .map(|(index, message)| {
+            let role = message
+                .get("role")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("governed message {index} has no string role"))?;
+            let content = message
+                .get("content")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("governed message {index} has no string content"))?;
+            Ok(match role {
+                "user" => TranscriptEntry::User(content.to_string()),
+                "assistant" => TranscriptEntry::Answer {
+                    text: content.to_string(),
+                    grounded: None,
+                    degraded: false,
+                    sources: Vec::new(),
+                },
+                _ => TranscriptEntry::System(content.to_string()),
+            })
+        })
+        .collect()
+}
+
+pub(crate) async fn request_compaction(
+    client: Client,
+    messages: Vec<Value>,
+    session_id: String,
+    generation: u64,
+    task: String,
+    model: String,
+    cancel: &CancellationToken,
+) -> Result<CommandReply, Error> {
+    client
+        .post(
+            estelle_client::Endpoint::Govern,
+            &json!({
+                "messages": messages,
+                "session_id": session_id,
+                "generation": generation,
+                "task": task,
+                "model": model,
+                "compact": true,
+                "force": true,
+            }),
+            cancel,
+        )
+        .await
+}
+
+fn message(role: &str, content: String) -> Option<Value> {
+    let content = mask_secret(&content);
+    (!content.trim().is_empty()).then(|| json!({"role": role, "content": content}))
+}
+
+fn semantic_line(text: &str, semantic: Color, base: Option<Color>) -> Line<'static> {
+    let mut spans = Vec::new();
+    let mut start = 0;
+    let mut whitespace = text.chars().next().is_some_and(char::is_whitespace);
+    let mut previous_word = String::new();
+    for (offset, character) in text.char_indices().skip(1) {
+        let next_whitespace = character.is_whitespace();
+        if next_whitespace == whitespace {
+            continue;
+        }
+        push_segment(
+            &mut spans,
+            &text[start..offset],
+            whitespace,
+            &mut previous_word,
+            semantic,
+            base,
+        );
+        start = offset;
+        whitespace = next_whitespace;
+    }
+    if start < text.len() {
+        push_segment(
+            &mut spans,
+            &text[start..],
+            whitespace,
+            &mut previous_word,
+            semantic,
+            base,
+        );
+    }
+    Line::from(spans)
+}
+
+fn push_segment(
+    spans: &mut Vec<Span<'static>>,
+    segment: &str,
+    whitespace: bool,
+    previous_word: &mut String,
+    semantic: Color,
+    base: Option<Color>,
+) {
+    let word = segment.trim_matches(|character: char| {
+        matches!(
+            character,
+            '`' | ',' | ';' | ':' | '(' | ')' | '[' | ']' | '{' | '}'
+        )
+    });
+    let follows_semantic_label = matches!(
+        previous_word.as_str(),
+        "command" | "file" | "link" | "path" | "symbol"
+    );
+    let semantic_token = !whitespace
+        && (follows_semantic_label
+            || word.starts_with("http://")
+            || word.starts_with("https://")
+            || word.starts_with('/')
+            || word.starts_with('!')
+            || word.contains("::")
+            || word.contains('/')
+            || [".rs", ".py", ".ts", ".tsx", ".js", ".md"]
+                .iter()
+                .any(|extension| word.contains(extension)));
+    let style = if semantic_token {
+        Style::default().fg(semantic)
+    } else {
+        base.map_or_else(Style::default, |color| Style::default().fg(color))
+    };
+    spans.push(Span::styled(segment.to_string(), style));
+    if !whitespace && !word.is_empty() {
+        *previous_word = word.to_ascii_lowercase();
+    }
+}
+
+fn mask_skill_catalog_line(line: &str) -> String {
+    let mask_name = |name: &str| {
+        let valid = !name.is_empty()
+            && name.len() <= 96
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+            && !estelle_client::is_secret_shaped(name);
+        if valid {
+            name.to_string()
+        } else {
+            mask_secret(name)
+        }
+    };
+    if let Some((name, description)) = line.split_once("  |  ") {
+        return format!("{}  |  {}", mask_name(name), mask_secret(description));
+    }
+    if line.ends_with(" playbooks") {
+        return mask_secret(line);
+    }
+    mask_name(line)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn semantic_tokens_are_blue_without_recolouring_prose() {
+        let line = semantic_line(
+            "open src/main.rs:42 then /verify charge::run and https://fatelabs.ca",
+            Color::Blue,
+            Some(Color::Gray),
+        );
+        let blue = line
+            .spans
+            .iter()
+            .filter(|span| span.style.fg == Some(Color::Blue))
+            .map(|span| span.content.as_ref())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            blue,
+            [
+                "src/main.rs:42",
+                "/verify",
+                "charge::run",
+                "https://fatelabs.ca"
+            ]
+        );
+        assert_eq!(line.spans[0].style.fg, Some(Color::Gray));
+    }
+
+    #[test]
+    fn compact_command_is_not_part_of_the_journal_it_requests_to_replace() {
+        let messages = compaction_messages(&[
+            TranscriptEntry::User("keep me".to_string()),
+            TranscriptEntry::Answer {
+                text: "kept answer".to_string(),
+                grounded: Some(true),
+                degraded: false,
+                sources: Vec::new(),
+            },
+            TranscriptEntry::User("/compact".to_string()),
+        ]);
+        assert_eq!(messages.len(), 2);
+        assert!(
+            messages
+                .iter()
+                .all(|message| message["content"] != "/compact")
+        );
+    }
+
+    #[test]
+    fn compacted_projection_replaces_the_journal_and_advances_exactly_once() {
+        let source = vec![json!({"role": "user", "content": "old"})];
+        let reply: CommandReply = serde_json::from_value(json!({
+            "governed": [
+                {"role": "system", "content": "bounded summary"},
+                {"role": "user", "content": "recent turn"}
+            ],
+            "compaction": {
+                "status": "compacted",
+                "reason": "history_exceeded_usable_window",
+                "generation_before": 4,
+                "generation_after": 5
+            }
+        }))
+        .expect("govern reply");
+
+        let outcome = compaction_outcome(&reply, &source, 4);
+
+        assert_eq!(outcome.generation_after, Some(5));
+        assert_eq!(outcome.replacement.as_ref().map(Vec::len), Some(2));
+        assert!(matches!(
+            outcome
+                .replacement
+                .as_ref()
+                .and_then(|entries| entries.first()),
+            Some(TranscriptEntry::System(text)) if text == "bounded summary"
+        ));
+    }
+
+    #[test]
+    fn malformed_compacted_projection_cannot_erase_the_journal() {
+        let source = vec![json!({"role": "user", "content": "old"})];
+        let reply: CommandReply = serde_json::from_value(json!({
+            "governed": [{"role": "system"}],
+            "compaction": {
+                "status": "compacted",
+                "reason": "history_exceeded_usable_window",
+                "generation_before": 4,
+                "generation_after": 5
+            }
+        }))
+        .expect("govern reply");
+
+        let outcome = compaction_outcome(&reply, &source, 4);
+
+        assert!(outcome.replacement.is_none());
+        assert_eq!(outcome.generation_after, None);
+        assert!(matches!(outcome.receipt, TranscriptEntry::Failure(_)));
+    }
+}

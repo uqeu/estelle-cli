@@ -36,7 +36,24 @@ for Estelle dispatch. The former outer palette and hand-built composer border no
 Committed turns now pass through `history_cell` as well. User turns use its filled, width-aware cell;
 assistant answers use its source-backed markdown cell so resize reflows the original markdown rather than
 already-wrapped output. Estelle still supplies the grounded/degraded heading, failure copy, secret masking,
-and citation lines. Those are product semantics, not duplicate wrapping or markdown machinery.
+and citation lines. Those are product semantics, not duplicate wrapping or markdown machinery. File paths,
+commands, symbols, and links use the theme's semantic blue (`#65A8FF` on dark, `#1F5AA6` on cream).
+Local shell receipts render as one `▸` row and reveal their visually distinct output only when that exact
+row is clicked; clicking elsewhere is a measured no-op.
+
+`/compact` now sends the caller-owned, masked journal to Guardian's `POST /govern` compact mode. An HTTP
+200 is transport evidence only: the client validates the receipt generation and the content-bearing
+`governed` projection. A blocked or unchanged receipt must return the original messages byte-for-value and
+renders the server fact directly, for example
+`compact BLOCKED  latest_turn_exceeds_usable_window`; any changed refusal turns into a failure and leaves
+the local generation untouched. There is no context percentage bar. A compacted receipt replaces the local
+journal with the returned projection before advancing its generation.
+
+The measured pre-change `main.rs` was 12,254 lines (the earlier 11,663 report predated intervening landed
+work). It is now smaller even after the new Guardian and click bindings: transcript semantics, projection
+validation, click targeting, and mouse behavior live in `tui/src/transcript.rs`; the replaced hand-rolled
+renderer left `main.rs` in the same commit. Disabled pet-era tests were deleted, leaving no Rust references
+to pets, OSS selection, model migration, or debug config.
 
 ## Jcode and fleet surface inventory
 
@@ -121,3 +138,8 @@ not a sandbox stream, so S3 is exactly one line: `sandbox · a clone, never prod
   that name while a real `sk-abcdefghijklmnop` remains hidden.
 - The `?` guard was mutation-tested by changing the dispatcher to `!`; it failed to render `/help`, then
   passed after the real binding was restored.
+- Tool expansion was probed with an off-row click (remained collapsed) and an exact-row click (changed
+  `▸` to `▾` and revealed the body).
+- Guardian compaction was probed through a mocked real HTTP client seam: a 200/blocker preserved the source
+  and generation and rendered the exact blocked line; a 200/blocker that changed `governed` rendered a
+  contract failure and did not advance.

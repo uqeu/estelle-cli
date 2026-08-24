@@ -19,8 +19,12 @@ mod setup_flow;
 #[cfg(test)]
 mod test_gallery;
 mod top_level;
+mod transcript;
+#[cfg(test)]
+mod transcript_adoption_tests;
 mod version_check;
 
+use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -53,7 +57,6 @@ use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
 use crossterm::event::MouseEvent;
-use crossterm::event::MouseEventKind;
 use crossterm::execute;
 use crossterm::terminal::Clear as TerminalClear;
 use crossterm::terminal::ClearType;
@@ -83,12 +86,10 @@ use estelle_tui::ComposerInput;
 use estelle_tui::ComposerPanePalette;
 use estelle_tui::ExternalResumePicker;
 use estelle_tui::ExternalResumeRow;
-use estelle_tui::HistoryTranscriptItem;
 use estelle_tui::boot_scene::BootPalette;
 use estelle_tui::boot_scene::BootPreferences;
 use estelle_tui::boot_scene::BootScene;
 use estelle_tui::boot_scene::spider_lily_coverage;
-use estelle_tui::render_history_transcript;
 use estelle_tui::session_gap;
 use futures::StreamExt;
 use history_import::ExternalHistorySource;
@@ -124,6 +125,10 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command as TokioCommand;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use transcript::ToolClickTarget;
+use transcript::TranscriptEntry;
+use transcript::TranscriptPalette;
+use transcript::source_label;
 use unicode_width::UnicodeWidthChar;
 
 const FRAME_INTERVAL: Duration = Duration::from_millis(100);
@@ -200,6 +205,14 @@ impl Theme {
         match self {
             Self::Dark => FATE_RED_SOFT,
             Self::CreamInk => Color::from_u32(0xB8_3A_31),
+        }
+    }
+
+    fn semantic(self) -> Color {
+        match self {
+            // Claude-like semantic blue: luminous on an inherited dark terminal, darker on cream.
+            Self::Dark => Color::from_u32(0x65_A8_FF),
+            Self::CreamInk => Color::from_u32(0x1F_5A_A6),
         }
     }
 
@@ -488,23 +501,6 @@ struct HeaderState {
     connected: bool,
 }
 
-enum TranscriptEntry {
-    SessionHandoff(Vec<String>),
-    User(String),
-    Answer {
-        text: String,
-        grounded: Option<bool>,
-        degraded: bool,
-        sources: Vec<Source>,
-    },
-    System(String),
-    Command {
-        name: String,
-        lines: Vec<String>,
-    },
-    Failure([String; 3]),
-}
-
 struct ActiveRequest {
     id: u64,
     label: String,
@@ -534,6 +530,13 @@ enum QueuedRequest {
     Shell {
         command: String,
         timeout: Duration,
+    },
+    Compact {
+        messages: Vec<Value>,
+        session_id: String,
+        generation: u64,
+        task: String,
+        model: String,
     },
     Apply {
         diff: String,
@@ -613,9 +616,17 @@ enum UiEvent {
         id: u64,
         progress: estelle_client::WorkProgress,
     },
+    CompactAnswer {
+        id: u64,
+        session_id: String,
+        source: Vec<Value>,
+        generation: u64,
+        result: Result<CommandReply, Error>,
+    },
     LocalAnswer {
         id: u64,
         name: &'static str,
+        label: Option<String>,
         result: Result<Vec<String>, String>,
     },
     SweepProgress {
@@ -1555,6 +1566,7 @@ struct App {
     last_interaction: Instant,
     working_memory_paths: Vec<String>,
     transcript_scroll: usize,
+    tool_click_targets: RefCell<Vec<ToolClickTarget>>,
     dither_wake: VecDeque<usize>,
     picker: Option<PickerSurface>,
     resume_picker: Option<ExternalResumePicker>,
@@ -1563,6 +1575,7 @@ struct App {
     pending_login: Option<PendingLogin>,
     login_required: bool,
     focus: FocusSurface,
+    compaction_generations: HashMap<String, u64>,
     theme: Theme,
 }
 
@@ -1764,6 +1777,7 @@ impl App {
             last_interaction: Instant::now(),
             working_memory_paths: Vec::new(),
             transcript_scroll: 0,
+            tool_click_targets: RefCell::new(Vec::new()),
             dither_wake: VecDeque::from([0]),
             picker: None,
             resume_picker: None,
@@ -1772,6 +1786,7 @@ impl App {
             pending_login: None,
             login_required: false,
             focus: FocusSurface::Composer,
+            compaction_generations: HashMap::new(),
             theme: Theme::Dark,
         }
     }
@@ -2000,6 +2015,24 @@ impl App {
                 });
                 self.queue.push_back(QueuedRequest::Sweep);
             }
+            "compact" if argument.trim().is_empty() => {
+                let generation = self
+                    .compaction_generations
+                    .get(&self.session_id)
+                    .copied()
+                    .unwrap_or(0);
+                self.queue.push_back(QueuedRequest::Compact {
+                    messages: transcript::compaction_messages(&self.transcript),
+                    session_id: self.session_id.clone(),
+                    generation,
+                    task: self.last_question.clone().unwrap_or_default(),
+                    model: self.active_model.clone().unwrap_or_default(),
+                });
+            }
+            "compact" => self.transcript.push(TranscriptEntry::System(
+                "/compact takes no argument; the caller-owned session journal is the input."
+                    .to_string(),
+            )),
             "context" => self.toggle_context_panel(),
             "prod" => self.toggle_prod_panel(tx),
             "diff" => self.toggle_diff_panel(),
@@ -2121,7 +2154,10 @@ impl App {
                     ),
                 ],
             }),
-            "clear" => self.transcript.clear(),
+            "clear" => {
+                self.transcript.clear();
+                self.compaction_generations.remove(&self.session_id);
+            }
             "exit" => self.should_exit = true,
             _ => {
                 let Some(lines) = commands::inherited_command_lines(name) else {
@@ -2656,6 +2692,7 @@ impl App {
                     let _ = tx.send(UiEvent::LocalAnswer {
                         id,
                         name: "shell",
+                        label: Some(format!("!{command}")),
                         result,
                     });
                 });
@@ -2667,7 +2704,47 @@ impl App {
                 let root = self.root.clone();
                 tokio::spawn(async move {
                     let result = apply_diff(&root, &diff, reverse, &cancel).await;
-                    let _ = tx.send(UiEvent::LocalAnswer { id, name, result });
+                    let _ = tx.send(UiEvent::LocalAnswer {
+                        id,
+                        name,
+                        label: None,
+                        result,
+                    });
+                });
+            }
+            QueuedRequest::Compact {
+                messages,
+                session_id,
+                generation,
+                task,
+                model,
+            } => {
+                let Some(client) = self.client.clone() else {
+                    self.handle_missing_client(QueuedRequest::Compact {
+                        messages,
+                        session_id,
+                        generation,
+                        task,
+                        model,
+                    });
+                    return;
+                };
+                let source = messages.clone();
+                let response_session_id = session_id.clone();
+                let (id, cancel) = self.begin_active("/compact");
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    let result = transcript::request_compaction(
+                        client, messages, session_id, generation, task, model, &cancel,
+                    )
+                    .await;
+                    let _ = tx.send(UiEvent::CompactAnswer {
+                        id,
+                        session_id: response_session_id,
+                        source,
+                        generation,
+                        result,
+                    });
                 });
             }
             QueuedRequest::Question {
@@ -3619,6 +3696,34 @@ impl App {
                     );
                 }
             }
+            UiEvent::CompactAnswer {
+                id,
+                session_id,
+                source,
+                generation,
+                result,
+            } => {
+                if self.active.as_ref().is_none_or(|active| active.id != id) {
+                    return;
+                }
+                self.active = None;
+                match result {
+                    Ok(reply) => {
+                        let outcome = transcript::compaction_outcome(&reply, &source, generation);
+                        if let Some(replacement) = outcome.replacement {
+                            self.transcript = replacement;
+                        }
+                        if let Some(after) = outcome.generation_after {
+                            self.compaction_generations.insert(session_id, after);
+                        }
+                        self.transcript.push(outcome.receipt);
+                    }
+                    Err(error) => self
+                        .transcript
+                        .push(TranscriptEntry::Failure(failure_lines(&error))),
+                }
+                self.start_next(tx);
+            }
             UiEvent::Answer { id, result } => {
                 if self.active.as_ref().is_none_or(|active| active.id != id) {
                     return;
@@ -3675,7 +3780,12 @@ impl App {
                     self.work_progress = Some(next);
                 }
             }
-            UiEvent::LocalAnswer { id, name, result } => {
+            UiEvent::LocalAnswer {
+                id,
+                name,
+                label,
+                result,
+            } => {
                 if self.active.as_ref().is_none_or(|active| active.id != id) {
                     return;
                 }
@@ -3687,10 +3797,18 @@ impl App {
                         } else if name == "undo" {
                             self.last_applied_diff = None;
                         }
-                        self.transcript.push(TranscriptEntry::Command {
-                            name: name.to_string(),
-                            lines,
-                        });
+                        if name == "shell" {
+                            self.transcript.push(TranscriptEntry::Tool {
+                                label: label.unwrap_or_else(|| "local shell output".to_string()),
+                                lines,
+                                expanded: false,
+                            });
+                        } else {
+                            self.transcript.push(TranscriptEntry::Command {
+                                name: name.to_string(),
+                                lines,
+                            });
+                        }
                     }
                     Err(error) if error == "cancelled" => {}
                     Err(error) => self.transcript.push(TranscriptEntry::Failure([
@@ -5028,7 +5146,7 @@ fn failure_lines(error: &Error) -> [String; 3] {
 
 #[cfg(test)]
 fn render_transcript(entries: &[TranscriptEntry]) -> Text<'static> {
-    render_transcript_with_citations(entries, true, Theme::Dark, 120)
+    render_transcript_with_citations(entries, true, Theme::Dark, 120).text
 }
 
 fn render_transcript_with_citations(
@@ -5036,143 +5154,18 @@ fn render_transcript_with_citations(
     include_citations: bool,
     theme: Theme,
     width: u16,
-) -> Text<'static> {
-    let mut items = Vec::with_capacity(entries.len());
-    for entry in entries {
-        match entry {
-            TranscriptEntry::SessionHandoff(lines) => {
-                let mut rendered = vec![Line::styled(
-                    "Since your last session",
-                    Style::default()
-                        .fg(theme.primary())
-                        .add_modifier(Modifier::BOLD),
-                )];
-                rendered.extend(
-                    lines.iter().map(|line| {
-                        Line::styled(mask_secret(line), Style::default().fg(Color::Gray))
-                    }),
-                );
-                items.push(HistoryTranscriptItem::Lines(rendered));
-            }
-            TranscriptEntry::User(message) => {
-                items.push(HistoryTranscriptItem::User {
-                    heading: vec![Line::styled("you", Style::default().fg(Color::Gray))],
-                    message: mask_secret(message),
-                    background: user_turn_background(theme),
-                });
-            }
-            TranscriptEntry::Answer {
-                text: answer,
-                grounded,
-                degraded,
-                sources,
-            } => {
-                let (label, color) = if *degraded {
-                    ("degraded", Color::Yellow)
-                } else if *grounded == Some(true) {
-                    ("grounded", Color::Cyan)
-                } else if *grounded == Some(false) {
-                    ("not grounded", Color::Yellow)
-                } else {
-                    ("conversation", Color::Gray)
-                };
-                let heading = vec![Line::from(vec![
-                    Span::styled(
-                        "estelle",
-                        Style::default()
-                            .fg(theme.primary())
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw("  "),
-                    Span::styled(label, Style::default().fg(color)),
-                ])];
-                let trailing = if include_citations {
-                    sources
-                        .iter()
-                        .map(|source| {
-                            Line::styled(
-                                format!("cited  {}", source_label(source)),
-                                Style::default().fg(Color::DarkGray),
-                            )
-                        })
-                        .collect()
-                } else {
-                    Vec::new()
-                };
-                items.push(HistoryTranscriptItem::Markdown {
-                    heading,
-                    source: mask_secret(answer),
-                    trailing,
-                });
-            }
-            TranscriptEntry::System(message) => {
-                items.push(HistoryTranscriptItem::Lines(vec![Line::styled(
-                    mask_secret(message),
-                    Style::default().fg(theme.ghost()),
-                )]));
-            }
-            TranscriptEntry::Command { name, lines } => {
-                let mut rendered = vec![Line::from(vec![
-                    Span::styled(
-                        "estelle",
-                        Style::default()
-                            .fg(theme.primary())
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw(format!("  /{}", mask_secret(name))),
-                ])];
-                for line in lines {
-                    let line = if name == "skills" {
-                        mask_skill_catalog_line(line)
-                    } else {
-                        mask_secret(line)
-                    };
-                    rendered.push(Line::from(line));
-                }
-                items.push(HistoryTranscriptItem::Lines(rendered));
-            }
-            TranscriptEntry::Failure(lines) => {
-                let mut rendered = vec![Line::styled(
-                    "estelle  failed",
-                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                )];
-                for line in lines {
-                    rendered.push(Line::from(mask_secret(line)));
-                }
-                items.push(HistoryTranscriptItem::Lines(rendered));
-            }
-        }
-    }
-    render_history_transcript(items, width, Path::new("."))
-}
-
-fn mask_skill_catalog_line(line: &str) -> String {
-    let mask_name = |name: &str| {
-        let valid = !name.is_empty()
-            && name.len() <= 96
-            && name
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-            && !is_secret_shaped(name);
-        if valid {
-            name.to_string()
-        } else {
-            mask_secret(name)
-        }
-    };
-    if let Some((name, description)) = line.split_once("  |  ") {
-        return format!("{}  |  {}", mask_name(name), mask_secret(description));
-    }
-    if line.ends_with(" playbooks") {
-        return mask_secret(line);
-    }
-    mask_name(line)
-}
-
-fn source_label(source: &Source) -> String {
-    source.line.map_or_else(
-        || source.file.clone(),
-        |line| format!("{}:{line}", source.file),
+) -> estelle_tui::RenderedHistoryTranscript {
+    transcript::render(
+        entries,
+        include_citations,
+        TranscriptPalette {
+            primary: theme.primary(),
+            ghost: theme.ghost(),
+            semantic: theme.semantic(),
+            user_background: user_turn_background(theme),
+        },
+        width,
+        Path::new("."),
     )
 }
 
@@ -6846,6 +6839,7 @@ fn github_diff_lines(diff: &str, width: usize, app: &App) -> Vec<Line<'static>> 
 }
 
 fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
+    app.tool_click_targets.borrow_mut().clear();
     let area = frame.area();
     frame.render_widget(
         Block::default().style(
@@ -7085,13 +7079,16 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             app.theme,
             transcript_root.width,
         );
-        let paragraph = Paragraph::new(transcript).wrap(Wrap { trim: false });
+        let paragraph = Paragraph::new(transcript.text).wrap(Wrap { trim: false });
         let line_count = paragraph.line_count(transcript_root.width);
         let visible = usize::from(transcript_root.height);
         let bottom_scroll = line_count.saturating_sub(visible);
         let scroll =
             u16::try_from(bottom_scroll.saturating_sub(app.transcript_scroll.min(bottom_scroll)))
                 .unwrap_or(u16::MAX);
+        let targets =
+            transcript::visible_tool_targets(transcript.interactive_rows, transcript_root, scroll);
+        *app.tool_click_targets.borrow_mut() = targets;
         let show_ground = !app.has_submitted_question
             && app.transcript.is_empty()
             && app.sweep_progress.is_none()
@@ -7420,16 +7417,12 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
 }
 
 fn handle_mouse(app: &mut App, mouse: MouseEvent) {
-    const WHEEL_LINES: usize = 3;
-    match mouse.kind {
-        MouseEventKind::ScrollUp => {
-            app.transcript_scroll = app.transcript_scroll.saturating_add(WHEEL_LINES);
-        }
-        MouseEventKind::ScrollDown => {
-            app.transcript_scroll = app.transcript_scroll.saturating_sub(WHEEL_LINES);
-        }
-        _ => {}
-    }
+    transcript::handle_mouse(
+        &mut app.transcript,
+        &app.tool_click_targets.borrow(),
+        &mut app.transcript_scroll,
+        mouse,
+    );
 }
 
 async fn record_session_checkpoint(root: PathBuf) {
