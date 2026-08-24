@@ -2044,7 +2044,8 @@ impl App {
                 self.picker = None;
             }
             Err(error) => self.transcript.push(TranscriptEntry::System(format!(
-                "Credential flow did not complete: {error}. Run /doctor."
+                "Credential flow did not complete: {error}. Run {}.",
+                doctor::Context::Tui.doctor_command()
             ))),
         }
     }
@@ -7252,7 +7253,10 @@ async fn run(
 
 async fn login_failure(error: &dyn std::fmt::Display) -> ExitCode {
     let mut stdout = tokio::io::stdout();
-    let message = format!("Login did not complete: {error}\nRun estelle doctor.\n");
+    let message = format!(
+        "Login did not complete: {error}\nRun {}.\n",
+        doctor::Context::Shell.doctor_command()
+    );
     let _ = stdout.write_all(message.as_bytes()).await;
     ExitCode::FAILURE
 }
@@ -7321,8 +7325,8 @@ async fn run_upgrade(force: bool) -> ExitCode {
         // Could not answer. Say that, and do not exit 0 pretending otherwise.
         version_check::Status::Unknown => {
             return command_failure(format!(
-                "Could not determine the newest release. Install or update manually with:\n\n  {}",
-                version_check::INSTALL_COMMAND
+                "Could not determine the newest release. Check releases and installation instructions at:\n\n  {}",
+                version_check::UPDATE_PAGE
             ))
             .await;
         }

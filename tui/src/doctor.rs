@@ -11,11 +11,24 @@ pub(crate) enum Context {
     Tui,
 }
 
+impl Context {
+    pub(crate) const fn login_command(self) -> &'static str {
+        match self {
+            Context::Shell => "estelle login",
+            Context::Tui => "/login",
+        }
+    }
+
+    pub(crate) const fn doctor_command(self) -> &'static str {
+        match self {
+            Context::Shell => "estelle doctor",
+            Context::Tui => "/doctor",
+        }
+    }
+}
+
 pub(crate) fn lines(context: Context) -> Vec<String> {
-    let login_command = match context {
-        Context::Shell => "estelle login",
-        Context::Tui => "/login",
-    };
+    let login_command = context.login_command();
     let estelle = estelle_status();
     let chatgpt = if login::chatgpt_credential_present() {
         "present · device-code store"
@@ -144,6 +157,14 @@ mod tests {
             render_estelle_status(true, false),
             "present · ESTELLE_API_KEY environment; runtime binding not yet proven"
         );
+    }
+
+    #[test]
+    fn repair_commands_match_the_surface_that_can_execute_them() {
+        assert_eq!(Context::Shell.login_command(), "estelle login");
+        assert_eq!(Context::Shell.doctor_command(), "estelle doctor");
+        assert_eq!(Context::Tui.login_command(), "/login");
+        assert_eq!(Context::Tui.doctor_command(), "/doctor");
     }
 
     #[test]

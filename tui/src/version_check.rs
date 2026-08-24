@@ -2,10 +2,10 @@
 //!
 //! The install path exists "so it constantly makes sure you update it". This
 //! module is the honest half of that promise: it learns the newest published
-//! release, says so when the running binary is older, and prints the one
-//! command that fixes it. It never replaces the binary and never shells out —
-//! a program that silently rewrites itself is exactly the trust violation this
-//! product exists to prevent. Tell, then let them run it.
+//! release, says so when the running binary is older, and links to the release
+//! page. It never replaces the binary, shells out, or trains users to pipe a
+//! network response into a shell. Tell, then let them choose and inspect the
+//! installation path.
 //!
 //! Three states, and the third is load-bearing: a check that could not reach
 //! the network reports [`Status::Unknown`], never [`Status::UpToDate`]. "I
@@ -21,12 +21,18 @@ use std::time::UNIX_EPOCH;
 use serde::Deserialize;
 use serde::Serialize;
 
-/// The one published install command. This string is duplicated by design in
+/// The legacy install command, retained only in tests that pin the release
+/// asset. The notifier must never render this executable text. It is
+/// duplicated by design in
 /// `web/lib/cli.ts` (`CLI_INSTALL`) in the `estelle` repo — two languages, two
 /// repos, no shared constant possible. `installer_url_is_the_release_asset`
 /// below pins this half; the web half is pinned by its own test. If you change
 /// one, change both, and keep the release asset as the canonical source.
+#[cfg(test)]
 pub const INSTALL_COMMAND: &str = "curl --proto '=https' --tlsv1.2 -fsSL \\\n  https://github.com/uqeu/estelle-cli/releases/latest/download/install.sh | sh";
+
+/// Human-inspectable release page used by every update notice.
+pub const UPDATE_PAGE: &str = "https://github.com/uqeu/estelle-cli/releases/latest";
 
 /// Where the newest published release is announced.
 const RELEASE_API: &str = "https://api.github.com/repos/uqeu/estelle-cli/releases/latest";
@@ -131,7 +137,7 @@ pub fn notice(status: Status) -> Option<String> {
     };
     debug_assert!(running < latest, "Behind must mean running < latest");
     Some(format!(
-        "estelle {running} is behind {latest}. Update with:\n\n  {INSTALL_COMMAND}\n"
+        "estelle {running} is behind {latest}. Review the release and installation instructions:\n\n  {UPDATE_PAGE}\n"
     ))
 }
 
@@ -314,7 +320,7 @@ mod tests {
         })
         .expect("behind must speak");
         assert!(message.contains("0.2.20 is behind 0.2.21"), "{message}");
-        assert!(message.contains(INSTALL_COMMAND), "{message}");
+        assert!(message.contains(UPDATE_PAGE), "{message}");
     }
 
     #[test]
@@ -347,6 +353,21 @@ mod tests {
         assert!(!INSTALL_COMMAND.contains("raw.githubusercontent.com"));
         assert!(INSTALL_COMMAND.contains("--proto '=https'"));
         assert!(INSTALL_COMMAND.contains("--tlsv1.2"));
+    }
+
+    #[test]
+    fn update_notice_never_pipes_http_into_a_shell() {
+        let message = notice(Status::Behind {
+            running: v(0, 2, 20),
+            latest: v(0, 2, 21),
+        })
+        .expect("behind must speak");
+        for forbidden in ["curl", "| sh", "raw.githubusercontent.com"] {
+            assert!(
+                !message.contains(forbidden),
+                "unsafe update advice: {message}"
+            );
+        }
     }
 
     #[test]
