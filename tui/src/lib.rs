@@ -220,6 +220,8 @@ pub use public_widgets::composer_input::ComposerCommand;
 pub use public_widgets::composer_input::ComposerInput;
 pub use public_widgets::history_transcript::HistoryTranscriptItem;
 pub use public_widgets::history_transcript::render_history_transcript;
+pub use resume_picker::ExternalResumePicker;
+pub use resume_picker::ExternalResumeRow;
 pub use status_indicator_widget::fmt_elapsed_compact;
 pub use style::user_message_style_for;
 pub use terminal_palette::default_bg;

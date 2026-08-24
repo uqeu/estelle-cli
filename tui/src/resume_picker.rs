@@ -87,6 +87,125 @@ const FOOTER_HINT_GAP: usize = 3;
 const PICKER_CHROME_HEIGHT: u16 = 8;
 const PICKER_LIST_HORIZONTAL_INSET: u16 = 4;
 
+/// A session supplied by an application embedding the maintained resume picker.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExternalResumeRow {
+    pub id: String,
+    pub title: String,
+    pub detail: String,
+}
+
+/// Data-driven adapter for applications whose sessions come from their own server.
+///
+/// The full Codex picker owns app-server paging and transcript previews. Embedders keep
+/// those transport decisions while sharing its comfortable rows, selection marker, and
+/// honest empty state.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ExternalResumePicker {
+    rows: Vec<ExternalResumeRow>,
+    selected: usize,
+}
+
+impl ExternalResumePicker {
+    pub fn new(rows: Vec<ExternalResumeRow>) -> Self {
+        Self { rows, selected: 0 }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    pub fn select_next(&mut self) {
+        self.selected = (self.selected + 1).min(self.rows.len().saturating_sub(1));
+    }
+
+    pub fn select_previous(&mut self) {
+        self.selected = self.selected.saturating_sub(1);
+    }
+
+    pub fn select_number(&mut self, number: usize) -> Option<&str> {
+        let index = number.checked_sub(1)?;
+        if index >= self.rows.len() {
+            return None;
+        }
+        self.selected = index;
+        self.selected_id()
+    }
+
+    pub fn selected_id(&self) -> Option<&str> {
+        self.rows.get(self.selected).map(|row| row.id.as_str())
+    }
+
+    pub fn desired_height(&self) -> u16 {
+        let rows = if self.rows.is_empty() {
+            1
+        } else {
+            self.rows.len().saturating_mul(2)
+        };
+        u16::try_from(rows.saturating_add(3)).unwrap_or(u16::MAX)
+    }
+
+    pub fn lines(
+        &self,
+        width: u16,
+        selected_colour: Color,
+        muted_colour: Color,
+    ) -> Vec<Line<'static>> {
+        if self.rows.is_empty() {
+            return vec![Line::styled(
+                "No sessions yet",
+                Style::default()
+                    .fg(muted_colour)
+                    .add_modifier(ratatui::style::Modifier::ITALIC),
+            )];
+        }
+
+        let content_width = usize::from(width.saturating_sub(2));
+        let mut lines = Vec::with_capacity(self.rows.len().saturating_mul(2));
+        for (index, row) in self.rows.iter().enumerate() {
+            let selected = index == self.selected;
+            let marker = if selected { "❯ " } else { "  " };
+            let number = if index < 9 {
+                format!("{} ", index + 1)
+            } else {
+                String::new()
+            };
+            let title_width = content_width.saturating_sub(marker.len() + number.len());
+            lines.push(Line::from(vec![
+                Span::styled(
+                    marker,
+                    Style::default()
+                        .fg(selected_colour)
+                        .add_modifier(ratatui::style::Modifier::BOLD),
+                ),
+                Span::styled(number, Style::default().fg(muted_colour)),
+                Span::styled(
+                    truncate_text(&row.title, title_width),
+                    if selected {
+                        Style::default()
+                            .fg(selected_colour)
+                            .add_modifier(ratatui::style::Modifier::BOLD)
+                    } else {
+                        Style::default().fg(muted_colour)
+                    },
+                ),
+            ]));
+            lines.push(Line::styled(
+                format!(
+                    "    {}",
+                    truncate_text(&row.detail, content_width.saturating_sub(4))
+                ),
+                Style::default().fg(muted_colour),
+            ));
+        }
+        lines
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SessionTarget {
     pub path: Option<PathBuf>,
@@ -3303,6 +3422,34 @@ mod tests {
 
     use crossterm::event::KeyCode;
     use crossterm::event::KeyEvent;
+
+    #[test]
+    fn external_picker_selects_exact_session_and_empty_state_cannot_submit() {
+        let mut picker = ExternalResumePicker::new(vec![
+            ExternalResumeRow {
+                id: "session-one".to_string(),
+                title: "First repair".to_string(),
+                detail: "2 runs".to_string(),
+            },
+            ExternalResumeRow {
+                id: "session-two".to_string(),
+                title: "Second repair".to_string(),
+                detail: "5 runs".to_string(),
+            },
+        ]);
+
+        assert_eq!(picker.selected_id(), Some("session-one"));
+        picker.select_next();
+        assert_eq!(picker.selected_id(), Some("session-two"));
+        assert_eq!(picker.select_number(1), Some("session-one"));
+
+        let empty = ExternalResumePicker::new(Vec::new());
+        assert_eq!(empty.selected_id(), None);
+        assert_eq!(
+            empty.lines(80, Color::Yellow, Color::Gray)[0].to_string(),
+            "No sessions yet"
+        );
+    }
     use crossterm::event::KeyModifiers;
     use insta::assert_snapshot;
     use pretty_assertions::assert_eq;

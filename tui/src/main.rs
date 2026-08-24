@@ -43,6 +43,8 @@ use clap::Subcommand;
 use codex_tui::ComposerAction;
 use codex_tui::ComposerCommand;
 use codex_tui::ComposerInput;
+use codex_tui::ExternalResumePicker;
+use codex_tui::ExternalResumeRow;
 use codex_tui::HistoryTranscriptItem;
 use codex_tui::boot_scene::BootPalette;
 use codex_tui::boot_scene::BootPreferences;
@@ -1440,6 +1442,7 @@ struct App {
     transcript_scroll: usize,
     dither_wake: VecDeque<usize>,
     picker: Option<PickerSurface>,
+    resume_picker: Option<ExternalResumePicker>,
     settings: Option<CommandReply>,
     pending_setting_input: Option<PendingSettingInput>,
     pending_login: Option<PendingLogin>,
@@ -1636,6 +1639,7 @@ impl App {
             transcript_scroll: 0,
             dither_wake: VecDeque::from([0]),
             picker: None,
+            resume_picker: None,
             settings: None,
             pending_setting_input: None,
             pending_login: None,
@@ -1848,6 +1852,14 @@ impl App {
                 name: "help".to_string(),
                 lines: commands::help_lines(),
             }),
+            "resume" if argument.trim().is_empty() => {
+                self.queue.push_back(QueuedRequest::Command(PendingCommand {
+                    name: "sessions",
+                    argument: String::new(),
+                    last_question: self.last_question.clone(),
+                    skill_thread: None,
+                }));
+            }
             "sweep" => {
                 self.sweep_progress = Some(top_level::SweepProgress {
                     state: "preparing sweep".to_string(),
@@ -2332,6 +2344,19 @@ impl App {
         }
     }
 
+    fn activate_resume_picker(&mut self, tx: &mpsc::UnboundedSender<UiEvent>) {
+        let session_id = self
+            .resume_picker
+            .as_ref()
+            .and_then(ExternalResumePicker::selected_id)
+            .map(str::to_string);
+        let Some(session_id) = session_id else {
+            return;
+        };
+        self.resume_picker = None;
+        self.submit(format!("/resume {session_id}"), tx);
+    }
+
     fn save_setting(
         &mut self,
         suite: String,
@@ -2803,6 +2828,54 @@ impl App {
             self.gate_modal = GateModal::from_reply(&result.reply, &result.inspected_files);
         }
         let reply = result.reply;
+        if name == "sessions" {
+            let rows = reply
+                .session_summaries()
+                .into_iter()
+                .filter_map(|session| {
+                    let id = match session.id? {
+                        Value::String(id) => id,
+                        value => value.to_string(),
+                    };
+                    let title = session
+                        .title
+                        .filter(|title| !title.trim().is_empty())
+                        .unwrap_or_else(|| "(untitled session)".to_string());
+                    let mut details = vec![id.clone()];
+                    if let Some(run_count) = session.run_count {
+                        details.push(format!(
+                            "{run_count} run{}",
+                            if run_count == 1 { "" } else { "s" }
+                        ));
+                    }
+                    if let Some(started_at) = session
+                        .started_at
+                        .filter(|started_at| !started_at.trim().is_empty())
+                    {
+                        details.push(started_at);
+                    }
+                    Some(ExternalResumeRow {
+                        id,
+                        title,
+                        detail: details.join(" · "),
+                    })
+                })
+                .collect::<Vec<_>>();
+            self.transcript.push(TranscriptEntry::Command {
+                name: "sessions".to_string(),
+                lines: vec![if rows.is_empty() {
+                    "No sessions yet. The picker has no selectable row.".to_string()
+                } else {
+                    format!(
+                        "{} session{} returned. Choose one to resume.",
+                        rows.len(),
+                        if rows.len() == 1 { "" } else { "s" }
+                    )
+                }],
+            });
+            self.resume_picker = Some(ExternalResumePicker::new(rows));
+            return;
+        }
         if name == "orchestra" && reply.fleet.is_some() {
             self.fleet = reply.fleet.clone();
         }
@@ -5195,6 +5268,50 @@ fn render_picker(frame: &mut Frame<'_>, picker: &PickerSurface, area: Rect, app:
     );
 }
 
+fn render_resume_picker(
+    frame: &mut Frame<'_>,
+    picker: &ExternalResumePicker,
+    area: Rect,
+    app: &App,
+) {
+    let height = picker.desired_height().min(area.height.max(4));
+    let modal = Rect {
+        x: area.x,
+        y: area.bottom().saturating_sub(height),
+        width: area.width,
+        height,
+    };
+    frame.render_widget(Clear, modal);
+    let mut lines = picker.lines(
+        modal.width.saturating_sub(2),
+        app.theme.primary(),
+        app.theme.ghost(),
+    );
+    lines.push(Line::styled(
+        if picker.is_empty() {
+            "Esc close · Enter cannot submit an empty result"
+        } else {
+            "↑↓ navigate · 1-9 or Enter resume · Esc close"
+        },
+        Style::default().fg(app.theme.ghost()),
+    ));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .style(
+                Style::default()
+                    .fg(app.theme.primary())
+                    .bg(app.theme.background()),
+            )
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(app.theme.primary()))
+                    .title(" RESUME A PREVIOUS SESSION "),
+            ),
+        modal,
+    );
+}
+
 fn dither_glyph(x: usize, y: usize) -> &'static str {
     let hash = x
         .wrapping_mul(31)
@@ -6474,7 +6591,8 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         .composer
         .bottom_pane_desired_height(content_area.width)
         .clamp(5, 14);
-    let modal_owns_input = app.picker.is_some() || app.gate_modal.is_some();
+    let modal_owns_input =
+        app.picker.is_some() || app.resume_picker.is_some() || app.gate_modal.is_some();
     let composer_height = if modal_owns_input { 0 } else { composer_height };
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -6500,7 +6618,8 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         && app.prod_panel_visible
         && area.width >= 110
         && app.gate_modal.is_none()
-        && app.picker.is_none();
+        && app.picker.is_none()
+        && app.resume_picker.is_none();
     let show_diff_panel = app.diff_panel_visible && !diff_as_rail;
     let show_prod_panel = app.prod_panel_visible && !prod_as_rail && !app.diff_panel_visible;
     let show_context_panel = !app.diff_panel_visible && !prod_as_rail && app.context_panel_visible;
@@ -6684,6 +6803,7 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             && app.fleet.is_none()
             && !app.todo_visible
             && app.picker.is_none()
+            && app.resume_picker.is_none()
             && !show_auxiliary_pane;
         if show_ground {
             render_symbol_ground(frame, transcript_root, app);
@@ -6755,7 +6875,9 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         Paragraph::new(footer_line(app, now, rows[3].width)),
         rows[3],
     );
-    if let Some(picker) = &app.picker {
+    if let Some(picker) = &app.resume_picker {
+        render_resume_picker(frame, picker, rows[1], app);
+    } else if let Some(picker) = &app.picker {
         render_picker(frame, picker, rows[1], app);
     } else if let Some(modal) = &app.gate_modal {
         render_gate_modal(frame, modal, rows[1], app);
@@ -6854,6 +6976,29 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
         app.cancel_active();
         return true;
+    }
+    if let Some(picker) = app.resume_picker.as_mut() {
+        match key.code {
+            KeyCode::Esc => app.resume_picker = None,
+            KeyCode::Down => picker.select_next(),
+            KeyCode::Up => picker.select_previous(),
+            KeyCode::Enter => app.activate_resume_picker(tx),
+            KeyCode::Char(c)
+                if c.is_ascii_digit()
+                    && !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                let selected = c
+                    .to_digit(10)
+                    .and_then(|number| picker.select_number(number as usize))
+                    .is_some();
+                if selected {
+                    app.activate_resume_picker(tx);
+                }
+            }
+            _ => {}
+        }
+        return false;
     }
     if let Some(picker) = app.picker.as_mut() {
         match key.code {
@@ -7562,6 +7707,69 @@ mod tests {
         });
         app.boot = None;
         app
+    }
+
+    #[test]
+    fn sessions_reply_opens_resume_picker_and_selected_id_drives_resume_route() {
+        let mut app = test_app();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let reply = serde_json::from_value(json!({
+            "sessions": [
+                {"id": "session-one", "title": "First repair", "run_count": 2},
+                {"id": "session-two", "title": "Second repair", "run_count": 5}
+            ],
+            "count": 2
+        }))
+        .expect("sessions reply");
+
+        app.apply_command_success(
+            "sessions",
+            RemoteCommandReply {
+                reply,
+                inspected_files: Vec::new(),
+            },
+        );
+        app.resume_picker
+            .as_mut()
+            .expect("resume picker")
+            .select_next();
+        app.activate_resume_picker(&tx);
+
+        assert!(app.resume_picker.is_none());
+        assert!(matches!(
+            app.queue.front(),
+            Some(QueuedRequest::Command(PendingCommand {
+                name: "resume",
+                argument,
+                ..
+            })) if argument == "session-two"
+        ));
+    }
+
+    #[test]
+    fn empty_sessions_reply_opens_honest_picker_and_enter_submits_nothing() {
+        let mut app = test_app();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let reply = serde_json::from_value(json!({"sessions": [], "count": 0}))
+            .expect("empty sessions reply");
+        app.apply_command_success(
+            "sessions",
+            RemoteCommandReply {
+                reply,
+                inspected_files: Vec::new(),
+            },
+        );
+        let transcript_len = app.transcript.len();
+
+        handle_key(&mut app, KeyEvent::from(KeyCode::Enter), &tx);
+
+        assert!(
+            app.resume_picker
+                .as_ref()
+                .is_some_and(ExternalResumePicker::is_empty)
+        );
+        assert!(app.queue.is_empty());
+        assert_eq!(app.transcript.len(), transcript_len);
     }
 
     #[test]
