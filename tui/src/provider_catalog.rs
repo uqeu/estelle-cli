@@ -12,7 +12,6 @@ use url::Url;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AuthKind {
     ClaudeImport,
-    ChatgptDevice,
     CopilotDevice,
     ApiKey,
     LocalEndpoint,
@@ -82,17 +81,6 @@ const PROVIDERS: &[ProviderDescriptor] = &[
         base_url: BaseUrlKind::Optional,
     },
     ProviderDescriptor {
-        id: "openai",
-        display_name: "ChatGPT plan",
-        aliases: &["chatgpt"],
-        detail: "device code · headless-safe",
-        auth: AuthKind::ChatgptDevice,
-        surface: Surface::Hidden,
-        server_provider: None,
-        default_base_url: None,
-        base_url: BaseUrlKind::None,
-    },
-    ProviderDescriptor {
         id: "openai-api",
         display_name: "OpenAI API",
         aliases: &["openai-key", "openai-platform"],
@@ -120,7 +108,7 @@ const PROVIDERS: &[ProviderDescriptor] = &[
         aliases: &["github-copilot"],
         detail: "GitHub device code",
         auth: AuthKind::CopilotDevice,
-        surface: Surface::ProviderKey,
+        surface: Surface::Hidden,
         server_provider: None,
         default_base_url: None,
         base_url: BaseUrlKind::None,
@@ -257,7 +245,7 @@ pub(crate) fn login_route(name: &str, supplied_base: Option<&str>) -> io::Result
     let requires_key = match provider.auth {
         AuthKind::ApiKey => true,
         AuthKind::LocalEndpoint => !base_url.as_deref().is_some_and(is_local_url),
-        AuthKind::ClaudeImport | AuthKind::ChatgptDevice | AuthKind::CopilotDevice => false,
+        AuthKind::ClaudeImport | AuthKind::CopilotDevice => false,
     };
     Ok(LoginRoute {
         provider,
@@ -356,7 +344,7 @@ mod tests {
     fn catalog_covers_every_required_provider_with_unique_names() {
         let required = [
             "claude",
-            "openai",
+            "openai-api",
             "gemini",
             "copilot",
             "azure",
@@ -385,7 +373,8 @@ mod tests {
     #[test]
     fn acquisition_kind_is_provider_data() {
         assert_eq!(resolve("claude").unwrap().auth, AuthKind::ClaudeImport);
-        assert_eq!(resolve("openai").unwrap().auth, AuthKind::ChatgptDevice);
+        assert!(resolve("openai").is_none());
+        assert!(resolve("chatgpt").is_none());
         assert_eq!(resolve("copilot").unwrap().auth, AuthKind::CopilotDevice);
         assert_eq!(resolve("fireworks-ai").unwrap().id, "fireworks");
         assert_eq!(resolve("anthropic").unwrap().id, "anthropic-api");

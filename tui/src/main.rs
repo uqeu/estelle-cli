@@ -203,18 +203,10 @@ struct Args {
 
 #[derive(Clone, Debug, Subcommand)]
 enum Command {
-    /// Store and verify an Estelle API credential; --chatgpt signs in with a ChatGPT plan.
+    /// Store and verify an Estelle API credential, or connect a model provider.
     Login {
-        /// Device-code sign-in with a ChatGPT account (headless-safe; no browser needed).
-        #[arg(long, conflicts_with = "provider")]
-        chatgpt: bool,
         /// Connect a model provider, subscription, API key, or local endpoint.
-        #[arg(
-            long,
-            visible_alias = "api-key",
-            value_name = "PROVIDER",
-            conflicts_with = "chatgpt"
-        )]
+        #[arg(long, visible_alias = "api-key", value_name = "PROVIDER")]
         provider: Option<String>,
         /// Override the provider API base URL (required for custom providers).
         #[arg(long, requires = "provider")]
@@ -526,7 +518,7 @@ enum QueuedRequest {
 enum PendingLogin {
     Estelle,
     Claude,
-    Chatgpt,
+    Copilot,
     Provider(&'static str),
     EstelleThenProvider(&'static str),
 }
@@ -534,7 +526,7 @@ enum PendingLogin {
 enum InlineLoginOutcome {
     Estelle(login::LoginOutcome),
     Claude,
-    Chatgpt,
+    Copilot,
     Provider(&'static str),
 }
 
@@ -736,7 +728,7 @@ fn parse_setting_input(spec: &Value, text: &str) -> Result<Value, String> {
 enum PickerAction {
     LoginEstelle,
     LoginClaude,
-    LoginChatgpt,
+    LoginCopilot,
     OpenProviderLogin,
     LoginProvider(&'static str),
     OpenLocalLogin,
@@ -792,27 +784,33 @@ impl PickerSurface {
         Self::login_with_machine(estelle_machine::machine().summary_line())
     }
 
-    fn login_with_machine(machine: String) -> Self {
+    fn login_with_machine(_machine: String) -> Self {
         Self {
             title: "Connect Estelle".to_string(),
-            rows: vec![
-                PickerRow {
-                    label: "Estelle account".to_string(),
-                    detail: "buys grounding: memory, code graph, recall and gate; never pays for model tokens"
+            rows: vec![PickerRow {
+                label: "Estelle account".to_string(),
+                detail:
+                    "identifies you for grounding, memory, code graph and gate; never pays model tokens"
                         .to_string(),
-                    action: PickerAction::LoginEstelle,
-                },
+                action: PickerAction::LoginEstelle,
+            }],
+            selected: 0,
+        }
+    }
+
+    fn model_funding() -> Self {
+        Self::model_funding_with_machine(estelle_machine::machine().summary_line())
+    }
+
+    fn model_funding_with_machine(machine: String) -> Self {
+        Self {
+            title: "Choose how model tokens are paid".to_string(),
+            rows: vec![
                 PickerRow {
                     label: "Claude subscription".to_string(),
                     detail: "imports the credential Claude Code stored on this machine · Pro, Max or Team"
                         .to_string(),
                     action: PickerAction::LoginClaude,
-                },
-                PickerRow {
-                    label: "ChatGPT plan".to_string(),
-                    detail: "the engine: your plan generates the answer · device code · headless-safe"
-                        .to_string(),
-                    action: PickerAction::LoginChatgpt,
                 },
                 PickerRow {
                     label: "Provider API key".to_string(),
@@ -825,6 +823,11 @@ impl PickerSurface {
                         "{machine} · LM Studio · Ollama · any OpenAI-compatible endpoint · no token bill"
                     ),
                     action: PickerAction::OpenLocalLogin,
+                },
+                PickerRow {
+                    label: "GitHub Copilot".to_string(),
+                    detail: "GitHub device code · uses your Copilot entitlement".to_string(),
+                    action: PickerAction::LoginCopilot,
                 },
             ],
             selected: 0,
@@ -1784,11 +1787,17 @@ impl App {
     ) -> bool {
         match name {
             "login" => match argument.trim() {
-                "" => self.picker = Some(PickerSurface::login()),
+                "" => {
+                    self.picker = Some(if self.client.is_some() {
+                        PickerSurface::model_funding()
+                    } else {
+                        PickerSurface::login()
+                    })
+                }
                 "--chatgpt" => {
-                    self.pending_login = Some(PendingLogin::Chatgpt);
                     self.transcript.push(TranscriptEntry::System(
-                        "Starting the ChatGPT credential flow here.".to_string(),
+                        "ChatGPT plan sign-in is unavailable: this binary does not own the OAuth client used by that device flow. Choose a provider API key instead."
+                            .to_string(),
                     ));
                 }
                 value if value.starts_with("--api-key ") || value.starts_with("--provider ") => {
@@ -1801,7 +1810,7 @@ impl App {
                     self.queue_provider_login(provider, api_key_route);
                 }
                 _ => self.transcript.push(TranscriptEntry::System(
-                    "Usage: /login, /login --chatgpt, or /login --provider <provider>.".to_string(),
+                    "Usage: /login or /login --provider <provider>.".to_string(),
                 )),
             },
             "logout" => self.logout_local_credentials(),
@@ -1980,13 +1989,64 @@ impl App {
                 ));
                 self.pending_login = Some(PendingLogin::Claude);
             }
-            provider_catalog::AuthKind::ChatgptDevice => {
-                self.pending_login = Some(PendingLogin::Chatgpt)
-            }
             _ if provider.server_provider.is_some() && self.client.is_none() => {
                 self.pending_login = Some(PendingLogin::EstelleThenProvider(provider.id));
             }
             _ => self.pending_login = Some(PendingLogin::Provider(provider.id)),
+        }
+    }
+
+    fn finish_inline_login(
+        &mut self,
+        result: io::Result<InlineLoginOutcome>,
+        tx: &mpsc::UnboundedSender<UiEvent>,
+    ) {
+        match result {
+            Ok(InlineLoginOutcome::Estelle(login::LoginOutcome::Rejected)) => {
+                self.transcript.push(TranscriptEntry::System(
+                    "Estelle rejected the credential; the previous credential was left unchanged."
+                        .to_string(),
+                ));
+                self.picker = Some(PickerSurface::login());
+            }
+            Ok(InlineLoginOutcome::Estelle(_)) => {
+                self.auth_resolved = false;
+                self.picker = Some(PickerSurface::model_funding());
+                spawn_credential_resolution(tx);
+            }
+            Ok(InlineLoginOutcome::Claude) => self.finish_model_login(
+                "Claude Code credential imported; Claude Code's source was left unchanged.",
+            ),
+            Ok(InlineLoginOutcome::Copilot) => {
+                self.finish_model_login("GitHub Copilot credential stored.")
+            }
+            Ok(InlineLoginOutcome::Provider(provider)) => {
+                self.transcript.push(TranscriptEntry::System(format!(
+                    "{provider} credential stored without exposing its value."
+                )));
+                self.auth_resolved = false;
+                spawn_credential_resolution(tx);
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                self.transcript.push(TranscriptEntry::System(
+                    "Credential flow cancelled. Nothing was stored.".to_string(),
+                ));
+                self.picker = None;
+            }
+            Err(error) => self.transcript.push(TranscriptEntry::System(format!(
+                "Credential flow did not complete: {error}. Run /doctor."
+            ))),
+        }
+    }
+
+    fn finish_model_login(&mut self, receipt: &str) {
+        self.transcript
+            .push(TranscriptEntry::System(receipt.to_string()));
+        if self.client.is_none() {
+            self.transcript.push(TranscriptEntry::System(
+                "Model access is configured, but Estelle identity is still missing.".to_string(),
+            ));
+            self.picker = Some(PickerSurface::login());
         }
     }
 
@@ -2152,9 +2212,9 @@ impl App {
                 ));
                 self.pending_login = Some(PendingLogin::Claude);
             }
-            PickerAction::LoginChatgpt => {
+            PickerAction::LoginCopilot => {
                 self.picker = None;
-                self.pending_login = Some(PendingLogin::Chatgpt);
+                self.pending_login = Some(PendingLogin::Copilot);
             }
             PickerAction::OpenProviderLogin => {
                 self.picker = Some(PickerSurface::provider_login());
@@ -4904,12 +4964,21 @@ fn truncate_display(value: &str, max_width: usize) -> String {
 }
 
 fn render_picker(frame: &mut Frame<'_>, picker: &PickerSurface, area: Rect, app: &App) {
-    let login_context = (picker.title == "Connect Estelle").then_some([
-        Line::from("Estelle grounds your coding agent in your real codebase."),
-        Line::from(
-            "It runs on the model plan or API key you already have — Estelle never bills you for model tokens.",
-        ),
-    ]);
+    let login_context = match picker.title.as_str() {
+        "Connect Estelle" => Some([
+            Line::from("Estelle grounds your coding agent in your real codebase."),
+            Line::from(
+                "It runs on the model plan or API key you already have — Estelle never bills you for model tokens.",
+            ),
+        ]),
+        "Choose how model tokens are paid" => Some([
+            Line::from("Estelle identity and model payment are separate."),
+            Line::from(
+                "Choose the account that pays for inference; Estelle never bills model tokens.",
+            ),
+        ]),
+        _ => None,
+    };
     let context_height = login_context.as_ref().map_or(0, |lines| lines.len());
     let height = u16::try_from(
         picker
@@ -7015,9 +7084,9 @@ async fn run(
             let result = match pending_login {
                 PendingLogin::Estelle => login::run().await.map(InlineLoginOutcome::Estelle),
                 PendingLogin::Claude => claude_import::run().map(|()| InlineLoginOutcome::Claude),
-                PendingLogin::Chatgpt => login::run_chatgpt()
+                PendingLogin::Copilot => copilot_login::run()
                     .await
-                    .map(|()| InlineLoginOutcome::Chatgpt),
+                    .map(|()| InlineLoginOutcome::Copilot),
                 PendingLogin::Provider(provider) => run_provider_login(provider, None, None, None)
                     .await
                     .map(|()| InlineLoginOutcome::Provider(provider)),
@@ -7039,48 +7108,7 @@ async fn run(
             // The terminal surface was cleared outside Ratatui. Reset both buffers so the next
             // draw paints the complete screen instead of diffing against pixels that no longer exist.
             terminal.swap_buffers();
-            match result {
-                Ok(InlineLoginOutcome::Estelle(login::LoginOutcome::Rejected)) => {
-                    app.transcript.push(TranscriptEntry::System(
-                        "Estelle rejected the credential; the previous credential was left unchanged."
-                            .to_string(),
-                    ));
-                }
-                Ok(InlineLoginOutcome::Estelle(_)) => {
-                    app.auth_resolved = false;
-                    spawn_credential_resolution(&tx);
-                }
-                Ok(InlineLoginOutcome::Claude) => {
-                    app.transcript.push(TranscriptEntry::System(
-                        "Claude Code credential imported into Estelle's own store; Claude Code's source was left unchanged. Provider runtime binding is not yet proven; run /doctor."
-                            .to_string(),
-                    ));
-                    if app.client.is_none() {
-                        app.picker = Some(PickerSurface::login());
-                    }
-                }
-                Ok(InlineLoginOutcome::Chatgpt) => {
-                    app.transcript.push(TranscriptEntry::System(
-                        "ChatGPT credential flow completed inside this session.".to_string(),
-                    ));
-                    if app.client.is_none() {
-                        app.picker = Some(PickerSurface::login());
-                    }
-                }
-                Ok(InlineLoginOutcome::Provider(provider)) => {
-                    app.transcript.push(TranscriptEntry::System(format!(
-                        "{provider} credential stored without exposing its value."
-                    )));
-                    app.auth_resolved = false;
-                    spawn_credential_resolution(&tx);
-                }
-                Err(error) => app.transcript.push(TranscriptEntry::System(format!(
-                    "Credential flow did not complete: {error}. Run /doctor."
-                ))),
-            }
-            if app.login_required && app.client.is_none() && app.picker.is_none() {
-                app.picker = Some(PickerSurface::login());
-            }
+            app.finish_inline_login(result, &tx);
         }
         if app.should_exit {
             break;
@@ -7116,7 +7144,6 @@ async fn run_provider_login(
     let route = provider_catalog::login_route(provider, base_url.or(prompted_base.as_deref()))?;
     match route.provider.auth {
         provider_catalog::AuthKind::ClaudeImport => claude_import::run(),
-        provider_catalog::AuthKind::ChatgptDevice => login::run_chatgpt().await,
         provider_catalog::AuthKind::ApiKey => {
             let server_provider = route
                 .provider
@@ -7196,19 +7223,12 @@ async fn main() -> ExitCode {
         emit_version_notice().await;
     }
     if let Some(Command::Login {
-        chatgpt,
         provider,
         base_url,
         model,
         label,
     }) = &args.command
     {
-        if *chatgpt {
-            return match login::run_chatgpt().await {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(error) => login_failure(&error).await,
-            };
-        }
         if let Some(provider) = provider {
             let result = run_provider_login(
                 provider,
@@ -7656,13 +7676,17 @@ mod tests {
         assert!(matches!(
             args.command,
             Some(Command::Login {
-                chatgpt: false,
                 provider: Some(provider),
                 base_url: None,
                 model: Some(model),
                 label: Some(label),
             }) if provider == "anthropic" && model == "claude-opus" && label == "production"
         ));
+    }
+
+    #[test]
+    fn chatgpt_plan_login_is_not_an_acquisition_surface() {
+        assert!(Args::try_parse_from(["estelle", "login", "--chatgpt"]).is_err());
     }
 
     #[test]
@@ -7697,13 +7721,8 @@ mod tests {
                 .auth,
             provider_catalog::AuthKind::ClaudeImport
         );
-        assert_eq!(
-            provider_catalog::login_route("openai", None)
-                .expect("ChatGPT route")
-                .provider
-                .auth,
-            provider_catalog::AuthKind::ChatgptDevice
-        );
+        assert!(provider_catalog::login_route("openai", None).is_err());
+        assert!(provider_catalog::login_route("chatgpt", None).is_err());
         assert_eq!(
             provider_catalog::login_route("openai-api", None)
                 .expect("OpenAI key route")
@@ -9790,7 +9809,7 @@ mod tests {
     }
 
     #[test]
-    fn login_opens_the_five_way_credential_picker_before_any_request() {
+    fn login_asks_who_you_are_before_asking_who_pays() {
         let (tx, _rx) = mpsc::unbounded_channel();
         let mut app = test_app();
         app.auth_resolved = true;
@@ -9804,25 +9823,51 @@ mod tests {
         );
         let picker = app.picker.as_ref().expect("credential picker");
         assert_eq!(picker.title, "Connect Estelle");
-        assert_eq!(picker.rows.len(), 5);
+        assert_eq!(picker.rows.len(), 1);
         assert_eq!(picker.rows[0].label, "Estelle account");
         assert!(picker.rows[0].detail.contains("grounding"));
+        assert!(picker.rows[0].detail.contains("never pays model tokens"));
+        assert!(picker.rows.iter().all(|row| row.label != "ChatGPT plan"));
+    }
+
+    #[test]
+    fn model_funding_is_a_second_four_way_question_without_identity_or_chatgpt() {
+        let picker =
+            PickerSurface::model_funding_with_machine("This machine · 32 GB RAM".to_string());
+
+        assert_eq!(picker.title, "Choose how model tokens are paid");
+        assert_eq!(picker.rows.len(), 4);
+        assert_eq!(picker.rows[0].label, "Claude subscription");
+        assert_eq!(picker.rows[1].label, "Provider API key");
+        assert_eq!(picker.rows[2].label, "Local model");
+        assert_eq!(picker.rows[3].label, "GitHub Copilot");
+        assert!(picker.rows[2].detail.contains("32 GB RAM"));
         assert!(
-            picker.rows[0]
-                .detail
-                .contains("never pays for model tokens")
+            picker
+                .rows
+                .iter()
+                .all(|row| row.label != "Estelle account" && row.label != "ChatGPT plan")
         );
-        assert_eq!(picker.rows[1].label, "Claude subscription");
-        assert!(picker.rows[1].detail.contains("Claude Code"));
-        assert_eq!(picker.rows[2].label, "ChatGPT plan");
-        assert!(picker.rows[2].detail.contains("device code"));
-        assert_eq!(picker.rows[3].label, "Provider API key");
-        assert!(picker.rows[3].detail.contains("Anthropic"));
-        assert_eq!(picker.rows[4].label, "Local model");
-        assert!(picker.rows[4].detail.contains("LM Studio"));
-        assert!(picker.rows[4].detail.contains("Ollama"));
-        assert!(picker.rows[4].detail.contains("This machine"));
-        assert!(picker.rows[4].detail.contains("RAM"));
+    }
+
+    #[test]
+    fn cancelling_identity_login_does_not_reopen_the_picker() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.login_required = true;
+        app.picker = Some(PickerSurface::login());
+
+        app.finish_inline_login(
+            Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled")),
+            &tx,
+        );
+
+        assert!(app.picker.is_none(), "cancel is a decision, not a retry");
+        assert!(app.login_required, "the unsigned-in state remains visible");
+        assert!(
+            format!("{:?}", render_transcript(&app.transcript))
+                .contains("Credential flow cancelled")
+        );
     }
 
     #[test]
@@ -9831,7 +9876,11 @@ mod tests {
         let mut app = test_app();
 
         app.submit("/login --provider openai".to_string(), &tx);
-        assert_eq!(app.pending_login, Some(PendingLogin::Chatgpt));
+        assert!(app.pending_login.is_none());
+        assert!(
+            format!("{:?}", render_transcript(&app.transcript))
+                .contains("will not guess an unknown provider route")
+        );
 
         app.pending_login = None;
         app.submit("/login --provider claude".to_string(), &tx);
@@ -9861,8 +9910,8 @@ mod tests {
         assert!(rendered.contains("CONNECT ESTELLE"));
         assert!(rendered.contains("grounds your coding agent in your real codebase"));
         assert!(rendered.contains("never bills you for model tokens"));
-        assert!(rendered.contains("This machine"));
-        assert!(rendered.contains("RAM"));
+        assert!(!rendered.contains("Claude subscription"));
+        assert!(!rendered.contains("ChatGPT plan"));
         assert!(!rendered.contains("ASK ESTELLE"));
         assert!(!rendered.contains("Run estelle login"));
     }
