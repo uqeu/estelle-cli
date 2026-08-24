@@ -46,6 +46,7 @@ use codex_tui::boot_scene::spider_lily_coverage;
 use codex_tui::render_markdown_text;
 use codex_tui::session_gap;
 use codex_utils_home_dir::find_codex_home;
+use crossterm::cursor::MoveTo;
 use crossterm::event::DisableBracketedPaste;
 use crossterm::event::DisableMouseCapture;
 use crossterm::event::EnableBracketedPaste;
@@ -59,6 +60,8 @@ use crossterm::event::KeyModifiers;
 use crossterm::event::MouseEvent;
 use crossterm::event::MouseEventKind;
 use crossterm::execute;
+use crossterm::terminal::Clear as TerminalClear;
+use crossterm::terminal::ClearType;
 use crossterm::terminal::EnterAlternateScreen;
 use crossterm::terminal::LeaveAlternateScreen;
 use crossterm::terminal::disable_raw_mode;
@@ -358,6 +361,54 @@ enum Command {
 
 struct TerminalSession;
 
+/// Owns the one stdin reader used by the custom Estelle shell.
+///
+/// A login temporarily installs its own crossterm reader. Keeping this reader alive at the same
+/// time lets whichever background thread wins consume the keypress, and the stale stream reports
+/// EOF when the shell resumes. The source therefore has an explicit absent state during handoff.
+struct EventSourceLease<S> {
+    source: Option<S>,
+    create: fn() -> S,
+}
+
+impl<S> EventSourceLease<S> {
+    fn new(create: fn() -> S) -> Self {
+        let source = Some(create());
+        assert!(source.is_some(), "an event-source lease must start active");
+        Self { source, create }
+    }
+
+    fn source_mut(&mut self) -> &mut S {
+        self.source
+            .as_mut()
+            .expect("the event source is polled only while the terminal owns stdin")
+    }
+
+    fn pause(&mut self) {
+        assert!(
+            self.source.is_some(),
+            "pause requires an active stdin reader"
+        );
+        drop(self.source.take());
+        assert!(self.source.is_none(), "pause must release the stdin reader");
+    }
+
+    fn resume(&mut self) {
+        assert!(self.source.is_none(), "resume requires a completed pause");
+        self.source = Some((self.create)());
+        assert!(
+            self.source.is_some(),
+            "resume must install a fresh stdin reader"
+        );
+    }
+}
+
+impl EventSourceLease<EventStream> {
+    fn crossterm() -> Self {
+        Self::new(EventStream::new)
+    }
+}
+
 fn enter_terminal_screen(writer: &mut impl io::Write) -> io::Result<()> {
     execute!(
         writer,
@@ -400,6 +451,15 @@ impl Drop for TerminalSession {
         let _ = disable_raw_mode();
         let _ = leave_terminal_screen(&mut io::stdout());
     }
+}
+
+fn clear_after_terminal_handoff(writer: &mut impl io::Write) -> io::Result<()> {
+    // Ratatui's `Terminal::clear` first asks the terminal for its cursor position (`ESC[6n`).
+    // Plain PTYs and several agent harnesses do not answer that query, so the read returns EOF and
+    // the caller silently exits the whole shell. Login owns the full alternate screen: clear it
+    // directly and move to a known position without asking the terminal a question.
+    execute!(writer, TerminalClear(ClearType::All), MoveTo(0, 0))?;
+    writer.flush()
 }
 
 #[derive(Default)]
@@ -6900,7 +6960,7 @@ async fn run(
         }
         Some(result) => app.handle_ui_event(UiEvent::Credential(result), &tx),
     }
-    let mut events = EventStream::new();
+    let mut events = EventSourceLease::crossterm();
     let mut ticker = tokio::time::interval(FRAME_INTERVAL);
     let mut first_frame = true;
 
@@ -6921,7 +6981,7 @@ async fn run(
                 app.poll_production_if_due(&tx);
             }
             Some(event) = rx.recv() => app.handle_ui_event(event, &tx),
-            event = events.next() => match event {
+            event = events.source_mut().next() => match event {
                 Some(Ok(Event::Key(key))) => {
                     app.last_interaction = Instant::now();
                     app.skip_boot(app.last_interaction);
@@ -6950,6 +7010,7 @@ async fn run(
             },
         }
         if let Some(pending_login) = app.pending_login.take() {
+            events.pause();
             session.suspend()?;
             let result = match pending_login {
                 PendingLogin::Estelle => login::run().await.map(InlineLoginOutcome::Estelle),
@@ -6973,7 +7034,11 @@ async fn run(
                 },
             };
             session.resume()?;
-            terminal.clear()?;
+            events.resume();
+            clear_after_terminal_handoff(terminal.backend_mut())?;
+            // The terminal surface was cleared outside Ratatui. Reset both buffers so the next
+            // draw paints the complete screen instead of diffing against pixels that no longer exist.
+            terminal.swap_buffers();
             match result {
                 Ok(InlineLoginOutcome::Estelle(login::LoginOutcome::Rejected)) => {
                     app.transcript.push(TranscriptEntry::System(
@@ -7367,6 +7432,54 @@ async fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn login_handoff_drops_and_recreates_the_stdin_reader() {
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::atomic::Ordering;
+
+        static CREATED: AtomicUsize = AtomicUsize::new(0);
+        static DROPPED: AtomicUsize = AtomicUsize::new(0);
+
+        struct CountingSource;
+
+        impl Drop for CountingSource {
+            fn drop(&mut self) {
+                DROPPED.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        fn create() -> CountingSource {
+            CREATED.fetch_add(1, Ordering::SeqCst);
+            CountingSource
+        }
+
+        CREATED.store(0, Ordering::SeqCst);
+        DROPPED.store(0, Ordering::SeqCst);
+        let mut lease = EventSourceLease::new(create);
+
+        lease.pause();
+        assert_eq!(DROPPED.load(Ordering::SeqCst), 1);
+        assert!(lease.source.is_none());
+
+        lease.resume();
+        assert_eq!(CREATED.load(Ordering::SeqCst), 2);
+        assert!(lease.source.is_some());
+    }
+
+    #[test]
+    fn login_handoff_clear_never_queries_cursor_position() {
+        let mut bytes = Vec::new();
+
+        clear_after_terminal_handoff(&mut bytes).expect("cursor-independent clear");
+
+        assert!(bytes.windows(4).any(|window| window == b"\x1b[2J"));
+        assert!(bytes.windows(6).any(|window| window == b"\x1b[1;1H"));
+        assert!(
+            !bytes.windows(4).any(|window| window == b"\x1b[6n"),
+            "cursor-position queries make login resume depend on a terminal reply"
+        );
+    }
     use ratatui::backend::TestBackend;
     use serde_json::json;
     use wiremock::Mock;
