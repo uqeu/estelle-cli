@@ -26,6 +26,7 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::io;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::process::Stdio;
@@ -42,11 +43,12 @@ use clap::Subcommand;
 use codex_tui::ComposerAction;
 use codex_tui::ComposerCommand;
 use codex_tui::ComposerInput;
+use codex_tui::HistoryTranscriptItem;
 use codex_tui::boot_scene::BootPalette;
 use codex_tui::boot_scene::BootPreferences;
 use codex_tui::boot_scene::BootScene;
 use codex_tui::boot_scene::spider_lily_coverage;
-use codex_tui::render_markdown_text;
+use codex_tui::render_history_transcript;
 use codex_tui::session_gap;
 use codex_utils_home_dir::find_codex_home;
 use crossterm::cursor::MoveTo;
@@ -528,6 +530,14 @@ enum PendingLogin {
     Copilot,
     Provider(&'static str),
     EstelleThenProvider(&'static str),
+}
+
+fn user_turn_background(theme: Theme) -> Option<Color> {
+    let terminal_bg = match theme {
+        Theme::CreamInk => Some((0xE9, 0xE6, 0xDC)),
+        Theme::Dark => codex_tui::default_bg(),
+    };
+    codex_tui::user_message_style_for(terminal_bg).bg
 }
 
 enum InlineLoginOutcome {
@@ -4679,52 +4689,40 @@ fn failure_lines(error: &Error) -> [String; 3] {
     failure_lines_for(&FailureView::from(error))
 }
 
-/// The filled user-turn block, ported from Codex (`style.rs::user_message_style_for`,
-/// `history_cell/messages.rs::UserHistoryCell`): a subtle tint over the terminal's own
-/// background. Under Cream Ink the painted surface is known, so the tint is deterministic;
-/// under Dark the background is inherited (D3), runtime detection decides, and an undetectable
-/// background yields NO fill rather than a guessed one.
-fn user_turn_style(theme: Theme) -> Style {
-    let terminal_bg = match theme {
-        Theme::CreamInk => Some((0xE9, 0xE6, 0xDC)),
-        Theme::Dark => codex_tui::default_bg(),
-    };
-    codex_tui::user_message_style_for(terminal_bg)
-}
-
 #[cfg(test)]
 fn render_transcript(entries: &[TranscriptEntry]) -> Text<'static> {
-    render_transcript_with_citations(entries, true, Theme::Dark)
+    render_transcript_with_citations(entries, true, Theme::Dark, 120)
 }
 
 fn render_transcript_with_citations(
     entries: &[TranscriptEntry],
     include_citations: bool,
     theme: Theme,
+    width: u16,
 ) -> Text<'static> {
-    let mut text = Text::default();
+    let mut items = Vec::with_capacity(entries.len());
     for entry in entries {
         match entry {
             TranscriptEntry::SessionHandoff(lines) => {
-                text.lines.push(Line::styled(
+                let mut rendered = vec![Line::styled(
                     "Since your last session",
                     Style::default()
                         .fg(theme.primary())
                         .add_modifier(Modifier::BOLD),
-                ));
-                text.lines.extend(
+                )];
+                rendered.extend(
                     lines.iter().map(|line| {
                         Line::styled(mask_secret(line), Style::default().fg(Color::Gray))
                     }),
                 );
-                text.lines.push(Line::default());
+                items.push(HistoryTranscriptItem::Lines(rendered));
             }
             TranscriptEntry::User(message) => {
-                text.lines.push(Line::from(vec![
-                    Span::styled("you  ", Style::default().fg(Color::Gray)),
-                    Span::styled(mask_secret(message), user_turn_style(theme)),
-                ]));
-                text.lines.push(Line::default());
+                items.push(HistoryTranscriptItem::User {
+                    heading: vec![Line::styled("you", Style::default().fg(Color::Gray))],
+                    message: mask_secret(message),
+                    background: user_turn_background(theme),
+                });
             }
             TranscriptEntry::Answer {
                 text: answer,
@@ -4741,7 +4739,7 @@ fn render_transcript_with_citations(
                 } else {
                     ("conversation", Color::Gray)
                 };
-                text.lines.push(Line::from(vec![
+                let heading = vec![Line::from(vec![
                     Span::styled(
                         "estelle",
                         Style::default()
@@ -4750,28 +4748,34 @@ fn render_transcript_with_citations(
                     ),
                     Span::raw("  "),
                     Span::styled(label, Style::default().fg(color)),
-                ]));
-                text.lines
-                    .extend(render_markdown_text(&mask_secret(answer)).lines);
-                if include_citations {
-                    for source in sources {
-                        text.lines.push(Line::styled(
-                            format!("cited  {}", source_label(source)),
-                            Style::default().fg(Color::DarkGray),
-                        ));
-                    }
-                }
-                text.lines.push(Line::default());
+                ])];
+                let trailing = if include_citations {
+                    sources
+                        .iter()
+                        .map(|source| {
+                            Line::styled(
+                                format!("cited  {}", source_label(source)),
+                                Style::default().fg(Color::DarkGray),
+                            )
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                items.push(HistoryTranscriptItem::Markdown {
+                    heading,
+                    source: mask_secret(answer),
+                    trailing,
+                });
             }
             TranscriptEntry::System(message) => {
-                text.lines.push(Line::styled(
+                items.push(HistoryTranscriptItem::Lines(vec![Line::styled(
                     mask_secret(message),
                     Style::default().fg(theme.ghost()),
-                ));
-                text.lines.push(Line::default());
+                )]));
             }
             TranscriptEntry::Command { name, lines } => {
-                text.lines.push(Line::from(vec![
+                let mut rendered = vec![Line::from(vec![
                     Span::styled(
                         "estelle",
                         Style::default()
@@ -4779,30 +4783,30 @@ fn render_transcript_with_citations(
                             .add_modifier(Modifier::BOLD),
                     ),
                     Span::raw(format!("  /{}", mask_secret(name))),
-                ]));
+                ])];
                 for line in lines {
                     let line = if name == "skills" {
                         mask_skill_catalog_line(line)
                     } else {
                         mask_secret(line)
                     };
-                    text.lines.push(Line::from(line));
+                    rendered.push(Line::from(line));
                 }
-                text.lines.push(Line::default());
+                items.push(HistoryTranscriptItem::Lines(rendered));
             }
             TranscriptEntry::Failure(lines) => {
-                text.lines.push(Line::styled(
+                let mut rendered = vec![Line::styled(
                     "estelle  failed",
                     Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                ));
+                )];
                 for line in lines {
-                    text.lines.push(Line::from(mask_secret(line)));
+                    rendered.push(Line::from(mask_secret(line)));
                 }
-                text.lines.push(Line::default());
+                items.push(HistoryTranscriptItem::Lines(rendered));
             }
         }
     }
-    text
+    render_history_transcript(items, width, Path::new("."))
 }
 
 fn mask_skill_catalog_line(line: &str) -> String {
@@ -6466,7 +6470,10 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         area,
     );
     let content_area = area;
-    let composer_height = app.composer.desired_height(content_area.width).clamp(3, 12);
+    let composer_height = app
+        .composer
+        .bottom_pane_desired_height(content_area.width)
+        .clamp(5, 14);
     let modal_owns_input = app.picker.is_some() || app.gate_modal.is_some();
     let composer_height = if modal_owns_input { 0 } else { composer_height };
     let rows = Layout::default()
@@ -6657,8 +6664,12 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         } else {
             transcript_band
         };
-        let transcript =
-            render_transcript_with_citations(&app.transcript, !show_citation_pane, app.theme);
+        let transcript = render_transcript_with_citations(
+            &app.transcript,
+            !show_citation_pane,
+            app.theme,
+            transcript_root.width,
+        );
         let paragraph = Paragraph::new(transcript).wrap(Wrap { trim: false });
         let line_count = paragraph.line_count(transcript_root.width);
         let visible = usize::from(transcript_root.height);
@@ -6729,10 +6740,14 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
     let composer_area = if modal_owns_input {
         Rect::default()
     } else {
-        app.composer.render_ref_with_background(
+        app.composer.render_bottom_pane(
             rows[2],
             frame.buffer_mut(),
             app.theme.background(),
+            "ASK ESTELLE",
+            app.focus == FocusSurface::Composer,
+            app.theme.primary(),
+            app.theme.ghost(),
         );
         rows[2]
     };
@@ -6746,7 +6761,7 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         render_gate_modal(frame, modal, rows[1], app);
     } else if !app.boot_active(now)
         && app.focus == FocusSurface::Composer
-        && let Some(position) = app.composer.cursor_pos(composer_area)
+        && let Some(position) = app.composer.bottom_pane_cursor_pos(composer_area)
     {
         frame.set_cursor_position(position);
     }
@@ -8101,9 +8116,8 @@ mod tests {
         let mut slash = test_app();
         slash.prod_panel_visible = false;
         slash.composer.set_text("/m");
-        // "/me" is the shortest "m" command, so it heads the palette; the needle pins the
-        // palette-open state with the first match selected, not a particular command's rank.
-        capture("06-slash-palette", &slash, 130, 38, "> /me");
+        // The native popup keeps the selected row in terminal style rather than printable copy.
+        capture("06-slash-palette", &slash, 130, 38, "/me");
 
         let mut settings = test_app();
         settings.prod_panel_visible = false;
@@ -9200,7 +9214,7 @@ mod tests {
         assert!(!has_adjacent_rules, "{rendered}");
         let command_rule = rendered
             .lines()
-            .find(|line| line.contains(" COMMANDS "))
+            .find(|line| line.contains(" ASK ESTELLE "))
             .expect("command dock rule");
         assert!(command_rule.ends_with('┐'), "{rendered}");
         assert!(
@@ -11164,7 +11178,8 @@ mod tests {
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
         assert!(rendered.contains("Since your last session"));
         assert!(rendered.contains("Welcome back. You were away about 5 hours."));
-        assert!(rendered.contains("you  what changed?"));
+        assert!(rendered.contains("│you"));
+        assert!(rendered.contains("› what changed?"));
     }
 
     #[test]
@@ -11436,7 +11451,7 @@ mod tests {
                 .count()
         };
         assert_eq!(
-            row_count("you  where does charge fail?"),
+            row_count("│you"),
             1,
             "exactly one user-labelled turn\n{rendered}"
         );
@@ -11462,7 +11477,7 @@ mod tests {
                 })
                 .unwrap_or_else(|| panic!("no rendered row for {needle:?}"))
         };
-        let user_label = label_cell("you  where does charge fail?");
+        let user_label = label_cell("│you");
         let estelle_label = label_cell("estelle  grounded");
         assert_ne!(
             user_label.fg, estelle_label.fg,

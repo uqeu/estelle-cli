@@ -8,6 +8,9 @@ use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
+use ratatui::widgets::Block;
+use ratatui::widgets::Borders;
+use ratatui::widgets::Widget;
 use std::time::Duration;
 
 use crate::app_event::AppEvent;
@@ -175,9 +178,21 @@ impl ComposerInput {
         self.inner.desired_height(width)
     }
 
+    /// Desired height for the complete bordered bottom dock.
+    pub fn bottom_pane_desired_height(&self, width: u16) -> u16 {
+        self.inner
+            .desired_height(width.saturating_sub(2))
+            .saturating_add(2)
+    }
+
     /// Compute the on-screen cursor position for the given area.
     pub fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
         self.inner.cursor_pos(area)
+    }
+
+    /// Compute the caret position inside the complete bordered bottom dock.
+    pub fn bottom_pane_cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
+        self.inner.cursor_pos(Block::bordered().inner(area))
     }
 
     /// Render the input into the provided buffer at `area`.
@@ -190,6 +205,26 @@ impl ComposerInput {
     pub fn render_ref_with_background(&self, area: Rect, buf: &mut Buffer, background: Color) {
         self.inner.render(area, buf);
         buf.set_style(area, Style::default().bg(background));
+    }
+
+    /// Render the complete bottom dock, with the application supplying only brand copy and focus.
+    pub fn render_bottom_pane(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        background: Color,
+        title: &str,
+        focused: bool,
+        focused_border: Color,
+        idle_border: Color,
+    ) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(if focused { focused_border } else { idle_border }))
+            .title(format!(" {title} "));
+        let inner = block.inner(area);
+        block.render(area, buf);
+        self.render_ref_with_background(inner, buf, background);
     }
 
     /// Return true if a paste-burst detection is currently active.

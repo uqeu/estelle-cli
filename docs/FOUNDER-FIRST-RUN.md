@@ -33,6 +33,11 @@ selection, validation, paste state machine, chrome, and footer. The catalog cont
 commands: Codex built-ins are disabled for this embedding, and accepted commands return as submitted text
 for Estelle dispatch. The former outer palette and hand-built composer border no longer run beside it.
 
+Committed turns now pass through `history_cell` as well. User turns use its filled, width-aware cell;
+assistant answers use its source-backed markdown cell so resize reflows the original markdown rather than
+already-wrapped output. Estelle still supplies the grounded/degraded heading, failure copy, secret masking,
+and citation lines. Those are product semantics, not duplicate wrapping or markdown machinery.
+
 ## Jcode and fleet surface inventory
 
 | Requested graft | Implementation | Exact user door in the release binary | Binding today | Disposition |

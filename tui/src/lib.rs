@@ -218,6 +218,8 @@ pub use markdown_render::render_markdown_text;
 pub use public_widgets::composer_input::ComposerAction;
 pub use public_widgets::composer_input::ComposerCommand;
 pub use public_widgets::composer_input::ComposerInput;
+pub use public_widgets::history_transcript::HistoryTranscriptItem;
+pub use public_widgets::history_transcript::render_history_transcript;
 pub use status_indicator_widget::fmt_elapsed_compact;
 pub use style::user_message_style_for;
 pub use terminal_palette::default_bg;
