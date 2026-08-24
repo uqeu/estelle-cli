@@ -1,6 +1,7 @@
 #![deny(clippy::print_stderr, clippy::print_stdout)]
 
 mod agent_brief;
+mod binding_probe;
 mod claude_import;
 mod commands;
 mod copilot_login;
@@ -7165,13 +7166,15 @@ async fn main() -> ExitCode {
         };
     }
     if matches!(args.command, Some(Command::Doctor)) {
-        let lines = doctor::lines(doctor::Context::Shell);
+        // ⚠️ `lines_with_binding`, not `lines`: the latter cannot fail, so `doctor` used to exit 0
+        // over a provider that did not work. A diagnostic whose exit code is a constant is not one.
+        let (lines, binding_failed) = doctor::lines_with_binding(doctor::Context::Shell).await;
         let mut stdout = tokio::io::stdout();
-        return if stdout
+        let written = stdout
             .write_all(format!("{}\n", lines.join("\n")).as_bytes())
             .await
-            .is_ok()
-        {
+            .is_ok();
+        return if written && !binding_failed {
             ExitCode::SUCCESS
         } else {
             ExitCode::FAILURE

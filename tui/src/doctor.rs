@@ -169,3 +169,56 @@ mod tests {
         );
     }
 }
+
+/// `doctor`, but it can be WRONG about you — it makes a real call. Returns the lines plus whether any
+/// configured provider failed its binding probe.
+///
+/// 🔴 **`lines()` ABOVE CANNOT FAIL, AND THAT WAS THE PROBLEM.** Every status it renders is a presence
+/// check on a local file, so it reported the same thing whether the provider worked or was dead — and
+/// four of its own strings simply repeated *"runtime binding not yet proven"*, which is what the login
+/// paths had already said. A user told to run `doctor` was handed back the sentence that sent them
+/// there. This wrapper is the exit from that loop: it asks the endpoint.
+///
+/// ⚠️ The bool is NOT "is anything missing". An unconfigured provider is a normal state and must never
+/// make a fresh install report broken; only a provider that is configured AND does not answer counts.
+pub(crate) async fn lines_with_binding(context: Context) -> (Vec<String>, bool) {
+    let mut rendered = lines(context);
+    let binding = probe_local_binding().await;
+    rendered.push(binding.line("Local model"));
+    let failed = binding.is_failure();
+    (rendered, failed)
+}
+
+async fn probe_local_binding() -> crate::binding_probe::Binding {
+    use crate::binding_probe::Binding;
+    let stored = match local_provider::stored_endpoint() {
+        // ⚠️ An unreadable store is NOT "not configured". Reporting a corrupt file as absent would send
+        // the user through a login that had already succeeded, chasing a state they cannot see.
+        Err(error) => {
+            return Binding::Unreachable {
+                reason: format!("the stored endpoint could not be read: {error}"),
+            }
+        }
+        Ok(None) => return Binding::NotConfigured,
+        Ok(Some(stored)) => stored,
+    };
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(
+            crate::binding_probe::PROBE_TIMEOUT_S,
+        ))
+        .build()
+    {
+        Ok(client) => client,
+        Err(error) => {
+            return Binding::Unreachable {
+                reason: format!("no HTTP client could be built: {error}"),
+            }
+        }
+    };
+    crate::binding_probe::probe_openai_compatible(
+        &client,
+        &stored.base_url,
+        stored.api_key.as_deref(),
+    )
+    .await
+}

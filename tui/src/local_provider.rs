@@ -24,6 +24,27 @@ struct LocalProviderSnapshot<'a> {
     api_key: Option<&'a str>,
 }
 
+/// The snapshot as READ BACK, owned.
+///
+/// ⚠️ Deliberately a separate type from :struct:`LocalProviderSnapshot`, which borrows (`&'a str`) so
+/// it can be written without copying a secret. A reader cannot borrow from a file it just closed, so
+/// the two shapes are genuinely different and sharing one type would mean weakening the writer.
+#[derive(Deserialize)]
+pub(crate) struct StoredLocalProvider {
+    pub(crate) base_url: String,
+    #[serde(default)]
+    pub(crate) api_key: Option<String>,
+}
+
+/// Load the configured local endpoint back, if there is one.
+///
+/// 🔴 Until this existed nothing in production could read this file. `configured_present()` answered
+/// "is there a file", which is presence, not capability — and presence was the entire basis on which
+/// `doctor` reported. See :mod:`crate::binding_probe`.
+pub(crate) fn stored_endpoint() -> io::Result<Option<StoredLocalProvider>> {
+    provider_store::read_private_json(&store_path()?)
+}
+
 #[derive(Deserialize, Serialize)]
 struct LocalModelProfile {
     model: Option<estelle_machine::Model>,
