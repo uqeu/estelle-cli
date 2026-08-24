@@ -57,6 +57,8 @@ use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
 use crossterm::event::KeyModifiers;
 use crossterm::event::MouseEvent;
+#[cfg(test)]
+use crossterm::event::MouseEventKind;
 use crossterm::execute;
 use crossterm::terminal::Clear as TerminalClear;
 use crossterm::terminal::ClearType;
