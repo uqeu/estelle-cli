@@ -92,9 +92,12 @@ same-repository session catalogue with every snapshot; the TUI renders it as a t
 switches the watched transcript with Alt+Left/Right (with Ctrl+Tab accepted where terminals report it), and
 closes only the local tab with Ctrl+W. Switching creates
 a new server session when the name is not present and never cancels the session being left. Affinity/
-Orchestra worker registration and durable restart recovery remain ordered work. Explicit local shell
+Orchestra worker registration and durable restart recovery remain ordered work. Explicit `!` local shell
 commands and patch application remain terminal-owned because they mutate the attached working tree; they
-are never presented as detachable server work.
+are never presented as detachable server work. Shell commands have a 30-second deadline and a shared
+64-KiB stdout/stderr capture ceiling, render as a distinct command transcript entry, and are killed and
+reaped on timeout. Those bounds prove containment, not command safety: the human typed the command and it
+does not pass through Estelle autonomy.
 
 The installed Claude Code and Codex `PostToolUse` table reports `Read`, `Write`, and `Edit` activity through
 the same socket. Read sets are kept by the server, capped at 4,096 repository-relative paths per session.
@@ -251,16 +254,19 @@ not permission to destroy a stored credential.
 ## Credential onboarding and provider boundary
 
 Credential absence is resolved before the first interactive frame. With no Estelle credential, the TUI
-opens the existing bottom-pane picker instead of accepting questions that must fail. `/login` reopens the
-same surface. The five top-level choices name what they buy: Estelle grounding, Claude subscription import,
-ChatGPT plan, provider API key, or local model. A failed inline flow returns to that picker and points to
-`/doctor`; shell failures point to `estelle doctor`. Before those choices, the picker states that Estelle
-uses the customer's existing model plan or key and never bills for model tokens.
+first asks the identity question: one `Connect Estelle` row obtains the Estelle key. After success, a
+separate `Choose how model tokens are paid` surface offers Claude subscription, provider API key, local
+model, or GitHub Copilot. `/login` reopens that two-step flow. Cancel is a decision and closes the surface;
+rejection may reopen the relevant identity step. Repair advice has one context owner: TUI failures name
+`/doctor` and shell failures name `estelle doctor`. The explanatory billing sentence renders above each
+picker rather than beside a choice.
 
 The stores and runtimes are deliberately distinct:
 
 - Estelle credentials authorize grounding/product requests and provider-key storage on `POST /key`.
-- ChatGPT device-flow credentials live under `~/.estelle/chatgpt`, never in Estelle's API-key record.
+- ChatGPT device-flow acquisition is not exposed. The inherited flow presented Codex's first-party OAuth
+  client id rather than an Estelle-owned id. Legacy credentials under `~/.estelle/chatgpt` remain detectable
+  and removable so an upgrade does not strand a secret, but no login surface creates one.
 - Claude import occurs only after the user selects it. It reads `CLAUDE_CODE_OAUTH_TOKEN` or the macOS
   `Claude Code-credentials` Keychain item, copies a refreshable snapshot to a mode-0600 Estelle file, and
   never moves, deletes, or modifies Claude Code's source credential.
@@ -268,7 +274,7 @@ The stores and runtimes are deliberately distinct:
   kinds, picker surfaces, server identities, endpoint defaults, and base-URL requirements. Shell and slash
   commands and both provider sub-pickers resolve through that same table.
 - `claude` means the consent-gated Claude Code import and `anthropic`/`anthropic-api` mean an Anthropic API
-  key. `openai` means the ChatGPT device flow and `openai-api` means an OpenAI API key. This keeps plan OAuth
+  key. `openai-api` means an OpenAI API key; `chatgpt` is deliberately unresolved. This keeps plan OAuth
   distinct from API-key wire identity before a credential is requested.
 - Gemini, Azure, Bedrock, OpenRouter, DeepSeek, Fireworks, and MiniMax use the one masked provider-key path.
   Azure prompts for its non-secret API base first. Unknown providers and unsafe public HTTP bases fail
@@ -278,15 +284,22 @@ The stores and runtimes are deliberately distinct:
 - LM Studio and Ollama supply their local defaults; a custom OpenAI-compatible provider prompts for its API
   base. HTTP is accepted only for loopback, private, link-local, CGNAT, or `.local` hosts. Those hosts may
   omit a key; a remote HTTPS endpoint may not. Endpoint/key metadata stays client-side in a mode-0600 file.
+  Login immediately calls the bounded `/models` binding probe. A data-array response is bound; 401/403 is
+  refused; other non-2xx, malformed 2xx, and unreachable endpoints remain distinct failures because their
+  remedies differ.
 - `/whoami` renders only credential presence and server-returned provider names. `/logout` removes local
   Estelle/plan/Copilot/endpoint stores but never silently deletes server-owned provider keys.
 
-This is onboarding and storage, not a completed provider runtime. Claude subscription tokens require the
-Anthropic OAuth wire/tool schema, while the custom Estelle conversation currently uses the server answer
-path. The jcode Anthropic adapter was read through its OAuth identity blocks, tool-name remapping, curated
-tool schemas, and cache placement; none is claimed wired merely because an import exists. LM Studio, Ollama,
-and no-key localhost endpoints likewise have no binding into that path. The missing contract and acceptance
-proof are recorded in `docs/SERVER-CONTRACTS-NEEDED.md`; neither import nor storage is styled as “connected.”
+The local/custom endpoint is now stored, read back, and probed during login and doctor; that proves endpoint
+binding only, not model spending by the answer runtime. Claude import proves a credential snapshot, and
+Copilot proves GitHub device authorization, but neither makes a model request. The custom Estelle
+conversation still uses the server answer path. The missing runtime contracts and acceptance proof are
+recorded in `docs/SERVER-CONTRACTS-NEEDED.md`; import, authorization, and endpoint census are not styled as
+completed inference.
+
+The update notifier never executes an installer and never prints executable `curl | sh` advice. A behind or
+explicitly unanswerable check links to the human-inspectable latest-release page. The public installer still
+exists as a separately documented distribution surface; linking to it is not evidence that an update ran.
 
 ## Cross-repository contracts
 
@@ -317,10 +330,14 @@ on uncommitted sweep contents. That client-side-only boundary is design limit #6
   skip, mock, or green board row.
 - The local Sigstore verifier could not initialize during the preceding `v0.2.11` probe, so external
   attestation verification is still absent even though the release workflow's signing steps passed.
-- The founder's clean-machine default-shell restart, shadowed-npm-machine repair, and ChatGPT device-flow
-  walkthrough remain human/device-bound; the clean public install and first-run picker are independently
-  reproduced.
-- Claude/ChatGPT/local-model credential acquisition is not yet bound to the custom TUI answer runtime.
+- The founder's clean-machine default-shell restart and shadowed-npm-machine repair remain human/device-bound;
+  the clean public install and first-run picker are independently reproduced. ChatGPT acquisition is removed,
+  not awaiting a walkthrough.
+- Claude/Copilot/local-model credential acquisition is not yet bound to the custom TUI answer runtime. The
+  local-model `/models` probe covers endpoint binding only.
+- Live `/work` phase rendering is blocked upstream: the durable-job progress store cannot create a
+  work-shaped first revision and `GET /jobs/{id}` does not expose one. The CLI must not synthesize progress,
+  an ETA, or a percentage while those server seams are absent.
 - Client-provided MCP servers remain deliberately rejected.
 - The public server/client split passed terminal detach/reconnect and detached failure replay on
   `awesome-llm-apps`; a production-authenticated successful answer still requires a customer credential.
