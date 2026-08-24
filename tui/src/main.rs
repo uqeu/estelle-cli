@@ -40,6 +40,7 @@ use std::time::Instant;
 use clap::Parser;
 use clap::Subcommand;
 use codex_tui::ComposerAction;
+use codex_tui::ComposerCommand;
 use codex_tui::ComposerInput;
 use codex_tui::boot_scene::BootPalette;
 use codex_tui::boot_scene::BootPreferences;
@@ -1428,7 +1429,6 @@ struct App {
     working_memory_paths: Vec<String>,
     transcript_scroll: usize,
     dither_wake: VecDeque<usize>,
-    palette_index: usize,
     picker: Option<PickerSurface>,
     settings: Option<CommandReply>,
     pending_setting_input: Option<PendingSettingInput>,
@@ -1446,9 +1446,12 @@ enum FocusSurface {
 }
 
 fn estelle_composer() -> ComposerInput {
-    let mut composer = ComposerInput::plain_text_with_placeholder("Ask Estelle");
-    composer.set_hint_items(Vec::<(String, String)>::new());
-    composer
+    ComposerInput::with_commands(
+        "Ask Estelle",
+        commands::composer_commands()
+            .into_iter()
+            .map(|(name, description)| ComposerCommand::new(name, description)),
+    )
 }
 
 fn env_truthy(name: &str) -> bool {
@@ -1622,7 +1625,6 @@ impl App {
             working_memory_paths: Vec::new(),
             transcript_scroll: 0,
             dither_wake: VecDeque::from([0]),
-            palette_index: 0,
             picker: None,
             settings: None,
             pending_setting_input: None,
@@ -6464,13 +6466,9 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         area,
     );
     let content_area = area;
-    let composer_inner_height = app.composer.desired_height(content_area.width).clamp(1, 6);
+    let composer_height = app.composer.desired_height(content_area.width).clamp(3, 12);
     let modal_owns_input = app.picker.is_some() || app.gate_modal.is_some();
-    let composer_height = if modal_owns_input {
-        0
-    } else {
-        composer_inner_height.saturating_add(2)
-    };
+    let composer_height = if modal_owns_input { 0 } else { composer_height };
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -6488,28 +6486,14 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         ])),
         rows[0],
     );
-    let palette = commands::palette_rows(&app.composer.text());
-    let palette_open = !palette.is_empty();
-    let surface_rows = if !palette_open {
-        vec![rows[1]]
-    } else {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(1),
-                Constraint::Length(u16::try_from(palette.len().saturating_add(2)).unwrap_or(10)),
-            ])
-            .split(rows[1])
-            .to_vec()
-    };
+    let surface_rows = vec![rows[1]];
 
     let diff_as_rail = app.diff_panel_visible && area.width >= 110;
     let prod_as_rail = !app.diff_panel_visible
         && app.prod_panel_visible
         && area.width >= 110
         && app.gate_modal.is_none()
-        && app.picker.is_none()
-        && !palette_open;
+        && app.picker.is_none();
     let show_diff_panel = app.diff_panel_visible && !diff_as_rail;
     let show_prod_panel = app.prod_panel_visible && !prod_as_rail && !app.diff_panel_visible;
     let show_context_panel = !app.diff_panel_visible && !prod_as_rail && app.context_panel_visible;
@@ -6558,13 +6542,8 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         } else {
             " CONVERSATION  Tab · Ctrl+←/→ focus "
         };
-        let primary_borders = if palette_open {
-            Borders::TOP | Borders::LEFT | Borders::RIGHT
-        } else {
-            Borders::ALL
-        };
         let primary_block = Block::default()
-            .borders(primary_borders)
+            .borders(Borders::ALL)
             .border_style(
                 Style::default().fg(if app.focus == FocusSurface::Transcript {
                     app.theme.primary()
@@ -6694,8 +6673,7 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             && app.fleet.is_none()
             && !app.todo_visible
             && app.picker.is_none()
-            && !show_auxiliary_pane
-            && !palette_open;
+            && !show_auxiliary_pane;
         if show_ground {
             render_symbol_ground(frame, transcript_root, app);
         }
@@ -6748,71 +6726,15 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             );
         }
     }
-    if let Some(area) = surface_rows.get(1).copied() {
-        let lines = palette
-            .into_iter()
-            .enumerate()
-            .map(|(index, (name, description))| {
-                let selected = index == app.palette_index;
-                Line::from(vec![
-                    Span::styled(
-                        format!("{} /{name:<11}", if selected { ">" } else { " " }),
-                        if selected {
-                            Style::default()
-                                .fg(app.theme.primary())
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default().fg(Color::Cyan)
-                        },
-                    ),
-                    Span::styled(
-                        description,
-                        if selected {
-                            Style::default().fg(Color::Gray)
-                        } else {
-                            Style::default().fg(Color::DarkGray)
-                        },
-                    ),
-                ])
-            })
-            .collect::<Vec<_>>();
-        frame.render_widget(
-            Paragraph::new(lines).block(
-                Block::default()
-                    .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
-                    .border_style(Style::default().fg(app.theme.primary()))
-                    .title(" COMMANDS  ↑/↓ select · Tab complete · Enter run "),
-            ),
-            area,
-        );
-    }
     let composer_area = if modal_owns_input {
         Rect::default()
     } else {
-        let composer_borders = if !palette_open {
-            Borders::ALL
-        } else {
-            Borders::LEFT | Borders::RIGHT | Borders::BOTTOM
-        };
-        let mut composer_block =
-            Block::default()
-                .borders(composer_borders)
-                .border_style(Style::default().fg(if app.focus == FocusSurface::Composer {
-                    app.theme.primary()
-                } else {
-                    app.theme.ghost()
-                }));
-        if !palette_open {
-            composer_block = composer_block.title(" ASK ESTELLE ");
-        }
-        let composer_area = composer_block.inner(rows[2]);
-        frame.render_widget(composer_block, rows[2]);
         app.composer.render_ref_with_background(
-            composer_area,
+            rows[2],
             frame.buffer_mut(),
             app.theme.background(),
         );
-        composer_area
+        rows[2]
     };
     frame.render_widget(
         Paragraph::new(footer_line(app, now, rows[3].width)),
@@ -7011,35 +6933,7 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
         app.picker = Some(PickerSurface::autonomy(app));
         return false;
     }
-    let palette = commands::palette_rows(&app.composer.text());
-    if !palette.is_empty() {
-        match key.code {
-            KeyCode::Down => {
-                app.palette_index = (app.palette_index + 1).min(palette.len() - 1);
-                return false;
-            }
-            KeyCode::Up => {
-                app.palette_index = app.palette_index.saturating_sub(1);
-                return false;
-            }
-            KeyCode::Tab => {
-                let (name, _) = palette[app.palette_index.min(palette.len() - 1)];
-                app.composer.set_text(format!("/{name} "));
-                app.palette_index = 0;
-                app.record_dither_caret();
-                return false;
-            }
-            KeyCode::Enter => {
-                let (name, _) = palette[app.palette_index.min(palette.len() - 1)];
-                app.composer = estelle_composer();
-                app.palette_index = 0;
-                app.submit(format!("/{name}"), tx);
-                return false;
-            }
-            _ => {}
-        }
-    }
-    if key.code == KeyCode::Tab {
+    if key.code == KeyCode::Tab && !app.composer.text().trim_start().starts_with('/') {
         app.move_focus(true);
         return false;
     }
@@ -7057,13 +6951,9 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
             return false;
         }
     }
-    let previous_text = app.composer.text();
     if let ComposerAction::Submitted(text) = app.composer.input(key) {
         app.submit_composer(text, tx);
     } else {
-        if app.composer.text() != previous_text {
-            app.palette_index = 0;
-        }
         app.inspect_composer_for_credential();
         app.record_dither_caret();
     }
@@ -8453,12 +8343,10 @@ mod tests {
     }
 
     #[test]
-    fn slash_palette_arrow_keys_move_the_selected_command_and_tab_uses_it() {
+    fn native_bottom_pane_popup_moves_selection_and_completes_estelle_command() {
         let mut app = test_app();
         let (tx, _rx) = mpsc::unbounded_channel();
         app.composer.set_text("/");
-        let rows = commands::palette_rows("/");
-        assert!(rows.len() >= 3);
 
         handle_key(
             &mut app,
@@ -8472,14 +8360,15 @@ mod tests {
         );
 
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
-        assert!(rendered.contains(&format!("> /{}", rows[2].0)));
+        assert!(rendered.contains("/logout"));
+        assert!(rendered.contains("remove local Estelle and plan credentials"));
 
         handle_key(
             &mut app,
             KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
             &tx,
         );
-        assert_eq!(app.composer.text(), format!("/{} ", rows[2].0));
+        assert_eq!(app.composer.text(), "/logout ");
     }
 
     #[test]

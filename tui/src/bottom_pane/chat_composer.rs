@@ -243,6 +243,7 @@ use super::prompt_args::parse_slash_name;
 use super::skill_popup::MentionItem;
 use super::skill_popup::SkillPopup;
 use super::slash_commands::BuiltinCommandFlags;
+use super::slash_commands::ExternalCommand;
 use super::slash_commands::ServiceTierCommand;
 use super::slash_commands::SlashCommandItem;
 use crate::bottom_pane::paste_burst::FlushResult;
@@ -426,6 +427,8 @@ pub(crate) struct ChatComposerConfig {
     pub(crate) popups_enabled: bool,
     /// Whether `/...` input is parsed and dispatched as slash commands.
     pub(crate) slash_commands_enabled: bool,
+    /// Whether the Codex command catalog participates in slash-command parsing.
+    pub(crate) builtin_commands_enabled: bool,
     /// Whether pasting a file path can attach local images.
     pub(crate) image_paste_enabled: bool,
     /// Whether the Codex token-window summary is rendered at the right edge.
@@ -437,6 +440,7 @@ impl Default for ChatComposerConfig {
         Self {
             popups_enabled: true,
             slash_commands_enabled: true,
+            builtin_commands_enabled: true,
             image_paste_enabled: true,
             context_footer_enabled: true,
         }
@@ -452,7 +456,19 @@ impl ChatComposerConfig {
         Self {
             popups_enabled: false,
             slash_commands_enabled: false,
+            builtin_commands_enabled: false,
             image_paste_enabled: false,
+            context_footer_enabled: false,
+        }
+    }
+
+    /// A full composer whose command surface belongs to the embedding application.
+    pub(crate) const fn external_commands() -> Self {
+        Self {
+            popups_enabled: true,
+            slash_commands_enabled: true,
+            builtin_commands_enabled: false,
+            image_paste_enabled: true,
             context_footer_enabled: false,
         }
     }
@@ -491,6 +507,7 @@ pub(crate) struct ChatComposer {
     token_activity_command_enabled: bool,
     service_tier_commands_enabled: bool,
     service_tier_commands: Vec<ServiceTierCommand>,
+    external_commands: Vec<ExternalCommand>,
     mentions_v2_enabled: bool,
     goal_command_enabled: bool,
     personality_command_enabled: bool,
@@ -554,8 +571,10 @@ impl ChatComposer {
         SlashInput::new(
             self.slash_commands_enabled(),
             self.draft.is_bash_mode,
+            self.config.builtin_commands_enabled,
             self.builtin_command_flags(),
             &self.service_tier_commands,
+            &self.external_commands,
         )
     }
 
@@ -673,6 +692,7 @@ impl ChatComposer {
             token_activity_command_enabled: false,
             service_tier_commands_enabled: false,
             service_tier_commands: Vec::new(),
+            external_commands: Vec::new(),
             mentions_v2_enabled: false,
             goal_command_enabled: false,
             personality_command_enabled: false,
@@ -757,6 +777,15 @@ impl ChatComposer {
     pub fn set_plugin_mentions(&mut self, plugins: Option<Vec<PluginCapabilitySummary>>) {
         self.plugins = plugins;
         self.refresh_mentions_v2_popup_candidates();
+        self.sync_popups();
+    }
+
+    /// Replace the embedding application's slash-command catalog.
+    ///
+    /// External commands use this composer's discovery, validation, and completion UI, then return
+    /// as ordinary submitted text for the embedding application to dispatch.
+    pub(crate) fn set_external_commands(&mut self, commands: Vec<ExternalCommand>) {
+        self.external_commands = commands;
         self.sync_popups();
     }
 
@@ -9083,6 +9112,9 @@ mod tests {
                 Some(CommandItem::ServiceTier(command)) => {
                     panic!("expected model command, got service tier {command:?}")
                 }
+                Some(CommandItem::External(command)) => {
+                    panic!("expected model command, got external command {command:?}")
+                }
                 None => panic!("no selected command for '/mo'"),
             },
             _ => panic!("slash popup not active after typing '/mo'"),
@@ -9165,6 +9197,9 @@ mod tests {
                 Some(CommandItem::ServiceTier(command)) => {
                     panic!("expected resume command, got service tier {command:?}")
                 }
+                Some(CommandItem::External(command)) => {
+                    panic!("expected resume command, got external command {command:?}")
+                }
                 None => panic!("no selected command for '/res'"),
             },
             _ => panic!("slash popup not active after typing '/res'"),
@@ -9219,6 +9254,9 @@ mod tests {
                 Some(CommandItem::ServiceTier(command)) => {
                     panic!("expected btw command, got service tier {command:?}")
                 }
+                Some(CommandItem::External(command)) => {
+                    panic!("expected btw command, got external command {command:?}")
+                }
                 None => panic!("no selected command for '/bt'"),
             },
             _ => panic!("slash popup not active after typing '/bt'"),
@@ -9272,6 +9310,9 @@ mod tests {
                 }
                 Some(CommandItem::ServiceTier(command)) => {
                     panic!("expected side command, got service tier {command:?}")
+                }
+                Some(CommandItem::External(command)) => {
+                    panic!("expected side command, got external command {command:?}")
                 }
                 None => panic!("no selected command for '/si'"),
             },

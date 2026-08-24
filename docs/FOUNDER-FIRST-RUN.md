@@ -9,7 +9,7 @@ reference and was not edited.
 |---|---|---|
 | Mouse wheel recalled composer history | CLI fixed: the alternate screen enables mouse reporting and wheel events change only transcript scroll. Arrow keys remain composer history. | `tui/src/main.rs:199-220`, `tui/src/main.rs:2430-2440`; mutation guards `mouse_wheel_scrolls_the_transcript_without_recalling_composer_history` and `terminal_session_requests_mouse_events_instead_of_wheel_to_arrow_translation` |
 | `hi` waited 42 seconds | Server handoff. The current server source already classifies a closed conversational vocabulary before scope, inventory, recall and gate work; 10 focused tests pass with `--no-cov`. The production measurement therefore contradicts the checked-in fast path and needs deployment/runtime verification. No client classifier was added. | `src/estelle/serve/utterance.py:102-112`, `src/estelle/serve/api_intel.py:510-545` |
-| Dots-only empty state | CLI fixed. The empty frame now puts real actions in front of a faint composed scene: sun, layered ridges and ghost blooms quantized through the canonical Bayer pass. The composer caret owns a separate cream-core/red-wake layer. The field disappears once transcript, sweep, palette or gate data needs the surface. | `tui/src/main.rs` (`scene_coverage`, `render_symbol_ground`, `render_empty_state`, `render_frame`); references read: `web/app/explore/_components/dither.ts`, `DitherField.tsx`, `BootLoader.tsx`, `LilyField.tsx`, `DitherTrail.tsx`, `SiteFoot.tsx`, `site-foot.css`, `effects.ts` |
+| Dots-only empty state | CLI fixed. The empty frame now puts real actions in front of a faint composed scene: sun, layered ridges and ghost blooms quantized through the canonical Bayer pass. The composer caret owns a separate cream-core/red-wake layer. The field disappears once transcript, sweep, the composer command popup, or gate data needs the surface. | `tui/src/main.rs` (`scene_coverage`, `render_symbol_ground`, `render_empty_state`, `render_frame`); references read: `web/app/explore/_components/dither.ts`, `DitherField.tsx`, `BootLoader.tsx`, `LilyField.tsx`, `DitherTrail.tsx`, `SiteFoot.tsx`, `site-foot.css`, `effects.ts` |
 | `/model` declined without an alternative | CLI fixed. The refusal names the account-wide dashboard and states the actual routing policy: strongest configured model plans; cheapest capable model implements. | `tui/src/commands.rs:920-929` |
 | `/skills` hid a legitimate name | CLI fixed without weakening the credential detector. A validated skill-name field may contain ordinary `sk-` across a word boundary; summaries and credential-shaped names still pass through the existing masker. | `tui/src/main.rs` (`mask_skill_catalog_line`); red/green guard `skill_catalog_preserves_valid_names_while_real_credentials_stay_hidden` |
 
@@ -26,9 +26,12 @@ The release path changed these inherited or misleading strings:
 | `/orchestra` “fan a task across the routed fleet” | `/orchestra` “run one gated server task” |
 | `/subagents` “view server orchestra agents” | Honest status: the fixed grid is implemented, but production still lacks the revisioned live-state wire |
 
-The maintained generic `ComposerInput::plain_text()` keeps Codex's default for Codex-owned callers. The
-Estelle release constructs `plain_text_with_placeholder("Ask Estelle")` on startup and on every reset, so
-that inherited default is not customer-reachable through `target/release/estelle`.
+The maintained generic `ComposerInput::plain_text()` remains available for text-only embedded fields.
+The Estelle release now constructs `ComposerInput::with_commands("Ask Estelle", catalog)` on startup and
+on every reset. That path uses the finished bottom-pane composer, including its command popup, filtering,
+selection, validation, paste state machine, chrome, and footer. The catalog contains only Estelle-owned
+commands: Codex built-ins are disabled for this embedding, and accepted commands return as submitted text
+for Estelle dispatch. The former outer palette and hand-built composer border no longer run beside it.
 
 ## Jcode and fleet surface inventory
 

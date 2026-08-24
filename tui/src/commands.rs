@@ -249,38 +249,11 @@ pub(crate) fn help_lines() -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn palette_rows(input: &str) -> Vec<(&'static str, &'static str)> {
-    let Some(command) = input.trim_start().strip_prefix('/') else {
-        return Vec::new();
-    };
-    let query = command
-        .split_whitespace()
-        .next()
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if command.contains(char::is_whitespace) {
-        return Vec::new();
-    }
-    let mut rows = SESSION_HELP
+pub(crate) fn composer_commands() -> Vec<(&'static str, &'static str)> {
+    SESSION_HELP
         .iter()
         .chain(GRAFT_HELP.iter())
-        .filter_map(|(name, description)| {
-            let tier = if query.is_empty() || name.starts_with(&query) {
-                0
-            } else if name.contains(&query) {
-                1
-            } else if one_edit(name, &query) {
-                2
-            } else {
-                return None;
-            };
-            Some((tier, *name, *description))
-        })
-        .collect::<Vec<_>>();
-    rows.sort_by_key(|(tier, name, _)| (*tier, name.len(), *name));
-    rows.into_iter()
-        .take(8)
-        .map(|(_, name, description)| (name, description))
+        .copied()
         .collect()
 }
 

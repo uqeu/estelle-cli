@@ -17,6 +17,17 @@ pub(crate) struct ServiceTierCommand {
     pub(crate) description: String,
 }
 
+/// A command owned by an embedding product that reuses the finished composer.
+///
+/// The composer owns discovery and completion; the embedding application owns
+/// dispatch. Keeping this descriptor beside the built-in catalog prevents an
+/// outer renderer from rebuilding a second command popup.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ExternalCommand {
+    pub(crate) name: String,
+    pub(crate) description: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SlashCommandItem {
     Builtin(SlashCommand),
@@ -154,6 +165,19 @@ pub(crate) fn has_slash_command_prefix(
     commands_for_input(flags, service_tier_commands)
         .into_iter()
         .any(|command| fuzzy_match(command.command(), name).is_some())
+}
+
+pub(crate) fn find_external_command<'a>(
+    name: &str,
+    commands: &'a [ExternalCommand],
+) -> Option<&'a ExternalCommand> {
+    commands.iter().find(|command| command.name == name)
+}
+
+pub(crate) fn has_external_command_prefix(name: &str, commands: &[ExternalCommand]) -> bool {
+    commands
+        .iter()
+        .any(|command| fuzzy_match(&command.name, name).is_some())
 }
 
 #[cfg(test)]

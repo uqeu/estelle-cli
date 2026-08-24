@@ -10,6 +10,7 @@ use super::selection_popup_common::GenericDisplayRow;
 use super::selection_popup_common::measure_rows_height_with_col_width_mode;
 use super::selection_popup_common::render_rows_with_col_width_mode;
 use super::slash_commands::BuiltinCommandFlags;
+use super::slash_commands::ExternalCommand;
 use super::slash_commands::ServiceTierCommand;
 use super::slash_commands::SlashCommandItem;
 use super::slash_commands::commands_for_input;
@@ -31,6 +32,7 @@ const COMMAND_COLUMN_WIDTH: ColumnWidthConfig = ColumnWidthConfig::new(
 pub(crate) enum CommandItem {
     Builtin(SlashCommand),
     ServiceTier(ServiceTierCommand),
+    External(ExternalCommand),
 }
 
 pub(crate) struct CommandPopup {
@@ -69,12 +71,21 @@ impl From<CommandPopupFlags> for BuiltinCommandFlags {
 }
 
 impl CommandPopup {
+    #[cfg(test)]
     pub(crate) fn new(
         flags: CommandPopupFlags,
         service_tier_commands: Vec<ServiceTierCommand>,
     ) -> Self {
+        Self::new_with_external(flags, service_tier_commands, Vec::new())
+    }
+
+    pub(crate) fn new_with_external(
+        flags: CommandPopupFlags,
+        service_tier_commands: Vec<ServiceTierCommand>,
+        external_commands: Vec<ExternalCommand>,
+    ) -> Self {
         // Keep built-in availability in sync with the composer.
-        let commands = commands_for_input(flags.into(), &service_tier_commands)
+        let mut commands = commands_for_input(flags.into(), &service_tier_commands)
             .into_iter()
             .filter_map(|command| match command {
                 SlashCommandItem::Builtin(cmd) => (!cmd.command().starts_with("debug")
@@ -82,10 +93,22 @@ impl CommandPopup {
                     .then_some(CommandItem::Builtin(cmd)),
                 SlashCommandItem::ServiceTier(command) => Some(CommandItem::ServiceTier(command)),
             })
-            .collect();
+            .collect::<Vec<_>>();
+        commands.extend(external_commands.into_iter().map(CommandItem::External));
         Self {
             command_filter: String::new(),
             commands,
+            state: ScrollState::new(),
+        }
+    }
+
+    pub(crate) fn external_only(external_commands: Vec<ExternalCommand>) -> Self {
+        Self {
+            command_filter: String::new(),
+            commands: external_commands
+                .into_iter()
+                .map(CommandItem::External)
+                .collect(),
             state: ScrollState::new(),
         }
     }
@@ -250,6 +273,7 @@ impl CommandItem {
         match self {
             Self::Builtin(cmd) => cmd.command(),
             Self::ServiceTier(command) => &command.name,
+            Self::External(command) => &command.name,
         }
     }
 
@@ -257,6 +281,7 @@ impl CommandItem {
         match self {
             Self::Builtin(cmd) => cmd.description(),
             Self::ServiceTier(command) => &command.description,
+            Self::External(command) => &command.description,
         }
     }
 }
@@ -295,7 +320,7 @@ mod tests {
         let matches = popup.filtered_items();
         let has_init = matches.iter().any(|item| match item {
             CommandItem::Builtin(cmd) => cmd.command() == "init",
-            CommandItem::ServiceTier(_) => false,
+            CommandItem::ServiceTier(_) | CommandItem::External(_) => false,
         });
         assert!(
             has_init,
@@ -316,6 +341,9 @@ mod tests {
             Some(CommandItem::ServiceTier(command)) => {
                 panic!("expected init command, got service tier {command:?}")
             }
+            Some(CommandItem::External(command)) => {
+                panic!("expected init command, got external command {command:?}")
+            }
             None => panic!("expected a selected command for exact match"),
         }
     }
@@ -329,6 +357,9 @@ mod tests {
             Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "model"),
             Some(CommandItem::ServiceTier(command)) => {
                 panic!("expected model command, got service tier {command:?}")
+            }
+            Some(CommandItem::External(command)) => {
+                panic!("expected model command, got external command {command:?}")
             }
             None => panic!("expected at least one match for '/mo'"),
         }
@@ -378,6 +409,7 @@ mod tests {
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command().to_string(),
                 CommandItem::ServiceTier(command) => command.name,
+                CommandItem::External(command) => command.name,
             })
             .collect();
         assert_eq!(
@@ -441,6 +473,7 @@ mod tests {
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command().to_string(),
                 CommandItem::ServiceTier(command) => command.name,
+                CommandItem::External(command) => command.name,
             })
             .collect();
         assert!(
@@ -516,6 +549,7 @@ mod tests {
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command().to_string(),
                 CommandItem::ServiceTier(command) => command.name,
+                CommandItem::External(command) => command.name,
             })
             .collect();
         assert!(
@@ -575,6 +609,7 @@ mod tests {
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command().to_string(),
                 CommandItem::ServiceTier(command) => command.name,
+                CommandItem::External(command) => command.name,
             })
             .collect();
         assert!(
@@ -619,6 +654,7 @@ mod tests {
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command().to_string(),
                 CommandItem::ServiceTier(command) => command.name,
+                CommandItem::External(command) => command.name,
             })
             .collect();
 

@@ -14,6 +14,7 @@ use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::ChatComposer;
 use crate::bottom_pane::InputResult;
+use crate::bottom_pane::slash_commands::ExternalCommand;
 use crate::render::renderable::Renderable;
 
 /// Action returned from feeding a key event into the ComposerInput.
@@ -22,6 +23,22 @@ pub enum ComposerAction {
     Submitted(String),
     /// No submission occurred; UI may need to redraw if `needs_redraw()` returned true.
     None,
+}
+
+/// A slash command supplied by an application embedding the mature composer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ComposerCommand {
+    pub name: String,
+    pub description: String,
+}
+
+impl ComposerCommand {
+    pub fn new(name: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            description: description.into(),
+        }
+    }
 }
 
 /// A minimal, public wrapper for the internal `ChatComposer` that behaves as a
@@ -50,6 +67,27 @@ impl ComposerInput {
             crate::bottom_pane::ChatComposerConfig::plain_text(),
             placeholder.into(),
         )
+    }
+
+    /// Create the full composer with a command catalog owned by the embedding application.
+    pub fn with_commands(
+        placeholder: impl Into<String>,
+        commands: impl IntoIterator<Item = ComposerCommand>,
+    ) -> Self {
+        let mut composer = Self::with_placeholder(
+            crate::bottom_pane::ChatComposerConfig::external_commands(),
+            placeholder.into(),
+        );
+        composer.inner.set_external_commands(
+            commands
+                .into_iter()
+                .map(|command| ExternalCommand {
+                    name: command.name,
+                    description: command.description,
+                })
+                .collect(),
+        );
+        composer
     }
 
     fn with_config(config: crate::bottom_pane::ChatComposerConfig) -> Self {
@@ -181,5 +219,40 @@ impl ComposerInput {
 impl Default for ComposerInput {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyCode;
+    use crossterm::event::KeyModifiers;
+
+    #[test]
+    fn external_command_popup_submits_the_canonical_command() {
+        let mut composer = ComposerInput::with_commands(
+            "Ask",
+            [ComposerCommand::new("doctor", "probe provider binding")],
+        );
+        composer.set_text("/doc");
+
+        let action = composer.input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert!(matches!(action, ComposerAction::Submitted(text) if text == "/doctor"));
+        assert!(composer.is_empty());
+    }
+
+    #[test]
+    fn unknown_external_command_is_rejected_and_preserves_the_draft() {
+        let mut composer = ComposerInput::with_commands(
+            "Ask",
+            [ComposerCommand::new("doctor", "probe provider binding")],
+        );
+        composer.set_text("/definitely-missing");
+
+        let action = composer.input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert!(matches!(action, ComposerAction::None));
+        assert_eq!(composer.text(), "/definitely-missing");
     }
 }

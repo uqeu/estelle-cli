@@ -216,6 +216,7 @@ pub use cli::Cli;
 use codex_arg0::Arg0DispatchPaths;
 pub use markdown_render::render_markdown_text;
 pub use public_widgets::composer_input::ComposerAction;
+pub use public_widgets::composer_input::ComposerCommand;
 pub use public_widgets::composer_input::ComposerInput;
 pub use status_indicator_widget::fmt_elapsed_compact;
 pub use style::user_message_style_for;

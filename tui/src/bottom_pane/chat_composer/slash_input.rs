@@ -11,9 +11,12 @@ use crate::bottom_pane::command_popup::CommandPopup;
 use crate::bottom_pane::command_popup::CommandPopupFlags;
 use crate::bottom_pane::prompt_args::parse_slash_name;
 use crate::bottom_pane::slash_commands::BuiltinCommandFlags;
+use crate::bottom_pane::slash_commands::ExternalCommand;
 use crate::bottom_pane::slash_commands::ServiceTierCommand;
 use crate::bottom_pane::slash_commands::SlashCommandItem;
+use crate::bottom_pane::slash_commands::find_external_command;
 use crate::bottom_pane::slash_commands::find_slash_command;
+use crate::bottom_pane::slash_commands::has_external_command_prefix;
 use crate::bottom_pane::slash_commands::has_slash_command_prefix;
 use crate::slash_command::SlashCommand;
 use codex_protocol::user_input::ByteRange;
@@ -46,22 +49,28 @@ pub(super) struct InlineCommand<'a> {
 pub(super) struct SlashInput<'a> {
     enabled: bool,
     is_bash_mode: bool,
+    builtin_commands_enabled: bool,
     command_flags: BuiltinCommandFlags,
     service_tier_commands: &'a [ServiceTierCommand],
+    external_commands: &'a [ExternalCommand],
 }
 
 impl<'a> SlashInput<'a> {
     pub(super) fn new(
         enabled: bool,
         is_bash_mode: bool,
+        builtin_commands_enabled: bool,
         command_flags: BuiltinCommandFlags,
         service_tier_commands: &'a [ServiceTierCommand],
+        external_commands: &'a [ExternalCommand],
     ) -> Self {
         Self {
             enabled,
             is_bash_mode,
+            builtin_commands_enabled,
             command_flags,
             service_tier_commands,
+            external_commands,
         }
     }
 
@@ -79,7 +88,7 @@ impl<'a> SlashInput<'a> {
         if input_starts_with_space || name.contains('/') {
             return SubmissionValidation::Valid;
         }
-        if self.command(name).is_some() {
+        if self.command(name).is_some() || self.external_command(name).is_some() {
             SubmissionValidation::Valid
         } else {
             SubmissionValidation::UnknownCommand(name.to_string())
@@ -151,7 +160,8 @@ impl<'a> SlashInput<'a> {
         if !has_space_after {
             return None;
         }
-        self.command(name).is_some().then_some(0..element_end)
+        (self.command(name).is_some() || self.external_command(name).is_some())
+            .then_some(0..element_end)
     }
 
     pub(super) fn is_editing_command_name(&self, first_line: &str, cursor: usize) -> bool {
@@ -165,30 +175,45 @@ impl<'a> SlashInput<'a> {
             return rest.is_empty();
         }
 
-        has_slash_command_prefix(name, self.command_flags, self.service_tier_commands)
+        (self.builtin_commands_enabled
+            && has_slash_command_prefix(name, self.command_flags, self.service_tier_commands))
+            || has_external_command_prefix(name, self.external_commands)
     }
 
     pub(super) fn command_popup(&self, filter_text: &str) -> CommandPopup {
-        let mut command_popup = CommandPopup::new(
-            CommandPopupFlags {
-                collaboration_modes_enabled: self.command_flags.collaboration_modes_enabled,
-                connectors_enabled: self.command_flags.connectors_enabled,
-                plugins_command_enabled: self.command_flags.plugins_command_enabled,
-                token_activity_command_enabled: self.command_flags.token_activity_command_enabled,
-                service_tier_commands_enabled: self.command_flags.service_tier_commands_enabled,
-                goal_command_enabled: self.command_flags.goal_command_enabled,
-                personality_command_enabled: self.command_flags.personality_command_enabled,
-                windows_degraded_sandbox_active: self.command_flags.allow_elevate_sandbox,
-                side_conversation_active: self.command_flags.side_conversation_active,
-            },
-            self.service_tier_commands.to_vec(),
-        );
+        let mut command_popup = if self.builtin_commands_enabled {
+            CommandPopup::new_with_external(
+                CommandPopupFlags {
+                    collaboration_modes_enabled: self.command_flags.collaboration_modes_enabled,
+                    connectors_enabled: self.command_flags.connectors_enabled,
+                    plugins_command_enabled: self.command_flags.plugins_command_enabled,
+                    token_activity_command_enabled: self
+                        .command_flags
+                        .token_activity_command_enabled,
+                    service_tier_commands_enabled: self.command_flags.service_tier_commands_enabled,
+                    goal_command_enabled: self.command_flags.goal_command_enabled,
+                    personality_command_enabled: self.command_flags.personality_command_enabled,
+                    windows_degraded_sandbox_active: self.command_flags.allow_elevate_sandbox,
+                    side_conversation_active: self.command_flags.side_conversation_active,
+                },
+                self.service_tier_commands.to_vec(),
+                self.external_commands.to_vec(),
+            )
+        } else {
+            CommandPopup::external_only(self.external_commands.to_vec())
+        };
         command_popup.on_composer_text_change(filter_text.to_string());
         command_popup
     }
 
     pub(super) fn command(&self, name: &str) -> Option<SlashCommandItem> {
-        find_slash_command(name, self.command_flags, self.service_tier_commands)
+        self.builtin_commands_enabled
+            .then(|| find_slash_command(name, self.command_flags, self.service_tier_commands))
+            .flatten()
+    }
+
+    pub(super) fn external_command(&self, name: &str) -> Option<&ExternalCommand> {
+        find_external_command(name, self.external_commands)
     }
 }
 
@@ -343,6 +368,13 @@ impl ChatComposer {
                 ..
             } => {
                 if let Some(sel) = popup.selected_item() {
+                    if let CommandItem::External(command) = &sel {
+                        self.draft
+                            .textarea
+                            .set_text_clearing_elements(&format!("/{}", command.name));
+                        self.draft.is_bash_mode = false;
+                        return self.handle_submission(/*should_queue*/ false);
+                    }
                     if self.blocks_direct_input {
                         let command_is_allowed = match &sel {
                             CommandItem::Builtin(cmd) => {
@@ -351,6 +383,7 @@ impl ChatComposer {
                                 )
                             }
                             CommandItem::ServiceTier(_) => false,
+                            CommandItem::External(_) => false,
                         };
                         if !command_is_allowed {
                             return (InputResult::ParentOwnedInputBlocked, true);
@@ -374,6 +407,7 @@ impl ChatComposer {
                             CommandItem::ServiceTier(command) => {
                                 InputResult::ServiceTierCommand(command)
                             }
+                            CommandItem::External(_) => unreachable!("handled before dispatch"),
                         },
                         true,
                     );
