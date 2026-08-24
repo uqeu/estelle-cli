@@ -93,14 +93,6 @@ fn should_emit_notification(condition: NotificationCondition, terminal_focused: 
     }
 }
 
-impl Drop for Tui {
-    fn drop(&mut self) {
-        if let Err(err) = self.clear_ambient_pet_image() {
-            tracing::debug!(error = %err, "failed to clear ambient pet image on TUI drop");
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::io::Write as _;
@@ -572,7 +564,6 @@ pub struct Tui {
     pub(crate) terminal: Terminal,
     pending_history_lines: Vec<PendingHistoryLines>,
     screen_size: ScreenSizePolicy,
-    ambient_pet_image_state: crate::pets::PetImageRenderState,
     alt_saved_viewport: Option<ratatui::layout::Rect>,
     #[cfg(unix)]
     suspend_context: SuspendContext,
@@ -629,7 +620,6 @@ impl Tui {
             terminal,
             pending_history_lines: vec![],
             screen_size: ScreenSizePolicy::default(),
-            ambient_pet_image_state: crate::pets::PetImageRenderState::default(),
             alt_saved_viewport: None,
             #[cfg(unix)]
             suspend_context: SuspendContext::new(),
@@ -992,39 +982,6 @@ impl Tui {
                 draw_fn(frame);
             })
         })?
-    }
-
-    pub fn draw_ambient_pet_image(
-        &mut self,
-        request: Option<crate::pets::AmbientPetDraw>,
-    ) -> std::result::Result<(), crate::pets::PetImageRenderError> {
-        if let Err(err) = ensure_virtual_terminal_processing() {
-            return Err(crate::pets::PetImageRenderError::Terminal(err));
-        }
-
-        let terminal = &mut self.terminal;
-        let state = &mut self.ambient_pet_image_state;
-        stdout().sync_update(|_| {
-            match crate::pets::render_ambient_pet_image(terminal.backend_mut(), state, request) {
-                Ok(()) => Ok(Ok(())),
-                Err(crate::pets::PetImageRenderError::Terminal(err)) => Err(err),
-                Err(err @ crate::pets::PetImageRenderError::Asset(_)) => Ok(Err(err)),
-            }
-        })??
-    }
-
-    pub fn clear_ambient_pet_image(
-        &mut self,
-    ) -> std::result::Result<(), crate::pets::PetImageRenderError> {
-        if let Err(err) = ensure_virtual_terminal_processing() {
-            return Err(crate::pets::PetImageRenderError::Terminal(err));
-        }
-
-        crate::pets::render_ambient_pet_image(
-            self.terminal.backend_mut(),
-            &mut self.ambient_pet_image_state,
-            /*request*/ None,
-        )
     }
 
     /// Draw a frame using the resize-reflow viewport and history insertion rules.

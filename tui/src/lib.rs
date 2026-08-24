@@ -109,11 +109,9 @@ mod collaboration_modes;
 mod color;
 mod config_update;
 pub(crate) mod custom_terminal;
-mod pets;
 pub use custom_terminal::Terminal;
 mod auto_review_denials;
 mod cwd_prompt;
-mod debug_config;
 mod diff_model;
 mod diff_render;
 mod exec_cell;
@@ -146,12 +144,10 @@ mod markdown_stream;
 mod markdown_text_merge;
 mod mention_codec;
 mod model_catalog;
-mod model_migration;
 mod motion;
 mod multi_agents;
 mod notifications;
 pub(crate) mod onboarding;
-mod oss_selection;
 mod pager_overlay;
 mod permission_compat;
 pub(crate) mod public_widgets;
@@ -1051,7 +1047,6 @@ pub async fn run_main(
         cwd.clone()
     };
 
-    let mut manually_selected_oss_provider = None;
     let model_provider_override = if cli.oss {
         let bootstrap_config_with_cloud_config;
         let config_toml_for_oss = if cli.oss_provider.is_none() {
@@ -1074,22 +1069,11 @@ pub async fn run_main(
 
         let resolved = resolve_oss_provider(cli.oss_provider.as_deref(), config_toml_for_oss);
 
-        if let Some(provider) = resolved {
-            Some(provider)
-        } else {
-            // No provider configured, prompt the user
-            let selection = oss_selection::select_oss_provider().await?;
-            let provider = selection.provider;
-            if provider == "__CANCELLED__" {
-                return Err(std::io::Error::other(
-                    "OSS provider selection was cancelled by user",
-                ));
-            }
-            if selection.manually_selected {
-                manually_selected_oss_provider = Some(provider.clone());
-            }
-            Some(provider)
-        }
+        Some(resolved.ok_or_else(|| {
+            std::io::Error::other(
+                "OSS mode requires --oss-provider or a configured oss_provider; Estelle has no interactive OSS-provider picker",
+            )
+        })?)
     } else {
         None
     };
@@ -1247,7 +1231,7 @@ pub async fn run_main(
         let log_file = log_file_opts.open(log_dir.join(TUI_LOG_FILE_NAME))?;
         let (non_blocking, guard) = non_blocking(log_file);
         let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            EnvFilter::new("codex_core=info,codex_tui=info,codex_rmcp_client=info")
+            EnvFilter::new("codex_core=info,estelle_tui=info,codex_rmcp_client=info")
         });
         let file_layer = tracing_subscriber::fmt::layer()
             .with_writer(non_blocking)
@@ -1308,7 +1292,6 @@ pub async fn run_main(
         app_server_target,
         remote_cwd_override,
         config,
-        manually_selected_oss_provider,
         overrides,
         cli_kv_overrides,
         cloud_config_bundle,
@@ -1330,7 +1313,6 @@ async fn run_ratatui_app(
     app_server_target: AppServerTarget,
     remote_cwd_override: Option<PathBuf>,
     initial_config: Config,
-    manually_selected_oss_provider: Option<String>,
     overrides: ConfigOverrides,
     cli_kv_overrides: Vec<(String, toml::Value)>,
     mut cloud_config_bundle: CloudConfigBundleLoader,
@@ -1387,19 +1369,6 @@ async fn run_ratatui_app(
         }
     }
     .with_remote_cwd_override(remote_cwd_override.clone());
-    if let Some(provider) = manually_selected_oss_provider.as_deref()
-        && let Err(err) = config_update::write_config_batch(
-            app_server_session.request_handle(),
-            vec![config_update::build_oss_provider_edit(provider)],
-        )
-        .await
-    {
-        warn!(
-            %err,
-            provider,
-            "Failed to persist selected OSS provider preference"
-        );
-    }
     let mut app_server = Some(app_server_session);
 
     let should_show_trust_screen_flag =

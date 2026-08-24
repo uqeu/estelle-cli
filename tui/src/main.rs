@@ -40,18 +40,6 @@ use std::time::Instant;
 
 use clap::Parser;
 use clap::Subcommand;
-use codex_tui::ComposerAction;
-use codex_tui::ComposerCommand;
-use codex_tui::ComposerInput;
-use codex_tui::ExternalResumePicker;
-use codex_tui::ExternalResumeRow;
-use codex_tui::HistoryTranscriptItem;
-use codex_tui::boot_scene::BootPalette;
-use codex_tui::boot_scene::BootPreferences;
-use codex_tui::boot_scene::BootScene;
-use codex_tui::boot_scene::spider_lily_coverage;
-use codex_tui::render_history_transcript;
-use codex_tui::session_gap;
 use codex_utils_home_dir::find_codex_home;
 use crossterm::cursor::MoveTo;
 use crossterm::event::DisableBracketedPaste;
@@ -89,6 +77,18 @@ use estelle_client::Source;
 use estelle_client::SuiteDispatchRequest;
 use estelle_client::is_secret_shaped;
 use estelle_client::mask_secret;
+use estelle_tui::ComposerAction;
+use estelle_tui::ComposerCommand;
+use estelle_tui::ComposerInput;
+use estelle_tui::ExternalResumePicker;
+use estelle_tui::ExternalResumeRow;
+use estelle_tui::HistoryTranscriptItem;
+use estelle_tui::boot_scene::BootPalette;
+use estelle_tui::boot_scene::BootPreferences;
+use estelle_tui::boot_scene::BootScene;
+use estelle_tui::boot_scene::spider_lily_coverage;
+use estelle_tui::render_history_transcript;
+use estelle_tui::session_gap;
 use futures::StreamExt;
 use history_import::ExternalHistorySource;
 use ratatui::Frame;
@@ -537,9 +537,9 @@ enum PendingLogin {
 fn user_turn_background(theme: Theme) -> Option<Color> {
     let terminal_bg = match theme {
         Theme::CreamInk => Some((0xE9, 0xE6, 0xDC)),
-        Theme::Dark => codex_tui::default_bg(),
+        Theme::Dark => estelle_tui::default_bg(),
     };
-    codex_tui::user_message_style_for(terminal_bg).bg
+    estelle_tui::user_message_style_for(terminal_bg).bg
 }
 
 enum InlineLoginOutcome {
@@ -5064,7 +5064,7 @@ fn status_line(app: &App, now: Instant) -> Line<'static> {
             Span::styled(label, Style::default().fg(Color::Yellow)),
             Span::raw(format!(
                 "  {}  |  Esc cancels",
-                codex_tui::fmt_elapsed_compact(elapsed)
+                estelle_tui::fmt_elapsed_compact(elapsed)
             )),
         ];
         if elapsed >= 30 {
@@ -8105,7 +8105,7 @@ mod tests {
         let mut boot = test_app();
         boot.boot = Some(BootScene::new(0));
         boot.boot_started = now
-            .checked_sub(Duration::from_millis(codex_tui::boot_scene::CONDENSE_MS))
+            .checked_sub(Duration::from_millis(estelle_tui::boot_scene::CONDENSE_MS))
             .expect("gallery boot clock");
         capture("00-boot", &boot, 120, 34, "by Fate Labs");
 
@@ -9589,7 +9589,7 @@ mod tests {
         let mut app = test_app();
         app.boot = Some(BootScene::new(0));
         app.boot_started = now
-            .checked_sub(Duration::from_millis(codex_tui::boot_scene::CONDENSE_MS))
+            .checked_sub(Duration::from_millis(estelle_tui::boot_scene::CONDENSE_MS))
             .expect("boot clock");
 
         let boot = rendered_frame_at_size(&app, now, 120, 34);
@@ -9598,7 +9598,7 @@ mod tests {
 
         let finished = rendered_frame_at_size(
             &app,
-            now + Duration::from_millis(codex_tui::boot_scene::FAIL_MS),
+            now + Duration::from_millis(estelle_tui::boot_scene::FAIL_MS),
             120,
             34,
         );
@@ -9628,7 +9628,7 @@ mod tests {
         assert_eq!(app.composer.text(), "h");
         assert!(matches!(
             app.boot.as_ref().map(|boot| boot.phase(50)),
-            Some(codex_tui::boot_scene::BootPhase::Dissolving { skipped: true, .. })
+            Some(estelle_tui::boot_scene::BootPhase::Dissolving { skipped: true, .. })
         ));
     }
 
@@ -11533,7 +11533,7 @@ mod tests {
             sources: Vec::new(),
         });
         let buffer = rendered_buffer_at_size(&app, Instant::now(), 120, 32);
-        let expected_bg = codex_tui::user_message_style_for(Some((0xE9, 0xE6, 0xDC)))
+        let expected_bg = estelle_tui::user_message_style_for(Some((0xE9, 0xE6, 0xDC)))
             .bg
             .expect("a known terminal background yields a fill");
         let row_with = |needle: &str| {

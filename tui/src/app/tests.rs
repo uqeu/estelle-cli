@@ -4,7 +4,6 @@
 mod advanced_reasoning_tests;
 #[path = "tests/key_chords.rs"]
 mod key_chords;
-mod model_catalog;
 mod plugin_catalog;
 mod rate_limits;
 mod safety_buffering;
@@ -5147,6 +5146,7 @@ async fn uncapped_resize_reflow_renders_all_cells_when_row_cap_absent() {
 }
 
 #[tokio::test]
+#[cfg(any())]
 async fn resize_reflow_wraps_transcript_early_when_pet_is_enabled() {
     let (mut app, _rx, _op_rx) = make_test_app_with_channels().await;
     app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Disabled;

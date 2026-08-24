@@ -267,7 +267,7 @@ The inherited Codex approval snapshot tests passed without replacement: 2 passed
 The spec's forecast that the six direct TUI dependencies would become deletable after the HTTP transplant
 is still wrong. `codex-app-server-client`, `codex-app-server-protocol`, `codex-cloud-config`,
 `codex-core-plugins`, `codex-feedback`, and `codex-sandboxing` remain direct `estelle-tui` dependencies.
-The preserved `codex_tui` library still compiles their consumers; the Estelle binary deliberately uses
+The preserved `estelle_tui` library still compiles their consumers; the Estelle binary deliberately uses
 that library's real `ComposerInput`, slash menu, and approval surface. Removing the dependencies would
 make the maintained terminal layer uncompilable or require a new narrow extraction that stops being the
 fork P0/P1 accepted. P2 does not replace those consumers with hollow stubs to manufacture a lower count.

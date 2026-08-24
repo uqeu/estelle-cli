@@ -27,7 +27,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::Command;
 use crate::commands;
-use codex_tui::session_gap;
+use estelle_tui::session_gap;
 
 const SOURCE_EXTENSIONS: &[&str] = &[
     "c", "cpp", "cs", "go", "h", "hpp", "java", "js", "jsx", "kt", "md", "php", "py", "rb", "rs",

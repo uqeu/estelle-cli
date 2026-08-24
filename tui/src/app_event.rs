@@ -476,12 +476,6 @@ pub(crate) enum AppEvent {
         thread_id: ThreadId,
     },
 
-    /// Persist a pet selection and reload the ambient pet.
-    ConfiguredPetLoaded {
-        pet_id: String,
-        result: Result<Option<crate::pets::AmbientPet>, String>,
-    },
-
     /// Refresh app connector state and mention bindings.
     RefreshConnectors {
         force_refetch: bool,
@@ -923,12 +917,6 @@ pub(crate) enum AppEvent {
 
     /// Persist the Plan-mode-specific reasoning effort.
     PersistPlanModeReasoningEffort(Option<ReasoningEffort>),
-
-    /// Persist the acknowledgement flag for the model migration prompt.
-    PersistModelMigrationPromptAcknowledged {
-        from_model: String,
-        to_model: String,
-    },
 
     /// Skip the next world-writable scan (one-shot) after a user-confirmed continue.
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]

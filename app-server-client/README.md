@@ -3,7 +3,7 @@
 Shared in-process app-server client used by conversational CLI surfaces:
 
 - `codex-exec`
-- `codex-tui`
+- `estelle-tui`
 
 ## Purpose
 

@@ -198,7 +198,6 @@ const PLAN_MODE_REASONING_SCOPE_TITLE: &str = "Apply reasoning change";
 const PLAN_MODE_REASONING_SCOPE_PLAN_ONLY: &str = "Apply to Plan mode override";
 const PLAN_MODE_REASONING_SCOPE_ALL_MODES: &str = "Apply to global default and Plan mode override";
 const CONNECTORS_SELECTION_VIEW_ID: &str = "connectors-selection";
-const AMBIENT_PET_WRAP_GAP_COLUMNS: u16 = 2;
 const TUI_STUB_MESSAGE: &str = "Not available in TUI yet.";
 const PARENT_OWNED_INPUT_MESSAGE: &str =
     "This sub-agent is controlled by its parent. Direct input is disabled.";
@@ -364,7 +363,6 @@ use self::interrupts::InterruptManager;
 mod keymap_picker;
 mod mcp_startup;
 use self::mcp_startup::McpStartupStatus;
-mod pets;
 mod session_flow;
 mod session_header;
 use self::session_header::SessionHeader;
@@ -646,11 +644,6 @@ pub(crate) struct ChatWidget {
     review: ReviewState,
     // Active hook runs render in a dedicated live cell so they can run alongside tools.
     active_hook_cell: Option<HookCell>,
-    // Reused for built-in pet CDN requests so redirects remain route-aware.
-    // Ambient companion rendered over the transcript area, never inside the footer rows.
-    ambient_pet: Option<crate::pets::AmbientPet>,
-    #[cfg(test)]
-    pet_image_support_override: Option<crate::pets::PetImageSupport>,
     thread_id: Option<ThreadId>,
     /// Nudge dismissals that should survive draft edits within the current thread scope.
     ///
@@ -1188,9 +1181,6 @@ impl ChatWidget {
         self.update_due_hook_visibility();
         self.schedule_hook_timer_if_needed();
         self.bottom_pane.pre_draw_tick();
-        if let Some(pet) = self.ambient_pet.as_ref() {
-            pet.schedule_next_frame();
-        }
         self.refresh_plan_mode_nudge();
         self.refresh_goal_status_indicator_for_time_tick();
         if self.terminal_title_shows_action_required() != self.last_terminal_title_requires_action {
@@ -1202,6 +1192,10 @@ impl ChatWidget {
             self.refresh_terminal_title();
         }
         self.refresh_status_line_if_workspace_headline_due();
+    }
+
+    pub(crate) fn history_wrap_width(&self, width: u16) -> u16 {
+        width.max(1)
     }
 
     fn flush_active_cell(&mut self) {
@@ -1389,13 +1383,6 @@ impl ChatWidget {
 
     pub(crate) fn on_diff_complete(&mut self) {
         self.request_redraw();
-    }
-
-    pub(crate) fn add_debug_config_output(&mut self) {
-        self.add_to_history(crate::debug_config::new_debug_config_output(
-            &self.config,
-            self.session_network_proxy.as_ref(),
-        ));
     }
 
     pub(crate) fn add_ps_output(&mut self) {

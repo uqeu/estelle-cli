@@ -4,7 +4,7 @@
 //! CLI dispatch path while preserving the TUI startup error as the boundary type.
 
 use codex_state::RuntimeDbBackup;
-use codex_tui::LocalStateDbStartupError;
+use estelle_tui::LocalStateDbStartupError;
 use std::io::IsTerminal;
 use std::path::Path;
 

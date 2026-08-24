@@ -14,7 +14,7 @@ name = "md-events"
 path = "src/bin/md-events.rs"
 
 [lib]
-name = "codex_tui"
+name = "estelle_tui"
 path = "src/lib.rs"
 doctest = false
 

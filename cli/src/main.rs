@@ -27,10 +27,10 @@ use codex_responses_api_proxy::Args as ResponsesApiProxyArgs;
 use codex_rollout_trace::REDUCED_STATE_FILE_NAME;
 use codex_rollout_trace::replay_bundle;
 use codex_state::StateRuntime;
-use codex_tui::AppExitInfo;
-use codex_tui::Cli as TuiCli;
-use codex_tui::ExitReason;
-use codex_tui::UpdateAction;
+use estelle_tui::AppExitInfo;
+use estelle_tui::Cli as TuiCli;
+use estelle_tui::ExitReason;
+use estelle_tui::UpdateAction;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::CliConfigOverrides;
 use codex_utils_cli::ProfileV2Name;
@@ -817,7 +817,7 @@ fn run_update_command() -> anyhow::Result<()> {
 
     #[cfg(not(debug_assertions))]
     {
-        let Some(action) = codex_tui::get_update_action() else {
+        let Some(action) = estelle_tui::get_update_action() else {
             anyhow::bail!(
                 "Could not detect the Codex installation method. Please update manually: https://developers.openai.com/codex/cli/"
             );
@@ -831,7 +831,7 @@ fn run_execpolicycheck(cmd: ExecPolicyCheckCommand) -> anyhow::Result<()> {
 }
 
 async fn run_session_archive_cli_command(
-    action: codex_tui::SessionArchiveAction,
+    action: estelle_tui::SessionArchiveAction,
     cmd: SessionArchiveCommand,
     mut interactive: TuiCli,
     root_config_overrides: CliConfigOverrides,
@@ -850,10 +850,10 @@ async fn run_session_archive_cli_command(
         remote.remote.or(root_remote),
         remote.remote_auth_token_env.or(root_remote_auth_token_env),
     )?;
-    codex_tui::run_session_archive_command(
+    estelle_tui::run_session_archive_command(
         action,
         target,
-        codex_tui::SessionArchiveCommandOptions {
+        estelle_tui::SessionArchiveCommandOptions {
             cli: interactive,
             arg0_paths,
             explicit_remote_endpoint,
@@ -863,15 +863,15 @@ async fn run_session_archive_cli_command(
     .map_err(|err| anyhow::anyhow!("{err}"))
 }
 
-fn delete_action(target: &str, force: bool) -> anyhow::Result<codex_tui::SessionArchiveAction> {
+fn delete_action(target: &str, force: bool) -> anyhow::Result<estelle_tui::SessionArchiveAction> {
     if force && codex_protocol::ThreadId::from_string(target).is_err() {
         anyhow::bail!("--force requires a session UUID; names must be confirmed interactively");
     }
     let confirmation = match force {
-        true => codex_tui::DeleteConfirmation::Skip,
-        false => codex_tui::DeleteConfirmation::Prompt,
+        true => estelle_tui::DeleteConfirmation::Skip,
+        false => estelle_tui::DeleteConfirmation::Prompt,
     };
-    Ok(codex_tui::SessionArchiveAction::Delete(confirmation))
+    Ok(estelle_tui::SessionArchiveAction::Delete(confirmation))
 }
 
 async fn run_debug_app_server_command(cmd: DebugAppServerCommand) -> anyhow::Result<()> {
@@ -1296,7 +1296,7 @@ async fn cli_main(
         }
         Some(Subcommand::Archive(cmd)) => {
             let output = run_session_archive_cli_command(
-                codex_tui::SessionArchiveAction::Archive,
+                estelle_tui::SessionArchiveAction::Archive,
                 cmd,
                 interactive,
                 root_config_overrides.clone(),
@@ -1323,7 +1323,7 @@ async fn cli_main(
         }
         Some(Subcommand::Unarchive(cmd)) => {
             let output = run_session_archive_cli_command(
-                codex_tui::SessionArchiveAction::Unarchive,
+                estelle_tui::SessionArchiveAction::Unarchive,
                 cmd,
                 interactive,
                 root_config_overrides.clone(),
@@ -2382,7 +2382,7 @@ async fn run_interactive_tui(
         Err(err) => return Err(err),
     };
     let start_tui = || {
-        codex_tui::run_main(
+        estelle_tui::run_main(
             interactive.clone(),
             arg0_paths.clone(),
             codex_config::LoaderOverrides::default(),
@@ -2427,10 +2427,10 @@ async fn run_interactive_tui(
 fn resolve_remote_endpoint(
     remote: Option<String>,
     remote_auth_token_env: Option<String>,
-) -> std::io::Result<Option<codex_tui::RemoteAppServerEndpoint>> {
+) -> std::io::Result<Option<estelle_tui::RemoteAppServerEndpoint>> {
     let mut remote_endpoint = remote
         .as_deref()
-        .map(codex_tui::resolve_remote_addr)
+        .map(estelle_tui::resolve_remote_addr)
         .transpose()
         .map_err(std::io::Error::other)?;
     if let Some(remote_auth_token_env) = remote_auth_token_env {
@@ -2439,14 +2439,14 @@ fn resolve_remote_endpoint(
                 "`--remote-auth-token-env` requires `--remote`.",
             ));
         };
-        if !codex_tui::remote_addr_supports_auth_token(endpoint) {
+        if !estelle_tui::remote_addr_supports_auth_token(endpoint) {
             return Err(std::io::Error::other(
                 "`--remote-auth-token-env` requires a `wss://` or loopback `ws://` remote.",
             ));
         }
         let auth_token = read_remote_auth_token_from_env_var(&remote_auth_token_env)
             .map_err(std::io::Error::other)?;
-        let codex_tui::RemoteAppServerEndpoint::WebSocket {
+        let estelle_tui::RemoteAppServerEndpoint::WebSocket {
             auth_token: slot, ..
         } = endpoint
         else {
@@ -2616,7 +2616,7 @@ mod tests {
     use super::*;
     use assert_matches::assert_matches;
     use codex_protocol::ThreadId;
-    use codex_tui::TokenUsage;
+    use estelle_tui::TokenUsage;
     use pretty_assertions::assert_eq;
 
     #[tokio::test]

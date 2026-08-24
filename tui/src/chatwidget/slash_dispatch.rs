@@ -465,9 +465,6 @@ impl ChatWidget {
             SlashCommand::Ide => {
                 self.handle_ide_command();
             }
-            SlashCommand::DebugConfig => {
-                self.add_debug_config_output();
-            }
             SlashCommand::Title => {
                 self.open_terminal_title_setup();
             }
@@ -1059,7 +1056,6 @@ impl ChatWidget {
             SlashCommand::Ide
             | SlashCommand::Status
             | SlashCommand::Usage
-            | SlashCommand::DebugConfig
             | SlashCommand::Ps
             | SlashCommand::Stop
             | SlashCommand::MemoryDrop

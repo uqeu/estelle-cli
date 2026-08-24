@@ -63,7 +63,7 @@ was also proven red in P0 and remains enforced.
    bounded response is available for the first end-to-end question. The shipped JS session path uses
    `/deep-search`, which is the working P1 transport.
 4. The six direct dependencies do not become deletable merely by swapping the binary's transport.
-   The preserved `codex_tui` library still compiles modules that consume all six, and the actual
+   The preserved `estelle_tui` library still compiles modules that consume all six, and the actual
    composer directly imports app-server protocol skill types.
 
 ## Post-transplant amputation count
