@@ -32,6 +32,8 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -110,6 +112,8 @@ use ratatui::widgets::GraphType;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
 use serde_json::Value;
+use tokio::io::AsyncRead;
+use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command as TokioCommand;
 use tokio::sync::mpsc;
@@ -117,6 +121,8 @@ use tokio_util::sync::CancellationToken;
 use unicode_width::UnicodeWidthChar;
 
 const FRAME_INTERVAL: Duration = Duration::from_millis(100);
+const SHELL_TIMEOUT: Duration = Duration::from_secs(30);
+const SHELL_OUTPUT_CAP_BYTES: usize = 64 * 1024;
 // P6's brand palette is intentionally truecolor; the rest of the TUI remains theme-safe ANSI.
 const FATE_BG: Color = Color::from_u32(0xE9_E6_DC);
 const FATE_GHOST: Color = Color::from_u32(0xC8_C2_B3);
@@ -4061,6 +4067,21 @@ async fn execute_shell(
     source: &str,
     cancel: &CancellationToken,
 ) -> Result<Vec<String>, String> {
+    execute_shell_with_limits(root, source, cancel, SHELL_TIMEOUT, SHELL_OUTPUT_CAP_BYTES).await
+}
+
+async fn execute_shell_with_limits(
+    root: &std::path::Path,
+    source: &str,
+    cancel: &CancellationToken,
+    timeout: Duration,
+    output_cap: usize,
+) -> Result<Vec<String>, String> {
+    assert!(
+        !source.trim().is_empty(),
+        "an empty command is not executable"
+    );
+    assert!(output_cap > 0, "shell output must have a positive cap");
     #[cfg(windows)]
     let mut command = {
         let mut command = TokioCommand::new("cmd");
@@ -4074,8 +4095,11 @@ async fn execute_shell(
         command
     };
     command.current_dir(root);
-    let output = cancellable_output(command, cancel).await?;
+    let output = bounded_shell_output(command, cancel, timeout, output_cap).await?;
     let mut lines = output_lines(&output.stdout, &output.stderr);
+    if output.truncated {
+        lines.push(format!("Output truncated after {output_cap} bytes."));
+    }
     if !output.status.success() {
         return Err(nonblank_output(
             &lines,
@@ -4086,6 +4110,110 @@ async fn execute_shell(
         lines.push("Command completed with no output.".to_string());
     }
     Ok(lines)
+}
+
+struct BoundedCommandOutput {
+    status: std::process::ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    truncated: bool,
+}
+
+async fn bounded_shell_output(
+    mut command: TokioCommand,
+    cancel: &CancellationToken,
+    timeout: Duration,
+    output_cap: usize,
+) -> Result<BoundedCommandOutput, String> {
+    assert!(!timeout.is_zero(), "shell timeout must be positive");
+    assert!(output_cap > 0, "shell output cap must be positive");
+    command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    let stdout = child.stdout.take().ok_or("shell stdout was unavailable")?;
+    let stderr = child.stderr.take().ok_or("shell stderr was unavailable")?;
+    let remaining = Arc::new(AtomicUsize::new(output_cap));
+    let stdout_task = tokio::spawn(read_shared_capped(stdout, remaining.clone(), output_cap));
+    let stderr_task = tokio::spawn(read_shared_capped(stderr, remaining, output_cap));
+    let status = tokio::select! {
+        () = cancel.cancelled() => {
+            stop_child(&mut child).await?;
+            join_capped_reader(stdout_task).await?;
+            join_capped_reader(stderr_task).await?;
+            return Err("cancelled".to_string());
+        }
+        () = tokio::time::sleep(timeout) => {
+            stop_child(&mut child).await?;
+            join_capped_reader(stdout_task).await?;
+            join_capped_reader(stderr_task).await?;
+            return Err(format!("command timed out after {} ms", timeout.as_millis()));
+        }
+        status = child.wait() => status.map_err(|error| error.to_string())?,
+    };
+    let (stdout, stdout_truncated) = join_capped_reader(stdout_task).await?;
+    let (stderr, stderr_truncated) = join_capped_reader(stderr_task).await?;
+    Ok(BoundedCommandOutput {
+        status,
+        stdout,
+        stderr,
+        truncated: stdout_truncated || stderr_truncated,
+    })
+}
+
+async fn stop_child(child: &mut tokio::process::Child) -> Result<(), String> {
+    match child.kill().await {
+        Ok(()) => {}
+        Err(_error) if child.try_wait().is_ok_and(|status| status.is_some()) => return Ok(()),
+        Err(error) => return Err(format!("could not terminate shell command: {error}")),
+    }
+    child
+        .wait()
+        .await
+        .map(|_| ())
+        .map_err(|error| format!("could not reap shell command: {error}"))
+}
+
+async fn read_shared_capped<R>(
+    mut reader: R,
+    remaining: Arc<AtomicUsize>,
+    output_cap: usize,
+) -> io::Result<(Vec<u8>, bool)>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    let mut kept = Vec::new();
+    let mut chunk = [0_u8; 8192];
+    let mut truncated = false;
+    loop {
+        let read = reader.read(&mut chunk).await?;
+        if read == 0 {
+            break;
+        }
+        let allowance = remaining
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |left| {
+                Some(left.saturating_sub(read))
+            })
+            .unwrap_or_default();
+        let retain = allowance.min(read);
+        kept.extend_from_slice(&chunk[..retain]);
+        truncated |= retain < read;
+        assert!(
+            retain <= read,
+            "a reader cannot retain bytes it did not read"
+        );
+        assert!(kept.len() <= output_cap, "shared cap exceeded");
+    }
+    Ok((kept, truncated))
+}
+
+async fn join_capped_reader(
+    task: tokio::task::JoinHandle<io::Result<(Vec<u8>, bool)>>,
+) -> Result<(Vec<u8>, bool), String> {
+    task.await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())
 }
 
 async fn apply_diff(
@@ -7687,6 +7815,61 @@ mod tests {
     #[test]
     fn chatgpt_plan_login_is_not_an_acquisition_surface() {
         assert!(Args::try_parse_from(["estelle", "login", "--chatgpt"]).is_err());
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn shell_captures_stdout_and_stderr_without_an_estelle_request() {
+        let root = tempfile::tempdir().expect("shell root");
+        let lines = execute_shell_with_limits(
+            root.path(),
+            "printf 'from-out\\n'; printf 'from-err\\n' >&2",
+            &CancellationToken::new(),
+            Duration::from_secs(1),
+            1024,
+        )
+        .await
+        .expect("bounded shell command");
+
+        assert!(lines.iter().any(|line| line == "from-out"));
+        assert!(lines.iter().any(|line| line == "from-err"));
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn shell_output_is_capped_and_names_the_truncation() {
+        let root = tempfile::tempdir().expect("shell root");
+        let lines = execute_shell_with_limits(
+            root.path(),
+            "i=0; while [ \"$i\" -lt 200 ]; do printf x; i=$((i+1)); done",
+            &CancellationToken::new(),
+            Duration::from_secs(1),
+            64,
+        )
+        .await
+        .expect("bounded shell command");
+        let rendered = lines.join("\n");
+
+        assert!(rendered.contains("Output truncated after 64 bytes."));
+        assert!(rendered.len() < 140, "the cap must bound retained output");
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn shell_timeout_kills_a_stalled_command() {
+        let root = tempfile::tempdir().expect("shell root");
+        let error = execute_shell_with_limits(
+            root.path(),
+            "sleep 1",
+            &CancellationToken::new(),
+            Duration::from_millis(20),
+            1024,
+        )
+        .await
+        .expect_err("a stalled shell command must time out");
+
+        assert!(error.contains("timed out after 20 ms"));
+        assert!(!error.contains("completed"));
     }
 
     #[test]
