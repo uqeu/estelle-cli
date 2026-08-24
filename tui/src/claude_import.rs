@@ -167,7 +167,7 @@ fn write_import_receipt(
     )?;
     writeln!(
         output,
-        "Credential import is complete; provider runtime binding is not yet proven. Run estelle doctor."
+        "Credential import is complete; no Claude model request was made during import."
     )?;
     output.flush()
 }
@@ -225,21 +225,5 @@ mod tests {
             1,
             "source blob stayed unchanged"
         );
-    }
-
-    #[test]
-    fn import_receipt_does_not_claim_the_unbound_runtime_is_connected() {
-        let mut output = Vec::new();
-        write_import_receipt(
-            &mut output,
-            "Claude Code macOS Keychain",
-            Path::new("/tmp/claude.json"),
-        )
-        .expect("receipt");
-
-        let rendered = String::from_utf8(output).expect("UTF-8 receipt");
-        assert!(rendered.contains("runtime binding is not yet proven"));
-        assert!(rendered.contains("Run estelle doctor"));
-        assert!(!rendered.contains("connected"));
     }
 }

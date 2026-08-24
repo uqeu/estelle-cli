@@ -130,7 +130,7 @@ async fn run_with(
     writeln!(output, "GitHub Copilot credential stored privately.")?;
     writeln!(
         output,
-        "Credential acquisition is complete; provider entitlement and runtime binding is not yet proven. Run estelle doctor."
+        "GitHub authorized the device flow; no Copilot model request was made during login."
     )?;
     output.flush()
 }
@@ -292,7 +292,6 @@ mod tests {
         );
         let receipt = String::from_utf8(output).expect("UTF-8 receipt");
         assert!(receipt.contains("ABCD-EFGH"));
-        assert!(receipt.contains("runtime binding is not yet proven"));
         assert!(!receipt.contains(token));
     }
 

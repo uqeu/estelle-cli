@@ -106,7 +106,10 @@ mod read_tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("providers/local.json");
         write_private_json(
-            &Out { base_url: "http://localhost:1234/v1", api_key: Some("k") },
+            &Out {
+                base_url: "http://localhost:1234/v1",
+                api_key: Some("k"),
+            },
             &path,
             "local",
         )
@@ -143,6 +146,9 @@ mod read_tests {
         let error = back.expect_err("a corrupt snapshot must not read as absent");
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         assert!(error.to_string().contains("present but unreadable"));
-        assert!(error.to_string().contains("broken.json"), "it must name the file");
+        assert!(
+            error.to_string().contains("broken.json"),
+            "it must name the file"
+        );
     }
 }

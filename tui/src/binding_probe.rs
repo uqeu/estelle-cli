@@ -30,6 +30,10 @@ pub(crate) enum Binding {
     Bound { detail: String },
     /// The endpoint answered and REFUSED. The credential is present and wrong (or unentitled).
     Refused { status: u16 },
+    /// The endpoint answered, but not with an authentication refusal or a usable model list.
+    EndpointError { status: u16 },
+    /// Success status with bytes that do not satisfy the model-list response contract.
+    InvalidResponse,
     /// We never got an answer. ⚠️ Distinct from `Refused` on purpose: they have opposite fixes —
     /// one is a bad credential, the other is a dead endpoint, and collapsing them sends the user to
     /// re-run a login that was never the problem.
@@ -39,7 +43,13 @@ pub(crate) enum Binding {
 impl Binding {
     /// A failure is something the user must act on. `NotConfigured` is not one.
     pub(crate) fn is_failure(&self) -> bool {
-        matches!(self, Binding::Refused { .. } | Binding::Unreachable { .. })
+        matches!(
+            self,
+            Binding::Refused { .. }
+                | Binding::EndpointError { .. }
+                | Binding::InvalidResponse
+                | Binding::Unreachable { .. }
+        )
     }
 
     pub(crate) fn line(&self, provider: &str) -> String {
@@ -49,6 +59,14 @@ impl Binding {
             Binding::Refused { status } => format!(
                 "{provider} binding  FAIL · the endpoint answered {status} and refused the stored \
                  credential — the credential is present and not accepted, so re-run the login"
+            ),
+            Binding::EndpointError { status } => format!(
+                "{provider} binding  FAIL · the endpoint answered {status}; only 401/403 mean the \
+                 stored credential was refused — inspect the endpoint and provider state"
+            ),
+            Binding::InvalidResponse => format!(
+                "{provider} binding  FAIL · the endpoint answered 2xx without a model-list data \
+                 array — acceptance could not be verified"
             ),
             Binding::Unreachable { reason } => format!(
                 "{provider} binding  FAIL · no answer within {PROBE_TIMEOUT_S}s: {reason} — the \
@@ -69,7 +87,9 @@ pub(crate) async fn probe_openai_compatible(
     api_key: Option<&str>,
 ) -> Binding {
     let url = format!("{}/models", base_url.trim_end_matches('/'));
-    let mut request = client.get(&url).timeout(Duration::from_secs(PROBE_TIMEOUT_S));
+    let mut request = client
+        .get(&url)
+        .timeout(Duration::from_secs(PROBE_TIMEOUT_S));
     if let Some(key) = api_key.filter(|key| !key.is_empty()) {
         request = request.bearer_auth(key);
     }
@@ -77,7 +97,10 @@ pub(crate) async fn probe_openai_compatible(
         Err(error) => Binding::Unreachable {
             reason: error.to_string(),
         },
-        Ok(response) if !response.status().is_success() => Binding::Refused {
+        Ok(response) if matches!(response.status().as_u16(), 401 | 403) => Binding::Refused {
+            status: response.status().as_u16(),
+        },
+        Ok(response) if !response.status().is_success() => Binding::EndpointError {
             status: response.status().as_u16(),
         },
         Ok(response) => {
@@ -85,14 +108,15 @@ pub(crate) async fn probe_openai_compatible(
                 .json::<serde_json::Value>()
                 .await
                 .ok()
-                .and_then(|body| body.get("data").and_then(|data| data.as_array().map(Vec::len)));
-            Binding::Bound {
-                detail: match count {
-                    Some(n) => format!("{url} answered · {n} model(s) offered"),
-                    // ⚠️ A 2xx whose body we could not parse still proves the credential was accepted.
-                    // Saying so beats inventing a count we did not read.
-                    None => format!("{url} answered · model list unparsed"),
+                .and_then(|body| {
+                    body.get("data")
+                        .and_then(|data| data.as_array().map(Vec::len))
+                });
+            match count {
+                Some(n) => Binding::Bound {
+                    detail: format!("{url} answered · {n} model(s) offered"),
                 },
+                None => Binding::InvalidResponse,
             }
         }
     }
@@ -113,7 +137,14 @@ mod tests {
     #[test]
     fn both_failure_kinds_are_failures() {
         assert!(Binding::Refused { status: 401 }.is_failure());
-        assert!(Binding::Unreachable { reason: "connection refused".into() }.is_failure());
+        assert!(Binding::EndpointError { status: 500 }.is_failure());
+        assert!(Binding::InvalidResponse.is_failure());
+        assert!(
+            Binding::Unreachable {
+                reason: "connection refused".into()
+            }
+            .is_failure()
+        );
     }
 
     #[test]
@@ -121,7 +152,10 @@ mod tests {
         // 🔴 They have OPPOSITE fixes. Collapsing them sends the user to re-run a login that was
         // never the problem, which is exactly the loop this module exists to end.
         let refused = Binding::Refused { status: 401 }.line("local");
-        let unreachable = Binding::Unreachable { reason: "connection refused".into() }.line("local");
+        let unreachable = Binding::Unreachable {
+            reason: "connection refused".into(),
+        }
+        .line("local");
         assert_ne!(refused, unreachable);
         assert!(refused.contains("re-run the login"));
         assert!(unreachable.contains("check the endpoint first"));
@@ -134,8 +168,14 @@ mod tests {
         // user-visible outcome of a successful login; if it comes back, so has the defect.
         for binding in [
             Binding::Refused { status: 403 },
-            Binding::Unreachable { reason: "timed out".into() },
-            Binding::Bound { detail: "ok".into() },
+            Binding::EndpointError { status: 429 },
+            Binding::InvalidResponse,
+            Binding::Unreachable {
+                reason: "timed out".into(),
+            },
+            Binding::Bound {
+                detail: "ok".into(),
+            },
             Binding::NotConfigured,
         ] {
             assert!(!binding.line("local").contains("not yet proven"));
@@ -147,5 +187,56 @@ mod tests {
         // A bound that is not visible to the person waiting is a bound only the author knows about.
         let line = Binding::Unreachable { reason: "x".into() }.line("local");
         assert!(line.contains(&PROBE_TIMEOUT_S.to_string()));
+    }
+
+    #[tokio::test]
+    async fn model_list_probe_distinguishes_acceptance_auth_refusal_and_server_failure() {
+        use wiremock::Mock;
+        use wiremock::MockServer;
+        use wiremock::ResponseTemplate;
+        use wiremock::matchers::method;
+        use wiremock::matchers::path;
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/ok/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{"id": "local-model"}]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/auth/models"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/server/models"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/invalid/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not a model list"))
+            .mount(&server)
+            .await;
+        let client = reqwest::Client::new();
+
+        assert!(matches!(
+            probe_openai_compatible(&client, &format!("{}/ok", server.uri()), None).await,
+            Binding::Bound { .. }
+        ));
+        assert_eq!(
+            probe_openai_compatible(&client, &format!("{}/auth", server.uri()), Some("bad")).await,
+            Binding::Refused { status: 401 }
+        );
+        assert_eq!(
+            probe_openai_compatible(&client, &format!("{}/server", server.uri()), None).await,
+            Binding::EndpointError { status: 500 }
+        );
+        assert_eq!(
+            probe_openai_compatible(&client, &format!("{}/invalid", server.uri()), None).await,
+            Binding::InvalidResponse
+        );
     }
 }

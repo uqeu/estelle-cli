@@ -197,7 +197,7 @@ async fn probe_local_binding() -> crate::binding_probe::Binding {
         Err(error) => {
             return Binding::Unreachable {
                 reason: format!("the stored endpoint could not be read: {error}"),
-            }
+            };
         }
         Ok(None) => return Binding::NotConfigured,
         Ok(Some(stored)) => stored,
@@ -212,7 +212,7 @@ async fn probe_local_binding() -> crate::binding_probe::Binding {
         Err(error) => {
             return Binding::Unreachable {
                 reason: format!("no HTTP client could be built: {error}"),
-            }
+            };
         }
     };
     crate::binding_probe::probe_openai_compatible(

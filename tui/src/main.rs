@@ -533,7 +533,7 @@ enum InlineLoginOutcome {
     Estelle(login::LoginOutcome),
     Claude,
     Copilot,
-    Provider(&'static str),
+    Provider(&'static str, Option<binding_probe::Binding>),
 }
 
 struct AuthContext {
@@ -2026,10 +2026,14 @@ impl App {
             Ok(InlineLoginOutcome::Copilot) => {
                 self.finish_model_login("GitHub Copilot credential stored.")
             }
-            Ok(InlineLoginOutcome::Provider(provider)) => {
+            Ok(InlineLoginOutcome::Provider(provider, binding)) => {
                 self.transcript.push(TranscriptEntry::System(format!(
-                    "{provider} credential stored without exposing its value."
+                    "{provider} configuration stored without exposing credential values."
                 )));
+                if let Some(binding) = binding {
+                    self.transcript
+                        .push(TranscriptEntry::System(binding.line(provider)));
+                }
                 self.auth_resolved = false;
                 spawn_credential_resolution(tx);
             }
@@ -7217,13 +7221,13 @@ async fn run(
                     .map(|()| InlineLoginOutcome::Copilot),
                 PendingLogin::Provider(provider) => run_provider_login(provider, None, None, None)
                     .await
-                    .map(|()| InlineLoginOutcome::Provider(provider)),
+                    .map(|binding| InlineLoginOutcome::Provider(provider, binding)),
                 PendingLogin::EstelleThenProvider(provider) => match login::run().await {
                     Ok(
                         login::LoginOutcome::StoredVerified | login::LoginOutcome::StoredUnverified,
                     ) => run_provider_login(provider, None, None, None)
                         .await
-                        .map(|()| InlineLoginOutcome::Provider(provider)),
+                        .map(|binding| InlineLoginOutcome::Provider(provider, binding)),
                     Ok(login::LoginOutcome::Rejected) => {
                         Ok(InlineLoginOutcome::Estelle(login::LoginOutcome::Rejected))
                     }
@@ -7258,11 +7262,13 @@ async fn run_provider_login(
     base_url: Option<&str>,
     model: Option<&str>,
     label: Option<&str>,
-) -> io::Result<()> {
+) -> io::Result<Option<binding_probe::Binding>> {
     let descriptor = provider_catalog::resolve(provider)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "unknown provider"))?;
     if descriptor.auth == provider_catalog::AuthKind::LocalEndpoint {
-        return local_provider::run(provider, base_url, model);
+        return local_provider::run(provider, base_url, model)
+            .await
+            .map(Some);
     }
     let prompted_base = if base_url.is_none() && descriptor.requires_base_url() {
         login::read_plain_value(b"Provider API base URL: ")?
@@ -7271,15 +7277,17 @@ async fn run_provider_login(
     };
     let route = provider_catalog::login_route(provider, base_url.or(prompted_base.as_deref()))?;
     match route.provider.auth {
-        provider_catalog::AuthKind::ClaudeImport => claude_import::run(),
+        provider_catalog::AuthKind::ClaudeImport => claude_import::run().map(|()| None),
         provider_catalog::AuthKind::ApiKey => {
             let server_provider = route
                 .provider
                 .server_provider
                 .ok_or_else(|| io::Error::other("provider key route has no server identity"))?;
-            provider_keys::run(server_provider, route.base_url.as_deref(), model, label).await
+            provider_keys::run(server_provider, route.base_url.as_deref(), model, label)
+                .await
+                .map(|()| None)
         }
-        provider_catalog::AuthKind::CopilotDevice => copilot_login::run().await,
+        provider_catalog::AuthKind::CopilotDevice => copilot_login::run().await.map(|()| None),
         provider_catalog::AuthKind::LocalEndpoint => unreachable!("handled before route dispatch"),
     }
 }
@@ -7366,7 +7374,8 @@ async fn main() -> ExitCode {
             )
             .await;
             return match result {
-                Ok(()) => ExitCode::SUCCESS,
+                Ok(Some(binding)) if binding.is_failure() => ExitCode::FAILURE,
+                Ok(_) => ExitCode::SUCCESS,
                 Err(error) => login_failure(&error).await,
             };
         }

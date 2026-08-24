@@ -94,11 +94,11 @@ fn remove_if_present(path: &Path) -> io::Result<bool> {
     }
 }
 
-pub(crate) fn run(
+pub(crate) async fn run(
     provider: &str,
     supplied_base: Option<&str>,
     model: Option<&str>,
-) -> io::Result<()> {
+) -> io::Result<crate::binding_probe::Binding> {
     let descriptor = provider_catalog::resolve(provider)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "unknown local provider"))?;
     if descriptor.auth != provider_catalog::AuthKind::LocalEndpoint {
@@ -125,22 +125,31 @@ pub(crate) fn run(
         Zeroizing::new(String::new())
     };
     let secret = (!secret.is_empty()).then_some(secret);
-    persist_and_receipt(
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(
+            crate::binding_probe::PROBE_TIMEOUT_S,
+        ))
+        .build()
+        .map_err(io::Error::other)?;
+    persist_and_probe(
+        &client,
         &route,
         model,
         secret.as_deref().map(String::as_str),
         &store_path()?,
         &mut io::stdout(),
     )
+    .await
 }
 
-fn persist_and_receipt(
+async fn persist_and_probe(
+    client: &reqwest::Client,
     route: &provider_catalog::LoginRoute,
     model: Option<&str>,
     api_key: Option<&str>,
     destination: &Path,
     output: &mut impl Write,
-) -> io::Result<()> {
+) -> io::Result<crate::binding_probe::Binding> {
     persist_model_profile(model, destination)?;
     let snapshot = LocalProviderSnapshot {
         provider: route.provider.id,
@@ -165,11 +174,15 @@ fn persist_and_receipt(
             "not required for this local endpoint"
         }
     )?;
-    writeln!(
-        output,
-        "Endpoint acquisition is complete; provider runtime binding is not yet proven. Run estelle doctor."
-    )?;
-    output.flush()
+    let binding = crate::binding_probe::probe_openai_compatible(
+        client,
+        route.base_url.as_deref().unwrap_or_default(),
+        api_key,
+    )
+    .await;
+    writeln!(output, "{}", binding.line(route.provider.display_name))?;
+    output.flush()?;
+    Ok(binding)
 }
 
 fn persist_model_profile(model: Option<&str>, credential_store: &Path) -> io::Result<()> {
@@ -251,29 +264,50 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     use tempfile::tempdir;
+    use wiremock::Mock;
+    use wiremock::MockServer;
+    use wiremock::ResponseTemplate;
+    use wiremock::matchers::header;
+    use wiremock::matchers::method;
+    use wiremock::matchers::path;
     use zeroize::Zeroizing;
 
     use super::*;
 
-    #[test]
-    fn endpoint_snapshot_is_private_and_receipt_never_renders_the_key() {
+    #[tokio::test]
+    async fn endpoint_snapshot_is_private_and_login_probes_the_wire() {
+        let server = MockServer::start().await;
         let dir = tempdir().expect("tempdir");
         let destination = dir.path().join("providers/local.json");
         let secret = Zeroizing::new("local-test-secret".to_string());
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .and(header(
+                "authorization",
+                format!("Bearer {}", secret.as_str()).as_str(),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{"id": "test-model"}]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
         let route = crate::provider_catalog::login_route(
             "openai-compatible",
-            Some("https://models.example.test/v1"),
+            Some(&format!("{}/v1", server.uri())),
         )
         .expect("custom route");
         let mut output = Vec::new();
 
-        persist_and_receipt(
+        let binding = persist_and_probe(
+            &reqwest::Client::new(),
             &route,
             Some("test-model"),
             Some(secret.as_str()),
             &destination,
             &mut output,
         )
+        .await
         .expect("persist local endpoint");
 
         assert_eq!(
@@ -286,8 +320,12 @@ mod tests {
         );
         let receipt = String::from_utf8(output).expect("UTF-8 receipt");
         assert!(receipt.contains("Endpoint configured"));
-        assert!(receipt.contains("runtime binding is not yet proven"));
+        assert!(receipt.contains("BOUND"));
         assert!(!receipt.contains(secret.as_str()));
+        assert!(matches!(
+            binding,
+            crate::binding_probe::Binding::Bound { .. }
+        ));
 
         let profile = fs::read_to_string(dir.path().join("providers/local-model.json"))
             .expect("non-secret local model profile");
@@ -300,6 +338,47 @@ mod tests {
         assert!(lines.contains("exact bundled metadata unavailable"));
         assert!(!lines.contains("test-model"));
         assert!(!lines.contains(secret.as_str()));
+    }
+
+    #[tokio::test]
+    async fn rejected_local_credential_is_stored_but_reported_as_refused() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(401))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let dir = tempdir().expect("tempdir");
+        let destination = dir.path().join("providers/local.json");
+        let route = crate::provider_catalog::login_route(
+            "openai-compatible",
+            Some(&format!("{}/v1", server.uri())),
+        )
+        .expect("custom route");
+        let mut output = Vec::new();
+
+        let binding = persist_and_probe(
+            &reqwest::Client::new(),
+            &route,
+            None,
+            Some("rejected-key"),
+            &destination,
+            &mut output,
+        )
+        .await
+        .expect("probe result");
+
+        assert_eq!(
+            binding,
+            crate::binding_probe::Binding::Refused { status: 401 }
+        );
+        assert!(destination.is_file(), "the configured endpoint is retained");
+        assert!(
+            String::from_utf8(output)
+                .expect("UTF-8 receipt")
+                .contains("re-run the login")
+        );
     }
 
     #[test]
