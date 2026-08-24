@@ -96,8 +96,35 @@ Orchestra worker registration and durable restart recovery remain ordered work. 
 commands and patch application remain terminal-owned because they mutate the attached working tree; they
 are never presented as detachable server work. Shell commands have a 30-second deadline and a shared
 64-KiB stdout/stderr capture ceiling, render as a distinct command transcript entry, and are killed and
-reaped on timeout. Those bounds prove containment, not command safety: the human typed the command and it
+reaped on timeout. The deadline is visible before and during execution and can be set from 1–1,800 seconds
+with `ESTELLE_SHELL_TIMEOUT_SECONDS`; an absent, zero, malformed, or out-of-range value retains the measured
+30-second default. Those bounds prove containment, not command safety: the human typed the command and it
 does not pass through Estelle autonomy.
+
+### Adopted terminal surfaces and live work
+
+The Estelle binary uses the retained upstream `bottom_pane` composer as its sole input surface, feeding it
+Estelle's command catalogue instead of rebuilding chrome in `main.rs`. Transcript adaptation similarly
+uses the retained history-cell renderer for user and model turns while shell output remains a separate,
+visually distinct command cell. The server `/sessions` result opens the retained resume picker and submits
+only the selected server-returned session id; an empty result has no selectable action. The discarded pets,
+OSS-selection, model-migration, and debug-config product surfaces are absent, and the library target is
+`estelle_tui`. Upstream protocol literals that identify the Codex wire format remain unchanged because a
+product rename is not authorization to fork an external protocol.
+
+`/work` is a durable operation: a 202 receipt names a caller-bound `job_<24 lowercase hex>` locator, then
+both standalone and attached-session clients poll `GET /jobs/{id}` until its remote terminal state. Each
+whole progress snapshot contains a strictly increasing revision plus the measured phase tally. The TUI
+accepts only non-regressing snapshots in the server-owned order `scope → recall → conventions → prompt →
+implement → gate`, prints measured elapsed seconds, and names how long no newer phase has arrived. It never
+derives a percentage or ETA from those boundaries. A malformed locator is refused before transport; an
+unknown phase, unknown tally key, repeated revision, or backwards phase leaves the last valid display
+unchanged. Completion and cancellation remove the live row rather than leaving a stale spinner behind.
+
+`tui/design-book-prototype.html` is the disposable design book for the 15 named customer surfaces. It owns
+three selectable variants per surface, uses the live cream/ink/red palette, includes explicit failure
+states, and uses no fabricated metrics. It is review input, not a runtime dependency; adoption proceeds one
+replacement at a time and the executable tests remain the wiring evidence.
 
 The installed Claude Code and Codex `PostToolUse` table reports `Read`, `Write`, and `Edit` activity through
 the same socket. Read sets are kept by the server, capped at 4,096 repository-relative paths per session.
