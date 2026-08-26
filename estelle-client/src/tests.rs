@@ -281,6 +281,90 @@ async fn durable_job_stream_refuses_a_complete_event_without_a_typed_snapshot() 
     assert!(matches!(error, Error::InvalidProgressStream));
 }
 
+#[tokio::test]
+async fn real_http_stream_surfaces_progress_before_the_server_releases_completion() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::sync::{mpsc, oneshot};
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+    let address = listener.local_addr().expect("address");
+    let job_id = "job_0123456789abcdef01234567";
+    let (release_tx, release_rx) = oneshot::channel::<()>();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.expect("accept");
+        let mut request = Vec::new();
+        let mut part = [0_u8; 1024];
+        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+            let read = socket.read(&mut part).await.expect("request read");
+            assert_ne!(read, 0, "request ended before headers");
+            request.extend_from_slice(&part[..read]);
+        }
+        assert!(
+            String::from_utf8_lossy(&request)
+                .starts_with(&format!("GET /jobs/{job_id}/events HTTP/1.1"))
+        );
+        socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nConnection: close\r\n\r\n")
+            .await
+            .expect("headers");
+        socket
+            .write_all(
+                format!(
+                    "{}\n",
+                    serde_json::json!({"event": "progress", "snapshot": {
+                        "job_id": job_id, "state": "running", "terminal": false,
+                        "progress": {"revision": 1, "work": {"phase": "scope"}}
+                    }})
+                )
+                .as_bytes(),
+            )
+            .await
+            .expect("progress");
+        socket.flush().await.expect("progress flush");
+        release_rx.await.expect("terminal release");
+        socket
+            .write_all(
+                format!(
+                    "{}\n",
+                    serde_json::json!({"event": "complete", "snapshot": {
+                        "job_id": job_id, "state": "done", "terminal": true,
+                        "progress": {"revision": 2, "work": {"phase": "gate"}},
+                        "result": {"answer": "bounded"}
+                    }})
+                )
+                .as_bytes(),
+            )
+            .await
+            .expect("complete");
+    });
+    let client =
+        Client::new(&format!("http://{address}/"), test_key(), MINIMUM_TIMEOUT).expect("client");
+    let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
+    let watcher = tokio::spawn(async move {
+        client
+            .stream_job(job_id, &CancellationToken::new(), move |snapshot| {
+                if let Some(progress) = &snapshot.progress {
+                    let _ = progress_tx.send(progress.work.phase.clone());
+                }
+            })
+            .await
+    });
+
+    let first = tokio::time::timeout(Duration::from_secs(2), progress_rx.recv())
+        .await
+        .expect("progress arrived before completion was released")
+        .expect("progress channel");
+    assert_eq!(first, "scope");
+    release_tx.send(()).expect("release completion");
+    let terminal = watcher
+        .await
+        .expect("watch task")
+        .expect("terminal receipt");
+    server.await.expect("server task");
+    assert_eq!(terminal.progress.expect("progress").work.phase, "gate");
+}
+
 #[test]
 fn orchestra_live_endpoints_match_the_server_contract() {
     assert_eq!(Endpoint::OrchestraRun.path(), "orchestra/run");
