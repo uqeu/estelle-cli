@@ -12,6 +12,7 @@ mod hook_distil;
 mod hook_guard;
 mod local_provider;
 mod login;
+mod production_hud;
 mod provider_catalog;
 mod provider_keys;
 mod provider_store;
@@ -337,8 +338,8 @@ enum Command {
     },
     /// Render the Estelle terminal surface catalog with clearly labelled fixture data.
     Screens {
-        /// Render one 1-based screen number; omit to render all eleven.
-        #[arg(long, value_name = "1..11")]
+        /// Render one 1-based screen number; omit to render all twelve.
+        #[arg(long, value_name = "1..12")]
         screen: Option<usize>,
         /// Use the cream-on-ink palette instead of the dark palette.
         #[arg(long)]
@@ -620,6 +621,7 @@ enum UiEvent {
         status: Result<estelle_client::GithubStatusResponse, Error>,
         proposed_prs: Result<estelle_client::ProposedPrsResponse, Error>,
     },
+    ProdGraph(Result<production_hud::ProductionGraph, String>),
     Answer {
         id: u64,
         result: Result<AnswerReply, Error>,
@@ -1561,6 +1563,9 @@ struct App {
     prod_agent_health: Option<estelle_client::AgentHealthResponse>,
     prod_github_status: Option<estelle_client::GithubStatusResponse>,
     prod_proposed_prs: Option<estelle_client::ProposedPrsResponse>,
+    prod_graph: Option<production_hud::ProductionGraph>,
+    prod_graph_error: Option<String>,
+    prod_graph_in_flight: bool,
     prod_issue_error: Option<String>,
     prod_overview_error: Option<String>,
     prod_agent_health_error: Option<String>,
@@ -1772,6 +1777,9 @@ impl App {
             prod_agent_health: None,
             prod_github_status: None,
             prod_proposed_prs: None,
+            prod_graph: None,
+            prod_graph_error: None,
+            prod_graph_in_flight: false,
             prod_issue_error: None,
             prod_overview_error: None,
             prod_agent_health_error: None,
@@ -2602,6 +2610,7 @@ impl App {
             self.prod_agent_health_next_poll = Some(Instant::now());
             self.prod_github_next_poll = Some(Instant::now());
             self.poll_production_if_due(tx);
+            self.request_production_graph(tx);
         } else {
             self.prod_issue_next_poll = None;
             self.prod_overview_next_poll = None;
@@ -2619,6 +2628,62 @@ impl App {
                 "closed"
             }
         )));
+    }
+
+    fn request_production_graph(&mut self, tx: &mpsc::UnboundedSender<UiEvent>) {
+        if self.prod_graph_in_flight {
+            return;
+        }
+        let Some(issue) = self.prod_issues.as_ref().and_then(|response| {
+            response
+                .issues
+                .iter()
+                .find(|issue| issue.status != "resolved")
+        }) else {
+            self.prod_graph = None;
+            self.prod_graph_error = None;
+            return;
+        };
+        if self
+            .prod_graph
+            .as_ref()
+            .is_some_and(|graph| graph.issue_key == issue.key)
+        {
+            return;
+        }
+        let failing_file = issue
+            .bound_location()
+            .map(|(file, _)| file.to_string())
+            .or_else(|| (!issue.culprit.trim().is_empty()).then(|| issue.culprit.clone()));
+        let failing_symbol = issue
+            .bound
+            .as_ref()
+            .and_then(|binding| binding.symbol.clone())
+            .or_else(|| {
+                issue
+                    .symbol_range
+                    .as_ref()
+                    .map(|range| range.symbol.clone())
+            })
+            .or_else(|| (!issue.symbol.trim().is_empty()).then(|| issue.symbol.clone()))
+            .unwrap_or_else(|| issue.display_title().to_string());
+        let (Some(client), Some(failing_file)) = (self.client.clone(), failing_file) else {
+            self.prod_graph_error = Some(
+                "code graph unavailable · the production issue is not bound to a repository file"
+                    .to_string(),
+            );
+            return;
+        };
+        self.prod_graph_in_flight = true;
+        self.prod_graph_error = None;
+        spawn_prod_graph_request(
+            client,
+            self.repo.clone(),
+            issue.key.clone(),
+            failing_symbol,
+            failing_file,
+            tx,
+        );
     }
 
     fn has_auxiliary_surface(&self) -> bool {
@@ -3614,6 +3679,20 @@ impl App {
                                 ),
                         )
                     };
+                    self.request_production_graph(tx);
+                }
+            }
+            UiEvent::ProdGraph(result) => {
+                self.prod_graph_in_flight = false;
+                match result {
+                    Ok(graph) => {
+                        self.prod_graph = Some(graph);
+                        self.prod_graph_error = None;
+                    }
+                    Err(error) => {
+                        self.prod_graph = None;
+                        self.prod_graph_error = Some(format!("code graph unavailable · {error}"));
+                    }
                 }
             }
             UiEvent::ProdOverview(result) => {
@@ -4842,6 +4921,123 @@ fn spawn_prod_issues_request(
             .await;
         let _ = tx.send(UiEvent::ProdIssues(result));
     });
+}
+
+fn spawn_prod_graph_request(
+    client: Client,
+    repo: Repo,
+    issue_key: String,
+    failing_symbol: String,
+    failing_file: String,
+    tx: &mpsc::UnboundedSender<UiEvent>,
+) {
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        let result =
+            fetch_production_graph(&client, &repo, issue_key, failing_symbol, failing_file).await;
+        let _ = tx.send(UiEvent::ProdGraph(result));
+    });
+}
+
+async fn fetch_production_graph(
+    client: &Client,
+    repo: &Repo,
+    issue_key: String,
+    failing_symbol: String,
+    failing_file: String,
+) -> Result<production_hud::ProductionGraph, String> {
+    let blast = call_graph_tool(
+        client,
+        repo,
+        "blast_radius",
+        serde_json::json!({"file": failing_file}),
+    );
+    let chokepoints = call_graph_tool(client, repo, "chokepoints", serde_json::json!({}));
+    let subsystems = call_graph_tool(client, repo, "subsystems", serde_json::json!({}));
+    let core_files = call_graph_tool(client, repo, "core_files", serde_json::json!({}));
+    let (blast, chokepoints, subsystems, core_files) =
+        tokio::try_join!(blast, chokepoints, subsystems, core_files)?;
+
+    let meaningful_lines = |text: String| {
+        text.lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(mask_secret)
+            .collect::<Vec<_>>()
+    };
+    let blast_radius = meaningful_lines(blast);
+    let chokepoints = meaningful_lines(chokepoints).into_iter().take(3).collect();
+    let healthy_subsystems = meaningful_lines(subsystems)
+        .into_iter()
+        .filter(|subsystem| !subsystem.contains(&failing_file))
+        .take(4)
+        .collect();
+    let core_files = meaningful_lines(core_files).into_iter().take(3).collect();
+
+    Ok(production_hud::ProductionGraph {
+        issue_key,
+        failing_symbol,
+        failing_file,
+        healthy_subsystems,
+        blast_radius,
+        chokepoints,
+        core_files,
+        drill_down: false,
+    })
+}
+
+async fn call_graph_tool(
+    client: &Client,
+    repo: &Repo,
+    name: &str,
+    mut arguments: serde_json::Value,
+) -> Result<String, String> {
+    let Some(arguments) = arguments.as_object_mut() else {
+        return Err(format!("{name} arguments were not an object"));
+    };
+    arguments.insert(
+        "repo".to_string(),
+        serde_json::Value::String(repo.as_str().to_string()),
+    );
+    let response: serde_json::Value = client
+        .post(
+            estelle_client::Endpoint::Mcp,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": name, "arguments": arguments},
+            }),
+            &CancellationToken::new(),
+        )
+        .await
+        .map_err(|error| format!("{name} request failed: {error}"))?;
+    if let Some(error) = response.get("error") {
+        return Err(format!(
+            "{name} returned a protocol error: {}",
+            mask_secret(&error.to_string())
+        ));
+    }
+    let result = response
+        .get("result")
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("{name} omitted the MCP result object"))?;
+    if result.get("isError").and_then(Value::as_bool) == Some(true) {
+        return Err(format!("{name} reported a tool failure"));
+    }
+    result
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find_map(|item| {
+            (item.get("type").and_then(Value::as_str) == Some("text"))
+                .then(|| item.get("text").and_then(Value::as_str))
+                .flatten()
+        })
+        .filter(|text| !text.trim().is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| format!("{name} returned no text content"))
 }
 
 fn merge_issue_page(
@@ -6651,8 +6847,34 @@ fn error_count_sparkline(buckets: &[estelle_client::MonitorErrorBucket]) -> Stri
         .collect()
 }
 
-fn render_prod_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let lines = production_workspace_lines(app);
+fn render_prod_panel(frame: &mut Frame<'_>, area: Rect, app: &App, now: Instant) {
+    let lines = if let Some(graph) = &app.prod_graph {
+        let palette = match app.theme {
+            Theme::Dark => theme::ScreenTheme::Dark.palette(),
+            Theme::CreamInk => theme::ScreenTheme::Cream.palette(),
+        };
+        let tick = now
+            .saturating_duration_since(app.boot_started)
+            .as_millis()
+            .checked_div(50)
+            .and_then(|value| u64::try_from(value).ok())
+            .unwrap_or(0);
+        production_hud::lines(graph, &palette, tick, true)
+    } else {
+        let mut lines = production_workspace_lines(app);
+        if app.prod_graph_in_flight {
+            lines.push(Line::styled(
+                "Reading blast_radius · chokepoints · subsystems · core_files...",
+                Style::default().fg(app.theme.ghost()),
+            ));
+        } else if let Some(error) = &app.prod_graph_error {
+            lines.push(Line::styled(
+                error.clone(),
+                Style::default().fg(app.theme.alert()),
+            ));
+        }
+        lines
+    };
     let has_unresolved = app.prod_issues.as_ref().is_some_and(|response| {
         response
             .issues
@@ -6937,7 +7159,7 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
     };
 
     if show_prod_panel {
-        render_prod_panel(frame, surface_rows[0], app);
+        render_prod_panel(frame, surface_rows[0], app, now);
     } else if show_diff_panel {
         render_diff_panel(frame, surface_rows[0], app);
     } else {
@@ -7128,7 +7350,7 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         if diff_as_rail {
             render_diff_panel(frame, citation_area, app);
         } else if prod_as_rail {
-            render_prod_panel(frame, citation_area, app);
+            render_prod_panel(frame, citation_area, app, now);
         } else if show_context_panel {
             render_context_panel(frame, citation_area, app);
         } else {
@@ -7355,6 +7577,25 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
     {
         app.move_focus(key.code == KeyCode::Right);
         return false;
+    }
+    if app.focus == FocusSurface::Auxiliary && app.prod_panel_visible {
+        if key.code == KeyCode::Enter {
+            if let Some(graph) = app.prod_graph.as_mut() {
+                graph.drill_down = true;
+            }
+            return false;
+        }
+        if key.code == KeyCode::Esc
+            && app
+                .prod_graph
+                .as_ref()
+                .is_some_and(|graph| graph.drill_down)
+        {
+            if let Some(graph) = app.prod_graph.as_mut() {
+                graph.drill_down = false;
+            }
+            return false;
+        }
     }
     if key.code == KeyCode::Esc && app.focus != FocusSurface::Composer {
         app.focus = FocusSurface::Composer;
@@ -12260,5 +12501,151 @@ mod tests {
         assert!(rendered.contains("Estelle Orchestra"));
         assert!(!rendered.contains("Ask about"));
         assert!(!rendered.contains("/sweep another repo"));
+    }
+
+    async fn mount_graph_tool(
+        server: &MockServer,
+        name: &str,
+        arguments: Value,
+        text: Option<&str>,
+    ) {
+        let result = text.map_or_else(
+            || json!({"content": []}),
+            |text| json!({"content": [{"type": "text", "text": text}], "isError": false}),
+        );
+        Mock::given(method("POST"))
+            .and(path("/mcp"))
+            .and(body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": name, "arguments": arguments}
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": result
+            })))
+            .expect(1)
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn production_hud_reads_all_four_graph_tools_through_the_real_client_type() {
+        let server = MockServer::start().await;
+        mount_graph_tool(
+            &server,
+            "blast_radius",
+            json!({"file": "billing.py", "repo": "uqeu/estelle"}),
+            Some("checkout.py\nreceipts.py"),
+        )
+        .await;
+        mount_graph_tool(
+            &server,
+            "chokepoints",
+            json!({"repo": "uqeu/estelle"}),
+            Some("api.py  (0.8)"),
+        )
+        .await;
+        mount_graph_tool(
+            &server,
+            "subsystems",
+            json!({"repo": "uqeu/estelle"}),
+            Some("billing.py, checkout.py\nauth.py, sessions.py"),
+        )
+        .await;
+        mount_graph_tool(
+            &server,
+            "core_files",
+            json!({"repo": "uqeu/estelle"}),
+            Some("models.py  (0.9)"),
+        )
+        .await;
+        let client = Client::new(
+            &format!("{}/", server.uri()),
+            estelle_client::ApiKey::new("test-key").expect("key"),
+            estelle_client::MINIMUM_TIMEOUT,
+        )
+        .expect("client");
+
+        let graph = fetch_production_graph(
+            &client,
+            &Repo::new("uqeu/estelle").expect("repo"),
+            "issue-17".to_string(),
+            "charge_card".to_string(),
+            "billing.py".to_string(),
+        )
+        .await
+        .expect("four graph receipts");
+
+        assert_eq!(graph.blast_radius, ["checkout.py", "receipts.py"]);
+        assert_eq!(graph.healthy_subsystems, ["auth.py, sessions.py"]);
+        assert_eq!(graph.chokepoints, ["api.py  (0.8)"]);
+        assert_eq!(graph.core_files, ["models.py  (0.9)"]);
+    }
+
+    #[tokio::test]
+    async fn production_hud_refuses_a_vacuous_graph_receipt() {
+        let server = MockServer::start().await;
+        for (name, arguments) in [
+            (
+                "blast_radius",
+                json!({"file": "billing.py", "repo": "uqeu/estelle"}),
+            ),
+            ("chokepoints", json!({"repo": "uqeu/estelle"})),
+            ("subsystems", json!({"repo": "uqeu/estelle"})),
+        ] {
+            mount_graph_tool(&server, name, arguments, Some("measured row")).await;
+        }
+        mount_graph_tool(&server, "core_files", json!({"repo": "uqeu/estelle"}), None).await;
+        let client = Client::new(
+            &format!("{}/", server.uri()),
+            estelle_client::ApiKey::new("test-key").expect("key"),
+            estelle_client::MINIMUM_TIMEOUT,
+        )
+        .expect("client");
+
+        let error = fetch_production_graph(
+            &client,
+            &Repo::new("uqeu/estelle").expect("repo"),
+            "issue-17".to_string(),
+            "charge_card".to_string(),
+            "billing.py".to_string(),
+        )
+        .await
+        .expect_err("empty content must keep the HUD red");
+
+        assert!(error.contains("core_files returned no text content"));
+    }
+
+    #[test]
+    fn enter_on_the_live_production_hud_opens_the_mermaid_path() {
+        let mut app = test_app();
+        app.prod_panel_visible = true;
+        app.focus = FocusSurface::Auxiliary;
+        app.prod_graph = Some(production_hud::ProductionGraph {
+            issue_key: "issue-17".to_string(),
+            failing_symbol: "charge_card".to_string(),
+            failing_file: "billing.py".to_string(),
+            healthy_subsystems: vec!["auth.py".to_string()],
+            blast_radius: vec!["checkout.py".to_string()],
+            ..Default::default()
+        });
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &tx,
+        );
+
+        assert!(
+            app.prod_graph
+                .as_ref()
+                .is_some_and(|graph| graph.drill_down)
+        );
+        let frame = rendered_frame_at_size(&app, Instant::now(), 120, 34);
+        assert!(frame.contains("event --> symbol --> diff"));
     }
 }

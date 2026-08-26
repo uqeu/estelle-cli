@@ -2,6 +2,7 @@
 //! Nothing here positions by hand: the column spec does it.
 
 use crate::cols::{Cell, Col, head, row, rule};
+use crate::production_hud::ProductionGraph;
 use crate::theme::ScreenTheme;
 use crate::theme::{Palette, pulse};
 use ratatui::Terminal;
@@ -22,6 +23,7 @@ pub const SCREENS: &[&str] = &[
     "everything at once",
     "when it breaks",
     "monitor · live",
+    "production HUD",
 ];
 
 pub fn render(idx: usize, p: &Palette, tick: u64, pulse_on: bool) -> Vec<Line<'static>> {
@@ -36,7 +38,8 @@ pub fn render(idx: usize, p: &Palette, tick: u64, pulse_on: bool) -> Vec<Line<'s
         7 => skill(p),
         8 => everything(p, tick, pulse_on),
         9 => broken(p, tick, pulse_on),
-        _ => monitor(p, tick, pulse_on),
+        10 => monitor(p, tick, pulse_on),
+        _ => production_hud(p, tick, pulse_on),
     }
 }
 
@@ -49,8 +52,8 @@ pub fn dump(
     pulse_enabled: bool,
 ) -> Result<Vec<String>, String> {
     let indices = match screen {
-        Some(number @ 1..=11) => vec![number - 1],
-        Some(number) => return Err(format!("screen must be between 1 and 11, got {number}")),
+        Some(number @ 1..=12) => vec![number - 1],
+        Some(number) => return Err(format!("screen must be between 1 and 12, got {number}")),
         None => (0..SCREENS.len()).collect(),
     };
     let palette = screen_theme.palette();
@@ -86,6 +89,28 @@ pub fn dump(
         }
     }
     Ok(output)
+}
+
+fn production_hud(palette: &Palette, tick: u64, pulse_enabled: bool) -> Vec<Line<'static>> {
+    crate::production_hud::lines(
+        &ProductionGraph {
+            issue_key: "design-fixture".to_string(),
+            failing_symbol: "charge_card".to_string(),
+            failing_file: "billing.py:88".to_string(),
+            healthy_subsystems: vec![
+                "auth".to_string(),
+                "search".to_string(),
+                "memory".to_string(),
+            ],
+            blast_radius: vec!["checkout.py".to_string(), "receipts.py".to_string()],
+            chokepoints: vec!["api.py".to_string()],
+            core_files: vec!["models.py".to_string()],
+            drill_down: false,
+        },
+        palette,
+        tick,
+        pulse_enabled,
+    )
 }
 
 fn blank() -> Line<'static> {
@@ -1206,5 +1231,15 @@ mod tests {
                 SCREENS[index]
             );
         }
+    }
+
+    #[test]
+    fn twelfth_screen_renders_the_production_hud_through_the_binary_catalog() {
+        let output = dump(Some(12), ScreenTheme::Dark, true)
+            .expect("production HUD fixture")
+            .join("\n");
+        assert!(output.contains("production HUD (12/12)"));
+        assert!(output.contains("charge_card"));
+        assert!(output.contains("Enter opens event → symbol → diff"));
     }
 }
