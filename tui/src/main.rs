@@ -27,6 +27,7 @@ mod transcript;
 #[cfg(test)]
 mod transcript_adoption_tests;
 mod version_check;
+mod work_job;
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -142,7 +143,6 @@ const SHELL_TIMEOUT: Duration = Duration::from_secs(30);
 const SHELL_TIMEOUT_ENV: &str = "ESTELLE_SHELL_TIMEOUT_SECONDS";
 const MAX_SHELL_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const SHELL_OUTPUT_CAP_BYTES: usize = 64 * 1024;
-const WORK_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const WORK_PHASES: [&str; 6] = [
     "scope",
     "recall",
@@ -4490,7 +4490,7 @@ async fn execute_remote_command(
             .and_then(Value::as_str)
             .map(str::to_string)
     {
-        reply = watch_work_job(&client, &job_id, cancel, work_progress_sink).await?;
+        reply = work_job::watch(&client, &job_id, cancel, work_progress_sink).await?;
     }
     Ok(RemoteCommandReply {
         reply,
@@ -4498,92 +4498,6 @@ async fn execute_remote_command(
             .map(|measured| measured.files)
             .unwrap_or_default(),
     })
-}
-
-async fn poll_work_job(
-    client: &Client,
-    job_id: &str,
-    cancel: &CancellationToken,
-    progress_sink: Option<WorkProgressSink>,
-) -> Result<CommandReply, CommandFailure> {
-    loop {
-        let snapshot = client
-            .job(job_id, cancel)
-            .await
-            .map_err(CommandFailure::Client)?;
-        if let Some(progress) = snapshot.progress.clone()
-            && let Some(sink) = &progress_sink
-        {
-            sink(progress);
-        }
-        if snapshot.terminal {
-            return terminal_work_reply(snapshot, job_id);
-        }
-        tokio::select! {
-            () = cancel.cancelled() => return Err(CommandFailure::Client(Error::Cancelled)),
-            () = tokio::time::sleep(WORK_POLL_INTERVAL) => {}
-        }
-    }
-}
-
-async fn watch_work_job(
-    client: &Client,
-    job_id: &str,
-    cancel: &CancellationToken,
-    progress_sink: Option<WorkProgressSink>,
-) -> Result<CommandReply, CommandFailure> {
-    let sink = progress_sink.clone();
-    let terminal = match client
-        .stream_job(job_id, cancel, move |snapshot| {
-            if let Some(progress) = snapshot.progress.clone()
-                && let Some(sink) = &sink
-            {
-                sink(progress);
-            }
-        })
-        .await
-    {
-        Ok(snapshot) => snapshot,
-        // An older server has only the durable snapshot door. Keep that compatibility path explicit;
-        // every server carrying the event route uses the stream above and does not wake every 500 ms.
-        Err(Error::Http { status, .. }) if status.as_u16() == 404 => {
-            return poll_work_job(client, job_id, cancel, progress_sink).await;
-        }
-        Err(error) => return Err(CommandFailure::Client(error)),
-    };
-    terminal_work_reply(terminal, job_id)
-}
-
-fn terminal_work_reply(
-    snapshot: estelle_client::JobSnapshot,
-    job_id: &str,
-) -> Result<CommandReply, CommandFailure> {
-    if snapshot.state == "done" {
-        let result = snapshot.result.ok_or_else(|| {
-            CommandFailure::Local([
-                "/work finished without a result.".to_string(),
-                format!("Durable job {job_id} reported state=done but no result body."),
-                "The job was read from the server; retry /work or inspect its server receipt."
-                    .to_string(),
-            ])
-        })?;
-        return serde_json::from_value(result).map_err(|error| {
-            CommandFailure::Local([
-                "/work returned an unreadable terminal result.".to_string(),
-                error.to_string(),
-                format!("The durable job is {job_id}; no local result was invented."),
-            ])
-        });
-    }
-    Err(CommandFailure::Local([
-        format!("/work stopped in durable state {}.", snapshot.state),
-        if snapshot.reason.trim().is_empty() {
-            "The server returned no failure reason.".to_string()
-        } else {
-            snapshot.reason
-        },
-        format!("The caller-bound job stream was GET /jobs/{job_id}/events."),
-    ]))
 }
 
 struct MeasuredDiff {
@@ -4969,110 +4883,9 @@ fn spawn_prod_graph_request(
     let tx = tx.clone();
     tokio::spawn(async move {
         let result =
-            fetch_production_graph(&client, &repo, issue_key, failing_symbol, failing_file).await;
+            production_hud::fetch(&client, &repo, issue_key, failing_symbol, failing_file).await;
         let _ = tx.send(UiEvent::ProdGraph(result));
     });
-}
-
-async fn fetch_production_graph(
-    client: &Client,
-    repo: &Repo,
-    issue_key: String,
-    failing_symbol: String,
-    failing_file: String,
-) -> Result<production_hud::ProductionGraph, String> {
-    let blast = call_graph_tool(
-        client,
-        repo,
-        "blast_radius",
-        serde_json::json!({"file": failing_file}),
-    );
-    let chokepoints = call_graph_tool(client, repo, "chokepoints", serde_json::json!({}));
-    let subsystems = call_graph_tool(client, repo, "subsystems", serde_json::json!({}));
-    let core_files = call_graph_tool(client, repo, "core_files", serde_json::json!({}));
-    let (blast, chokepoints, subsystems, core_files) =
-        tokio::try_join!(blast, chokepoints, subsystems, core_files)?;
-
-    let meaningful_lines = |text: String| {
-        text.lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(mask_secret)
-            .collect::<Vec<_>>()
-    };
-    let blast_radius = meaningful_lines(blast);
-    let chokepoints = meaningful_lines(chokepoints).into_iter().take(3).collect();
-    let healthy_subsystems = meaningful_lines(subsystems)
-        .into_iter()
-        .filter(|subsystem| !subsystem.contains(&failing_file))
-        .take(4)
-        .collect();
-    let core_files = meaningful_lines(core_files).into_iter().take(3).collect();
-
-    Ok(production_hud::ProductionGraph {
-        issue_key,
-        failing_symbol,
-        failing_file,
-        healthy_subsystems,
-        blast_radius,
-        chokepoints,
-        core_files,
-        drill_down: false,
-    })
-}
-
-async fn call_graph_tool(
-    client: &Client,
-    repo: &Repo,
-    name: &str,
-    mut arguments: serde_json::Value,
-) -> Result<String, String> {
-    let Some(arguments) = arguments.as_object_mut() else {
-        return Err(format!("{name} arguments were not an object"));
-    };
-    arguments.insert(
-        "repo".to_string(),
-        serde_json::Value::String(repo.as_str().to_string()),
-    );
-    let response: serde_json::Value = client
-        .post(
-            estelle_client::Endpoint::Mcp,
-            &serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {"name": name, "arguments": arguments},
-            }),
-            &CancellationToken::new(),
-        )
-        .await
-        .map_err(|error| format!("{name} request failed: {error}"))?;
-    if let Some(error) = response.get("error") {
-        return Err(format!(
-            "{name} returned a protocol error: {}",
-            mask_secret(&error.to_string())
-        ));
-    }
-    let result = response
-        .get("result")
-        .and_then(Value::as_object)
-        .ok_or_else(|| format!("{name} omitted the MCP result object"))?;
-    if result.get("isError").and_then(Value::as_bool) == Some(true) {
-        return Err(format!("{name} reported a tool failure"));
-    }
-    result
-        .get("content")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .find_map(|item| {
-            (item.get("type").and_then(Value::as_str) == Some("text"))
-                .then(|| item.get("text").and_then(Value::as_str))
-                .flatten()
-        })
-        .filter(|text| !text.trim().is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| format!("{name} returned no text content"))
 }
 
 fn merge_issue_page(
@@ -8399,88 +8212,6 @@ mod tests {
         assert!(line.contains("no new phase for 3s"));
         assert!(!line.contains('%'));
         assert!(!line.to_ascii_lowercase().contains("eta"));
-    }
-
-    #[tokio::test]
-    async fn work_receipt_streams_phase_events_to_a_terminal_result() {
-        let server = MockServer::start().await;
-        let job_id = "job_0123456789abcdef01234567";
-        Mock::given(method("POST"))
-            .and(path("/work"))
-            .respond_with(ResponseTemplate::new(202).set_body_json(json!({
-                "accepted": true,
-                "job_id": job_id,
-                "poll": format!("GET /jobs/{job_id}")
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
-        Mock::given(method("GET"))
-            .and(path(format!("/jobs/{job_id}/events")))
-            .respond_with(ResponseTemplate::new(200).set_body_string(format!(
-                "{}\n{}\n",
-                json!({"event": "progress", "snapshot": {
-                    "job_id": job_id, "state": "running", "terminal": false,
-                    "progress": {"revision": 1, "work": {"phase": "scope", "phases": {"scope": 0.4}, "elapsed_s": 0.4}}
-                }}),
-                json!({"event": "complete", "snapshot": {
-                    "job_id": job_id,
-                    "state": "done",
-                    "terminal": true,
-                    "progress": {
-                        "revision": 6,
-                        "work": {
-                            "phase": "gate",
-                            "phases": {
-                                "scope": 0.4, "recall": 1.2, "conventions": 0.2,
-                                "prompt": 0.1, "implement": 3.0, "gate": 0.7
-                            },
-                            "elapsed_s": 5.6
-                        }
-                    },
-                    "result": {"answer": "work complete", "diff": "diff --git a/a b/a"}
-                }})
-            )))
-            .expect(1)
-            .mount(&server)
-            .await;
-        let client = Client::new(
-            &format!("{}/", server.uri()),
-            estelle_client::ApiKey::new("test-key").expect("key"),
-            Duration::from_secs(120),
-        )
-        .expect("client");
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let sink_seen = seen.clone();
-        let sink: WorkProgressSink = Arc::new(move |progress| {
-            sink_seen.lock().expect("progress sink").push(progress);
-        });
-        let pending = PendingCommand {
-            name: "work",
-            argument: "repair parser".to_string(),
-            last_question: None,
-            skill_thread: None,
-        };
-
-        let result = execute_remote_command(
-            client,
-            Repo::new("fatelabs/estelle").expect("repo"),
-            tempfile::tempdir().expect("root").path().to_path_buf(),
-            pending,
-            &CancellationToken::new(),
-            Some(sink),
-        )
-        .await
-        .expect("terminal work reply");
-
-        assert_eq!(result.reply.answer.as_deref(), Some("work complete"));
-        let seen = seen.lock().expect("progress samples");
-        assert_eq!(seen.len(), 2);
-        assert_eq!(
-            (seen[0].revision, seen[0].work.phase.as_str()),
-            (1, "scope")
-        );
-        assert_eq!((seen[1].revision, seen[1].work.phase.as_str()), (6, "gate"));
     }
 
     #[test]
@@ -12547,122 +12278,6 @@ mod tests {
         assert!(rendered.contains("Estelle Orchestra"));
         assert!(!rendered.contains("Ask about"));
         assert!(!rendered.contains("/sweep another repo"));
-    }
-
-    async fn mount_graph_tool(
-        server: &MockServer,
-        name: &str,
-        arguments: Value,
-        text: Option<&str>,
-    ) {
-        let result = text.map_or_else(
-            || json!({"content": []}),
-            |text| json!({"content": [{"type": "text", "text": text}], "isError": false}),
-        );
-        Mock::given(method("POST"))
-            .and(path("/mcp"))
-            .and(body_json(json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {"name": name, "arguments": arguments}
-            })))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "result": result
-            })))
-            .expect(1)
-            .mount(server)
-            .await;
-    }
-
-    #[tokio::test]
-    async fn production_hud_reads_all_four_graph_tools_through_the_real_client_type() {
-        let server = MockServer::start().await;
-        mount_graph_tool(
-            &server,
-            "blast_radius",
-            json!({"file": "billing.py", "repo": "uqeu/estelle"}),
-            Some("checkout.py\nreceipts.py"),
-        )
-        .await;
-        mount_graph_tool(
-            &server,
-            "chokepoints",
-            json!({"repo": "uqeu/estelle"}),
-            Some("api.py  (0.8)"),
-        )
-        .await;
-        mount_graph_tool(
-            &server,
-            "subsystems",
-            json!({"repo": "uqeu/estelle"}),
-            Some("billing.py, checkout.py\nauth.py, sessions.py"),
-        )
-        .await;
-        mount_graph_tool(
-            &server,
-            "core_files",
-            json!({"repo": "uqeu/estelle"}),
-            Some("models.py  (0.9)"),
-        )
-        .await;
-        let client = Client::new(
-            &format!("{}/", server.uri()),
-            estelle_client::ApiKey::new("test-key").expect("key"),
-            estelle_client::MINIMUM_TIMEOUT,
-        )
-        .expect("client");
-
-        let graph = fetch_production_graph(
-            &client,
-            &Repo::new("uqeu/estelle").expect("repo"),
-            "issue-17".to_string(),
-            "charge_card".to_string(),
-            "billing.py".to_string(),
-        )
-        .await
-        .expect("four graph receipts");
-
-        assert_eq!(graph.blast_radius, ["checkout.py", "receipts.py"]);
-        assert_eq!(graph.healthy_subsystems, ["auth.py, sessions.py"]);
-        assert_eq!(graph.chokepoints, ["api.py  (0.8)"]);
-        assert_eq!(graph.core_files, ["models.py  (0.9)"]);
-    }
-
-    #[tokio::test]
-    async fn production_hud_refuses_a_vacuous_graph_receipt() {
-        let server = MockServer::start().await;
-        for (name, arguments) in [
-            (
-                "blast_radius",
-                json!({"file": "billing.py", "repo": "uqeu/estelle"}),
-            ),
-            ("chokepoints", json!({"repo": "uqeu/estelle"})),
-            ("subsystems", json!({"repo": "uqeu/estelle"})),
-        ] {
-            mount_graph_tool(&server, name, arguments, Some("measured row")).await;
-        }
-        mount_graph_tool(&server, "core_files", json!({"repo": "uqeu/estelle"}), None).await;
-        let client = Client::new(
-            &format!("{}/", server.uri()),
-            estelle_client::ApiKey::new("test-key").expect("key"),
-            estelle_client::MINIMUM_TIMEOUT,
-        )
-        .expect("client");
-
-        let error = fetch_production_graph(
-            &client,
-            &Repo::new("uqeu/estelle").expect("repo"),
-            "issue-17".to_string(),
-            "charge_card".to_string(),
-            "billing.py".to_string(),
-        )
-        .await
-        .expect_err("empty content must keep the HUD red");
-
-        assert!(error.contains("core_files returned no text content"));
     }
 
     #[test]
