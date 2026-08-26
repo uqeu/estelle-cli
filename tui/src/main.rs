@@ -3,6 +3,7 @@
 mod agent_brief;
 mod binding_probe;
 mod claude_import;
+mod cols;
 mod commands;
 mod copilot_login;
 mod doctor;
@@ -14,10 +15,12 @@ mod login;
 mod provider_catalog;
 mod provider_keys;
 mod provider_store;
+mod screens;
 mod session_server;
 mod setup_flow;
 #[cfg(test)]
 mod test_gallery;
+mod theme;
 mod top_level;
 mod transcript;
 #[cfg(test)]
@@ -331,6 +334,18 @@ enum Command {
         action: Option<String>,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         values: Vec<String>,
+    },
+    /// Render the Estelle terminal surface catalog with clearly labelled fixture data.
+    Screens {
+        /// Render one 1-based screen number; omit to render all eleven.
+        #[arg(long, value_name = "1..11")]
+        screen: Option<usize>,
+        /// Use the cream-on-ink palette instead of the dark palette.
+        #[arg(long)]
+        cream: bool,
+        /// Disable pulse emphasis without removing severity glyphs or words.
+        #[arg(long)]
+        no_pulse: bool,
     },
     /// Monitor vendor drift and ground repairs.
     Research {

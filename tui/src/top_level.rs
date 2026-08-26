@@ -74,6 +74,7 @@ fn contract(command: &Command) -> Contract {
         | Command::Acp
         | Command::Mcp { .. }
         | Command::McpServer
+        | Command::Screens { .. }
         | Command::Upgrade { .. } => Contract::Local,
         Command::Init { .. }
         | Command::Setup { .. }
@@ -122,6 +123,19 @@ pub(crate) async fn run(command: Command, repo: Repo, root: &Path) -> Result<Vec
         Command::Mcp { .. } | Command::McpServer => {
             Err("MCP is handled by the protocol runtime".to_string())
         }
+        Command::Screens {
+            screen,
+            cream,
+            no_pulse,
+        } => crate::screens::dump(
+            screen,
+            if cream {
+                crate::theme::ScreenTheme::Cream
+            } else {
+                crate::theme::ScreenTheme::Dark
+            },
+            !no_pulse,
+        ),
         command => {
             let api = Api::resolve()?;
             run_authenticated(command, repo, root, &api).await
@@ -1479,6 +1493,7 @@ async fn run_authenticated(
         | Command::Acp
         | Command::Mcp { .. }
         | Command::McpServer
+        | Command::Screens { .. }
         | Command::Upgrade { .. } => Err("local command reached the remote dispatcher".to_string()),
     }
 }
