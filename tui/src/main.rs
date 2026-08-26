@@ -4490,7 +4490,7 @@ async fn execute_remote_command(
             .and_then(Value::as_str)
             .map(str::to_string)
     {
-        reply = poll_work_job(&client, &job_id, cancel, work_progress_sink).await?;
+        reply = watch_work_job(&client, &job_id, cancel, work_progress_sink).await?;
     }
     Ok(RemoteCommandReply {
         reply,
@@ -4511,44 +4511,79 @@ async fn poll_work_job(
             .job(job_id, cancel)
             .await
             .map_err(CommandFailure::Client)?;
-        if let Some(progress) = snapshot.progress
+        if let Some(progress) = snapshot.progress.clone()
             && let Some(sink) = &progress_sink
         {
             sink(progress);
         }
         if snapshot.terminal {
-            if snapshot.state == "done" {
-                let result = snapshot.result.ok_or_else(|| {
-                    CommandFailure::Local([
-                        "/work finished without a result.".to_string(),
-                        format!("Durable job {job_id} reported state=done but no result body."),
-                        "The job was read from the server; retry /work or inspect its server receipt."
-                            .to_string(),
-                    ])
-                })?;
-                return serde_json::from_value(result).map_err(|error| {
-                    CommandFailure::Local([
-                        "/work returned an unreadable terminal result.".to_string(),
-                        error.to_string(),
-                        format!("The durable job is {job_id}; no local result was invented."),
-                    ])
-                });
-            }
-            return Err(CommandFailure::Local([
-                format!("/work stopped in durable state {}.", snapshot.state),
-                if snapshot.reason.trim().is_empty() {
-                    "The server returned no failure reason.".to_string()
-                } else {
-                    snapshot.reason
-                },
-                format!("The caller-bound job read was GET /jobs/{job_id}."),
-            ]));
+            return terminal_work_reply(snapshot, job_id);
         }
         tokio::select! {
             () = cancel.cancelled() => return Err(CommandFailure::Client(Error::Cancelled)),
             () = tokio::time::sleep(WORK_POLL_INTERVAL) => {}
         }
     }
+}
+
+async fn watch_work_job(
+    client: &Client,
+    job_id: &str,
+    cancel: &CancellationToken,
+    progress_sink: Option<WorkProgressSink>,
+) -> Result<CommandReply, CommandFailure> {
+    let sink = progress_sink.clone();
+    let terminal = match client
+        .stream_job(job_id, cancel, move |snapshot| {
+            if let Some(progress) = snapshot.progress.clone()
+                && let Some(sink) = &sink
+            {
+                sink(progress);
+            }
+        })
+        .await
+    {
+        Ok(snapshot) => snapshot,
+        // An older server has only the durable snapshot door. Keep that compatibility path explicit;
+        // every server carrying the event route uses the stream above and does not wake every 500 ms.
+        Err(Error::Http { status, .. }) if status.as_u16() == 404 => {
+            return poll_work_job(client, job_id, cancel, progress_sink).await;
+        }
+        Err(error) => return Err(CommandFailure::Client(error)),
+    };
+    terminal_work_reply(terminal, job_id)
+}
+
+fn terminal_work_reply(
+    snapshot: estelle_client::JobSnapshot,
+    job_id: &str,
+) -> Result<CommandReply, CommandFailure> {
+    if snapshot.state == "done" {
+        let result = snapshot.result.ok_or_else(|| {
+            CommandFailure::Local([
+                "/work finished without a result.".to_string(),
+                format!("Durable job {job_id} reported state=done but no result body."),
+                "The job was read from the server; retry /work or inspect its server receipt."
+                    .to_string(),
+            ])
+        })?;
+        return serde_json::from_value(result).map_err(|error| {
+            CommandFailure::Local([
+                "/work returned an unreadable terminal result.".to_string(),
+                error.to_string(),
+                format!("The durable job is {job_id}; no local result was invented."),
+            ])
+        });
+    }
+    Err(CommandFailure::Local([
+        format!("/work stopped in durable state {}.", snapshot.state),
+        if snapshot.reason.trim().is_empty() {
+            "The server returned no failure reason.".to_string()
+        } else {
+            snapshot.reason
+        },
+        format!("The caller-bound job stream was GET /jobs/{job_id}/events."),
+    ]))
 }
 
 struct MeasuredDiff {
@@ -8367,7 +8402,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn work_receipt_is_polled_to_a_terminal_result_and_emits_progress() {
+    async fn work_receipt_streams_phase_events_to_a_terminal_result() {
         let server = MockServer::start().await;
         let job_id = "job_0123456789abcdef01234567";
         Mock::given(method("POST"))
@@ -8381,24 +8416,31 @@ mod tests {
             .mount(&server)
             .await;
         Mock::given(method("GET"))
-            .and(path(format!("/jobs/{job_id}")))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "job_id": job_id,
-                "state": "done",
-                "terminal": true,
-                "progress": {
-                    "revision": 6,
-                    "work": {
-                        "phase": "gate",
-                        "phases": {
-                            "scope": 0.4, "recall": 1.2, "conventions": 0.2,
-                            "prompt": 0.1, "implement": 3.0, "gate": 0.7
-                        },
-                        "elapsed_s": 5.6
-                    }
-                },
-                "result": {"answer": "work complete", "diff": "diff --git a/a b/a"}
-            })))
+            .and(path(format!("/jobs/{job_id}/events")))
+            .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+                "{}\n{}\n",
+                json!({"event": "progress", "snapshot": {
+                    "job_id": job_id, "state": "running", "terminal": false,
+                    "progress": {"revision": 1, "work": {"phase": "scope", "phases": {"scope": 0.4}, "elapsed_s": 0.4}}
+                }}),
+                json!({"event": "complete", "snapshot": {
+                    "job_id": job_id,
+                    "state": "done",
+                    "terminal": true,
+                    "progress": {
+                        "revision": 6,
+                        "work": {
+                            "phase": "gate",
+                            "phases": {
+                                "scope": 0.4, "recall": 1.2, "conventions": 0.2,
+                                "prompt": 0.1, "implement": 3.0, "gate": 0.7
+                            },
+                            "elapsed_s": 5.6
+                        }
+                    },
+                    "result": {"answer": "work complete", "diff": "diff --git a/a b/a"}
+                }})
+            )))
             .expect(1)
             .mount(&server)
             .await;
@@ -8433,8 +8475,12 @@ mod tests {
 
         assert_eq!(result.reply.answer.as_deref(), Some("work complete"));
         let seen = seen.lock().expect("progress samples");
-        assert_eq!(seen.len(), 1);
-        assert_eq!((seen[0].revision, seen[0].work.phase.as_str()), (6, "gate"));
+        assert_eq!(seen.len(), 2);
+        assert_eq!(
+            (seen[0].revision, seen[0].work.phase.as_str()),
+            (1, "scope")
+        );
+        assert_eq!((seen[1].revision, seen[1].work.phase.as_str()), (6, "gate"));
     }
 
     #[test]

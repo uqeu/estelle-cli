@@ -204,6 +204,83 @@ async fn durable_job_read_rejects_a_path_shaped_locator_before_transport() {
     );
 }
 
+#[tokio::test]
+async fn durable_job_stream_delivers_phase_revisions_before_the_terminal_receipt() {
+    let server = MockServer::start().await;
+    let job_id = "job_0123456789abcdef01234567";
+    let body = [
+        serde_json::json!({"event": "progress", "snapshot": {
+            "job_id": job_id, "state": "running", "terminal": false,
+            "progress": {"revision": 1, "work": {"phase": "scope"}}
+        }}),
+        serde_json::json!({"event": "heartbeat", "revision": 1, "state": "running"}),
+        serde_json::json!({"event": "progress", "snapshot": {
+            "job_id": job_id, "state": "running", "terminal": false,
+            "progress": {"revision": 2, "work": {"phase": "recall"}}
+        }}),
+        serde_json::json!({"event": "complete", "snapshot": {
+            "job_id": job_id, "state": "done", "terminal": true,
+            "progress": {"revision": 3, "work": {"phase": "gate"}},
+            "result": {"answer": "bounded"}
+        }}),
+    ]
+    .into_iter()
+    .map(|event| serde_json::to_string(&event).expect("event"))
+    .collect::<Vec<_>>()
+    .join("\n")
+        + "\n";
+    Mock::given(method("GET"))
+        .and(path(format!("/jobs/{job_id}/events")))
+        .and(header("authorization", "Bearer estelle_live_test-only"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "application/x-ndjson")
+                .set_body_string(body),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client =
+        Client::new(&format!("{}/", server.uri()), test_key(), MINIMUM_TIMEOUT).expect("client");
+    let mut phases = Vec::new();
+
+    let terminal = client
+        .stream_job(job_id, &CancellationToken::new(), |snapshot| {
+            if let Some(progress) = &snapshot.progress {
+                phases.push(progress.work.phase.clone());
+            }
+        })
+        .await
+        .expect("terminal stream receipt");
+
+    assert_eq!(phases, ["scope", "recall", "gate"]);
+    assert!(terminal.terminal);
+    assert_eq!(
+        terminal.result,
+        Some(serde_json::json!({"answer": "bounded"}))
+    );
+}
+
+#[tokio::test]
+async fn durable_job_stream_refuses_a_complete_event_without_a_typed_snapshot() {
+    let server = MockServer::start().await;
+    let job_id = "job_0123456789abcdef01234567";
+    Mock::given(method("GET"))
+        .and(path(format!("/jobs/{job_id}/events")))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{\"event\":\"complete\"}\n"))
+        .mount(&server)
+        .await;
+    let client =
+        Client::new(&format!("{}/", server.uri()), test_key(), MINIMUM_TIMEOUT).expect("client");
+
+    let error = client
+        .stream_job(job_id, &CancellationToken::new(), |_| {})
+        .await
+        .expect_err("a completion without its durable receipt must go red");
+
+    assert!(matches!(error, Error::InvalidProgressStream));
+}
+
 #[test]
 fn orchestra_live_endpoints_match_the_server_contract() {
     assert_eq!(Endpoint::OrchestraRun.path(), "orchestra/run");

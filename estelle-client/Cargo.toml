@@ -10,8 +10,9 @@ workspace = true
 [dependencies]
 codex-login = { workspace = true }
 dirs = { workspace = true }
+futures = { workspace = true }
 gix = { workspace = true }
-reqwest = { workspace = true, features = ["json"] }
+reqwest = { workspace = true, features = ["json", "stream"] }
 regex = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["preserve_order"] }

@@ -15,6 +15,7 @@ pub use auth_record::AuthRecord;
 pub use endpoint::API_ENDPOINTS;
 pub use endpoint::Endpoint;
 pub use endpoint::HttpMethod;
+use futures::StreamExt;
 pub use repo::Repo;
 pub use repo::RepoResolver;
 pub use repo::repo_from_remote_url;
@@ -112,6 +113,8 @@ pub enum Error {
     EmptyResponse,
     #[error("invalid durable job id")]
     InvalidJobId,
+    #[error("Estelle returned an invalid durable job progress stream")]
+    InvalidProgressStream,
     #[error("HTTP receipt failed: {0}")]
     ReceiptIo(String),
 }
@@ -235,6 +238,108 @@ impl Client {
             return Err(Error::EmptyResponse);
         }
         Ok(serde_json::from_slice(&bytes)?)
+    }
+
+    /// Watch one caller-bound durable job as changed phase snapshots arrive over NDJSON.
+    /// Heartbeats carry no phase and are deliberately ignored; only server-read durable facts reach
+    /// `on_snapshot`. The terminal snapshot is returned as the command receipt.
+    pub async fn stream_job<F>(
+        &self,
+        job_id: &str,
+        cancel: &CancellationToken,
+        mut on_snapshot: F,
+    ) -> Result<JobSnapshot, Error>
+    where
+        F: FnMut(&JobSnapshot),
+    {
+        let suffix = job_id.strip_prefix("job_").ok_or(Error::InvalidJobId)?;
+        if suffix.len() != 24
+            || !suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(Error::InvalidJobId);
+        }
+        let request_path = format!("jobs/{job_id}/events");
+        let url = self.base_url.join(&request_path)?;
+        let request = self
+            .http
+            .get(url)
+            .bearer_auth(self.api_key.expose())
+            .header(
+                "X-Estelle-Client-Protocol",
+                CLIENT_PROTOCOL_VERSION.to_string(),
+            )
+            .header("X-Estelle-Hook-Contract", HOOK_CONTRACT_VERSION.to_string())
+            .header("X-Estelle-Client-Version", env!("CARGO_PKG_VERSION"));
+        let response = tokio::select! {
+            () = cancel.cancelled() => return Err(Error::Cancelled),
+            response = request.send() => response?,
+        };
+        let status = response.status();
+        if !status.is_success() {
+            let bytes = tokio::select! {
+                () = cancel.cancelled() => return Err(Error::Cancelled),
+                bytes = response.bytes() => bytes?,
+            };
+            return Err(Error::Http {
+                status,
+                message: error_message(&bytes),
+            });
+        }
+
+        let mut stream = response.bytes_stream();
+        let mut buffer = Vec::new();
+        let mut receipt = Vec::new();
+        while let Some(chunk) = tokio::select! {
+            () = cancel.cancelled() => return Err(Error::Cancelled),
+            chunk = stream.next() => chunk,
+        } {
+            let chunk = chunk?;
+            receipt.extend_from_slice(&chunk);
+            buffer.extend_from_slice(&chunk);
+            while let Some(end) = buffer.iter().position(|byte| *byte == b'\n') {
+                let line = buffer.drain(..=end).collect::<Vec<_>>();
+                let line = &line[..line.len().saturating_sub(1)];
+                if line.iter().all(u8::is_ascii_whitespace) {
+                    continue;
+                }
+                let event: Value = serde_json::from_slice(line)?;
+                let kind = event
+                    .get("event")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if kind == "heartbeat" {
+                    continue;
+                }
+                if !matches!(kind, "progress" | "complete") {
+                    return Err(Error::InvalidProgressStream);
+                }
+                let snapshot: JobSnapshot = serde_json::from_value(
+                    event
+                        .get("snapshot")
+                        .cloned()
+                        .ok_or(Error::InvalidProgressStream)?,
+                )?;
+                if (kind == "complete") != snapshot.terminal {
+                    return Err(Error::InvalidProgressStream);
+                }
+                on_snapshot(&snapshot);
+                if kind == "complete" {
+                    self.write_receipt_path(
+                        &Method::GET,
+                        &format!("/{request_path}"),
+                        &[],
+                        None,
+                        status,
+                        &receipt,
+                    )
+                    .await?;
+                    return Ok(snapshot);
+                }
+            }
+        }
+        Err(Error::InvalidProgressStream)
     }
 
     pub async fn github_status(

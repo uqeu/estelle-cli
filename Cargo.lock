@@ -5370,6 +5370,7 @@ dependencies = [
  "codex-login",
  "codex-protocol",
  "dirs",
+ "futures",
  "gix",
  "regex",
  "reqwest 0.12.28",
