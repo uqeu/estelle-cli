@@ -24,6 +24,7 @@ pub const SCREENS: &[&str] = &[
     "when it breaks",
     "monitor · live",
     "production HUD",
+    "THE PLAN",
 ];
 
 pub fn render(idx: usize, p: &Palette, tick: u64, pulse_on: bool) -> Vec<Line<'static>> {
@@ -39,7 +40,8 @@ pub fn render(idx: usize, p: &Palette, tick: u64, pulse_on: bool) -> Vec<Line<'s
         8 => everything(p, tick, pulse_on),
         9 => broken(p, tick, pulse_on),
         10 => monitor(p, tick, pulse_on),
-        _ => production_hud(p, tick, pulse_on),
+        11 => production_hud(p, tick, pulse_on),
+        _ => work_plan(p),
     }
 }
 
@@ -52,8 +54,8 @@ pub fn dump(
     pulse_enabled: bool,
 ) -> Result<Vec<String>, String> {
     let indices = match screen {
-        Some(number @ 1..=12) => vec![number - 1],
-        Some(number) => return Err(format!("screen must be between 1 and 12, got {number}")),
+        Some(number @ 1..=13) => vec![number - 1],
+        Some(number) => return Err(format!("screen must be between 1 and 13, got {number}")),
         None => (0..SCREENS.len()).collect(),
     };
     let palette = screen_theme.palette();
@@ -110,6 +112,41 @@ fn production_hud(palette: &Palette, tick: u64, pulse_enabled: bool) -> Vec<Line
         palette,
         tick,
         pulse_enabled,
+    )
+}
+
+fn work_plan(palette: &Palette) -> Vec<Line<'static>> {
+    crate::work_plan::lines(
+        &estelle_client::WorkPlan {
+            revision: 4,
+            steps: vec![
+                estelle_client::WorkPlanStep {
+                    id: "inspect".to_string(),
+                    step: "Inspect the existing work progress seam".to_string(),
+                    status: "complete".to_string(),
+                    evidence: "work_progress.py:WorkProgressRecorder".to_string(),
+                },
+                estelle_client::WorkPlanStep {
+                    id: "wire".to_string(),
+                    step: "Stream the structured architect plan".to_string(),
+                    status: "active".to_string(),
+                    evidence: "api_work.py:handle_work".to_string(),
+                },
+                estelle_client::WorkPlanStep {
+                    id: "prove".to_string(),
+                    step: "Prove the negative control".to_string(),
+                    status: "pending".to_string(),
+                    evidence: "".to_string(),
+                },
+                estelle_client::WorkPlanStep {
+                    id: "deploy".to_string(),
+                    step: "Deploy the verified build".to_string(),
+                    status: "protected".to_string(),
+                    evidence: "scripts/deploy.sh".to_string(),
+                },
+            ],
+        },
+        palette,
     )
 }
 
@@ -1238,8 +1275,18 @@ mod tests {
         let output = dump(Some(12), ScreenTheme::Dark, true)
             .expect("production HUD fixture")
             .join("\n");
-        assert!(output.contains("production HUD (12/12)"));
+        assert!(output.contains("production HUD (12/13)"));
         assert!(output.contains("charge_card"));
         assert!(output.contains("Enter opens event → symbol → diff"));
+    }
+
+    #[test]
+    fn thirteenth_screen_renders_the_live_plan_through_the_binary_catalog() {
+        let output = dump(Some(13), ScreenTheme::Dark, true)
+            .expect("plan fixture")
+            .join("\n");
+        assert!(output.contains("THE PLAN (13/13)"));
+        assert!(output.contains("— unevidenced"));
+        assert!(output.contains("▲"));
     }
 }

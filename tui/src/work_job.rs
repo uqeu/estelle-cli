@@ -118,7 +118,13 @@ mod tests {
                 "{}\n{}\n",
                 json!({"event": "progress", "snapshot": {
                     "job_id": job_id, "state": "running", "terminal": false,
-                    "progress": {"revision": 1, "work": {"phase": "scope", "phases": {"scope": 0.4}, "elapsed_s": 0.4}}
+                    "progress": {"revision": 1,
+                        "work": {"phase": "scope", "phases": {"scope": 0.4}, "elapsed_s": 0.4},
+                        "plan": {"revision": 1, "steps": [{
+                            "id": "inspect", "step": "Inspect parser", "status": "active",
+                            "evidence": "parser.py:parse"
+                        }]}
+                    }
                 }}),
                 json!({"event": "complete", "snapshot": {
                     "job_id": job_id, "state": "done", "terminal": true,
@@ -167,6 +173,10 @@ mod tests {
         assert_eq!(
             (seen[0].revision, seen[0].work.phase.as_str()),
             (1, "scope")
+        );
+        assert_eq!(
+            seen[0].plan.as_ref().expect("streamed plan").steps[0].id,
+            "inspect"
         );
         assert_eq!((seen[1].revision, seen[1].work.phase.as_str()), (6, "gate"));
     }

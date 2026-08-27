@@ -28,6 +28,7 @@ mod transcript;
 mod transcript_adoption_tests;
 mod version_check;
 mod work_job;
+mod work_plan;
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -226,6 +227,13 @@ impl Theme {
         match self {
             Self::Dark => BootPalette::Dark,
             Self::CreamInk => BootPalette::Light,
+        }
+    }
+
+    fn screen_palette(self) -> theme::Palette {
+        match self {
+            Self::Dark => theme::ScreenTheme::Dark.palette(),
+            Self::CreamInk => theme::ScreenTheme::Cream.palette(),
         }
     }
 }
@@ -677,6 +685,7 @@ struct WorkProgressView {
     phase: String,
     phases: Vec<(String, f64)>,
     elapsed_s: f64,
+    plan: Option<estelle_client::WorkPlan>,
     observed_at: Instant,
 }
 
@@ -715,6 +724,7 @@ impl WorkProgressView {
             phase: progress.work.phase.clone(),
             phases,
             elapsed_s: progress.work.elapsed_s,
+            plan: progress.plan.clone(),
             observed_at: Instant::now(),
         })
     }
@@ -970,13 +980,13 @@ impl PickerSurface {
             rows: vec![
                 PickerRow {
                     label: "Claude subscription".to_string(),
-                    detail: "imports the credential Claude Code stored on this machine · Pro, Max or Team"
-                        .to_string(),
+                    detail: "browser sign-in · server-held OAuth · Pro, Max or Team".to_string(),
                     action: PickerAction::LoginClaude,
                 },
                 PickerRow {
                     label: "Provider API key".to_string(),
-                    detail: "Anthropic · OpenAI · Gemini · OpenRouter · DeepSeek · masked input".to_string(),
+                    detail: "Anthropic · OpenAI · Gemini · OpenRouter · DeepSeek · masked input"
+                        .to_string(),
                     action: PickerAction::OpenProviderLogin,
                 },
                 PickerRow {
@@ -2212,12 +2222,16 @@ impl App {
             return;
         };
         match provider.auth {
-            provider_catalog::AuthKind::ClaudeImport => {
+            provider_catalog::AuthKind::ProviderOAuth => {
                 self.transcript.push(TranscriptEntry::System(
-                    "Claude import reads the credential Claude Code stored on this machine after this explicit command; it never moves or modifies Claude Code's copy."
+                    "Claude sign-in opens the server-issued OAuth URL and waits for the account binding to read back."
                         .to_string(),
                 ));
-                self.pending_login = Some(PendingLogin::Claude);
+                self.pending_login = Some(if self.client.is_some() {
+                    PendingLogin::Claude
+                } else {
+                    PendingLogin::EstelleThenProvider(provider.id)
+                });
             }
             _ if provider.server_provider.is_some() && self.client.is_none() => {
                 self.pending_login = Some(PendingLogin::EstelleThenProvider(provider.id));
@@ -2245,7 +2259,7 @@ impl App {
                 spawn_credential_resolution(tx);
             }
             Ok(InlineLoginOutcome::Claude) => self.finish_model_login(
-                "Claude Code credential imported; Claude Code's source was left unchanged.",
+                "Claude subscription connected; the server account read-back confirms the binding.",
             ),
             Ok(InlineLoginOutcome::Copilot) => {
                 self.finish_model_login("GitHub Copilot credential stored.")
@@ -2442,7 +2456,7 @@ impl App {
             PickerAction::LoginClaude => {
                 self.picker = None;
                 self.transcript.push(TranscriptEntry::System(
-                    "Claude import reads the credential Claude Code stored on this machine after this explicit selection; it never moves or modifies Claude Code's copy."
+                    "Claude sign-in opens the server-issued OAuth URL; the CLI waits for a server account read-back before claiming success."
                         .to_string(),
                 ));
                 self.pending_login = Some(PendingLogin::Claude);
@@ -7098,14 +7112,24 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             transcript_band
         };
         let transcript_root = if let Some(progress) = &app.work_progress {
+            let plan_lines = progress
+                .plan
+                .as_ref()
+                .map(|plan| work_plan::lines(plan, &app.theme.screen_palette()))
+                .unwrap_or_default();
+            let plan_height = u16::try_from(plan_lines.len()).unwrap_or(u16::MAX);
             let work_rows = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
+                    Constraint::Length(plan_height),
                     Constraint::Length(1),
                     Constraint::Length(1),
                     Constraint::Min(1),
                 ])
                 .split(transcript_band);
+            if !plan_lines.is_empty() {
+                frame.render_widget(Paragraph::new(plan_lines), work_rows[0]);
+            }
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
                     Span::styled(
@@ -7116,14 +7140,14 @@ fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
                     ),
                     Span::styled(progress.line(now), Style::default().fg(Color::Gray)),
                 ])),
-                work_rows[0],
+                work_rows[1],
             );
             frame.render_widget(
                 Paragraph::new(progress.phase_track())
                     .style(Style::default().fg(app.theme.ghost())),
-                work_rows[1],
+                work_rows[2],
             );
-            work_rows[2]
+            work_rows[3]
         } else if let Some(progress) = &app.sweep_progress {
             let sweep_rows = Layout::default()
                 .direction(Direction::Vertical)
@@ -7664,7 +7688,18 @@ async fn run(
             session.suspend()?;
             let result = match pending_login {
                 PendingLogin::Estelle => login::run().await.map(InlineLoginOutcome::Estelle),
-                PendingLogin::Claude => claude_import::run().map(|()| InlineLoginOutcome::Claude),
+                PendingLogin::Claude => match app
+                    .client
+                    .clone()
+                    .or_else(|| resolve_credential().ok().map(|(client, _auth)| client))
+                {
+                    Some(client) => login::run_claude_plan(&client)
+                        .await
+                        .map(|()| InlineLoginOutcome::Claude),
+                    None => Err(io::Error::other(
+                        "Claude sign-in needs an Estelle account first",
+                    )),
+                },
                 PendingLogin::Copilot => copilot_login::run()
                     .await
                     .map(|()| InlineLoginOutcome::Copilot),
@@ -7729,7 +7764,10 @@ async fn run_provider_login(
     };
     let route = provider_catalog::login_route(provider, base_url.or(prompted_base.as_deref()))?;
     match route.provider.auth {
-        provider_catalog::AuthKind::ClaudeImport => claude_import::run().map(|()| None),
+        provider_catalog::AuthKind::ProviderOAuth => {
+            let (client, _auth) = resolve_credential().map_err(io::Error::other)?;
+            login::run_claude_plan(&client).await.map(|()| None)
+        }
         provider_catalog::AuthKind::ApiKey => {
             let server_provider = route
                 .provider
@@ -8215,6 +8253,41 @@ mod tests {
     }
 
     #[test]
+    fn live_work_progress_renders_the_structured_plan_not_only_the_phase_track() {
+        let mut app = test_app();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        app.active = Some(ActiveRequest {
+            id: 18,
+            label: "/work".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        let progress = serde_json::from_value(json!({
+            "revision": 3,
+            "work": {
+                "phase": "prompt",
+                "phases": {"scope": 0.2, "recall": 0.2, "conventions": 0.2, "prompt": 0.2},
+                "elapsed_s": 0.8
+            },
+            "plan": {"revision": 1, "steps": [
+                {"id": "prove", "step": "Prove parser behavior", "status": "active", "evidence": ""},
+                {"id": "deploy", "step": "Deploy", "status": "protected", "evidence": "scripts/deploy.sh"}
+            ]}
+        })).expect("plan progress");
+        app.handle_ui_event(UiEvent::WorkProgress { id: 18, progress }, &tx);
+        let mut terminal = Terminal::new(TestBackend::new(120, 35)).expect("terminal");
+        terminal
+            .draw(|frame| render_frame(frame, &app, Instant::now()))
+            .expect("render frame");
+        let frame = format!("{}", terminal.backend());
+
+        assert!(frame.contains("THE PLAN"));
+        assert!(frame.contains("Prove parser behavior"));
+        assert!(frame.contains("— unevidenced"));
+        assert!(frame.contains("▲") && frame.contains("scripts/deploy.sh"));
+    }
+
+    #[test]
     fn sessions_reply_opens_resume_picker_and_selected_id_drives_resume_route() {
         let mut app = test_app();
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -8533,7 +8606,7 @@ mod tests {
                 .expect("Claude route")
                 .provider
                 .auth,
-            provider_catalog::AuthKind::ClaudeImport
+            provider_catalog::AuthKind::ProviderOAuth
         );
         assert!(provider_catalog::login_route("openai", None).is_err());
         assert!(provider_catalog::login_route("chatgpt", None).is_err());
@@ -10696,7 +10769,10 @@ mod tests {
 
         app.pending_login = None;
         app.submit("/login --provider claude".to_string(), &tx);
-        assert_eq!(app.pending_login, Some(PendingLogin::Claude));
+        assert_eq!(
+            app.pending_login,
+            Some(PendingLogin::EstelleThenProvider("claude"))
+        );
 
         app.pending_login = None;
         app.submit("/login --api-key openai".to_string(), &tx);

@@ -301,13 +301,15 @@ The stores and runtimes are deliberately distinct:
 - ChatGPT device-flow acquisition is not exposed. The inherited flow presented Codex's first-party OAuth
   client id rather than an Estelle-owned id. Legacy credentials under `~/.estelle/chatgpt` remain detectable
   and removable so an upgrade does not strand a secret, but no login surface creates one.
-- Claude import occurs only after the user selects it. It reads `CLAUDE_CODE_OAUTH_TOKEN` or the macOS
-  `Claude Code-credentials` Keychain item, copies a refreshable snapshot to a mode-0600 Estelle file, and
-  never moves, deletes, or modifies Claude Code's source credential.
+- Claude subscription acquisition starts at the authenticated server-owned `POST /oauth/start` door. The
+  CLI accepts only an HTTPS authorization URL, opens it in the user's browser, and polls `/account` until
+  `uses_plan: true` reads back; a browser launch alone is never success. The retired Claude Code import is
+  no longer callable. Its old Estelle-owned snapshot remains detectable and removable so upgrades do not
+  strand a local secret.
 - `tui/src/provider_catalog.rs` is the single owner of canonical ids, globally unique aliases, acquisition
   kinds, picker surfaces, server identities, endpoint defaults, and base-URL requirements. Shell and slash
   commands and both provider sub-pickers resolve through that same table.
-- `claude` means the consent-gated Claude Code import and `anthropic`/`anthropic-api` mean an Anthropic API
+- `claude` means server-held Claude subscription OAuth and `anthropic`/`anthropic-api` mean an Anthropic API
   key. `openai-api` means an OpenAI API key; `chatgpt` is deliberately unresolved. This keeps plan OAuth
   distinct from API-key wire identity before a credential is requested.
 - Gemini, Azure, Bedrock, OpenRouter, DeepSeek, Fireworks, and MiniMax use the one masked provider-key path.
@@ -325,8 +327,8 @@ The stores and runtimes are deliberately distinct:
   Estelle/plan/Copilot/endpoint stores but never silently deletes server-owned provider keys.
 
 The local/custom endpoint is now stored, read back, and probed during login and doctor; that proves endpoint
-binding only, not model spending by the answer runtime. Claude import proves a credential snapshot, and
-Copilot proves GitHub device authorization, but neither makes a model request. The custom Estelle
+binding only, not model spending by the answer runtime. Claude OAuth proves the server account binding, and
+Copilot proves GitHub device authorization, but neither proof alone makes a model request. The custom Estelle
 conversation still uses the server answer path. The missing runtime contracts and acceptance proof are
 recorded in `docs/SERVER-CONTRACTS-NEEDED.md`; import, authorization, and endpoint census are not styled as
 completed inference.
@@ -347,8 +349,18 @@ can no longer turn a release test into an environment failure or a vacuous pass.
 
 The server owns memory, graph, gate, entitlement, and account facts. The CLI renders typed responses and
 must preserve absent/unknown states; it does not infer a clean verdict from a missing field, elapsed time, or
-an HTTP completion. The CLI owns local filesystem inventory and is therefore still the only secret filter
-on uncommitted sweep contents. That client-side-only boundary is design limit #66 and remains open.
+an HTTP completion. The CLI owns local filesystem inventory and is therefore still the only secret filter on
+uncommitted sweep contents. Its Git inventory uses Git's exclude-standard result even for explicitly named
+inputs, so ignored secret files and ignored allowlisted source trees cannot bypass the fence; the paired
+positive keeps an ordinary tracked source file in the sweep. This closes the `.gitignore` defect tracked as
+#66 while retaining the architectural fact that uncommitted bytes are filtered client-side.
+
+`/work` progress is one revisioned snapshot with two additive projections. `work` carries the six measured
+phase spans; `plan` carries bounded architect steps with stable ids, status, and an evidence string that may
+honestly be blank. The server publishes the plan immediately after architecture and again after the gate.
+The TUI renders that same wire state as Screen 13 with an evidence column; `— unevidenced` is visible, and a
+deployment step remains `▲ protected` because `/work` proposes code and never deploys it. All status glyphs
+are one terminal column. Legacy phase-only snapshots remain valid.
 
 ## Current limits
 
@@ -367,11 +379,11 @@ on uncommitted sweep contents. That client-side-only boundary is design limit #6
 - The founder's clean-machine default-shell restart and shadowed-npm-machine repair remain human/device-bound;
   the clean public install and first-run picker are independently reproduced. ChatGPT acquisition is removed,
   not awaiting a walkthrough.
-- Claude/Copilot/local-model credential acquisition is not yet bound to the custom TUI answer runtime. The
-  local-model `/models` probe covers endpoint binding only.
-- Live `/work` phase rendering is blocked upstream: the durable-job progress store cannot create a
-  work-shaped first revision and `GET /jobs/{id}` does not expose one. The CLI must not synthesize progress,
-  an ETA, or a percentage while those server seams are absent.
+- Claude OAuth is built and locally wire-tested, but staging currently returns the generic route 404 for
+  `POST /oauth/start`; a staging browser callback, restart-surviving account binding, and Claude inference
+  are therefore not PROBED. Copilot and local-model acquisition likewise do not prove answer-runtime spend.
+- Live `/work` phase and plan rendering is built and locally tested through the durable event stream. It is
+  not DEPLOYED or PROBED from a published CLI against production; the UI never invents ETA or percentage.
 - Client-provided MCP servers remain deliberately rejected.
 - The public server/client split passed terminal detach/reconnect and detached failure replay on
   `awesome-llm-apps`; a production-authenticated successful answer still requires a customer credential.

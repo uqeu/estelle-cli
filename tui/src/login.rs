@@ -18,6 +18,7 @@ use estelle_client::Client;
 use estelle_client::CredentialStore;
 use estelle_client::Error;
 use tokio_util::sync::CancellationToken;
+use url::Url;
 use zeroize::Zeroizing;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -72,6 +73,77 @@ pub(crate) async fn validate_and_store(
             Ok(LoginOutcome::StoredUnverified)
         }
     }
+}
+
+pub(crate) async fn connect_claude_plan_with<F>(
+    client: &Client,
+    cancel: &CancellationToken,
+    open_browser: F,
+    poll_interval: std::time::Duration,
+    max_polls: usize,
+) -> io::Result<()>
+where
+    F: FnOnce(&str) -> io::Result<()>,
+{
+    let start: estelle_client::OAuthStartResponse = client
+        .post(
+            estelle_client::Endpoint::OAuthStart,
+            &serde_json::json!({}),
+            cancel,
+        )
+        .await
+        .map_err(io::Error::other)?;
+    let authorize = Url::parse(&start.authorize_url).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "server returned an invalid OAuth URL",
+        )
+    })?;
+    if authorize.scheme() != "https" || authorize.host_str().is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "server returned a non-HTTPS OAuth URL",
+        ));
+    }
+    open_browser(authorize.as_str())?;
+    for _ in 0..max_polls {
+        let account = client.account(cancel).await.map_err(io::Error::other)?;
+        if account
+            .extra
+            .get("uses_plan")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+        tokio::select! {
+            () = cancel.cancelled() => {
+                return Err(io::Error::new(io::ErrorKind::Interrupted, "OAuth login cancelled"));
+            }
+            () = tokio::time::sleep(poll_interval) => {}
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::TimedOut,
+        "Claude sign-in did not reach the account before the bounded wait ended",
+    ))
+}
+
+pub(crate) async fn run_claude_plan(client: &Client) -> io::Result<()> {
+    io::stdout().write_all(
+        b"Opening Claude sign-in in your browser. Estelle will wait for the server callback.\n",
+    )?;
+    connect_claude_plan_with(
+        client,
+        &CancellationToken::new(),
+        |url| webbrowser::open(url).map_err(io::Error::other),
+        std::time::Duration::from_secs(1),
+        120,
+    )
+    .await?;
+    io::stdout()
+        .write_all(b"Claude subscription connected and read back from your Estelle account.\n")?;
+    Ok(())
 }
 
 #[derive(Default)]
@@ -359,5 +431,93 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn claude_oauth_opens_the_server_url_and_waits_for_the_persisted_account_binding() {
+        use std::sync::{Arc, Mutex};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/start"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "authorize_url": "https://provider.example/oauth/authorize?state=opaque"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/account"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "uses_plan": true
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = Client::new(
+            &format!("{}/", server.uri()),
+            ApiKey::new("estelle_test_key").expect("key"),
+            Duration::from_secs(120),
+        )
+        .expect("client");
+        let opened = Arc::new(Mutex::new(Vec::new()));
+        let opened_by_browser = opened.clone();
+
+        connect_claude_plan_with(
+            &client,
+            &CancellationToken::new(),
+            move |url| {
+                opened_by_browser
+                    .lock()
+                    .expect("browser record")
+                    .push(url.to_string());
+                Ok(())
+            },
+            Duration::ZERO,
+            1,
+        )
+        .await
+        .expect("connected plan");
+
+        assert_eq!(
+            opened.lock().expect("opened URL").as_slice(),
+            ["https://provider.example/oauth/authorize?state=opaque"]
+        );
+    }
+
+    #[tokio::test]
+    async fn claude_oauth_refuses_a_non_https_authorize_url_before_opening_it() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/start"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "authorize_url": "http://provider.example/oauth/authorize"
+            })))
+            .mount(&server)
+            .await;
+        let client = Client::new(
+            &format!("{}/", server.uri()),
+            ApiKey::new("estelle_test_key").expect("key"),
+            Duration::from_secs(120),
+        )
+        .expect("client");
+        let opened = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let browser_called = opened.clone();
+
+        let error = connect_claude_plan_with(
+            &client,
+            &CancellationToken::new(),
+            move |_| {
+                browser_called.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            },
+            Duration::ZERO,
+            1,
+        )
+        .await
+        .expect_err("HTTP authorize URL must be refused");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(!opened.load(std::sync::atomic::Ordering::SeqCst));
     }
 }

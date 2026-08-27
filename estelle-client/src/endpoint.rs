@@ -61,6 +61,7 @@ endpoints! {
     (TurnRoute, "turn/route", [Post], false),
     (ProviderKey, "key", [Post], false),
     (ProviderSelect, "provider/select", [Post], false),
+    (OAuthStart, "oauth/start", [Post], false),
     (Overview, "overview", [Get], false),
     (Repos, "repos", [Get], false),
     (Session, "session", [Get], false),

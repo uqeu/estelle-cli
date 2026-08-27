@@ -93,6 +93,11 @@ pub struct AccountResponse {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct OAuthStartResponse {
+    pub authorize_url: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct TeamIdentity {
     pub id: String,
     #[serde(default)]
@@ -436,6 +441,51 @@ pub struct JobSnapshot {
 pub struct WorkProgress {
     pub revision: u64,
     pub work: WorkPhaseSnapshot,
+    #[serde(default)]
+    pub plan: Option<WorkPlan>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct WorkPlan {
+    #[serde(default)]
+    pub revision: u64,
+    #[serde(default)]
+    pub steps: Vec<WorkPlanStep>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct WorkPlanStep {
+    pub id: String,
+    pub step: String,
+    pub status: String,
+    #[serde(default)]
+    pub evidence: String,
+}
+
+#[cfg(test)]
+mod work_plan_tests {
+    use super::*;
+
+    #[test]
+    fn work_progress_accepts_an_optional_structured_plan_without_breaking_legacy_snapshots() {
+        let legacy: WorkProgress = serde_json::from_value(serde_json::json!({
+            "revision": 1,
+            "work": {"phase": "scope", "phases": {"scope": 0.1}, "elapsed_s": 0.1}
+        }))
+        .expect("legacy progress");
+        assert!(legacy.plan.is_none());
+
+        let current: WorkProgress = serde_json::from_value(serde_json::json!({
+            "revision": 2,
+            "work": {"phase": "prompt", "phases": {"prompt": 0.2}, "elapsed_s": 0.2},
+            "plan": {"revision": 1, "steps": [{
+                "id": "inspect", "step": "Inspect parser", "status": "active", "evidence": "parser.py:parse"
+            }]}
+        })).expect("structured progress");
+        let plan = current.plan.expect("plan");
+        assert_eq!(plan.steps[0].id, "inspect");
+        assert_eq!(plan.steps[0].evidence, "parser.py:parse");
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -11,7 +11,7 @@ use url::Url;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AuthKind {
-    ClaudeImport,
+    ProviderOAuth,
     CopilotDevice,
     ApiKey,
     LocalEndpoint,
@@ -62,8 +62,8 @@ const PROVIDERS: &[ProviderDescriptor] = &[
         id: "claude",
         display_name: "Claude subscription",
         aliases: &["anthropic-subscription"],
-        detail: "import from Claude Code · source stays untouched",
-        auth: AuthKind::ClaudeImport,
+        detail: "browser sign-in · server-held OAuth · Pro, Max or Team",
+        auth: AuthKind::ProviderOAuth,
         surface: Surface::Hidden,
         server_provider: None,
         default_base_url: None,
@@ -245,7 +245,7 @@ pub(crate) fn login_route(name: &str, supplied_base: Option<&str>) -> io::Result
     let requires_key = match provider.auth {
         AuthKind::ApiKey => true,
         AuthKind::LocalEndpoint => !base_url.as_deref().is_some_and(is_local_url),
-        AuthKind::ClaudeImport | AuthKind::CopilotDevice => false,
+        AuthKind::ProviderOAuth | AuthKind::CopilotDevice => false,
     };
     Ok(LoginRoute {
         provider,
@@ -372,7 +372,7 @@ mod tests {
 
     #[test]
     fn acquisition_kind_is_provider_data() {
-        assert_eq!(resolve("claude").unwrap().auth, AuthKind::ClaudeImport);
+        assert_eq!(resolve("claude").unwrap().auth, AuthKind::ProviderOAuth);
         assert!(resolve("openai").is_none());
         assert!(resolve("chatgpt").is_none());
         assert_eq!(resolve("copilot").unwrap().auth, AuthKind::CopilotDevice);
