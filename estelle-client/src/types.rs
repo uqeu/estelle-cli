@@ -412,8 +412,30 @@ pub struct CommandReply {
     pub gate: Option<serde_json::Value>,
     #[serde(default)]
     pub merge: Option<serde_json::Value>,
+    /// Terminal `/work` receipt. Every fact here is measured by the server; clients render it
+    /// but never replace an absent value with a local clock or an inferred price.
+    #[serde(default)]
+    pub completion: Option<WorkCompletion>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct WorkCompletion {
+    pub elapsed_s: f64,
+    pub finished_at: String,
+    #[serde(default)]
+    pub spend_usd: Option<f64>,
+    #[serde(default)]
+    pub spend_known: bool,
+    #[serde(default)]
+    pub spend_is_upper_bound: bool,
+    #[serde(default)]
+    pub spend_is_lower_bound: bool,
+    #[serde(default)]
+    pub gate_refused: bool,
+    #[serde(default)]
+    pub gate_refused_count: u64,
 }
 
 /// Caller-bound snapshot returned by `GET /jobs/{id}`. Progress stays a typed whole snapshot:

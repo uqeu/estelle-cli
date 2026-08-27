@@ -1963,6 +1963,9 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
             {
                 lines.push("A reviewable diff is ready. Use /apply to write it.".to_string());
             }
+            if let Some(completion) = reply.completion.as_ref() {
+                lines.push(render_work_completion(completion));
+            }
             nonblank_or(
                 lines,
                 "Work completed without a displayable answer or diff.",
@@ -2172,6 +2175,46 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
         "skill:" => render_skill_reply(reply),
         _ => render_unknown_reply(reply),
     }
+}
+
+fn render_work_completion(completion: &estelle_client::WorkCompletion) -> String {
+    let elapsed = if completion.elapsed_s.is_finite() && completion.elapsed_s >= 0.0 {
+        estelle_tui::fmt_elapsed_compact(completion.elapsed_s.round() as u64)
+    } else {
+        "elapsed unavailable".to_string()
+    };
+    let finished = chrono::DateTime::parse_from_rfc3339(&completion.finished_at)
+        .map(|timestamp| {
+            timestamp
+                .with_timezone(&chrono::Utc)
+                .format("%H:%M UTC")
+                .to_string()
+        })
+        .unwrap_or_else(|_| "finish time unavailable".to_string());
+    let spend = match completion
+        .spend_usd
+        .filter(|value| value.is_finite() && *value >= 0.0)
+    {
+        Some(value) if completion.spend_is_lower_bound && completion.spend_is_upper_bound => {
+            format!("spend ${value:.6} (upper and lower bounds unresolved)")
+        }
+        Some(value) if completion.spend_is_lower_bound => format!("spend ≥${value:.6}"),
+        Some(value) if completion.spend_is_upper_bound => format!("spend ≤${value:.6}"),
+        Some(value) if completion.spend_known => format!("spend ${value:.6}"),
+        _ => "spend unknown".to_string(),
+    };
+    let gate = if completion.gate_refused {
+        let noun = if completion.gate_refused_count == 1 {
+            "finding"
+        } else {
+            "findings"
+        };
+        format!("gate refused {} {noun}", completion.gate_refused_count)
+    } else {
+        "gate accepted".to_string()
+    };
+
+    format!("✳ Worked for {elapsed} · done {finished} · {spend} · {gate}")
 }
 
 /// The `/graph nodes` view — the drawable dependency graph (`GET /graph/nodes`). The server's
@@ -5016,5 +5059,90 @@ mod tests {
 
         let rendered = todo_view_lines_at(&todo, false, 100.0).join("\n");
         assert!(rendered.contains("Todo · STALE"), "{rendered}");
+    }
+
+    #[test]
+    fn work_ends_with_the_server_owned_completion_line() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "answer": "Proposal ready.",
+            "completion": {
+                "elapsed_s": 357.0,
+                "finished_at": "2026-08-27T07:37:00+00:00",
+                "spend_usd": 0.012345,
+                "spend_known": true,
+                "spend_is_upper_bound": false,
+                "spend_is_lower_bound": false,
+                "gate_refused": true,
+                "gate_refused_count": 2
+            }
+        }))
+        .expect("work response");
+
+        let rendered = render_remote_reply("work", &reply);
+
+        assert_eq!(
+            rendered.last().map(String::as_str),
+            Some(
+                "✳ Worked for 5m 57s · done 07:37 UTC · spend $0.012345 · gate refused 2 findings"
+            )
+        );
+    }
+
+    #[test]
+    fn work_completion_keeps_unpriced_usage_unknown() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "completion": {
+                "elapsed_s": 1.0,
+                "finished_at": "2026-08-27T07:37:00Z",
+                "spend_usd": null,
+                "spend_known": false,
+                "gate_refused": false,
+                "gate_refused_count": 0
+            }
+        }))
+        .expect("unpriced work response");
+
+        let rendered = render_remote_reply("work", &reply).join("\n");
+
+        assert!(rendered.contains("spend unknown"), "{rendered}");
+        assert!(!rendered.contains("$0.000000"), "{rendered}");
+        assert!(rendered.contains("gate accepted"), "{rendered}");
+    }
+
+    #[test]
+    fn legacy_work_response_does_not_invent_a_client_timed_receipt() {
+        let reply: estelle_client::CommandReply =
+            serde_json::from_value(json!({"answer": "Legacy server answer."}))
+                .expect("legacy work response");
+
+        let rendered = render_remote_reply("work", &reply).join("\n");
+
+        assert_eq!(rendered, "Legacy server answer.");
+        assert!(!rendered.contains("Worked for"), "{rendered}");
+    }
+
+    #[test]
+    fn work_completion_does_not_call_a_two_direction_spend_error_exact() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "completion": {
+                "elapsed_s": 1.0,
+                "finished_at": "2026-08-27T07:37:00Z",
+                "spend_usd": 0.5,
+                "spend_known": false,
+                "spend_is_upper_bound": true,
+                "spend_is_lower_bound": true,
+                "gate_refused": true,
+                "gate_refused_count": 1
+            }
+        }))
+        .expect("bounded work response");
+
+        let rendered = render_remote_reply("work", &reply).join("\n");
+
+        assert!(
+            rendered.contains("spend $0.500000 (upper and lower bounds unresolved)"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("gate refused 1 finding"), "{rendered}");
     }
 }

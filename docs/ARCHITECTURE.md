@@ -127,6 +127,10 @@ implement → gate`, prints measured elapsed seconds, and names how long no newe
 derives a percentage or ETA from those boundaries. A malformed locator is refused before transport; an
 unknown phase, unknown tally key, repeated revision, or backwards phase leaves the last valid display
 unchanged. Completion and cancellation remove the live row rather than leaving a stale spinner behind.
+The terminal result carries a typed server-owned completion receipt: elapsed seconds, RFC 3339 finish
+time, vendor-list spend with its upper/lower-bound labels, and the number of gate findings that refused
+the proposal. The TUI ends the transcript with that receipt. An unpriced model says `spend unknown`, and
+an older server with no receipt gets no client-timed substitute; the terminal never owns a second clock.
 
 `tui/design-book-prototype.html` is the disposable design book for the 15 named customer surfaces. It owns
 three selectable variants per surface, uses the live cream/ink/red palette, includes explicit failure

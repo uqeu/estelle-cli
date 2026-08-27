@@ -133,7 +133,20 @@ mod tests {
                         "phases": {"scope": 0.4, "recall": 1.2, "conventions": 0.2, "prompt": 0.1, "implement": 3.0, "gate": 0.7},
                         "elapsed_s": 5.6
                     }},
-                    "result": {"answer": "work complete", "diff": "diff --git a/a b/a"}
+                    "result": {
+                        "answer": "work complete",
+                        "diff": "diff --git a/a b/a",
+                        "completion": {
+                            "elapsed_s": 5.6,
+                            "finished_at": "2026-08-27T07:37:00Z",
+                            "spend_usd": null,
+                            "spend_known": false,
+                            "spend_is_upper_bound": false,
+                            "spend_is_lower_bound": false,
+                            "gate_refused": false,
+                            "gate_refused_count": 0
+                        }
+                    }
                 }})
             )))
             .expect(1)
@@ -168,6 +181,11 @@ mod tests {
         .expect("terminal work reply");
 
         assert_eq!(result.reply.answer.as_deref(), Some("work complete"));
+        let completion = result.reply.completion.expect("typed completion receipt");
+        assert_eq!(completion.elapsed_s, 5.6);
+        assert_eq!(completion.finished_at, "2026-08-27T07:37:00Z");
+        assert!(!completion.spend_known);
+        assert!(!completion.gate_refused);
         let seen = seen.lock().expect("progress samples");
         assert_eq!(seen.len(), 2);
         assert_eq!(
