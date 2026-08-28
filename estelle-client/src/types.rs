@@ -513,6 +513,8 @@ mod work_plan_tests {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct WorkPhaseSnapshot {
     pub phase: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     #[serde(default)]
     pub phases: Map<String, Value>,
     #[serde(default)]

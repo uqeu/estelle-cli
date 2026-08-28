@@ -157,6 +157,7 @@ async fn durable_job_read_preserves_revisioned_work_progress() {
                 "revision": 2,
                 "work": {
                     "phase": "recall",
+                    "label": "Recalling your codebase",
                     "phases": {"scope": 0.4, "recall": 1.2},
                     "elapsed_s": 1.6
                 }
@@ -176,6 +177,12 @@ async fn durable_job_read_preserves_revisioned_work_progress() {
     let progress = snapshot.progress.expect("work progress");
     assert_eq!(progress.revision, 2);
     assert_eq!(progress.work.phase, "recall");
+    assert_eq!(
+        progress.work.label.as_deref(),
+        Some("Recalling your codebase")
+    );
+    let work_json = serde_json::to_value(&progress.work).expect("serializable work progress");
+    assert_eq!(work_json["label"], "Recalling your codebase");
     assert_eq!(progress.work.phases.len(), 2);
     assert!(!snapshot.terminal);
 }

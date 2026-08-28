@@ -121,7 +121,9 @@ exactly one and replace the local journal. Missing, malformed, or contradictory 
 
 `/work` is a durable operation: a 202 receipt names a caller-bound `job_<24 lowercase hex>` locator, then
 both standalone and attached-session clients poll `GET /jobs/{id}` until its remote terminal state. Each
-whole progress snapshot contains a strictly increasing revision plus the measured phase tally. The TUI
+whole progress snapshot contains a strictly increasing revision plus the measured phase tally and the
+server-owned `work.label`. The TUI renders that label verbatim; it owns no phase-to-copy dictionary. An
+older server that omits the additive label retains the raw `last measured <phase>` display. The TUI
 accepts only non-regressing snapshots in the server-owned order `scope → recall → conventions → prompt →
 implement → gate`, prints measured elapsed seconds, and names how long no newer phase has arrived. It never
 derives a percentage or ETA from those boundaries. A malformed locator is refused before transport; an
@@ -360,11 +362,13 @@ positive keeps an ordinary tracked source file in the sweep. This closes the `.g
 #66 while retaining the architectural fact that uncommitted bytes are filtered client-side.
 
 `/work` progress is one revisioned snapshot with two additive projections. `work` carries the six measured
-phase spans; `plan` carries bounded architect steps with stable ids, status, and an evidence string that may
-honestly be blank. The server publishes the plan immediately after architecture and again after the gate.
+phase spans and their server-authored human label; `plan` carries bounded architect steps with stable ids,
+status, and an evidence string that may honestly be blank. The server publishes the plan immediately after
+architecture and again after the gate.
 The TUI renders that same wire state as Screen 13 with an evidence column; `— unevidenced` is visible, and a
 deployment step remains `▲ protected` because `/work` proposes code and never deploys it. All status glyphs
-are one terminal column. Legacy phase-only snapshots remain valid.
+are one terminal column. Legacy phase-only snapshots remain valid. `research` is reserved but unemitted;
+the CLI neither invents that phase nor the copy `Researching the web`.
 
 `/gate` is still a synchronous server request and exposes no server-owned progress stream. The interactive TUI
 therefore reports only the two phases it can observe without guessing: `reading local diff`, then `waiting for

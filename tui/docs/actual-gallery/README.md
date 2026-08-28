@@ -11,7 +11,7 @@ ESTELLE_ACTUAL_GALLERY_DIR=docs/actual-gallery \
   cargo test -p estelle-tui --bin estelle actual_renderer_gallery_covers_the_product_surfaces
 ```
 
-Open `index.html` to inspect all fifteen frames together. Each `.txt` file is the exact terminal-cell text;
+Open `index.html` to inspect the generated frames together. Each `.txt` file is the exact terminal-cell text;
 each `.svg` preserves the corresponding Ratatui foreground, background, and bold styles.
 
 The separate `../visual-gallery/` directory is labelled `DESIGN FIXTURE - NOT LIVE DATA`. It is the binding

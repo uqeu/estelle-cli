@@ -688,6 +688,7 @@ struct WorkProgressView {
     revision: u64,
     phase_index: usize,
     phase: String,
+    label: Option<String>,
     phases: Vec<(String, f64)>,
     elapsed_s: f64,
     plan: Option<estelle_client::WorkPlan>,
@@ -727,6 +728,11 @@ impl WorkProgressView {
             revision: progress.revision,
             phase_index,
             phase: progress.work.phase.clone(),
+            label: progress
+                .work
+                .label
+                .clone()
+                .filter(|label| !label.is_empty()),
             phases,
             elapsed_s: progress.work.elapsed_s,
             plan: progress.plan.clone(),
@@ -751,10 +757,14 @@ impl WorkProgressView {
         } else {
             String::new()
         };
+        let status = self
+            .label
+            .clone()
+            .unwrap_or_else(|| format!("last measured {}", self.phase));
         format!(
-            "revision {} · last measured {} · elapsed {:.1}s{}{}",
+            "{} · revision {} · elapsed {:.1}s{}{}",
+            status,
             self.revision,
-            self.phase,
             self.elapsed_s,
             if measured.is_empty() { "" } else { " · " },
             measured + &stale
@@ -8286,6 +8296,7 @@ mod tests {
         assert_eq!((view.revision, view.phase.as_str()), (2, "recall"));
         assert!(view.phase_track().contains("scope ✓ → recall ✓"));
         let line = view.line(view.observed_at + Duration::from_secs(3));
+        assert!(line.contains("last measured recall"));
         assert!(line.contains("no new phase for 3s"));
         assert!(!line.contains('%'));
         assert!(!line.to_ascii_lowercase().contains("eta"));
@@ -8305,6 +8316,7 @@ mod tests {
             "revision": 3,
             "work": {
                 "phase": "prompt",
+                "label": "Assembling context",
                 "phases": {"scope": 0.2, "recall": 0.2, "conventions": 0.2, "prompt": 0.2},
                 "elapsed_s": 0.8
             },
@@ -8324,6 +8336,48 @@ mod tests {
         assert!(frame.contains("Prove parser behavior"));
         assert!(frame.contains("— unevidenced"));
         assert!(frame.contains("▲") && frame.contains("scripts/deploy.sh"));
+        assert!(frame.contains("Assembling context"));
+    }
+
+    #[test]
+    fn connected_work_progress_renders_the_server_owned_gate_label() {
+        let mut app = test_app();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        app.active = Some(ActiveRequest {
+            id: 19,
+            label: "/work".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        let progress = serde_json::from_value(json!({
+            "revision": 6,
+            "work": {
+                "phase": "gate",
+                "label": "Checking every claim against your code",
+                "phases": {
+                    "scope": 0.2,
+                    "recall": 0.2,
+                    "conventions": 0.2,
+                    "prompt": 0.2,
+                    "implement": 0.2,
+                    "gate": 0.2
+                },
+                "elapsed_s": 1.2
+            }
+        }))
+        .expect("gate progress");
+
+        app.handle_ui_event(
+            UiEvent::Session(session_server::ServerMessage::WorkProgress { id: 19, progress }),
+            &tx,
+        );
+        let mut terminal = Terminal::new(TestBackend::new(120, 25)).expect("terminal");
+        terminal
+            .draw(|frame| render_frame(frame, &app, Instant::now()))
+            .expect("render frame");
+        let frame = format!("{}", terminal.backend());
+
+        assert!(frame.contains("Checking every claim against your code"));
     }
 
     #[test]
@@ -9079,6 +9133,45 @@ mod tests {
             130,
             34,
             "ctrl+t to expand",
+        );
+
+        let mut work = test_app();
+        work.prod_panel_visible = false;
+        work.active = Some(ActiveRequest {
+            id: 19,
+            label: "/work".to_string(),
+            started: now,
+            cancel: CancellationToken::new(),
+        });
+        work.handle_ui_event(
+            UiEvent::WorkProgress {
+                id: 19,
+                progress: serde_json::from_value(json!({
+                    "revision": 6,
+                    "work": {
+                        "phase": "gate",
+                        "label": "Checking every claim against your code",
+                        "phases": {
+                            "scope": 0.2,
+                            "recall": 0.2,
+                            "conventions": 0.2,
+                            "prompt": 0.2,
+                            "implement": 0.2,
+                            "gate": 0.2
+                        },
+                        "elapsed_s": 1.2
+                    }
+                }))
+                .expect("gallery work progress"),
+            },
+            &tx,
+        );
+        capture(
+            "15-work-progress-label",
+            &work,
+            130,
+            34,
+            "Checking every claim against your code",
         );
 
         if let Some(output) = output.as_deref() {
