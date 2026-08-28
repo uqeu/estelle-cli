@@ -639,6 +639,10 @@ enum UiEvent {
         name: &'static str,
         result: Result<RemoteCommandReply, CommandFailure>,
     },
+    CommandProgress {
+        id: u64,
+        label: String,
+    },
     WorkProgress {
         id: u64,
         progress: estelle_client::WorkProgress,
@@ -677,6 +681,7 @@ struct AnswerReply {
 }
 
 type WorkProgressSink = Arc<dyn Fn(estelle_client::WorkProgress) + Send + Sync>;
+type CommandProgressSink = Arc<dyn Fn(String) + Send + Sync>;
 
 #[derive(Clone, Debug)]
 struct WorkProgressView {
@@ -2961,6 +2966,13 @@ impl App {
                             let _ = progress_tx.send(UiEvent::WorkProgress { id, progress });
                         }) as WorkProgressSink
                     });
+                    let command_progress_events: Option<CommandProgressSink> = (name == "gate")
+                        .then(|| {
+                            let progress_tx = tx.clone();
+                            Arc::new(move |label| {
+                                let _ = progress_tx.send(UiEvent::CommandProgress { id, label });
+                            }) as CommandProgressSink
+                        });
                     let result = execute_remote_command(
                         client,
                         repo,
@@ -2968,6 +2980,7 @@ impl App {
                         command,
                         &cancel,
                         progress_events,
+                        command_progress_events,
                     )
                     .await;
                     let _ = tx.send(UiEvent::CommandAnswer { id, name, result });
@@ -3379,6 +3392,12 @@ impl App {
                 {
                     self.work_progress = Some(next);
                 }
+            }
+            session_server::ServerMessage::CommandProgress { id, label } => {
+                let Some(active) = self.active.as_mut().filter(|active| active.id == id) else {
+                    return;
+                };
+                active.label = label;
             }
             session_server::ServerMessage::Fleet { fleet } => {
                 if self.fleet.as_ref().is_none_or(|current| {
@@ -3874,6 +3893,12 @@ impl App {
                     }
                 }
                 self.start_next(tx);
+            }
+            UiEvent::CommandProgress { id, label } => {
+                let Some(active) = self.active.as_mut().filter(|active| active.id == id) else {
+                    return;
+                };
+                active.label = label;
             }
             UiEvent::WorkProgress { id, progress } => {
                 if self.active.as_ref().is_none_or(|active| active.id != id) {
@@ -4371,7 +4396,13 @@ async fn execute_remote_command(
     pending: PendingCommand,
     cancel: &CancellationToken,
     work_progress_sink: Option<WorkProgressSink>,
+    command_progress_sink: Option<CommandProgressSink>,
 ) -> Result<RemoteCommandReply, CommandFailure> {
+    if pending.name == "gate"
+        && let Some(progress) = &command_progress_sink
+    {
+        progress("/gate · reading local diff".to_string());
+    }
     let measured_diff = if matches!(pending.name, "gate" | "scan" | "review") {
         Some(git_diff(&root, &pending.argument, cancel).await?)
     } else {
@@ -4440,6 +4471,12 @@ async fn execute_remote_command(
             messages.push(serde_json::json!({"role": "user", "content": task}));
         }
         body["messages"] = Value::Array(messages);
+    }
+
+    if pending.name == "gate"
+        && let Some(progress) = &command_progress_sink
+    {
+        progress("/gate · waiting for server verdict".to_string());
     }
 
     let result = match (request.method, request.endpoint.requires_repo()) {
@@ -5388,7 +5425,9 @@ fn status_line(app: &App, now: Instant) -> Line<'static> {
     if let Some(active) = &app.active {
         let elapsed = now.saturating_duration_since(active.started).as_secs();
         let local_shell = active.label.starts_with("local shell");
-        let label = if elapsed >= 30 && !local_shell {
+        let label = if elapsed >= 30 && active.label.starts_with("/gate ·") {
+            format!("{} · still waiting for Estelle", active.label)
+        } else if elapsed >= 30 && !local_shell {
             "still waiting for Estelle".to_string()
         } else {
             active.label.clone()
@@ -9675,6 +9714,34 @@ mod tests {
     }
 
     #[test]
+    fn connected_session_keeps_the_gate_phase_and_elapsed_visible() {
+        let mut app = test_app();
+        let started = Instant::now();
+        app.active = Some(ActiveRequest {
+            id: 84,
+            label: "/gate".to_string(),
+            started,
+            cancel: CancellationToken::new(),
+        });
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        app.handle_ui_event(
+            UiEvent::Session(session_server::ServerMessage::CommandProgress {
+                id: 84,
+                label: "/gate · waiting for server verdict".to_string(),
+            }),
+            &tx,
+        );
+
+        let rendered = format!("{:?}", status_line(&app, started + Duration::from_secs(13)));
+        assert!(
+            rendered.contains("/gate · waiting for server verdict"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("13s"), "{rendered}");
+    }
+
+    #[test]
     fn live_fleet_grid_stays_fixed_above_a_scrolling_transcript() {
         let mut app = test_app();
         app.active = Some(ActiveRequest {
@@ -11330,6 +11397,7 @@ mod tests {
             first_pending,
             &CancellationToken::new(),
             None,
+            None,
         )
         .await
         .expect("first run");
@@ -11360,6 +11428,7 @@ mod tests {
             root.path().to_path_buf(),
             second_pending,
             &CancellationToken::new(),
+            None,
             None,
         )
         .await
@@ -11621,11 +11690,17 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
 
         app.submit("/gate".to_string(), &tx);
-        let event = tokio::time::timeout(Duration::from_secs(2), rx.recv())
-            .await
-            .expect("gate deadline")
-            .expect("gate event");
-        app.handle_ui_event(event, &tx);
+        loop {
+            let event = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+                .await
+                .expect("gate deadline")
+                .expect("gate event");
+            let done = matches!(&event, UiEvent::CommandAnswer { .. });
+            app.handle_ui_event(event, &tx);
+            if done {
+                break;
+            }
+        }
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
 
         assert!(rendered.contains("EDIT REFUSED"));
@@ -11634,6 +11709,108 @@ mod tests {
         assert!(rendered.contains("2 files"));
         assert!(rendered.contains("6 changed lines"));
         assert!(rendered.contains("Ask Estelle"));
+    }
+
+    #[tokio::test]
+    async fn gate_wait_names_the_observed_phase_before_the_server_replies() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/gate"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(Duration::from_millis(500))
+                    .set_body_json(json!({
+                        "merge": true,
+                        "verified": true,
+                        "verdict": "clean",
+                        "blockers": [],
+                        "warnings": []
+                    })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let root = tempfile::tempdir().expect("git root");
+        let run_git = |args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(root.path())
+                .args(args)
+                .status()
+                .expect("git command");
+            assert!(status.success(), "git {args:?}");
+        };
+        run_git(&["init", "-q"]);
+        run_git(&["config", "user.email", "wait@example.invalid"]);
+        run_git(&["config", "user.name", "Gate Wait Test"]);
+        std::fs::write(root.path().join("a.rs"), "fn a() {}\n").expect("baseline");
+        run_git(&["add", "a.rs"]);
+        run_git(&["commit", "-qm", "baseline"]);
+        std::fs::write(root.path().join("a.rs"), "fn a() { real_call(); }\n").expect("change");
+
+        let mut app = test_app();
+        app.root = root.path().to_path_buf();
+        app.repo = Repo::new("fatelabs/estelle").expect("repo");
+        app.client = Some(
+            Client::new(
+                &format!("{}/", server.uri()),
+                estelle_client::ApiKey::new("test-key").expect("key"),
+                Duration::from_secs(120),
+            )
+            .expect("client"),
+        );
+        app.auth_resolved = true;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        app.submit("/gate".to_string(), &tx);
+        let mut phases = Vec::new();
+        while phases.len() < 2 {
+            let event = tokio::time::timeout(Duration::from_millis(250), rx.recv())
+                .await
+                .expect("both gate phases must arrive before the delayed verdict")
+                .expect("gate phase event");
+            app.handle_ui_event(event, &tx);
+            phases.push(
+                app.active
+                    .as_ref()
+                    .expect("gate still active")
+                    .label
+                    .clone(),
+            );
+        }
+        assert_eq!(
+            phases,
+            [
+                "/gate · reading local diff",
+                "/gate · waiting for server verdict"
+            ]
+        );
+        let now = app.active.as_ref().expect("gate still active").started + Duration::from_secs(13);
+        let rendered = format!("{:?}", status_line(&app, now));
+
+        assert!(
+            rendered.contains("/gate · waiting for server verdict"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("13s"), "{rendered}");
+        let cold = format!(
+            "{:?}",
+            status_line(
+                &app,
+                app.active.as_ref().expect("gate still active").started + Duration::from_secs(93),
+            )
+        );
+        assert!(
+            cold.contains("/gate · waiting for server verdict"),
+            "{cold}"
+        );
+        assert!(cold.contains("still waiting for Estelle"), "{cold}");
+        let verdict = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("delayed gate verdict deadline")
+            .expect("gate verdict event");
+        assert!(matches!(verdict, UiEvent::CommandAnswer { .. }));
+        app.handle_ui_event(verdict, &tx);
     }
 
     #[test]

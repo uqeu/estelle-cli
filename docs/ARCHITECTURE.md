@@ -366,7 +366,22 @@ The TUI renders that same wire state as Screen 13 with an evidence column; `— 
 deployment step remains `▲ protected` because `/work` proposes code and never deploys it. All status glyphs
 are one terminal column. Legacy phase-only snapshots remain valid.
 
+`/gate` is still a synchronous server request and exposes no server-owned progress stream. The interactive TUI
+therefore reports only the two phases it can observe without guessing: `reading local diff`, then `waiting for
+server verdict`, with live elapsed time. Those events cross both the standalone TUI channel and the
+`serve`/`connect` session protocol. A wait beyond 30 seconds retains the observed phase while adding `still
+waiting for Estelle`; it never invents which grounding or security sub-check the server is running. The headless
+one-shot `estelle gate` command still waits synchronously without live status updates.
+
 ## Current limits
+
+- A 2026-08-27 fresh-profile probe installed the public `v0.2.28` binary to an empty temporary directory in
+  6.07 seconds and read back `estelle 0.2.28`. Fresh account creation then stopped honestly at the public
+  boundary: `POST /signup` returned 403 in 0.364 seconds with `sign up at fatelabs.ca and verify your email
+  before creating an API key`; a second probe returned the same 403 in 0.448 seconds. No founder credential was
+  substituted, so auth, repo connection, first sweep, first gate, and first coding-turn timings remain
+  unmeasured until a verified fresh mailbox/account is supplied. The website-owned verification flow is not a
+  CLI workaround target.
 
 - The immutable `v0.2.12` release is public at candidate commit `6fa3bf744f1d08a3cb1f2ecf3e115a2e40cfae78`.
   All four native archives, the checksum-first public installer, and npm package `@fatelabs/estelle@0.2.12`

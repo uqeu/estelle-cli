@@ -112,6 +112,10 @@ pub(crate) enum ServerMessage {
         id: u64,
         progress: estelle_client::WorkProgress,
     },
+    CommandProgress {
+        id: u64,
+        label: String,
+    },
     Fleet {
         fleet: estelle_client::FleetSnapshot,
     },
@@ -911,6 +915,14 @@ async fn handle_request(
                         let _ = progress_events.send(ServerMessage::WorkProgress { id, progress });
                     }) as crate::WorkProgressSink
                 });
+                let command_progress_sink: Option<crate::CommandProgressSink> =
+                    (static_name == "gate").then(|| {
+                        let progress_events = events.clone();
+                        std::sync::Arc::new(move |label| {
+                            let _ =
+                                progress_events.send(ServerMessage::CommandProgress { id, label });
+                        }) as crate::CommandProgressSink
+                    });
                 let result = crate::execute_remote_command(
                     client,
                     repo,
@@ -918,6 +930,7 @@ async fn handle_request(
                     pending,
                     &cancel,
                     progress_sink,
+                    command_progress_sink,
                 )
                 .await;
                 let result = if follows_orchestra {

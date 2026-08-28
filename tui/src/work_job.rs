@@ -176,6 +176,7 @@ mod tests {
             },
             &CancellationToken::new(),
             Some(sink),
+            None,
         )
         .await
         .expect("terminal work reply");
