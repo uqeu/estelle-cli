@@ -7888,6 +7888,63 @@ async fn emit_version_notice() {
     let _ = stderr.write_all(message.as_bytes()).await;
 }
 
+/// The HTTP status inside `estelle-client`'s `Estelle returned HTTP {status}: {message}`.
+///
+/// ⚠️ Text matching is a compromise, stated rather than hidden: `top_level::run` returns
+/// `Result<_, String>`, so the typed `Error::Http` is already flattened by the time it reaches here.
+/// An unparsed status yields `None` and the generic advice, which is the safe direction to be wrong.
+fn http_status(error: &str) -> Option<u16> {
+    error
+        .split("returned HTTP ")
+        .nth(1)?
+        .split(|c: char| !c.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()
+}
+
+/// The two lines that follow `Estelle command failed: …`, chosen from what actually went wrong.
+///
+/// 🔴 **ONE ARM ANSWERED EVERY FAILURE, AND FOR AT LEAST ONE STATUS ITS ADVICE WAS FALSE.** A `409`
+/// from `estelle sweep` reads *"an ingest is already running for this account — poll
+/// GET /ingest/progress for its status"*, and the CLI answered **"Correct the command or account
+/// state, then retry."** Nothing needed correcting: the account was healthy, a run was simply in
+/// flight, and the server had already named the remedy. The generic line did not merely fail to
+/// help — it contradicted the sentence printed directly above it.
+///
+/// 🔑 **THE RULE: WHEN THE SERVER SUPPLIES A REMEDY, DO NOT BURY IT UNDER GENERIC ADVICE.** The
+/// message from the wire is printed verbatim on the first line; these lines exist to say what the
+/// reader should DO, and a status we do not recognise keeps the old wording rather than guessing.
+fn failure_advice(error: &str) -> Vec<String> {
+    let two = |a: &str, b: &str| vec![a.to_string(), b.to_string()];
+    match http_status(error) {
+        Some(409) => two(
+            "Estelle is already ingesting for this account.",
+            "Nothing is wrong here — let the run in flight finish, then retry.",
+        ),
+        Some(401 | 403) => two(
+            "The stored credential was refused.",
+            "Run `estelle login` to store a working key, then retry.",
+        ),
+        Some(402) => two(
+            "This account is over its allowance for that operation.",
+            "Raise the plan or wait for the next period; the command itself is fine.",
+        ),
+        Some(429 | 503) => two(
+            "Estelle asked to be retried later, and the client already waited the interval it advertised.",
+            "Retry shortly. Nothing needs changing here.",
+        ),
+        Some(status) if status >= 500 => two(
+            "Estelle failed on its side, not on yours.",
+            "Retry; if it persists, report the message above.",
+        ),
+        _ => two(
+            "The command did not complete its requested operation.",
+            "Correct the command or account state, then retry.",
+        ),
+    }
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = Args::parse();
@@ -8102,14 +8159,11 @@ async fn main() -> ExitCode {
         let outcome = top_level::run(command, repo, &root).await;
         let (lines, code) = match outcome {
             Ok(lines) => (lines, ExitCode::SUCCESS),
-            Err(error) => (
-                vec![
-                    format!("Estelle command failed: {error}"),
-                    "The command did not complete its requested operation.".to_string(),
-                    "Correct the command or account state, then retry.".to_string(),
-                ],
-                ExitCode::FAILURE,
-            ),
+            Err(error) => {
+                let mut lines = vec![format!("Estelle command failed: {error}")];
+                lines.extend(failure_advice(&error));
+                (lines, ExitCode::FAILURE)
+            }
         };
         let mut stdout = tokio::io::stdout();
         let body = format!("{}\n", lines.join("\n"));
@@ -12654,5 +12708,80 @@ mod tests {
         );
         let frame = rendered_frame_at_size(&app, Instant::now(), 120, 34);
         assert!(frame.contains("event --> symbol --> diff"));
+    }
+}
+
+#[cfg(test)]
+mod failure_advice_tests {
+    use super::failure_advice;
+    use super::http_status;
+
+    /// The exact wire message that exposed this: `estelle sweep` in the v0.2.30 public-binary
+    /// receipt. The server named the remedy and the CLI contradicted it on the next line.
+    const CONFLICT: &str = "Estelle returned HTTP 409 Conflict: an ingest is already running for \
+                            this account — poll GET /ingest/progress for its status";
+
+    #[test]
+    fn a_run_already_in_flight_is_not_reported_as_the_users_mistake() {
+        let advice = failure_advice(CONFLICT);
+        assert!(
+            advice.iter().any(|line| line.contains("already ingesting")),
+            "a 409 must say a run is in flight, got {advice:?}"
+        );
+        assert!(
+            !advice
+                .iter()
+                .any(|line| line.contains("Correct the command")),
+            "telling the reader to correct their account contradicts the server's own message"
+        );
+    }
+
+    #[test]
+    fn a_refused_credential_names_the_command_that_fixes_it() {
+        for status in ["401 Unauthorized", "403 Forbidden"] {
+            let advice = failure_advice(&format!("Estelle returned HTTP {status}: nope"));
+            assert!(
+                advice.iter().any(|line| line.contains("estelle login")),
+                "{status} should point at login, got {advice:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_server_side_failure_does_not_blame_the_caller() {
+        let advice = failure_advice("Estelle returned HTTP 500 Internal Server Error: boom");
+        assert!(advice.iter().any(|line| line.contains("not on yours")));
+    }
+
+    /// ⚠️ THE CONTROL. An unrecognised failure must keep the original wording rather than invent
+    /// advice for a case nobody classified — a wrong-but-confident remedy is the defect this
+    /// function exists to remove, and it would be one here too.
+    #[test]
+    fn an_unclassified_failure_keeps_the_original_generic_wording() {
+        for error in [
+            "Estelle request failed: dns error",
+            "Estelle returned HTTP 418 I'm a teapot: ?",
+            "something with no status at all",
+        ] {
+            let advice = failure_advice(error);
+            assert_eq!(
+                advice,
+                vec![
+                    "The command did not complete its requested operation.".to_string(),
+                    "Correct the command or account state, then retry.".to_string(),
+                ],
+                "unclassified error {error:?} must not receive invented advice"
+            );
+        }
+    }
+
+    #[test]
+    fn the_status_is_read_out_of_the_clients_own_formatting() {
+        assert_eq!(http_status(CONFLICT), Some(409));
+        assert_eq!(
+            http_status("Estelle returned HTTP 402 Payment Required: x"),
+            Some(402)
+        );
+        assert_eq!(http_status("no status here"), None);
     }
 }
