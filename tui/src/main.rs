@@ -4434,6 +4434,11 @@ async fn execute_remote_command(
                 "The local working tree and selected comparison are unchanged.".to_string(),
                 "Make a change or pass a base revision, then retry.".to_string(),
             ],
+            commands::RouteError::InvalidBillingArguments => [
+                "/billing needs one complete setting assignment.".to_string(),
+                "Use: /billing set <key>=<value>".to_string(),
+                "Nothing was sent.".to_string(),
+            ],
             commands::RouteError::InvalidPresetArguments => [
                 "/presets needs one complete server-owned routing table.".to_string(),
                 "Use: /presets set <coding|research|review> plan=<auto|provider:model> implement=<auto|provider:model> review=<auto|provider:model>".to_string(),
@@ -11614,6 +11619,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn billing_setting_write_reaches_the_server_and_renders_its_readback() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/settings"))
+            .and(body_json(json!({
+                "key": "rerank_quality",
+                "value": "best"
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "settings": {"rerank_quality": "best"},
+                "pricing": {"total_monthly_usd": 20.0, "breakdown": []}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut app = test_app();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        app.submit("/billing set rerank_quality=best".to_string(), &tx);
+        let queued = app.queue.pop_front().expect("billing write queued");
+        let QueuedRequest::Command(pending) = queued else {
+            panic!("expected a command")
+        };
+
+        let reply = execute_remote_command(
+            Client::new(
+                &format!("{}/", server.uri()),
+                estelle_client::ApiKey::new("test-key").expect("key"),
+                Duration::from_secs(120),
+            )
+            .expect("client"),
+            Repo::new("fatelabs/estelle").expect("repo"),
+            tempfile::tempdir().expect("root").path().to_path_buf(),
+            pending,
+            &CancellationToken::new(),
+            None,
+            None,
+        )
+        .await
+        .expect("billing write");
+
+        let rendered = commands::render_remote_reply("billing", &reply.reply).join("\n");
+        assert!(rendered.contains("rerank_quality  |  best"), "{rendered}");
+        assert!(rendered.contains("adds $20.00/month"), "{rendered}");
+    }
+
+    #[tokio::test]
     async fn conversational_question_rides_the_fast_path_with_no_working_memory_upload() {
         let server = MockServer::start().await;
         mount_research_dispatch(&server, "hi").await;
@@ -11735,7 +11786,11 @@ mod tests {
             .and(path("/sync"))
             .and(body_json(json!({
                 "repo": "fatelabs/estelle",
-                "files": [{"path": "main.rs", "content": "fn main() {}\n"}]
+                "files": [{"path": "main.rs", "content": "fn main() {}\n"}],
+                "client_fence": {
+                    "gitignore": "not-applicable",
+                    "secret_scan": "credential-shapes-v1"
+                }
             })))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"accepted": 1})))
             .expect(1)

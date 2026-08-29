@@ -359,7 +359,11 @@ an HTTP completion. The CLI owns local filesystem inventory and is therefore sti
 uncommitted sweep contents. Its Git inventory uses Git's exclude-standard result even for explicitly named
 inputs, so ignored secret files and ignored allowlisted source trees cannot bypass the fence; the paired
 positive keeps an ordinary tracked source file in the sweep. This closes the `.gitignore` defect tracked as
-#66 while retaining the architectural fact that uncommitted bytes are filtered client-side.
+#66 while retaining the architectural fact that uncommitted bytes are filtered client-side. Sweep uploads
+now carry a typed `client_fence` description: `gitignore=exclude-standard` only for a proved Git inventory,
+`gitignore=not-applicable` for a plain directory, plus the named credential scanner. Older clients omit it.
+The server does not yet preserve or echo this field, so it is server-observable request metadata but not yet
+a server-verified receipt; no UI may claim a sweep was fenced from a successful HTTP status alone.
 
 `/work` progress is one revisioned snapshot with two additive projections. `work` carries the six measured
 phase spans and their server-authored human label; `plan` carries bounded architect steps with stable ids,

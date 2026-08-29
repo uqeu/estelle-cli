@@ -95,8 +95,8 @@
     },
     {
       "path": "estelle-client/src/endpoint.rs",
-      "blob": "dcf173ebfd888639288d067fc8558c088be1a70b",
-      "reason": "the closed typed transport inventory adds the server-owned /agent-presets GET/PUT and /turn/route POST contracts alongside the previously reviewed GitHub, provider-key, Orchestra, and agent-health routes; both use the existing api.fatelabs.ca client and add no destination RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
+      "blob": "c57c369d15ea8c623c648e40de694291c1de322f",
+      "reason": "the closed typed transport inventory adds POST to the existing server-owned /settings BillingCatalog route. It uses the existing api.fatelabs.ca client and adds no destination or credential source; GET remains declared separately. The command layer supplies the exact server-owned {key,value} body and refuses malformed assignments before transport."
     },
     {
       "path": "estelle-client/src/lib.rs",
@@ -240,8 +240,8 @@
     },
     {
       "path": "tui/src/commands.rs",
-      "blob": "1bdd03c907a53fea2751ce1a46bf7d2235b16692",
-      "reason": "local command ownership remains explicit; /presets renders and PUTs one complete server-owned plan/implement/review table, rejects partial tables before transport, and never computes a model choice. Monitor rendering and /orchestra continue to display only server-returned facts through existing typed routes. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
+      "blob": "d44aa63343ea439c6cee81aa1aae36ef553cead5",
+      "reason": "local command ownership remains explicit. /billing stays a GET with no argument; /billing set <key>=<value> becomes one POST to the existing server-owned settings route with exactly {key,value}. Missing, empty, or extra arguments return InvalidBillingArguments before any request. Rendering uses only the server readback and no local setting is mutated or inferred."
     },
     {
       "path": "tui/src/config_update.rs",
@@ -275,8 +275,8 @@
     },
     {
       "path": "tui/src/history_import.rs",
-      "blob": "29b83c2cea8d768e2c895475521b8a35472a4fbe",
-      "reason": "NEW FILE, reviewed by the version-check lane and NOT its author. Verified: no network primitive of any kind in the module (pure std::fs plus the already-audited codex_external_agent_migration::sessions helpers), reached only through the explicit opt-in `estelle connect --from <harness>` flag which defaults to None, so nothing is read without the customer naming a harness. \u26a0\ufe0f NAMED LIMIT, not signed off: `model_context()` concatenates every imported turn's question and answer VERBATIM with no redaction pass, so a secret pasted into another harness's transcript would reach the existing deep-search sink. That content-filtering question is open and belongs to the authoring lane; this entry unblocks the release and does not clear it."
+      "blob": "8a6a006d881ca0779b5cc8c90390078a056bf97e",
+      "reason": "the explicit opt-in harness import remains local and read-only at its source. Before imported title, question, and answer text can leave through the existing deep-search path, model_context applies the shared estelle-client secret redactor once to the complete assembled context. The regression dynamically constructs GitHub, sk-, and AWS shapes, proves none survives, and keeps ordinary prose; it adds no destination or credential source."
     },
     {
       "path": "tui/src/lib.rs",
@@ -295,8 +295,8 @@
     },
     {
       "path": "tui/src/main.rs",
-      "blob": "2b39afcb0ddc7bc5b2fc112a1f6ce95cfd53a0cf",
-      "reason": "plain-English turns send the untouched prompt to the server-owned /turn/route classifier, then bind its closed action to an already-audited suite endpoint; the client carries no lexical classifier or model resolver, and ambiguous or unsupported actions stop before a second request. Preset PUTs use the existing authenticated client, while `brief` and dry-run `setup` remain local. No credential value is rendered and no new egress destination exists. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them. RE-ATTESTED 2026-08-29: adds `failure_advice` and `http_status`, which choose the two advice lines after a failed command from the HTTP status already present in the error string. Pure presentation \u2014 no request, no destination, no credential read, and an unrecognised status keeps the previous wording."
+      "blob": "9cb3c424ddf0eb802dc354f3983f4d3f4cb035b9",
+      "reason": "adds local refusal copy for malformed billing assignments, an exact localhost-only POST /settings test that renders the server readback, and an exact localhost-only sweep-body expectation for client_fence metadata. Production uses only the existing api.fatelabs.ca client; no destination or credential source was added and no secret value is rendered."
     },
     {
       "path": "tui/src/model_migration.rs",
@@ -425,8 +425,8 @@
     },
     {
       "path": "tui/src/top_level.rs",
-      "blob": "f314df127c81ec6800d732ae53dc919d93c17375",
-      "reason": "`brief` is a repository-confined local file transform; `setup` deliberately composes the already-audited authenticated /mcp, /ingest/start, /ingest/progress and /deep-search routes. The 4,000-file bound now reserves TypeScript and Go representation before filling in Git order, and doctor labels its accepted/total inventory as local-only rather than server proof. No new network destination or credential source was added. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
+      "blob": "3bf2307f95202b4a58540aee14d542fe42734cdc",
+      "reason": "both existing sweep transports now add content-free client_fence metadata to their existing api.fatelabs.ca request: gitignore is exclude-standard only when Git worktree detection succeeded, otherwise not-applicable, and secret_scan names the built-in scanner version. Older clients omit the field. No file content, credential, destination, or authority changes; the server must still preserve and echo the field before it can claim verification."
     },
     {
       "path": "tui/src/transcript.rs",

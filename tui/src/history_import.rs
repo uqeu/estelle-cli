@@ -13,6 +13,7 @@ use codex_external_agent_migration::sessions::prepare_validated_session_import_w
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::RolloutItem;
 use codex_rollout::RolloutRecorder;
+use estelle_client::redact_secrets;
 use serde::Deserialize;
 use serde::Serialize;
 use sha2::Digest;
@@ -60,7 +61,7 @@ impl ImportedHistory {
             lines.push(format!("User: {}", turn.question));
             lines.push(format!("Assistant: {}", turn.answer));
         }
-        lines.join("\n")
+        redact_secrets(&lines.join("\n"))
     }
 }
 
@@ -342,6 +343,40 @@ mod tests {
         let error = turns_from_rollout_items(&items).expect_err("must fail closed");
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         assert!(error.to_string().contains("no complete"));
+    }
+
+    #[test]
+    fn model_context_redacts_credentials_without_erasing_clean_imported_prose() {
+        let github_token = format!("ghp_{}", "A".repeat(20));
+        let api_key = format!("sk-{}", "b".repeat(16));
+        let aws_key = format!("AKIA{}", "C".repeat(16));
+        let history = ImportedHistory {
+            source: ExternalHistorySource::ClaudeCode,
+            title: format!("Debug {github_token}"),
+            cwd: PathBuf::from("/fixture"),
+            source_path: PathBuf::from("/fixture/session.jsonl"),
+            source_sha256: "fixture-sha".to_string(),
+            turns: vec![ImportedTurn {
+                question: format!("Why did {api_key} fail?"),
+                answer: format!("Rotate {aws_key}, then retry the clean parser task."),
+            }],
+        };
+
+        let context = history.model_context();
+
+        for credential in [&github_token, &api_key, &aws_key] {
+            assert!(
+                !context.contains(credential),
+                "credential survived: {context}"
+            );
+        }
+        assert!(context.contains("[redacted: a GitHub token]"), "{context}");
+        assert!(context.contains("[redacted: an sk- API key]"), "{context}");
+        assert!(
+            context.contains("[redacted: an AWS access key]"),
+            "{context}"
+        );
+        assert!(context.contains("retry the clean parser task"), "{context}");
     }
 
     #[tokio::test]

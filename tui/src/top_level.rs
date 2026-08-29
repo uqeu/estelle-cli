@@ -1954,13 +1954,10 @@ where
                 bytes,
             })
             .map_err(SweepFailure::Local)?;
+            let body = with_sweep_fence(with_measured_head(json!({"files": files}), root), root)
+                .map_err(SweepFailure::Local)?;
             let response: Value = client
-                .post_scoped(
-                    Endpoint::Sync,
-                    repo,
-                    &with_measured_head(json!({"files": files}), root),
-                    cancel,
-                )
+                .post_scoped(Endpoint::Sync, repo, &body, cancel)
                 .await
                 .map_err(SweepFailure::Client)?;
             lines.push("Repo swept. The server accepted the complete source set.".to_string());
@@ -1974,7 +1971,8 @@ where
             .map_err(SweepFailure::Local)?;
         }
         SweepTransport::Background => {
-            let body = with_measured_head(json!({"files": files}), root);
+            let body = with_sweep_fence(with_measured_head(json!({"files": files}), root), root)
+                .map_err(SweepFailure::Local)?;
             lines.extend(
                 ingest_with_progress(client, repo, body, file_count, bytes, cancel, &mut report)
                     .await?,
@@ -1982,6 +1980,28 @@ where
         }
     }
     Ok(lines)
+}
+
+/// Describe the client-owned source boundary on the upload itself. Older clients omit this field,
+/// so the server can distinguish "not reported" from a current client that proved Git's
+/// exclude-standard inventory. The server must preserve/echo this receipt before it may claim the
+/// protection was present; accepting an unknown JSON field is not evidence of enforcement.
+fn with_sweep_fence(mut body: Value, root: &Path) -> Result<Value, String> {
+    let object = body
+        .as_object_mut()
+        .ok_or_else(|| "internal sweep body must be an object".to_string())?;
+    object.insert(
+        "client_fence".to_string(),
+        json!({
+            "gitignore": if is_git_worktree(root)? {
+                "exclude-standard"
+            } else {
+                "not-applicable"
+            },
+            "secret_scan": "credential-shapes-v1"
+        }),
+    );
+    Ok(body)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -5266,6 +5286,41 @@ tests/test_serve.py:88: AssertionError\n\
         assert!(
             body.get("head").is_none(),
             "an unreadable HEAD must omit the field, never invent one"
+        );
+    }
+
+    #[test]
+    fn sweep_body_tells_the_server_which_client_fence_was_applied() {
+        let git_root = tempfile::tempdir().expect("git root");
+        let init = ProcessCommand::new("git")
+            .arg("init")
+            .arg(git_root.path())
+            .output()
+            .expect("git init");
+        assert!(init.status.success());
+        let git_body =
+            with_sweep_fence(json!({"files": []}), git_root.path()).expect("git fence receipt");
+        assert_eq!(
+            git_body["client_fence"],
+            json!({
+                "gitignore": "exclude-standard",
+                "secret_scan": "credential-shapes-v1"
+            })
+        );
+
+        let plain = tempfile::tempdir().expect("plain root");
+        let plain_body =
+            with_sweep_fence(json!({"files": []}), plain.path()).expect("plain fence receipt");
+        assert_eq!(
+            plain_body["client_fence"],
+            json!({
+                "gitignore": "not-applicable",
+                "secret_scan": "credential-shapes-v1"
+            })
+        );
+        assert_ne!(
+            git_body["client_fence"], plain_body["client_fence"],
+            "the receipt must distinguish a Git-ignore proof from a plain-directory scan"
         );
     }
 

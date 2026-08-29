@@ -51,7 +51,7 @@ endpoints! {
     (Requests, "requests", [Get], false),
     (Presence, "presence", [Get], false),
     (Leaderboard, "leaderboard", [Get], false),
-    (BillingCatalog, "settings", [Get], false),
+    (BillingCatalog, "settings", [Get, Post], false),
     (TeamLeaderboard, "team/leaderboard", [Get], false),
     (Marketplace, "marketplace", [Get], false),
     (Automations, "automations", [Get], false),

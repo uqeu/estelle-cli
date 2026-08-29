@@ -115,7 +115,7 @@ const SESSION_HELP: [(&str, &str); 47] = [
     ("leaderboard", "skills ranked by verified grounded outcome"),
     (
         "billing",
-        "settings catalog with monthly pricing and current choices",
+        "view choices; /billing set <key>=<value> changes one server setting",
     ),
     ("marketplace", "the team's published plugins"),
     (
@@ -552,6 +552,7 @@ pub(crate) struct RemoteRequest {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RouteError {
     MissingDiff,
+    InvalidBillingArguments,
     InvalidPresetArguments,
 }
 
@@ -674,7 +675,8 @@ pub(crate) fn remote_request(
         "requests" => get(Endpoint::Requests, json!({})),
         "presence" => get(Endpoint::Presence, json!({})),
         "leaderboard" => get(Endpoint::Leaderboard, json!({})),
-        "billing" => get(Endpoint::BillingCatalog, json!({})),
+        "billing" if argument.is_empty() => get(Endpoint::BillingCatalog, json!({})),
+        "billing" => post(Endpoint::BillingCatalog, billing_update_body(argument)?),
         "model" if argument.is_empty() => get(Endpoint::Providers, json!({})),
         "presets" if argument.is_empty() => get(Endpoint::AgentPresets, json!({})),
         "presets" => put(Endpoint::AgentPresets, preset_update_body(argument)?),
@@ -745,6 +747,22 @@ pub(crate) fn remote_request(
         ),
         _ => Ok(None),
     }
+}
+
+fn billing_update_body(argument: &str) -> Result<Value, RouteError> {
+    let mut words = argument.split_whitespace();
+    if words.next() != Some("set") {
+        return Err(RouteError::InvalidBillingArguments);
+    }
+    let assignment = words
+        .next()
+        .filter(|_| words.next().is_none())
+        .ok_or(RouteError::InvalidBillingArguments)?;
+    let (key, value) = assignment
+        .split_once('=')
+        .filter(|(key, value)| !key.is_empty() && !value.is_empty())
+        .ok_or(RouteError::InvalidBillingArguments)?;
+    Ok(json!({"key": key, "value": value}))
 }
 
 fn preset_update_body(argument: &str) -> Result<Value, RouteError> {
@@ -4210,6 +4228,39 @@ mod tests {
     }
 
     #[test]
+    fn billing_write_uses_the_server_settings_contract_and_read_stays_get() {
+        let read = remote_request("billing", "", None, None)
+            .expect("read route")
+            .expect("read request");
+        assert_eq!(read.method, RemoteMethod::Get);
+        assert_eq!(read.body, None);
+
+        let write = remote_request("billing", "set rerank_quality=best", None, None)
+            .expect("write route")
+            .expect("write request");
+        assert_eq!(write.endpoint, Endpoint::BillingCatalog);
+        assert_eq!(write.method, RemoteMethod::Post);
+        assert_eq!(
+            write.body,
+            Some(json!({"key": "rerank_quality", "value": "best"}))
+        );
+
+        for malformed in [
+            "rerank_quality=best",
+            "set",
+            "set =best",
+            "set rerank_quality=",
+            "set rerank_quality=best extra",
+        ] {
+            assert_eq!(
+                remote_request("billing", malformed, None, None),
+                Err(RouteError::InvalidBillingArguments),
+                "malformed write must not produce a request: {malformed:?}"
+            );
+        }
+    }
+
+    #[test]
     fn dropped_codex_only_commands_are_unknown_and_kept_names_still_resolve() {
         // The DROP list (founder, 2026-08-07): Codex-only or wrong-branded names must not exist
         // on the Estelle surface at all — an unknown name sends zero requests.
@@ -4638,7 +4689,8 @@ mod tests {
             ("tools", estelle_client::Endpoint::Mcp),
         ];
         for (name, endpoint) in routed {
-            let request = remote_request(name, "subject", Some("diff body"), Some("last question"))
+            let argument = if name == "billing" { "" } else { "subject" };
+            let request = remote_request(name, argument, Some("diff body"), Some("last question"))
                 .unwrap_or_else(|error| panic!("route failed for {name}: {error:?}"))
                 .unwrap_or_else(|| panic!("missing route for {name}"));
             assert_eq!(request.endpoint, endpoint, "wrong route for {name}");
