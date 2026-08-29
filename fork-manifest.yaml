@@ -160,8 +160,8 @@
     },
     {
       "path": "tui/src/bottom_pane/chat_composer.rs",
-      "blob": "4ae923474b43086f2e62992aded145502a47715f",
-      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+      "blob": "0ffb12657b2f4e39dc92ccf27308e8a8895ef1a4",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added. RE-ATTESTED 2026-08-29: one change, a temp-file name in a test (codex_tui_test_paste_image.png -> estelle_tui_test_paste_image.png). No behaviour, no destination, no credential."
     },
     {
       "path": "tui/src/bottom_pane/chat_composer/slash_input.rs",
@@ -207,6 +207,11 @@
       "path": "tui/src/chatwidget/slash_dispatch.rs",
       "blob": "29de370276154d5a66d851daafb27cb522fed65d",
       "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/chatwidget/tests.rs",
+      "blob": "a7c20091d74792157d51e0ec5f9dae2220ffc841",
+      "reason": "Test harness only. Three hardcoded snapshot NAMES carried the pre-rename crate identity -- format!(\"codex_tui__chatwidget__tests__{}\", $name) in two macros plus one literal path -- so 188 fixtures were requested under a name the crate no longer has. Changed to estelle_tui__, which is what [lib] name actually is. No network destination, no credential source, no production code path."
     },
     {
       "path": "tui/src/chatwidget/tests/status_and_layout.rs",
@@ -255,13 +260,8 @@
     },
     {
       "path": "tui/src/doctor.rs",
-      "blob": "7de1f1dde8c1aea4551f7b6505adcda2d0504719",
-      "reason": "doctor retains metadata-only credential reporting and adds only repository inventory counts: TypeScript and Go are reported independently as accepted/total with a loud local-only limit, so one blocked side cannot be rendered healthy. No file content, credential value or network result is rendered. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
-    },
-    {
-      "path": "tui/src/external_agent_config_migration/snapshots/codex_tui__external_agent_config_migration__source__tests__external_agent_config_source_prompt.snap",
-      "blob": "b380a0aeb7908f252f1ab7e16ba182201d9063e2",
-      "reason": "the reviewed terminal snapshot proves OpenCode is visible as the third explicit local import source without changing the prompt's action or adding an implicit migration"
+      "blob": "18b316c6bc36ed2ae12a80485854267387d1344d",
+      "reason": "doctor retains metadata-only credential reporting and adds only repository inventory counts: TypeScript and Go are reported independently as accepted/total with a loud local-only limit, so one blocked side cannot be rendered healthy. No file content, credential value or network result is rendered. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them. RE-ATTESTED 2026-08-29: the `#[cfg(test)] mod tests` block moved to the end of the file to satisfy clippy::items_after_test_module. Pure relocation -- no line inside it changed."
     },
     {
       "path": "tui/src/external_agent_config_migration/source.rs",
@@ -375,8 +375,8 @@
     },
     {
       "path": "tui/src/public_widgets/history_transcript.rs",
-      "blob": "4caf93a96c9d75bbe29340f19fbc7c85cad18f21",
-      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+      "blob": "e7690118a5a4796a72795d654ab0c4d9bf015670",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added. RE-ATTESTED 2026-08-29: one line-scoped allow for a fixed dark swatch rendered over a hardcoded ground, with the reason inline. No behaviour change."
     },
     {
       "path": "tui/src/public_widgets/mod.rs",
@@ -390,8 +390,8 @@
     },
     {
       "path": "tui/src/screens.rs",
-      "blob": "d328bb07729df3da8aa80b485441335b5e3288c8",
-      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+      "blob": "2be0b408d0dbff362dfcb357c1e5fc428433cd31",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added. RE-ATTESTED 2026-08-29: two bare tuple row types replaced by named aliases (RoutedModelRow, LocalModelRow) to satisfy clippy::type_complexity. Type names only; no behaviour change."
     },
     {
       "path": "tui/src/session_gap.rs",
@@ -414,49 +414,14 @@
       "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
     },
     {
-      "path": "tui/src/snapshots/estelle__tests__snapshot_composer_with_text.snap",
-      "blob": "87453941ac33931ad2ee219295733846d2e6405a",
-      "reason": "Rendered-output fixture, not executable code. Pins UI text; contains no network or credential primitive. One snapshot quotes Estelle's own credential-refusal copy, which is display text."
-    },
-    {
-      "path": "tui/src/snapshots/estelle__tests__snapshot_empty_composer.snap",
-      "blob": "0a4a7092ee18d3df6d97c75cfb025688858f5216",
-      "reason": "Rendered-output fixture, not executable code. Pins UI text; contains no network or credential primitive. One snapshot quotes Estelle's own credential-refusal copy, which is display text."
-    },
-    {
-      "path": "tui/src/snapshots/estelle__tests__snapshot_every_failure_screen.snap",
-      "blob": "af7db4844cf70c5f1013728c319f9ab8e156b7c9",
-      "reason": "Rendered-output fixture, not executable code. Pins UI text; contains no network or credential primitive. One snapshot quotes Estelle's own credential-refusal copy, which is display text."
-    },
-    {
-      "path": "tui/src/snapshots/estelle__tests__snapshot_long_running_query_with_elapsed_timer.snap",
-      "blob": "082e9bc0bc27f0e412b5494d6563da6117cdaf4b",
-      "reason": "Rendered-output fixture, not executable code. Pins UI text; contains no network or credential primitive. One snapshot quotes Estelle's own credential-refusal copy, which is display text."
-    },
-    {
-      "path": "tui/src/snapshots/estelle__tests__snapshot_p6_citation_pane.snap",
-      "blob": "9d16b9435038b96f9bb0069ca3b650ed5301c3eb",
-      "reason": "Rendered-output fixture, not executable code. Pins UI text; contains no network or credential primitive. One snapshot quotes Estelle's own credential-refusal copy, which is display text."
-    },
-    {
-      "path": "tui/src/snapshots/estelle__tests__snapshot_p6_sweep_gauge.snap",
-      "blob": "6207d23146e3eda6dfa260c51af11b6e7654572b",
-      "reason": "Rendered-output fixture, not executable code. Pins UI text; contains no network or credential primitive. One snapshot quotes Estelle's own credential-refusal copy, which is display text."
-    },
-    {
-      "path": "tui/src/snapshots/estelle__tests__snapshot_slash_menu_open.snap",
-      "blob": "0800a8633977ada8b22d74da8d83aa033b0dfeef",
-      "reason": "Rendered-output fixture, not executable code. Pins UI text; contains no network or credential primitive. One snapshot quotes Estelle's own credential-refusal copy, which is display text."
-    },
-    {
       "path": "tui/src/status/tests.rs",
       "blob": "fb0f2f4754ee53c87593688f0aa994dc5dc78e2a",
       "reason": "release-version snapshot sanitization preserves rendered width when SemVer grows, keeping inherited status layout assertions stable without accepting changed snapshots"
     },
     {
       "path": "tui/src/theme.rs",
-      "blob": "2bf0c0948856c47a0f8f5eda2cd850f8ea372531",
-      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+      "blob": "681fab62b5f3e37a08563b208ee0e052feda9fba",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added. RE-ATTESTED 2026-08-29: a module-level `#![allow(clippy::disallowed_methods)]` plus the doc comment arguing for it. The workspace forbids Color::Rgb to keep ANSI portability; this module IS the brand palette (exact identity colours) and adapts via ScreenTheme Dark/Cream chosen from the DETECTED terminal background. No behaviour change, no destination, no credential."
     },
     {
       "path": "tui/src/top_level.rs",

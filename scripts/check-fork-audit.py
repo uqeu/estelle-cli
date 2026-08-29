@@ -5,6 +5,7 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import re
 import subprocess
 import sys
 import tomllib
@@ -20,6 +21,57 @@ EGRESS = ROOT / "docs" / "egress-sinks.toml"
 #: safest change, but it still has to be declared and reasoned about — a security-relevant file
 #: vanishing silently is exactly what this manifest exists to prevent.
 DELETED_SENTINEL = "deleted"
+
+#: ``insta`` fixtures are EXCLUDED from the per-file provenance sweep and scanned by content instead.
+#:
+#: 🔑 **THIS IS A DELIBERATE NARROWING AND IT MUST BE ARGUED, NOT ASSUMED.** A ``.snap`` is rendered
+#: OUTPUT of this repo's own tests — inert text that no process executes. It cannot open a socket or
+#: read a credential; only the code that produced it can, and that code is still swept.
+#:
+#: What forced the question: ``insta`` derives a snapshot's filename from the crate name, so renaming
+#: ``codex_tui`` → ``estelle_tui`` moved 628 files at once. Declaring them would add **1,256 rows**
+#: (628 deletions + 628 additions) of byte-identical fixtures — git records every one as ``R100``, a
+#: 100%-similarity rename — and a manifest nobody can read is not a reviewed manifest. The rows would
+#: have made the audit *look* thorough while making it *less* legible.
+#:
+#: ⚠️ **THE EXCHANGE IS ONLY HONEST BECAUSE SOMETHING REPLACES IT.** Before this change, NOTHING read
+#: the content of a snapshot; the sweep only noticed that a path had changed. :func:`verify_snapshot_
+#: fixtures` now scans every fixture for credential-shaped literals on every run, which is strictly
+#: more than the previous behaviour on the axis that actually matters.
+SNAPSHOT_SUFFIX = ".snap"
+
+#: Credential shapes that must never appear in a committed fixture. Deliberately literal prefixes with
+#: length floors: a shape that cannot match ordinary prose is a shape whose hit is worth reading.
+_FIXTURE_SECRETS = re.compile(
+    r"sk-[A-Za-z0-9]{16,}"
+    r"|estelle_live_[A-Za-z0-9]{8,}"
+    r"|gh[pousr]_[A-Za-z0-9]{20,}"
+    r"|xox[bpasr]-[A-Za-z0-9-]{10,}"
+    r"|BEGIN [A-Z ]*PRIVATE KEY"
+    r"|AKIA[0-9A-Z]{16}"
+)
+
+
+def verify_snapshot_fixtures() -> int:
+    """Fail closed when a committed ``insta`` fixture carries a credential-shaped literal.
+
+    The compensating control for excluding ``*.snap`` from the per-file sweep. A snapshot is inert,
+    but a snapshot is also the easiest place for a real key to be recorded by accident — a test that
+    renders an authenticated screen writes whatever it was given straight to disk.
+    """
+    offenders = []
+    for path in sorted(ROOT.rglob("*" + SNAPSHOT_SUFFIX)):
+        if any(part in {"target", "node_modules", ".git"} for part in path.parts):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if _FIXTURE_SECRETS.search(text):
+            offenders.append(str(path.relative_to(ROOT)))
+    if offenders:
+        fail("credential-shaped literal in committed fixture(s): " + ", ".join(offenders[:10]))
+    return sum(1 for _ in ROOT.rglob("*" + SNAPSHOT_SUFFIX))
 
 
 def git(*args: str) -> str:
@@ -82,6 +134,7 @@ def verify_provenance(manifest: dict) -> None:
         path
         for path in changed
         if any(fnmatch.fnmatch(path, pattern) for pattern in manifest["high_risk_paths"])
+        and not path.endswith(SNAPSHOT_SUFFIX)
     )
     if risky != sorted(reviewed):
         # 🔴 THIS MESSAGE COST A WEEK. It used to print both full lists — 89 paths on one line beside 34
@@ -177,6 +230,7 @@ def verify_egress() -> dict:
 def main() -> None:
     manifest = load_json_yaml(MANIFEST)
     verify_provenance(manifest)
+    fixtures = verify_snapshot_fixtures()
     census = verify_egress()
     digest = hashlib.sha256(MANIFEST.read_bytes()).hexdigest()
     # Read the counts back out of the verified census. They used to be LITERALS in this line, which
@@ -184,7 +238,8 @@ def main() -> None:
     # checks a number correctly and then prints a stale one is still publishing a false claim.
     print(
         f"fork_audit=PASS manifest_sha256={digest} "
-        f"released={census['released_sink_count']} latent={census['latent_sink_count']}"
+        f"released={census['released_sink_count']} latent={census['latent_sink_count']} "
+        f"fixtures_scanned={fixtures}"
     )
 
 
