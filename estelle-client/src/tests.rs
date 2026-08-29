@@ -1511,3 +1511,47 @@ fn an_interval_we_cannot_afford_to_wait_is_declined_rather_than_silently_obeyed(
         Some(Duration::from_secs(2))
     );
 }
+
+// ── The HTTP receipt must be wired at the SHARED constructor ───────────────────────────────────
+//
+// 🔴 THE DEFECT THIS GUARDS. `ESTELLE_RECEIPT_PATH` used to be read inside `Client::production()`
+// alone. The TUI calls `production()` twice and `new()` thirteen times — `session_server.rs` builds a
+// client six times by itself — so nearly every request the app made recorded nothing. The
+// public-binary probe then reported **"not observed" for all 26 routes it asserts, 29 contracts**,
+// during a session that was visibly pulling a 275-file repo graph. The calls happened; the observer
+// was wired to a path the app mostly does not take.
+//
+// ⚠️ This is a STATIC wiring proof on purpose. A behavioural test would have to mutate a
+// process-global env var, which is `unsafe` in edition 2024 and races every other test in this
+// binary. What actually regresses here is not the reading of the variable — it is WHERE the reading
+// lives, and that is a fact about the source, so the source is what this asserts.
+
+#[test]
+fn the_receipt_path_is_read_at_the_one_constructor_every_caller_reaches() {
+    const SOURCE: &str = include_str!("lib.rs");
+    const VAR: &str = "ESTELLE_RECEIPT_PATH";
+
+    let new_at = SOURCE.find("pub fn new(").expect("Client::new must exist");
+    let after_new = &SOURCE[new_at..];
+    let new_body_end = after_new
+        .find("pub fn with_receipt_path")
+        .expect("with_receipt_path follows new()");
+    let new_body = &after_new[..new_body_end];
+
+    assert!(
+        new_body.contains(VAR),
+        "{VAR} is not read in Client::new. Every constructor funnels through new(), so a client \
+         built any other way records nothing and every route reads 'not observed'."
+    );
+
+    // And it must not ALSO be read in production(), or there are two owners of one decision again.
+    let prod_at = SOURCE
+        .find("pub fn production(")
+        .expect("Client::production must exist");
+    let prod_body = &SOURCE[prod_at..prod_at + new_at.saturating_sub(prod_at).max(1)];
+    assert!(
+        !prod_body.contains(VAR),
+        "{VAR} is read in production() as well as new(). One owner per derived fact: production() \
+         delegates to new(), so the read belongs in exactly one of them."
+    );
+}

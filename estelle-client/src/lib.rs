@@ -185,12 +185,7 @@ pub struct Client {
 
 impl Client {
     pub fn production(api_key: ApiKey) -> Result<Self, Error> {
-        let client = Self::new(DEFAULT_BASE_URL, api_key, DEFAULT_TIMEOUT)?;
-        let Some(path) = std::env::var_os("ESTELLE_RECEIPT_PATH").filter(|path| !path.is_empty())
-        else {
-            return Ok(client);
-        };
-        Ok(client.with_receipt_path(PathBuf::from(path)))
+        Self::new(DEFAULT_BASE_URL, api_key, DEFAULT_TIMEOUT)
     }
 
     pub fn new(base_url: &str, api_key: ApiKey, timeout: Duration) -> Result<Self, Error> {
@@ -199,11 +194,25 @@ impl Client {
         }
         let base_url = Url::parse(base_url)?;
         let http = reqwest::Client::builder().timeout(timeout).build()?;
+        // 🔴 THE RECEIPT PATH IS READ HERE, AT THE ONE CONSTRUCTOR EVERYTHING FUNNELS THROUGH.
+        //
+        // It used to be read in `production()` only. The TUI calls `production()` twice and `new()`
+        // thirteen times — `session_server.rs` alone builds a client six times — so almost every
+        // request the app made wrote no receipt, and the public-binary probe reported **"not
+        // observed" for all 26 routes it asserts, 29 contracts, while the same session was visibly
+        // pulling a 275-file repo graph**. The calls happened; nothing recorded them.
+        //
+        // That is this repo's own rule about a guard reachable only from the path you remembered to
+        // instrument: it is a guard on that path, not on the system. `production()` delegates here,
+        // so there is now exactly one place that decides, and no constructor can miss it.
+        let receipt_path = std::env::var_os("ESTELLE_RECEIPT_PATH")
+            .filter(|path| !path.is_empty())
+            .map(|path| Arc::new(PathBuf::from(path)));
         Ok(Self {
             http,
             base_url,
             api_key,
-            receipt_path: None,
+            receipt_path,
         })
     }
 
