@@ -16,6 +16,11 @@ ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "fork-manifest.yaml"
 EGRESS = ROOT / "docs" / "egress-sinks.toml"
 
+#: Recorded in ``blob`` when a high-risk path was REMOVED. Removing code is a legitimate and often the
+#: safest change, but it still has to be declared and reasoned about — a security-relevant file
+#: vanishing silently is exactly what this manifest exists to prevent.
+DELETED_SENTINEL = "deleted"
+
 
 def git(*args: str) -> str:
     return subprocess.run(
@@ -81,6 +86,24 @@ def verify_provenance(manifest: dict) -> None:
     if risky != sorted(reviewed):
         fail(f"high-risk delta is not exactly reviewed: changed={risky}, reviewed={sorted(reviewed)}")
     for path, row in reviewed.items():
+        # ⚠️ A DELETION IS A CHANGE THIS GUARD COULD NOT EXPRESS, AND IT CRASHED RATHER THAN SAYING SO.
+        # ``git diff --name-only`` lists removed paths, so a deleted high-risk file lands in ``risky``
+        # and must be declared like any other. But the only check here was ``git hash-object``, which
+        # exits non-zero on a path that is gone — and ``git()`` uses ``check=True``, so the audit died
+        # with a traceback instead of a verdict. Found 2026-08-29, when the ``pets/`` subsystem was
+        # removed and 15 deletions had to be declared.
+        #
+        # 🔑 THIS ADDS A CASE; IT DOES NOT WEAKEN ONE. ``blob: "deleted"`` is not a way to skip review —
+        # the row still needs a reason, and the file is asserted to be genuinely ABSENT. Claiming a
+        # deletion for a file that still exists now FAILS, so the sentinel cannot be used to smuggle a
+        # live file past the blob check.
+        if row["blob"] == DELETED_SENTINEL:
+            if (ROOT / path).exists():
+                fail(f"manifest declares {path} deleted, but the file is present and unreviewed")
+            continue
+        if not (ROOT / path).exists():
+            fail(f"reviewed high-risk path is missing: {path}; declare it as blob "
+                 f"{DELETED_SENTINEL!r} with a reason if the removal was intended")
         actual = git("hash-object", path)
         if actual != row["blob"]:
             fail(f"reviewed high-risk blob drifted: {path} is {actual}, manifest says {row['blob']}")

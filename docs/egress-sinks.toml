@@ -250,7 +250,13 @@ disposition = "keep; FIRST released destination that is not api.fatelabs.ca, so 
 id = "released-tui-browser-open"
 path = "tui/src"
 needle = "webbrowser::open("
-expected_occurrences = 3
+# Bumped 3 -> 4 on 2026-08-29. The fourth call site is `tui/src/top_level.rs:2541`, the GitHub OAuth
+# authorize hand-off, which is ALREADY a declared sink (`github-browser-handoff`, destination
+# "https://github.com/login/oauth/authorize only"). The sink was registered when GitHub connect
+# shipped; this counter was not bumped with it, so the census — correctly — refused the release.
+# ⚠️ Two owners of one derived fact: the sink table and this count both describe the same call site,
+# and they disagreed. The count is the one that lagged.
+expected_occurrences = 4
 
 [[primitive_census]]
 id = "token-url-overrides"

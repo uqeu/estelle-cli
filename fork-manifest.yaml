@@ -49,44 +49,9 @@
   ],
   "reviewed_changes_after_audited_commit": [
     {
-      "path": "tui/src/top_level.rs",
-      "blob": "e65cef179a38696ae3455f7a64af63caca70ea3e",
-      "reason": "`brief` is a repository-confined local file transform; `setup` deliberately composes the already-audited authenticated /mcp, /ingest/start, /ingest/progress and /deep-search routes. The 4,000-file bound now reserves TypeScript and Go representation before filling in Git order, and doctor labels its accepted/total inventory as local-only rather than server proof. No new network destination or credential source was added."
-    },
-    {
-      "path": "tui/src/agent_brief.rs",
-      "blob": "0c10e01a8f0e4564a0a9c686ec4ec45d32d8eefb",
-      "reason": "NEW FILE, local filesystem only: writes a bounded managed block to one of sixteen explicit repository-relative instruction paths, refuses absolute/parent/symlink/non-file targets, preserves the original in a .bak, and turns a second run into no write. It has no network or credential primitive."
-    },
-    {
-      "path": "tui/src/setup_flow.rs",
-      "blob": "1159b402f05c08216fe5978f3c183ce1c4bcbe12",
-      "reason": "NEW FILE, pure parser only: derives one proving question from a strong symbol actually present in collected TypeScript or Go source and refuses generic or unparseable input. It performs no file write, network call or credential access."
-    },
-    {
-      "path": "tui/src/external_agent_config_migration/source.rs",
-      "blob": "8767f331e7a4990ec278cd5c41761256c1eb23b1",
-      "reason": "the local /import source picker adds OpenCode as a third explicit choice; it only selects an app-server migration source and introduces no network destination, credential read, or background execution"
-    },
-    {
-      "path": "tui/src/external_agent_config_migration/snapshots/codex_tui__external_agent_config_migration__source__tests__external_agent_config_source_prompt.snap",
-      "blob": "b380a0aeb7908f252f1ab7e16ba182201d9063e2",
-      "reason": "the reviewed terminal snapshot proves OpenCode is visible as the third explicit local import source without changing the prompt's action or adding an implicit migration"
-    },
-    {
-      "path": ".github/workflows/release.yml",
-      "blob": "b884ee1e974e31252a531cd89b588bddb70dff93",
-      "reason": "release dispatch now validates and builds a new current-main candidate before creating its annotated tag, while an existing exact same-SHA tag remains resumable after main advances; it gives the measured Intel tail a finite 120-minute budget and reads npm version plus packed customer files back after publication. Contents-write, OIDC, GitHub releases, and npm remain the existing permissions and destinations; no credential source or product egress was added."
-    },
-    {
       "path": ".github/workflows/plain-english-routing-receipt.yml",
       "blob": "1b7db222dc50c5c40255d0e88aa16d59cc32eb0e",
       "reason": "the manual routing receipt accepts one existing exact SemVer release, installs from its versioned GitHub URL, clones one named real public repository, creates one harmless tracked-file diff so Review and Guardian are measured rather than refused on an empty fixture, passes the existing receipt key by environment without printing it, and drives ten turns only through the installed binary and api.fatelabs.ca. It has contents:read only and always preserves the sanitized receipt artifact."
-    },
-    {
-      "path": ".github/workflows/public-install-probe.yml",
-      "blob": "49429b0129f23c4f07f5384f570895413ada01da",
-      "reason": "the manual INSTALL rerun resolves the public latest release, installs that artifact, clones three named small public repositories, passes the existing receipt key by environment without printing it, and drives only the installed binary and api.fatelabs.ca. Its contents:write permission is used solely to attach a fully green sanitized receipt to the existing release; failures are preserved as Actions artifacts and never attached as green evidence."
     },
     {
       "path": ".github/workflows/public-binary-receipts.yml",
@@ -99,84 +64,14 @@
       "reason": "the manual five-worker receipt accepts only an existing exact SemVer release, installs from its public URL, requires the repository-scoped secret by presence only, drives five installed-binary sessions on a real-size public repository, and preserves failures without deploying a service"
     },
     {
-      "path": "tui/src/session_gap.rs",
-      "blob": "07229a7a9ddb1241aad3f5c8259d7870569e01eb",
-      "reason": "the Rust brief contract carries a Python-produced release oracle while retaining live cross-repo parity when the server source is present"
+      "path": ".github/workflows/public-install-probe.yml",
+      "blob": "49429b0129f23c4f07f5384f570895413ada01da",
+      "reason": "the manual INSTALL rerun resolves the public latest release, installs that artifact, clones three named small public repositories, passes the existing receipt key by environment without printing it, and drives only the installed binary and api.fatelabs.ca. Its contents:write permission is used solely to attach a fully green sanitized receipt to the existing release; failures are preserved as Actions artifacts and never attached as green evidence."
     },
     {
-      "path": "estelle-client/Cargo.toml",
-      "blob": "6021253386ef4efbf914b2874eac8dbcce30a30c",
-      "reason": "the Estelle API-key client no longer links its direct keyring or encrypted-secrets dependencies; inherited ChatGPT/provider authentication remains separately owned and this change adds no network destination"
-    },
-    {
-      "path": "estelle-client/src/auth.rs",
-      "blob": "095f6051732612323aef8ac978e363472b5f8e26",
-      "reason": "the Estelle API-key path resolves ESTELLE_API_KEY before storage and otherwise uses one stable ~/.estelle/auth.json identity, atomically written at mode 0600 under a mode-0700 directory; reads fail closed on group/world permission bits, no Keychain API remains on this path, and the old Keychain-backed ciphertext is deliberately not auto-migrated because reading it would recreate the customer prompt"
-    },
-    {
-      "path": "estelle-client/src/endpoint.rs",
-      "blob": "0194c9e927f7bde8b1134e6f987433116a4de98d",
-      "reason": "the closed typed transport inventory adds the server-owned /agent-presets GET/PUT and /turn/route POST contracts alongside the previously reviewed GitHub, provider-key, Orchestra, and agent-health routes; both use the existing api.fatelabs.ca client and add no destination"
-    },
-    {
-      "path": "estelle-client/src/tests.rs",
-      "blob": "33800dadcb09d6b83d9d5970588e80dece541f28",
-      "reason": "the endpoint denominator and typed contracts pin the new preset and untouched-prompt dispatch request shapes while the existing Estelle credential tests continue to prove mode-0600 creation, fail-closed rejection of mode 0644, environment precedence over deliberately unreadable-by-policy storage, and stable cross-build file identity"
-    },
-    {
-      "path": "estelle-client/src/lib.rs",
-      "blob": "70085340ab94aacecb94b8e6c127a77110da87b9",
-      "reason": "the shared authenticated HTTP seam adds one typed route_within_plan POST to api.fatelabs.ca/route. It carries repository identity, user text, and the provider-authenticated model slugs but never the ChatGPT plan credential; the existing Estelle credential boundary and receipt redaction remain unchanged."
-    },
-    {
-      "path": "tui/src/claude_import.rs",
-      "blob": "a09793e5c279b1c23eb41847e5597a8909e713c1",
-      "reason": "Claude Code credential access is consent-triggered, read-only at the source, snapshotted through the shared private provider-store transaction, and never reported runtime-ready"
-    },
-    {
-      "path": "tui/src/commands.rs",
-      "blob": "0dfd841f1c5c60032fa068d76e5ccc6616df4eb7",
-      "reason": "local command ownership remains explicit; /presets renders and PUTs one complete server-owned plan/implement/review table, rejects partial tables before transport, and never computes a model choice. Monitor rendering and /orchestra continue to display only server-returned facts through existing typed routes."
-    },
-    {
-      "path": "tui/src/doctor.rs",
-      "blob": "2ca571ead3fe6c085d7c7724f4d9df53852be425",
-      "reason": "doctor retains metadata-only credential reporting and adds only repository inventory counts: TypeScript and Go are reported independently as accepted/total with a loud local-only limit, so one blocked side cannot be rendered healthy. No file content, credential value or network result is rendered."
-    },
-    {
-      "path": "tui/src/login.rs",
-      "blob": "219e881c66add50f48d099c23f832b8906eacd64",
-      "reason": "masked provider input, non-secret endpoint input, and ChatGPT presence/logout reuse isolated credential stores without echoing secret material"
-    },
-    {
-      "path": "tui/src/main.rs",
-      "blob": "b9a7cc7611c877da631c76b4c9444550d934ae86",
-      "reason": "plain-English turns send the untouched prompt to the server-owned /turn/route classifier, then bind its closed action to an already-audited suite endpoint; the client carries no lexical classifier or model resolver, and ambiguous or unsupported actions stop before a second request. Preset PUTs use the existing authenticated client, while `brief` and dry-run `setup` remain local. No credential value is rendered and no new egress destination exists."
-    },
-    {
-      "path": "tui/src/copilot_login.rs",
-      "blob": "2199731c763e068604ce32445b7776a7d8c2fbd0",
-      "reason": "explicit GitHub Copilot device login has request and issued-expiry bounds, persists the access token in a mode-0600 Estelle-owned file, and never renders tokens, provider error bodies, or runtime-entitlement claims"
-    },
-    {
-      "path": "tui/src/local_provider.rs",
-      "blob": "04821906806575abc6f466265b8ea26edd9f15f0",
-      "reason": "local acquisition stores exact bundled non-secret model metadata separately at mode 0600, never retains an unknown raw model name, recomputes fit from current hardware, and labels throughput estimated and server Affinity authoritative"
-    },
-    {
-      "path": "tui/src/provider_catalog.rs",
-      "blob": "4813c6d95ac1cb40a30b7d2c4ef4e1b56d25fb9c",
-      "reason": "one static provider catalog owns canonical ids, globally unique aliases, acquisition kinds, UI surfaces, server identities, base defaults, and fail-closed HTTP endpoint policy"
-    },
-    {
-      "path": "tui/src/provider_store.rs",
-      "blob": "449e8da0ce6014680bf24bb938c22d8d88fda555",
-      "reason": "Claude, Copilot, and local-provider snapshots share one collision-resistant atomic JSON transaction with a mode-0700 parent, mode-0600 file, zeroized encoded buffer, sync-before-rename, and failed-temporary cleanup"
-    },
-    {
-      "path": "estelle-client/src/types.rs",
-      "blob": "94dc7769403c009baf556f8df81501ca98466a7a",
-      "reason": "the plan-route request and response types preserve the exact available model list plus server-returned model, tier, effort and reason. They contain no plan credential field, and the runtime separately verifies that any selected model was in the authenticated provider census."
+      "path": ".github/workflows/release.yml",
+      "blob": "5c5913efcb17cc49904c0a93eb2c3b6f4925029b",
+      "reason": "release dispatch now validates and builds a new current-main candidate before creating its annotated tag, while an existing exact same-SHA tag remains resumable after main advances; it gives the measured Intel tail a finite 120-minute budget and reads npm version plus packed customer files back after publication. Contents-write, OIDC, GitHub releases, and npm remain the existing permissions and destinations; no credential source or product egress was added. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
     },
     {
       "path": "estelle-acp/src/engine.rs",
@@ -189,14 +84,189 @@
       "reason": "ACP sessions retain one fixed authenticated model census from session start and pass it to per-prompt routing. This adds no credential read beyond the already-reviewed local engine resolution and no destination beyond the separately registered Estelle route and ChatGPT provider sinks."
     },
     {
-      "path": "tui/src/session_server.rs",
-      "blob": "b5e0a45d50584904aa06af4ad0c42ca853a0f282",
-      "reason": "the prior ImportHistory confinement remains unchanged; detached-session fixtures now require the new server-owned /turn/route request before /deep-search and prove the answer still persists across disconnects and named sessions. This is test-only drift and adds no runtime destination, credential read or background execution."
+      "path": "estelle-client/Cargo.toml",
+      "blob": "2fd8fbc1a8de33277dbf58dd217903a7ed9ab47c",
+      "reason": "the Estelle API-key client no longer links its direct keyring or encrypted-secrets dependencies; inherited ChatGPT/provider authentication remains separately owned and this change adds no network destination RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
     },
     {
-      "path": "tui/src/status/tests.rs",
-      "blob": "fb0f2f4754ee53c87593688f0aa994dc5dc78e2a",
-      "reason": "release-version snapshot sanitization preserves rendered width when SemVer grows, keeping inherited status layout assertions stable without accepting changed snapshots"
+      "path": "estelle-client/src/auth.rs",
+      "blob": "095f6051732612323aef8ac978e363472b5f8e26",
+      "reason": "the Estelle API-key path resolves ESTELLE_API_KEY before storage and otherwise uses one stable ~/.estelle/auth.json identity, atomically written at mode 0600 under a mode-0700 directory; reads fail closed on group/world permission bits, no Keychain API remains on this path, and the old Keychain-backed ciphertext is deliberately not auto-migrated because reading it would recreate the customer prompt"
+    },
+    {
+      "path": "estelle-client/src/endpoint.rs",
+      "blob": "dcf173ebfd888639288d067fc8558c088be1a70b",
+      "reason": "the closed typed transport inventory adds the server-owned /agent-presets GET/PUT and /turn/route POST contracts alongside the previously reviewed GitHub, provider-key, Orchestra, and agent-health routes; both use the existing api.fatelabs.ca client and add no destination RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
+    },
+    {
+      "path": "estelle-client/src/lib.rs",
+      "blob": "972588b22ec353c9a02775c54daff530a52d5bf3",
+      "reason": "the shared authenticated HTTP seam adds one typed route_within_plan POST to api.fatelabs.ca/route. It carries repository identity, user text, and the provider-authenticated model slugs but never the ChatGPT plan credential; the existing Estelle credential boundary and receipt redaction remain unchanged. RE-ATTESTED 2026-08-29: adds `send_honoring_shed`, which retries a request the server explicitly shed with a bounded `Retry-After`. It sends the SAME request to the SAME destination up to SHED_MAX_ATTEMPTS=3, waiting at most SHED_MAX_WAIT=30s; it adds no destination, no header and no credential source. Retry is authorised by the header, never by the status alone."
+    },
+    {
+      "path": "estelle-client/src/tests.rs",
+      "blob": "66b9e8c7d1365ad1aa0770d5b6fff73521189eb4",
+      "reason": "the endpoint denominator and typed contracts pin the new preset and untouched-prompt dispatch request shapes while the existing Estelle credential tests continue to prove mode-0600 creation, fail-closed rejection of mode 0644, environment precedence over deliberately unreadable-by-policy storage, and stable cross-build file identity RE-ATTESTED 2026-08-29: adds four tests for the above against a local wiremock server, including a negative control proving a 503 without `Retry-After` is NOT retried. Test-only."
+    },
+    {
+      "path": "estelle-client/src/types.rs",
+      "blob": "6de5845225682fcb9c26e8c945e691ec99af29a6",
+      "reason": "the plan-route request and response types preserve the exact available model list plus server-returned model, tier, effort and reason. They contain no plan credential field, and the runtime separately verifies that any selected model was in the authenticated provider census. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
+    },
+    {
+      "path": "tui/src/agent_brief.rs",
+      "blob": "0c10e01a8f0e4564a0a9c686ec4ec45d32d8eefb",
+      "reason": "NEW FILE, local filesystem only: writes a bounded managed block to one of sixteen explicit repository-relative instruction paths, refuses absolute/parent/symlink/non-file targets, preserves the original in a .bak, and turns a second run into no write. It has no network or credential primitive."
+    },
+    {
+      "path": "tui/src/app.rs",
+      "blob": "4de6cd955a6f545cb4c3a94bf15f399a64b197f9",
+      "reason": "Collects `std::env::vars()` into a map for child-process composition \u2014 environment PASSTHROUGH to a locally spawned process, not extraction to a network sink; no value is logged or transmitted. The only URLs are doc-comment citations of tui-textarea and iTerm2."
+    },
+    {
+      "path": "tui/src/app/event_dispatch.rs",
+      "blob": "55f4442b550d2af32fcf69326d89f28fd0a3f5ea",
+      "reason": "Same `std::env::vars()` passthrough as app.rs, for locally spawned processes only. No network primitive and no credential read."
+    },
+    {
+      "path": "tui/src/app/pets.rs",
+      "blob": "deleted",
+      "reason": "DELETED. The `pets` terminal-sprite subsystem was removed wholesale. A removal reduces the fork's divergence and its attack surface; nothing replaced it, and no capability moved elsewhere. Declared rather than allowed to vanish silently."
+    },
+    {
+      "path": "tui/src/app/startup_prompts.rs",
+      "blob": "3476c22675fc2c5570c63ff2d248504d4628a8f4",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/app/tests.rs",
+      "blob": "9ce8320c4a66302d9a8f494e2da37c10ad33a3d4",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Test-only code. URL literals are fixtures on reserved example domains (example.com, example.test, payments.example) or 127.0.0.1; API keys are the literal string \"test-key\"."
+    },
+    {
+      "path": "tui/src/app/tests/model_catalog.rs",
+      "blob": "deleted",
+      "reason": "DELETED. Removed during the round-6 TUI consolidation; the surface it provided is either gone or folded into an already-reviewed module. Declared so the removal is on the record."
+    },
+    {
+      "path": "tui/src/app_event.rs",
+      "blob": "f39e08696f5e5af083404def50a18e777186166c",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/binding_probe.rs",
+      "blob": "777f22aeb9bc2fdd22e956f07873edad46fa2ec4",
+      "reason": "NEW NETWORK CALLER \u2014 the only one in this batch. It takes `base_url` as a PARAMETER from the already-audited provider catalog and appends `/models`; it hardcodes no host of its own. It sends the stored provider credential to that provider's own endpoint, which is that credential's sole purpose, bounded by PROBE_TIMEOUT_S=5. It separates 401/403 (credential refused) from unreachable, and asserts nothing about model quality."
+    },
+    {
+      "path": "tui/src/bottom_pane/chat_composer.rs",
+      "blob": "4ae923474b43086f2e62992aded145502a47715f",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/bottom_pane/chat_composer/slash_input.rs",
+      "blob": "8b90966b49f467b5814cb38bbb1f3c0c79f8de51",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/bottom_pane/command_popup.rs",
+      "blob": "5cf4d781ad0e4f16b5a6f284195a2086d6555990",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/bottom_pane/slash_commands.rs",
+      "blob": "842f1b97517dc117e927deeb0cb9129aa22b2fe9",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/chatwidget.rs",
+      "blob": "1784696f72e98db0548b171ec2a09ebb3da76943",
+      "reason": "Contains `DEFAULT_OPENAI_BASE_URL = https://api.openai.com/v1` plus developers.openai.com and chatgpt.com documentation links. All three are INHERITED FROM THE FORK BASE, not introduced here. No Estelle-side destination is added."
+    },
+    {
+      "path": "tui/src/chatwidget/constructor.rs",
+      "blob": "6c2b80e099f65beddafb91a68c511de882926071",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/chatwidget/pets.rs",
+      "blob": "deleted",
+      "reason": "DELETED. The `pets` terminal-sprite subsystem was removed wholesale. A removal reduces the fork's divergence and its attack surface; nothing replaced it, and no capability moved elsewhere. Declared rather than allowed to vanish silently."
+    },
+    {
+      "path": "tui/src/chatwidget/pets_tests.rs",
+      "blob": "deleted",
+      "reason": "DELETED. The `pets` terminal-sprite subsystem was removed wholesale. A removal reduces the fork's divergence and its attack surface; nothing replaced it, and no capability moved elsewhere. Declared rather than allowed to vanish silently."
+    },
+    {
+      "path": "tui/src/chatwidget/rendering.rs",
+      "blob": "0af7db809caf9de56b314d94f1773fab3fa793e4",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/chatwidget/slash_dispatch.rs",
+      "blob": "29de370276154d5a66d851daafb27cb522fed65d",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/chatwidget/tests/status_and_layout.rs",
+      "blob": "acb8d6f99743826de9aabaf67af3d5519cc527c3",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Test-only code. URL literals are fixtures on reserved example domains (example.com, example.test, payments.example) or 127.0.0.1; API keys are the literal string \"test-key\"."
+    },
+    {
+      "path": "tui/src/chatwidget/tool_requests.rs",
+      "blob": "a3fbc8cc7fc03d68c53dd248132776958280f764",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/chatwidget/turn_runtime.rs",
+      "blob": "73d7e8f1885428264270d2a6c7505bf06cb65223",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/claude_import.rs",
+      "blob": "0d873173149542839669312d0dca2eb66730f83d",
+      "reason": "Claude Code credential access is consent-triggered, read-only at the source, snapshotted through the shared private provider-store transaction, and never reported runtime-ready RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
+    },
+    {
+      "path": "tui/src/cols.rs",
+      "blob": "9a870787726ddd43d8528edb8195e8b584f26393",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/commands.rs",
+      "blob": "1bdd03c907a53fea2751ce1a46bf7d2235b16692",
+      "reason": "local command ownership remains explicit; /presets renders and PUTs one complete server-owned plan/implement/review table, rejects partial tables before transport, and never computes a model choice. Monitor rendering and /orchestra continue to display only server-returned facts through existing typed routes. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
+    },
+    {
+      "path": "tui/src/config_update.rs",
+      "blob": "3dae47894d677728aea9bd8113e032f67f56603a",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/copilot_login.rs",
+      "blob": "929f77a40582d929c3dc304b4afa97a0d4a78ea3",
+      "reason": "explicit GitHub Copilot device login has request and issued-expiry bounds, persists the access token in a mode-0600 Estelle-owned file, and never renders tokens, provider error bodies, or runtime-entitlement claims RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
+    },
+    {
+      "path": "tui/src/debug_config.rs",
+      "blob": "deleted",
+      "reason": "DELETED. Removed during the round-6 TUI consolidation; the surface it provided is either gone or folded into an already-reviewed module. Declared so the removal is on the record."
+    },
+    {
+      "path": "tui/src/doctor.rs",
+      "blob": "7de1f1dde8c1aea4551f7b6505adcda2d0504719",
+      "reason": "doctor retains metadata-only credential reporting and adds only repository inventory counts: TypeScript and Go are reported independently as accepted/total with a loud local-only limit, so one blocked side cannot be rendered healthy. No file content, credential value or network result is rendered. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
+    },
+    {
+      "path": "tui/src/external_agent_config_migration/snapshots/codex_tui__external_agent_config_migration__source__tests__external_agent_config_source_prompt.snap",
+      "blob": "b380a0aeb7908f252f1ab7e16ba182201d9063e2",
+      "reason": "the reviewed terminal snapshot proves OpenCode is visible as the third explicit local import source without changing the prompt's action or adding an implicit migration"
+    },
+    {
+      "path": "tui/src/external_agent_config_migration/source.rs",
+      "blob": "8767f331e7a4990ec278cd5c41761256c1eb23b1",
+      "reason": "the local /import source picker adds OpenCode as a third explicit choice; it only selects an app-server migration source and introduces no network destination, credential read, or background execution"
     },
     {
       "path": "tui/src/history_cell/tests.rs",
@@ -204,24 +274,229 @@
       "reason": "release-version snapshot sanitization preserves rendered width when SemVer grows, keeping inherited session-info layout assertions stable without accepting changed snapshots"
     },
     {
+      "path": "tui/src/history_import.rs",
+      "blob": "29b83c2cea8d768e2c895475521b8a35472a4fbe",
+      "reason": "NEW FILE, reviewed by the version-check lane and NOT its author. Verified: no network primitive of any kind in the module (pure std::fs plus the already-audited codex_external_agent_migration::sessions helpers), reached only through the explicit opt-in `estelle connect --from <harness>` flag which defaults to None, so nothing is read without the customer naming a harness. \u26a0\ufe0f NAMED LIMIT, not signed off: `model_context()` concatenates every imported turn's question and answer VERBATIM with no redaction pass, so a secret pasted into another harness's transcript would reach the existing deep-search sink. That content-filtering question is open and belongs to the authoring lane; this entry unblocks the release and does not clear it."
+    },
+    {
+      "path": "tui/src/lib.rs",
+      "blob": "8bb41d880b4079ec19074ed29bd8a86cb06d77bb",
+      "reason": "Parses a remote app-server address and decides whether that URL may carry an auth token (`websocket_url_supports_auth_token`). This RESTRICTS where a token may travel rather than adding a destination; the address is operator-supplied, not a new baked-in host."
+    },
+    {
+      "path": "tui/src/local_provider.rs",
+      "blob": "21c776962764e2fbeb4de01a36550ada1d1e9108",
+      "reason": "local acquisition stores exact bundled non-secret model metadata separately at mode 0600, never retains an unknown raw model name, recomputes fit from current hardware, and labels throughput estimated and server Affinity authoritative RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
+    },
+    {
+      "path": "tui/src/login.rs",
+      "blob": "0843a28daf9417e9dff50d61ae47750350f24bc0",
+      "reason": "masked provider input, non-secret endpoint input, and ChatGPT presence/logout reuse isolated credential stores without echoing secret material RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
+    },
+    {
+      "path": "tui/src/main.rs",
+      "blob": "da2c68b0a5724db20a855e5fc3f698a0e0fdab0f",
+      "reason": "plain-English turns send the untouched prompt to the server-owned /turn/route classifier, then bind its closed action to an already-audited suite endpoint; the client carries no lexical classifier or model resolver, and ambiguous or unsupported actions stop before a second request. Preset PUTs use the existing authenticated client, while `brief` and dry-run `setup` remain local. No credential value is rendered and no new egress destination exists. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
+    },
+    {
+      "path": "tui/src/model_migration.rs",
+      "blob": "deleted",
+      "reason": "DELETED. Removed during the round-6 TUI consolidation; the surface it provided is either gone or folded into an already-reviewed module. Declared so the removal is on the record."
+    },
+    {
+      "path": "tui/src/oss_selection.rs",
+      "blob": "deleted",
+      "reason": "DELETED. Removed during the round-6 TUI consolidation; the surface it provided is either gone or folded into an already-reviewed module. Declared so the removal is on the record."
+    },
+    {
+      "path": "tui/src/pets/ambient.rs",
+      "blob": "deleted",
+      "reason": "DELETED. The `pets` terminal-sprite subsystem was removed wholesale. A removal reduces the fork's divergence and its attack surface; nothing replaced it, and no capability moved elsewhere. Declared rather than allowed to vanish silently."
+    },
+    {
+      "path": "tui/src/pets/asset_pack.rs",
+      "blob": "deleted",
+      "reason": "DELETED. The `pets` terminal-sprite subsystem was removed wholesale. A removal reduces the fork's divergence and its attack surface; nothing replaced it, and no capability moved elsewhere. Declared rather than allowed to vanish silently."
+    },
+    {
+      "path": "tui/src/pets/catalog.rs",
+      "blob": "deleted",
+      "reason": "DELETED. The `pets` terminal-sprite subsystem was removed wholesale. A removal reduces the fork's divergence and its attack surface; nothing replaced it, and no capability moved elsewhere. Declared rather than allowed to vanish silently."
+    },
+    {
+      "path": "tui/src/pets/frames.rs",
+      "blob": "deleted",
+      "reason": "DELETED. The `pets` terminal-sprite subsystem was removed wholesale. A removal reduces the fork's divergence and its attack surface; nothing replaced it, and no capability moved elsewhere. Declared rather than allowed to vanish silently."
+    },
+    {
+      "path": "tui/src/pets/image_protocol.rs",
+      "blob": "deleted",
+      "reason": "DELETED. The `pets` terminal-sprite subsystem was removed wholesale. A removal reduces the fork's divergence and its attack surface; nothing replaced it, and no capability moved elsewhere. Declared rather than allowed to vanish silently."
+    },
+    {
+      "path": "tui/src/pets/mod.rs",
+      "blob": "deleted",
+      "reason": "DELETED. The `pets` terminal-sprite subsystem was removed wholesale. A removal reduces the fork's divergence and its attack surface; nothing replaced it, and no capability moved elsewhere. Declared rather than allowed to vanish silently."
+    },
+    {
+      "path": "tui/src/pets/model.rs",
+      "blob": "deleted",
+      "reason": "DELETED. The `pets` terminal-sprite subsystem was removed wholesale. A removal reduces the fork's divergence and its attack surface; nothing replaced it, and no capability moved elsewhere. Declared rather than allowed to vanish silently."
+    },
+    {
+      "path": "tui/src/pets/sixel.rs",
+      "blob": "deleted",
+      "reason": "DELETED. The `pets` terminal-sprite subsystem was removed wholesale. A removal reduces the fork's divergence and its attack surface; nothing replaced it, and no capability moved elsewhere. Declared rather than allowed to vanish silently."
+    },
+    {
+      "path": "tui/src/production_hud.rs",
+      "blob": "8afc33d9b1df3e2415272892dad4adfa3e90eaae",
+      "reason": "Imports `mask_secret` and applies it to error text before rendering \u2014 a DEFENSIVE addition that reduces the chance a credential reaches the screen. `ApiKey::new(\"test-key\")` appears only in tests."
+    },
+    {
+      "path": "tui/src/provider_catalog.rs",
+      "blob": "99ca47a9bfe5b65f686c31e42dd5d8349b48175f",
+      "reason": "one static provider catalog owns canonical ids, globally unique aliases, acquisition kinds, UI surfaces, server identities, base defaults, and fail-closed HTTP endpoint policy RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
+    },
+    {
       "path": "tui/src/provider_keys.rs",
       "blob": "34676155e2495741df96b31b55cb0b64f22ba121",
       "reason": "provider secrets cross only the authenticated POST /key boundary and receipts expose status/model but never the submitted value"
     },
     {
-      "path": "tui/src/version_check.rs",
-      "blob": "5b701cded5c259459b8b088fb0cc2478130542fc",
-      "reason": "NEW FILE, and it widens egress by exactly one host. Unauthenticated GET to api.github.com/repos/uqeu/estelle-cli/releases/latest, bounded by a 3s timeout and a 256KB response cap, cached 24h, suppressible with ESTELLE_NO_VERSION_CHECK, sending no account, credential, repo, prompt or file content. It NEVER downloads, writes or executes a binary \u2014 it prints a command and stops, asserted by a test that fails if the message ever grows an auto-apply prompt. Recorded as the `cli-version-check` sink."
+      "path": "tui/src/provider_store.rs",
+      "blob": "d94cb925eda3527d4a8c4bec3fcb9395c81d186d",
+      "reason": "Claude, Copilot, and local-provider snapshots share one collision-resistant atomic JSON transaction with a mode-0700 parent, mode-0600 file, zeroized encoded buffer, sync-before-rename, and failed-temporary cleanup RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
     },
     {
-      "path": "tui/src/history_import.rs",
-      "blob": "29b83c2cea8d768e2c895475521b8a35472a4fbe",
-      "reason": "NEW FILE, reviewed by the version-check lane and NOT its author. Verified: no network primitive of any kind in the module (pure std::fs plus the already-audited codex_external_agent_migration::sessions helpers), reached only through the explicit opt-in `estelle connect --from <harness>` flag which defaults to None, so nothing is read without the customer naming a harness. \u26a0\ufe0f NAMED LIMIT, not signed off: `model_context()` concatenates every imported turn's question and answer VERBATIM with no redaction pass, so a secret pasted into another harness's transcript would reach the existing deep-search sink. That content-filtering question is open and belongs to the authoring lane; this entry unblocks the release and does not clear it."
+      "path": "tui/src/public_widgets/composer_input.rs",
+      "blob": "db75384bd24c63694c3dd96ba676d57f4b3f0272",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/public_widgets/history_transcript.rs",
+      "blob": "4caf93a96c9d75bbe29340f19fbc7c85cad18f21",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/public_widgets/mod.rs",
+      "blob": "aa60e188146709076c9f3d1308522092fb54cc0c",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/resume_picker.rs",
+      "blob": "62464abc12631cb3197b3041146f41109a0553ed",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/screens.rs",
+      "blob": "d328bb07729df3da8aa80b485441335b5e3288c8",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/session_gap.rs",
+      "blob": "07229a7a9ddb1241aad3f5c8259d7870569e01eb",
+      "reason": "the Rust brief contract carries a Python-produced release oracle while retaining live cross-repo parity when the server source is present"
+    },
+    {
+      "path": "tui/src/session_server.rs",
+      "blob": "bdc6c33930f3cec53787a4fe3ca04892f56a8a94",
+      "reason": "the prior ImportHistory confinement remains unchanged; detached-session fixtures now require the new server-owned /turn/route request before /deep-search and prove the answer still persists across disconnects and named sessions. This is test-only drift and adds no runtime destination, credential read or background execution. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
+    },
+    {
+      "path": "tui/src/setup_flow.rs",
+      "blob": "1159b402f05c08216fe5978f3c183ce1c4bcbe12",
+      "reason": "NEW FILE, pure parser only: derives one proving question from a strong symbol actually present in collected TypeScript or Go source and refuses generic or unparseable input. It performs no file write, network call or credential access."
+    },
+    {
+      "path": "tui/src/slash_command.rs",
+      "blob": "099232e9d32568aa82c65b62e069912d194d7461",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/snapshots/estelle__tests__snapshot_composer_with_text.snap",
+      "blob": "87453941ac33931ad2ee219295733846d2e6405a",
+      "reason": "Rendered-output fixture, not executable code. Pins UI text; contains no network or credential primitive. One snapshot quotes Estelle's own credential-refusal copy, which is display text."
+    },
+    {
+      "path": "tui/src/snapshots/estelle__tests__snapshot_empty_composer.snap",
+      "blob": "0a4a7092ee18d3df6d97c75cfb025688858f5216",
+      "reason": "Rendered-output fixture, not executable code. Pins UI text; contains no network or credential primitive. One snapshot quotes Estelle's own credential-refusal copy, which is display text."
+    },
+    {
+      "path": "tui/src/snapshots/estelle__tests__snapshot_every_failure_screen.snap",
+      "blob": "af7db4844cf70c5f1013728c319f9ab8e156b7c9",
+      "reason": "Rendered-output fixture, not executable code. Pins UI text; contains no network or credential primitive. One snapshot quotes Estelle's own credential-refusal copy, which is display text."
+    },
+    {
+      "path": "tui/src/snapshots/estelle__tests__snapshot_long_running_query_with_elapsed_timer.snap",
+      "blob": "082e9bc0bc27f0e412b5494d6563da6117cdaf4b",
+      "reason": "Rendered-output fixture, not executable code. Pins UI text; contains no network or credential primitive. One snapshot quotes Estelle's own credential-refusal copy, which is display text."
+    },
+    {
+      "path": "tui/src/snapshots/estelle__tests__snapshot_p6_citation_pane.snap",
+      "blob": "9d16b9435038b96f9bb0069ca3b650ed5301c3eb",
+      "reason": "Rendered-output fixture, not executable code. Pins UI text; contains no network or credential primitive. One snapshot quotes Estelle's own credential-refusal copy, which is display text."
+    },
+    {
+      "path": "tui/src/snapshots/estelle__tests__snapshot_p6_sweep_gauge.snap",
+      "blob": "6207d23146e3eda6dfa260c51af11b6e7654572b",
+      "reason": "Rendered-output fixture, not executable code. Pins UI text; contains no network or credential primitive. One snapshot quotes Estelle's own credential-refusal copy, which is display text."
+    },
+    {
+      "path": "tui/src/snapshots/estelle__tests__snapshot_slash_menu_open.snap",
+      "blob": "0800a8633977ada8b22d74da8d83aa033b0dfeef",
+      "reason": "Rendered-output fixture, not executable code. Pins UI text; contains no network or credential primitive. One snapshot quotes Estelle's own credential-refusal copy, which is display text."
+    },
+    {
+      "path": "tui/src/status/tests.rs",
+      "blob": "fb0f2f4754ee53c87593688f0aa994dc5dc78e2a",
+      "reason": "release-version snapshot sanitization preserves rendered width when SemVer grows, keeping inherited status layout assertions stable without accepting changed snapshots"
+    },
+    {
+      "path": "tui/src/theme.rs",
+      "blob": "2bf0c0948856c47a0f8f5eda2cd850f8ea372531",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/top_level.rs",
+      "blob": "f314df127c81ec6800d732ae53dc919d93c17375",
+      "reason": "`brief` is a repository-confined local file transform; `setup` deliberately composes the already-audited authenticated /mcp, /ingest/start, /ingest/progress and /deep-search routes. The 4,000-file bound now reserves TypeScript and Go representation before filling in Git order, and doctor labels its accepted/total inventory as local-only rather than server proof. No new network destination or credential source was added. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
+    },
+    {
+      "path": "tui/src/transcript.rs",
+      "blob": "137e543aadcfda501efbabee6d22f80711e436ba",
+      "reason": "Applies `mask_secret` to every rendered line, and detects http/https prefixes only to STYLE them as links. Defensive; adds no fetch of any kind."
+    },
+    {
+      "path": "tui/src/transcript_adoption_tests.rs",
+      "blob": "8e7ae74f331a133638584f12c7f603be6b6f5a92",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Test-only code. URL literals are fixtures on reserved example domains (example.com, example.test, payments.example) or 127.0.0.1; API keys are the literal string \"test-key\"."
+    },
+    {
+      "path": "tui/src/tui.rs",
+      "blob": "5450eae0416c7b0a27d67c3d43a0a0cf0d108b2a",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/version_check.rs",
+      "blob": "6105e583a4507442eba0cd231a536c20fb854d28",
+      "reason": "NEW FILE, and it widens egress by exactly one host. Unauthenticated GET to api.github.com/repos/uqeu/estelle-cli/releases/latest, bounded by a 3s timeout and a 256KB response cap, cached 24h, suppressible with ESTELLE_NO_VERSION_CHECK, sending no account, credential, repo, prompt or file content. It NEVER downloads, writes or executes a binary \u2014 it prints a command and stops, asserted by a test that fails if the message ever grows an auto-apply prompt. Recorded as the `cli-version-check` sink. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
+    },
+    {
+      "path": "tui/src/work_job.rs",
+      "blob": "ea30f6e30cf893422dda4375728a959694ea625c",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/work_plan.rs",
+      "blob": "699de25acfb6cc060b4e07c924b35055b1e8ae03",
+      "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
     }
   ],
   "owners": [
     "CLI",
     "SECURITY"
   ],
-  "last_semantic_audit": "2026-08-16"
+  "last_semantic_audit": "2026-08-29"
 }
