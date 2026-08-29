@@ -84,7 +84,25 @@ def verify_provenance(manifest: dict) -> None:
         if any(fnmatch.fnmatch(path, pattern) for pattern in manifest["high_risk_paths"])
     )
     if risky != sorted(reviewed):
-        fail(f"high-risk delta is not exactly reviewed: changed={risky}, reviewed={sorted(reviewed)}")
+        # 🔴 THIS MESSAGE COST A WEEK. It used to print both full lists — 89 paths on one line beside 34
+        # on another — and leave the reader to diff them by eye. The refusal was correct and completely
+        # unreadable, so "your manifest is stale" was indistinguishable from "CI is broken", and it got
+        # filed as the latter. A guard that cannot say what to DO about its own refusal is half a guard:
+        # it stops the bad thing and stops the good thing equally.
+        missing = [path for path in risky if path not in reviewed]
+        stale = [path for path in sorted(reviewed) if path not in risky]
+        lines = [f"high-risk delta is not exactly reviewed: "
+                 f"{len(missing)} undeclared, {len(stale)} declared-but-unchanged"]
+        if missing:
+            lines.append(f"\n  {len(missing)} CHANGED FILE(S) WITH NO REVIEW ROW — add each to "
+                         f"reviewed_changes_after_audited_commit with its `git hash-object` blob and a "
+                         f"reason (or blob {DELETED_SENTINEL!r} if it was removed):")
+            lines += [f"    + {path}" for path in missing]
+        if stale:
+            lines.append(f"\n  {len(stale)} REVIEW ROW(S) FOR FILES THAT NO LONGER DIFFER FROM THE "
+                         f"AUDITED COMMIT — delete these rows:")
+            lines += [f"    - {path}" for path in stale]
+        fail("\n".join(lines))
     for path, row in reviewed.items():
         # ⚠️ A DELETION IS A CHANGE THIS GUARD COULD NOT EXPRESS, AND IT CRASHED RATHER THAN SAYING SO.
         # ``git diff --name-only`` lists removed paths, so a deleted high-risk file lands in ``risky``
