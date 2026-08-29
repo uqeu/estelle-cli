@@ -100,13 +100,13 @@
     },
     {
       "path": "estelle-client/src/lib.rs",
-      "blob": "972588b22ec353c9a02775c54daff530a52d5bf3",
-      "reason": "the shared authenticated HTTP seam adds one typed route_within_plan POST to api.fatelabs.ca/route. It carries repository identity, user text, and the provider-authenticated model slugs but never the ChatGPT plan credential; the existing Estelle credential boundary and receipt redaction remain unchanged. RE-ATTESTED 2026-08-29: adds `send_honoring_shed`, which retries a request the server explicitly shed with a bounded `Retry-After`. It sends the SAME request to the SAME destination up to SHED_MAX_ATTEMPTS=3, waiting at most SHED_MAX_WAIT=30s; it adds no destination, no header and no credential source. Retry is authorised by the header, never by the status alone."
+      "blob": "d3474a2c3a2d6651fcb8861f4552c561b96949af",
+      "reason": "the shared authenticated HTTP seam adds one typed route_within_plan POST to api.fatelabs.ca/route. It carries repository identity, user text, and the provider-authenticated model slugs but never the ChatGPT plan credential; the existing Estelle credential boundary and receipt redaction remain unchanged. RE-ATTESTED 2026-08-29: adds `send_honoring_shed`, which retries a request the server explicitly shed with a bounded `Retry-After`. It sends the SAME request to the SAME destination up to SHED_MAX_ATTEMPTS=3, waiting at most SHED_MAX_WAIT=30s; it adds no destination, no header and no credential source. Retry is authorised by the header, never by the status alone. RE-ATTESTED 2026-08-29 (second time today): the ESTELLE_RECEIPT_PATH read MOVES from production() into new(), the one constructor every caller funnels through. This adds no destination and no credential source \u2014 it makes the LOCAL diagnostic trace, which the app already wrote on one of two construction paths, reachable on both. Opt-in: with the env var unset the field is None and nothing is written."
     },
     {
       "path": "estelle-client/src/tests.rs",
-      "blob": "66b9e8c7d1365ad1aa0770d5b6fff73521189eb4",
-      "reason": "the endpoint denominator and typed contracts pin the new preset and untouched-prompt dispatch request shapes while the existing Estelle credential tests continue to prove mode-0600 creation, fail-closed rejection of mode 0644, environment precedence over deliberately unreadable-by-policy storage, and stable cross-build file identity RE-ATTESTED 2026-08-29: adds four tests for the above against a local wiremock server, including a negative control proving a 503 without `Retry-After` is NOT retried. Test-only."
+      "blob": "e36b8954e8a90683b2b9753f67aa856a1a97e449",
+      "reason": "the endpoint denominator and typed contracts pin the new preset and untouched-prompt dispatch request shapes while the existing Estelle credential tests continue to prove mode-0600 creation, fail-closed rejection of mode 0644, environment precedence over deliberately unreadable-by-policy storage, and stable cross-build file identity RE-ATTESTED 2026-08-29: adds four tests for the above against a local wiremock server, including a negative control proving a 503 without `Retry-After` is NOT retried. Test-only. RE-ATTESTED 2026-08-29 (second time today): adds a static wiring proof that the receipt read lives in new() and is not duplicated into production(). Test-only."
     },
     {
       "path": "estelle-client/src/types.rs",
