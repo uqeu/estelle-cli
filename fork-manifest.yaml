@@ -425,8 +425,8 @@
     },
     {
       "path": "tui/src/top_level.rs",
-      "blob": "f314df127c81ec6800d732ae53dc919d93c17375",
-      "reason": "`brief` is a repository-confined local file transform; `setup` deliberately composes the already-audited authenticated /mcp, /ingest/start, /ingest/progress and /deep-search routes. The 4,000-file bound now reserves TypeScript and Go representation before filling in Git order, and doctor labels its accepted/total inventory as local-only rather than server proof. No new network destination or credential source was added. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
+      "blob": "b915275d802cba596af9fe56cc2f4bbf28e5f64d",
+      "reason": "`brief` is a repository-confined local file transform; `setup` deliberately composes the already-audited authenticated routes. RE-ATTESTED 2026-08-29: checkpointing replaces image bytes with media-type/decoded-size metadata so an image-only question remains paired with the assistant description without persisting base64. The marker adds no network destination, credential source, model call or image copy. Mechanical egress scan found only previously declared destinations. LIMIT: this preserves the image's shape and conversational adjacency; it deliberately does not perform vision or claim what the image depicts."
     },
     {
       "path": "tui/src/transcript.rs",
