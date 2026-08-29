@@ -119,7 +119,12 @@ SMALL_SWEEP_PATH = "rag_tutorials/multimodal_agentic_rag/frontend"
 TUI_PASTE_SETTLE_SECONDS = 0.2
 TUI_SUBMIT_ATTEMPTS = 3
 PRODUCTION_HEALTH_URL = "https://api.fatelabs.ca/health"
-EXPECTED_PRODUCTION_SURFACE = {"tools_base": 16, "prompts": 246}
+#: ⚠️ 246 -> 247 on 2026-08-29. SECOND OWNER of the same fact: public-install-receipts.py pins it
+#: as EXPECTED_SURFACE under a different name, and BOTH were stale by one. The prompt count comes
+#: from ``load_default_library().names()`` and moved when a stale floor was removed; neither pin
+#: moved with it, so a HEALTHY build was refused. Power of Ten rule 9 — if two places compute a
+#: derived fact they will disagree, and here they agreed only in being wrong together.
+EXPECTED_PRODUCTION_SURFACE = {"tools_base": 16, "prompts": 247}
 SKILL_TURNS = (
     "/skill:grill-me State one risk in changing a CLI contract.",
     "/skill:grill-me Challenge that answer.",

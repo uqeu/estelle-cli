@@ -101,12 +101,12 @@ def test_production_build_receipt_rejects_a_sha_change() -> None:
     before = {
         "build": "f08d5f393fbc",
         "build_verified": True,
-        "surface": {"tools_base": 16, "prompts": 246},
+        "surface": load_harness().EXPECTED_PRODUCTION_SURFACE,
     }
     after = {
         "build": "73efb8c7ae7b",
         "build_verified": True,
-        "surface": {"tools_base": 16, "prompts": 246},
+        "surface": load_harness().EXPECTED_PRODUCTION_SURFACE,
     }
 
     receipt = harness.production_build_receipt(before, after)
@@ -125,7 +125,7 @@ def test_production_build_receipt_rejects_an_unverified_stable_sha() -> None:
     identity = {
         "build": "73efb8c7ae7b",
         "build_verified": False,
-        "surface": {"tools_base": 16, "prompts": 246},
+        "surface": load_harness().EXPECTED_PRODUCTION_SURFACE,
     }
 
     receipt = harness.production_build_receipt(identity, identity)
@@ -141,12 +141,12 @@ def test_pin_production_build_wraps_the_whole_receipt_run() -> None:
             {
                 "build": "f08d5f393fbc",
                 "build_verified": True,
-                "surface": {"tools_base": 16, "prompts": 246},
+                "surface": load_harness().EXPECTED_PRODUCTION_SURFACE,
             },
             {
                 "build": "73efb8c7ae7b",
                 "build_verified": True,
-                "surface": {"tools_base": 16, "prompts": 246},
+                "surface": load_harness().EXPECTED_PRODUCTION_SURFACE,
             },
         ]
     )
@@ -174,12 +174,12 @@ def test_surface_build_pin_discards_a_receipt_that_crossed_a_build() -> None:
             {
                 "build": "f08d5f393fbc",
                 "build_verified": True,
-                "surface": {"tools_base": 16, "prompts": 246},
+                "surface": load_harness().EXPECTED_PRODUCTION_SURFACE,
             },
             {
                 "build": "73efb8c7ae7b",
                 "build_verified": True,
-                "surface": {"tools_base": 16, "prompts": 246},
+                "surface": load_harness().EXPECTED_PRODUCTION_SURFACE,
             },
         ]
     )
@@ -204,7 +204,7 @@ def test_surface_build_pin_keeps_a_receipt_on_one_verified_build() -> None:
     identity = {
         "build": "73efb8c7ae7b",
         "build_verified": True,
-        "surface": {"tools_base": 16, "prompts": 246},
+        "surface": load_harness().EXPECTED_PRODUCTION_SURFACE,
     }
 
     receipt = harness.pin_surface_build(
@@ -1045,7 +1045,7 @@ def test_complete_harness_writes_every_receipt() -> None:
                 {
                     "build": "stable-test-build",
                     "build_verified": True,
-                    "surface": {"tools_base": 16, "prompts": 246},
+                    "surface": load_harness().EXPECTED_PRODUCTION_SURFACE,
                 }
             ),
             encoding="utf-8",

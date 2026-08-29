@@ -15,7 +15,16 @@ import urllib.request
 from pathlib import Path
 
 HEALTH_URL = "https://api.fatelabs.ca/health"
-EXPECTED_SURFACE = {"tools_base": 16, "prompts": 246}
+#: The surface only the RUNNING PROCESS can report. Pinned deliberately: a SHA identifies
+#: source, only a count identifies what is serving.
+#:
+#: ⚠️ 246 -> 247 on 2026-08-29. The prompt count is derived from
+#: ``load_default_library().names()`` and legitimately moved when a stale floor was removed.
+#: This pin did not move with it, so the probe refused to certify a HEALTHY build and
+#: discarded three receipts whose remote calls had all returned 200. **When the system's
+#: own number changes, the pin asserting it is part of that change** — read /health before
+#: assuming a red here means the build is bad.
+EXPECTED_SURFACE = {"tools_base": 16, "prompts": 247}
 BEGIN = "<!-- BEGIN ESTELLE — managed block, safe to move, do not edit inside -->"
 END = "<!-- END ESTELLE -->"
 QUESTION = re.compile(r"Proving question: What does `([A-Za-z_][A-Za-z0-9_]*)` do")

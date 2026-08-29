@@ -194,7 +194,7 @@ class PublicInstallReceiptTests(unittest.TestCase):
         healthy = {
             "build": "abc123",
             "build_verified": True,
-            "surface": {"tools_base": 16, "prompts": 246},
+            "surface": MODULE.EXPECTED_SURFACE,
         }
         self.assertTrue(MODULE.verified_health(healthy))
         self.assertFalse(MODULE.verified_health({**healthy, "surface": {"tools_base": 16}}))
@@ -204,7 +204,7 @@ class PublicInstallReceiptTests(unittest.TestCase):
         healthy = {
             "build": "before-sha",
             "build_verified": True,
-            "surface": {"tools_base": 16, "prompts": 246},
+            "surface": MODULE.EXPECTED_SURFACE,
         }
         stable = MODULE.build_window(healthy, dict(healthy))
         self.assertTrue(stable["stable_and_verified"])
