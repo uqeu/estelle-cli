@@ -5482,6 +5482,7 @@ dependencies = [
  "itertools",
  "lazy_static",
  "libc",
+ "mime_guess",
  "pathdiff",
  "pretty_assertions",
  "pulldown-cmark",

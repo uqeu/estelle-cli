@@ -58,6 +58,7 @@ codex-terminal-detection = { workspace = true }
 estelle-client = { workspace = true }
 estelle-machine = { workspace = true }
 estelle-acp = { workspace = true }
+mime_guess = { workspace = true }
 estelle-mcp = { workspace = true }
 codex-utils-approval-presets = { workspace = true }
 codex-utils-absolute-path = { workspace = true }

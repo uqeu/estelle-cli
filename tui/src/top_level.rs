@@ -10,6 +10,7 @@ use std::process::Command as ProcessCommand;
 use std::time::Duration;
 use std::time::Instant;
 
+use base64::Engine;
 use estelle_client::ChatCompletionRequest;
 use estelle_client::ChatCompletionResponse;
 use estelle_client::Client;
@@ -30,9 +31,16 @@ use crate::commands;
 use estelle_tui::session_gap;
 
 const SOURCE_EXTENSIONS: &[&str] = &[
-    "c", "cpp", "cs", "go", "h", "hpp", "java", "js", "jsx", "kt", "md", "php", "py", "rb", "rs",
-    "scala", "swift", "ts", "tsx",
+    "adoc", "c", "cpp", "cs", "csv", "go", "h", "hpp", "java", "js", "json", "jsx", "kt", "md",
+    "org", "php", "py", "rb", "rs", "rst", "scala", "svg", "swift", "ts", "tsx", "txt", "xml",
+    "yaml", "yml",
 ];
+const BINARY_EXTENSIONS: &[&str] = &[
+    "arrow", "bmp", "docx", "epub", "gif", "html", "jpeg", "jpg", "m4a", "mov", "mp3", "mp4",
+    "odt", "parquet", "pdf", "png", "pptx", "rtf", "tiff", "wav", "webp", "xlsx",
+];
+const INGEST_MAX_TEXT_FILE_BYTES: u64 = 400_000;
+const INGEST_MAX_BINARY_FILE_BYTES: u64 = 1_000_000;
 const GITHUB_LOOPBACK_PORT: u16 = 8788;
 const GITHUB_CALLBACK_PATH: &str = "/github/callback";
 const GITHUB_CALLBACK_TIMEOUT: Duration = Duration::from_secs(300);
@@ -1600,7 +1608,7 @@ fn setup_dry_run(root: &Path) -> Result<Vec<String>, String> {
         match crate::setup_flow::proving_question(
             files
                 .iter()
-                .map(|file| (file.path.clone(), file.content.clone())),
+                .filter_map(|file| Some((file.path.clone(), file.content.clone()?))),
         ) {
             Some(question) => format!("Would prove with: {question}"),
             None => "No TypeScript or Go symbol could be named; no proving question was invented."
@@ -1613,7 +1621,20 @@ fn setup_dry_run(root: &Path) -> Result<Vec<String>, String> {
 #[derive(Serialize)]
 struct FilePayload {
     path: String,
-    content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content_base64: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    media_type: Option<String>,
+    #[serde(skip)]
+    bytes: usize,
+}
+
+impl FilePayload {
+    fn byte_len(&self) -> usize {
+        self.bytes
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1638,9 +1659,11 @@ pub(crate) fn working_memory_files(root: &Path) -> Result<Vec<WorkingMemoryFile>
     let (files, _skipped) = collect_files(root, &named)?;
     Ok(files
         .into_iter()
-        .map(|file| WorkingMemoryFile {
-            path: file.path,
-            content: file.content,
+        .filter_map(|file| {
+            Some(WorkingMemoryFile {
+                path: file.path,
+                content: file.content?,
+            })
         })
         .collect())
 }
@@ -1709,31 +1732,51 @@ fn collect_files(
             skipped.push(format!("{relative_key} (outside Git inventory)"));
             continue;
         }
-        if !is_source(relative) {
+        if !is_ingest_file(relative) {
             skipped.push(relative.display().to_string());
             continue;
         }
+        let max_bytes = if is_binary_ingest(relative) {
+            INGEST_MAX_BINARY_FILE_BYTES
+        } else {
+            INGEST_MAX_TEXT_FILE_BYTES
+        };
         let metadata = match fs::symlink_metadata(&full) {
-            Ok(metadata) if metadata.is_file() && metadata.len() <= 400_000 => metadata,
+            Ok(metadata) if metadata.is_file() && metadata.len() <= max_bytes => metadata,
             _ => {
                 skipped.push(relative.display().to_string());
                 continue;
             }
         };
-        let _ = metadata;
-        let content =
-            fs::read_to_string(&full).map_err(|error| format!("{}: {error}", full.display()))?;
-        if is_secret_shaped(&content) {
-            skipped.push(format!(
-                "{} (credential-shaped content)",
-                relative.display()
-            ));
-            continue;
+        if is_binary_ingest(relative) {
+            let data = fs::read(&full).map_err(|error| format!("{}: {error}", full.display()))?;
+            files.push(FilePayload {
+                path: relative_key,
+                content: None,
+                content_base64: Some(base64::engine::general_purpose::STANDARD.encode(&data)),
+                media_type: mime_guess::from_path(relative)
+                    .first_raw()
+                    .map(str::to_string),
+                bytes: data.len(),
+            });
+        } else {
+            let content = fs::read_to_string(&full)
+                .map_err(|error| format!("{}: {error}", full.display()))?;
+            if is_secret_shaped(&content) {
+                skipped.push(format!(
+                    "{} (credential-shaped content)",
+                    relative.display()
+                ));
+                continue;
+            }
+            files.push(FilePayload {
+                path: relative_key,
+                bytes: metadata.len() as usize,
+                content: Some(content),
+                content_base64: None,
+                media_type: None,
+            });
         }
-        files.push(FilePayload {
-            path: relative_key,
-            content,
-        });
     }
     Ok((files, skipped))
 }
@@ -1848,12 +1891,18 @@ fn walk_paths(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(paths)
 }
 
-fn is_source(path: &Path) -> bool {
+fn extension_in(path: &Path, extensions: &[&str]) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            SOURCE_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str())
-        })
+        .is_some_and(|extension| extensions.contains(&extension.to_ascii_lowercase().as_str()))
+}
+
+fn is_binary_ingest(path: &Path) -> bool {
+    extension_in(path, BINARY_EXTENSIONS)
+}
+
+fn is_ingest_file(path: &Path) -> bool {
+    extension_in(path, SOURCE_EXTENSIONS) || is_binary_ingest(path)
 }
 
 fn git_paths(root: &Path, args: &[&str]) -> Result<Vec<PathBuf>, String> {
@@ -1941,7 +1990,7 @@ where
             "no ingestable source files were found".to_string(),
         ));
     }
-    let bytes: usize = files.iter().map(|file| file.content.len()).sum();
+    let bytes: usize = files.iter().map(FilePayload::byte_len).sum();
     let file_count = files.len();
     let mut lines = vec![format!(
         "Found {} files ({} KB) for {repo}; {} skipped.",
@@ -1969,7 +2018,7 @@ where
     }
     let estimate_files = files
         .iter()
-        .map(|file| json!({"path": file.path, "bytes": file.content.len()}))
+        .map(|file| json!({"path": file.path, "bytes": file.byte_len()}))
         .collect::<Vec<_>>();
     report(SweepProgress {
         state: "checking account capacity".to_string(),
@@ -3198,7 +3247,7 @@ async fn setup(
     let question = crate::setup_flow::proving_question(
         files
             .iter()
-            .map(|file| (file.path.clone(), file.content.clone())),
+            .filter_map(|file| Some((file.path.clone(), file.content.clone()?))),
     );
     if dry_run {
         lines.push(format!(
@@ -5259,6 +5308,55 @@ tests/test_serve.py:88: AssertionError\n\
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "main.rs");
         assert!(skipped.is_empty());
+    }
+
+    #[test]
+    fn sweep_serializes_a_binary_document_as_bounded_base64_and_keeps_text_plain() {
+        let root = tempfile::tempdir().expect("mixed source root");
+        fs::write(root.path().join("rules.pdf"), b"%PDF-1.7\nfixture").expect("pdf");
+        fs::write(root.path().join("notes.md"), "plain text\n").expect("text");
+
+        let (files, skipped) = collect_files(root.path(), &[]).expect("mixed collection");
+        let wire = serde_json::to_value(&files).expect("wire JSON");
+        let by_path = wire
+            .as_array()
+            .expect("file array")
+            .iter()
+            .map(|entry| (entry["path"].as_str().expect("path"), entry))
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        assert!(skipped.is_empty());
+        assert_eq!(by_path.len(), 2);
+        assert_eq!(by_path["notes.md"]["content"], json!("plain text\n"));
+        assert!(by_path["notes.md"].get("content_base64").is_none());
+        assert_eq!(
+            by_path["rules.pdf"]["content_base64"],
+            json!("JVBERi0xLjcKZml4dHVyZQ==")
+        );
+        assert_eq!(by_path["rules.pdf"]["media_type"], json!("application/pdf"));
+        assert!(by_path["rules.pdf"].get("content").is_none());
+    }
+
+    #[test]
+    fn sweep_refuses_a_binary_document_above_the_servers_one_million_byte_cap() {
+        let root = tempfile::tempdir().expect("bounded binary root");
+        fs::write(
+            root.path().join("within.pdf"),
+            vec![b'x'; INGEST_MAX_BINARY_FILE_BYTES as usize],
+        )
+        .expect("within-bound document");
+        fs::write(
+            root.path().join("over.pdf"),
+            vec![b'x'; INGEST_MAX_BINARY_FILE_BYTES as usize + 1],
+        )
+        .expect("over-bound document");
+
+        let (files, skipped) = collect_files(root.path(), &[]).expect("bounded collection");
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "within.pdf");
+        assert_eq!(files[0].byte_len(), INGEST_MAX_BINARY_FILE_BYTES as usize);
+        assert_eq!(skipped, ["over.pdf"]);
     }
 
     #[test]
