@@ -1379,3 +1379,135 @@ async fn production_deep_search_contract() {
         .expect("production deep-search contract");
     assert!(response.rendered_answer().is_some());
 }
+
+// ── Server-advertised load shedding ────────────────────────────────────────────────────────────
+//
+// 🔴 WHY THESE EXIST. The public-binary receipt for v0.2.28 failed nine contracts, and eight of them
+// were a cascade off ONE: `estelle sweep` met `503 dependency slow-path cooldown; retry after the
+// advertised interval` and exited 1. The server was behaving correctly — `api.py:_guard` sheds a
+// dependency-bound route with a bounded `Retry-After` BEFORE the handler dispatches, so the request
+// had no effect and coming back later is exactly right. The Python client honours it
+// (`serve/backend.py:585`); this client did not, so a routine cooldown read to a user as a hard
+// failure and every downstream contract went unobserved.
+//
+// ⚠️ The negative control is the load-bearing test. Retrying on a 503 ALONE would make the client
+// hammer a server that never asked it to — so `shed_without_retry_after_is_not_retried` pins that
+// the HEADER, not the status, is what authorises a second attempt.
+
+#[tokio::test]
+async fn advertised_cooldown_is_honoured_and_the_call_succeeds() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/account"))
+        .respond_with(
+            ResponseTemplate::new(503)
+                .insert_header("Retry-After", "1")
+                .set_body_json(serde_json::json!({
+                    "error": {"message": "dependency slow-path cooldown; retry after the advertised interval"}
+                })),
+        )
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/account"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "plan": "ultra", "plan_active": true
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client =
+        Client::new(&format!("{}/", server.uri()), test_key(), MINIMUM_TIMEOUT).expect("client");
+
+    let account = client.account(&CancellationToken::new()).await.expect(
+        "a shed request must be retried after the advertised interval, not surfaced as a failure",
+    );
+
+    assert_eq!(account.plan.as_deref(), Some("ultra"));
+}
+
+#[tokio::test]
+async fn a_persistent_cooldown_fails_with_the_servers_own_503_after_a_bounded_number_of_attempts() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/account"))
+        .respond_with(
+            ResponseTemplate::new(503)
+                .insert_header("Retry-After", "1")
+                .set_body_json(serde_json::json!({
+                    "error": {"message": "dependency slow-path cooldown; retry after the advertised interval"}
+                })),
+        )
+        // 🔑 THE BOUND IS THE ASSERTION. A retry loop with no stated ceiling is the defect this fix
+        // would otherwise introduce, so pin the exact attempt count the constant promises.
+        .expect(u64::from(SHED_MAX_ATTEMPTS))
+        .mount(&server)
+        .await;
+    let client =
+        Client::new(&format!("{}/", server.uri()), test_key(), MINIMUM_TIMEOUT).expect("client");
+
+    let error = client.account(&CancellationToken::new()).await.expect_err(
+        "an unrelenting cooldown must still surface, never be swallowed into a fake success",
+    );
+
+    match error {
+        Error::Http { status, .. } => assert_eq!(status.as_u16(), 503),
+        other => panic!("expected the server's own 503 to survive the retries, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn shed_without_retry_after_is_not_retried() {
+    // NEGATIVE CONTROL: status alone must never authorise a second attempt. Without this, the fix
+    // would turn every unrelated 503 into three requests against an already-struggling server.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/account"))
+        .respond_with(ResponseTemplate::new(503).set_body_json(serde_json::json!({
+            "error": {"message": "service unavailable"}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client =
+        Client::new(&format!("{}/", server.uri()), test_key(), MINIMUM_TIMEOUT).expect("client");
+
+    let error = client
+        .account(&CancellationToken::new())
+        .await
+        .expect_err("a 503 with no advertised interval is a plain failure");
+
+    assert!(matches!(error, Error::Http { status, .. } if status.as_u16() == 503));
+}
+
+#[test]
+fn an_interval_we_cannot_afford_to_wait_is_declined_rather_than_silently_obeyed() {
+    let ok = shed_delay_for(
+        reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        Some(SHED_MAX_WAIT.as_secs().to_string().as_str()),
+    );
+    assert_eq!(ok, Some(SHED_MAX_WAIT));
+
+    // Past the ceiling we do NOT sleep and we do NOT pretend to succeed — the 503 goes to the caller.
+    let too_long = shed_delay_for(
+        reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        Some((SHED_MAX_WAIT.as_secs() + 1).to_string().as_str()),
+    );
+    assert_eq!(too_long, None);
+
+    assert_eq!(
+        shed_delay_for(reqwest::StatusCode::SERVICE_UNAVAILABLE, Some("0")),
+        None
+    );
+    assert_eq!(
+        shed_delay_for(reqwest::StatusCode::SERVICE_UNAVAILABLE, Some("soon")),
+        None
+    );
+    assert_eq!(shed_delay_for(reqwest::StatusCode::OK, Some("1")), None);
+    assert_eq!(
+        shed_delay_for(reqwest::StatusCode::TOO_MANY_REQUESTS, Some("2")),
+        Some(Duration::from_secs(2))
+    );
+}

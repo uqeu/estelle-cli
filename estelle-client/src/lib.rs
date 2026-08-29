@@ -38,6 +38,47 @@ pub const CLIENT_PROTOCOL_VERSION: u64 = 1;
 /// Cross-repo Python↔Rust hook fixture/schema contract understood by this binary.
 pub const HOOK_CONTRACT_VERSION: u64 = 1;
 
+/// How many times a single request may be sent when the server asks us to come back later.
+///
+/// 🔑 A FIXED, STATED BOUND (Power of Ten rule 2). The server sheds a dependency-bound route in
+/// `api.py:_guard` — **before** the handler dispatches, so the shed request had no effect and a
+/// second attempt is not a re-execution. That makes retrying safe even for POST, which is exactly
+/// why the bound has to be explicit: the only thing stopping an unbounded loop is this number.
+pub const SHED_MAX_ATTEMPTS: u32 = 3;
+
+/// The longest advertised cooldown this client will actually wait out.
+///
+/// Past this the request is NOT retried and the server's own 503 goes to the caller. Waiting an
+/// arbitrary interval because a header said so would turn a fast, legible failure into a hang.
+pub const SHED_MAX_WAIT: Duration = Duration::from_secs(30);
+
+/// The single owner of "did the server ask us to come back, and may we?".
+///
+/// Returns the interval to wait, or `None` when this response must be surfaced as-is. `None` is the
+/// default for everything uncertain — an unparseable header, a zero, an interval past
+/// [`SHED_MAX_WAIT`], or any status the server did not pair with an interval.
+///
+/// ⚠️ The status alone is never enough. Retrying every 503 would have this client hammer a server
+/// that never advertised a cooldown; the HEADER is the authorisation, and `tests.rs`
+/// pins that with a negative control.
+fn shed_delay_for(status: reqwest::StatusCode, retry_after: Option<&str>) -> Option<Duration> {
+    if status != reqwest::StatusCode::SERVICE_UNAVAILABLE
+        && status != reqwest::StatusCode::TOO_MANY_REQUESTS
+    {
+        return None;
+    }
+    let seconds: u64 = retry_after?.trim().parse().ok()?;
+    if seconds == 0 {
+        return None;
+    }
+    let wait = Duration::from_secs(seconds);
+    if wait > SHED_MAX_WAIT {
+        None
+    } else {
+        Some(wait)
+    }
+}
+
 #[derive(Clone)]
 pub struct ApiKey(Zeroizing<String>);
 
@@ -210,10 +251,7 @@ impl Client {
             )
             .header("X-Estelle-Hook-Contract", HOOK_CONTRACT_VERSION.to_string())
             .header("X-Estelle-Client-Version", env!("CARGO_PKG_VERSION"));
-        let response = tokio::select! {
-            () = cancel.cancelled() => return Err(Error::Cancelled),
-            response = request.send() => response?,
-        };
+        let response = self.send_honoring_shed(request, cancel).await?;
         let status = response.status();
         let bytes = tokio::select! {
             () = cancel.cancelled() => return Err(Error::Cancelled),
@@ -272,10 +310,7 @@ impl Client {
             )
             .header("X-Estelle-Hook-Contract", HOOK_CONTRACT_VERSION.to_string())
             .header("X-Estelle-Client-Version", env!("CARGO_PKG_VERSION"));
-        let response = tokio::select! {
-            () = cancel.cancelled() => return Err(Error::Cancelled),
-            response = request.send() => response?,
-        };
+        let response = self.send_honoring_shed(request, cancel).await?;
         let status = response.status();
         if !status.is_success() {
             let bytes = tokio::select! {
@@ -592,10 +627,7 @@ impl Client {
             request = request.header("X-Estelle-Repo", repo.as_str());
         }
 
-        let response = tokio::select! {
-            () = cancel.cancelled() => return Err(Error::Cancelled),
-            response = request.send() => response?,
-        };
+        let response = self.send_honoring_shed(request, cancel).await?;
         let status = response.status();
         let bytes = tokio::select! {
             () = cancel.cancelled() => return Err(Error::Cancelled),
@@ -620,6 +652,51 @@ impl Client {
             return Err(Error::EmptyResponse);
         }
         Ok(serde_json::from_slice(&bytes)?)
+    }
+
+    /// Send `request`, honouring a server-advertised cooldown up to [`SHED_MAX_ATTEMPTS`] times.
+    ///
+    /// 🔴 THE DEFECT THIS CLOSES. `estelle sweep` met `503 dependency slow-path cooldown; retry
+    /// after the advertised interval` and exited 1 — the server behaving exactly as designed read
+    /// to the user as a hard failure. The Python client already honours `Retry-After`
+    /// (`serve/backend.py:585`); this one ignored it, and eight further receipt contracts went
+    /// unobserved downstream of that one exit.
+    ///
+    /// The last response is returned even when every attempt was shed, so an unrelenting cooldown
+    /// still surfaces as the server's own 503 and is never swallowed into a fake success.
+    async fn send_honoring_shed(
+        &self,
+        request: reqwest::RequestBuilder,
+        cancel: &CancellationToken,
+    ) -> Result<reqwest::Response, Error> {
+        let mut pending = request;
+        let mut attempt: u32 = 1;
+        loop {
+            // `try_clone` returns None only for a streaming body; every request this client builds
+            // carries a JSON or empty body. A None here means "cannot retry", never a panic.
+            let next = pending.try_clone();
+            let response = tokio::select! {
+                () = cancel.cancelled() => return Err(Error::Cancelled),
+                response = pending.send() => response?,
+            };
+            let advertised = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned);
+            let Some(wait) = shed_delay_for(response.status(), advertised.as_deref()) else {
+                return Ok(response);
+            };
+            let (Some(retryable), true) = (next, attempt < SHED_MAX_ATTEMPTS) else {
+                return Ok(response);
+            };
+            tokio::select! {
+                () = cancel.cancelled() => return Err(Error::Cancelled),
+                () = tokio::time::sleep(wait) => {}
+            }
+            pending = retryable;
+            attempt += 1;
+        }
     }
 
     async fn write_receipt(
