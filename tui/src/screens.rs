@@ -11,6 +11,35 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
+/// One row of the routed-model table: marker, model, provider, score, n, in, out, ctx, up30d, notes.
+///
+/// Named because clippy is right that a bare ten-tuple is unreadable at the call site — at that width
+/// a reader cannot tell column 7 from column 8 without counting, and neither can a reviewer.
+type RoutedModelRow<'a> = (
+    &'a str,
+    &'a str,
+    &'a str,
+    &'a str,
+    &'a str,
+    &'a str,
+    &'a str,
+    &'a str,
+    &'a str,
+    &'a str,
+);
+
+/// One row of the local-model table: marker, model, param, tok/s, quant, mode, mem, fit.
+type LocalModelRow<'a> = (
+    &'a str,
+    &'a str,
+    &'a str,
+    &'a str,
+    &'a str,
+    &'a str,
+    &'a str,
+    &'a str,
+);
+
 pub const SCREENS: &[&str] = &[
     "models · hosted",
     "models · local",
@@ -183,7 +212,7 @@ fn models(p: &Palette) -> Vec<Line<'static>> {
             0,
         ),
     ];
-    let rows: &[(&str, &str, &str, &str, &str, &str, &str, &str, &str, &str)] = &[
+    let rows: &[RoutedModelRow] = &[
         (
             "●",
             "claude-opus-5",
@@ -359,7 +388,7 @@ fn local(p: &Palette) -> Vec<Line<'static>> {
             0,
         ),
     ];
-    let rows: &[(&str, &str, &str, &str, &str, &str, &str, &str)] = &[
+    let rows: &[LocalModelRow] = &[
         (
             "L",
             "Qwen3-Coder-Next-80B",

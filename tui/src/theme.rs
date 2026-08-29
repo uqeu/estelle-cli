@@ -1,4 +1,16 @@
 //! Palette for the ported Estelle screens.
+//!
+//! ⚠️ **RGB IS DELIBERATE IN THIS MODULE, AND ONLY IN THIS MODULE.** The workspace disallows
+//! `Color::Rgb` with the reason *"Use ANSI colors, which work better in various terminal themes."*
+//! That reason is sound for general UI code and it is why the opt-out is scoped to the one file whose
+//! entire job is the brand palette: Estelle's identity colours are exact values — cream `#E9E6DC`,
+//! ink `#1F1C17`, red `#C52416` — and an ANSI approximation of them is a different brand.
+//!
+//! The concern the lint exists for is met a stronger way here: [`ScreenTheme`] carries Dark and Cream
+//! variants and the composer picks between them from the DETECTED terminal background
+//! (`style::user_message_style_for`), so the palette adapts to the host theme instead of assuming one.
+//! Every other module in this crate stays under the lint.
+#![allow(clippy::disallowed_methods)]
 
 use ratatui::style::{Color, Modifier, Style};
 

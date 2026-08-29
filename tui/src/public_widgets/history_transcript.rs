@@ -202,6 +202,9 @@ mod tests {
                 HistoryTranscriptItem::User {
                     heading: vec![Line::from("you")],
                     message: "a user message that must wrap".to_string(),
+                    // A fixed dark swatch for a transcript rendered over a hardcoded ground; the
+                    // surrounding widget does not consult the terminal theme.
+                    #[allow(clippy::disallowed_methods)]
                     background: Some(Color::Rgb(24, 24, 24)),
                     semantic_color: Some(Color::Blue),
                 },
