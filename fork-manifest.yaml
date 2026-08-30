@@ -100,8 +100,8 @@
     },
     {
       "path": "estelle-client/src/secret_engine.rs",
-      "blob": "5d23b05389244a6183c157959be7a2e7d421b27f",
-      "reason": "NEW FILE, local pure scanner: compiles the embedded rules lazily, bounds scans to 16 KiB chunks plus 1 KiB overlap and 512-character rule windows, applies entropy gates and allowlists, and rescans decoded base64. Its public finding type carries only rule ID, line and a 12-hex SHA-256 fingerprint; credential values are used transiently for matching/redaction and never stored or printed. It adds no filesystem or network primitive."
+      "blob": "14eecd0db03acc5976a0f62314505825e728f7f5",
+      "reason": "NEW FILE, local pure scanner: compiles the embedded rules lazily, bounds scans to 16 KiB chunks plus 1 KiB overlap and 512-character rule windows, applies entropy gates and allowlists, and rescans decoded base64. Its public finding type carries only rule ID, line and a 12-hex SHA-256 fingerprint; credential values are used transiently for matching/redaction and never stored or printed. It adds no filesystem or network primitive. RE-ATTESTED 2026-08-31 by coach during the R11 CLI integration, and the DRIFT WAS ALREADY PRESENT ON SECURITY'S OWN BRANCH \u2014 `main` passes this audit, `codex/security-r11-cli-20260831` fails it, so the release workflow could not have shipped v0.2.32. The unattested delta is 104 added lines and is exactly SECURITY's own round-11 work: an `openai-classic-key` rule, a `railway-token-loose` rule, Estelle's own minted-key shapes, and the rule count moving 227 -> 231, with the module docstring updated to match. Characterised MECHANICALLY against the attested blob: 0 new URL or host literals, 0 network/filesystem/process calls, 0 credential reads (the single `secrets` match is the substring inside `redact_secrets_engine` in a test assertion). Additive DETECTION only \u2014 no new capability and no new egress, which is why the egress census is unchanged. \u26a0\ufe0f This is a mechanical re-attestation of a hash SECURITY left stale; it is NOT a substitute for SECURITY's own review of its rule semantics, and the false-positive behaviour of `railway-token-loose` in particular is theirs to judge."
     },
     {
       "path": "estelle-client/src/endpoint.rs",
@@ -245,7 +245,7 @@
     },
     {
       "path": "tui/src/cols.rs",
-      "blob": "9a870787726ddd43d8528edb8195e8b584f26393",
+      "blob": "24cac6313e59afb0dba4811d87f8659a4c4a088f",
       "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
     },
     {
@@ -310,8 +310,13 @@
     },
     {
       "path": "tui/src/main.rs",
-      "blob": "346bee141d19b2f1927513813ca5d014f5f05ad2",
-      "reason": "plain-English turns send the untouched prompt to the server-owned /turn/route classifier, then bind its closed action to an already-audited suite endpoint; the client carries no lexical classifier or model resolver, and ambiguous or unsupported actions stop before a second request. Preset PUTs use the existing authenticated client, while `brief` and dry-run `setup` remain local. No credential value is rendered and no new egress destination exists. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them. RE-ATTESTED 2026-08-29: adds `failure_advice` and `http_status`, which choose the two advice lines after a failed command from the HTTP status already present in the error string. Pure presentation \u2014 no request, no destination, no credential read, and an unrecognised status keeps the previous wording. RE-ATTESTED 2026-08-30: registers `estelle leaked` and returns through its local scanner before the upgrade check or any authenticated path can run. This makes the no-network claim structural at the entrypoint; output remains owned by the separately reviewed scanner."
+      "blob": "fd3568162f96dcfc7e5e29101cb037b20a38403f",
+      "reason": "plain-English turns send the untouched prompt to the server-owned /turn/route classifier, then bind its closed action to an already-audited suite endpoint; the client carries no lexical classifier or model resolver, and ambiguous or unsupported actions stop before a second request. Preset PUTs use the existing authenticated client, while `brief` and dry-run `setup` remain local. No credential value is rendered and no new egress destination exists. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them. RE-ATTESTED 2026-08-29: adds `failure_advice` and `http_status`, which choose the two advice lines after a failed command from the HTTP status already present in the error string. Pure presentation \u2014 no request, no destination, no credential read, and an unrecognised status keeps the previous wording. RE-ATTESTED 2026-08-30: registers `estelle leaked` and returns through its local scanner before the upgrade check or any authenticated path can run. This makes the no-network claim structural at the entrypoint; output remains owned by the separately reviewed scanner. RE-ATTESTED 2026-08-31 by coach during the R11 CLI integration. Two separately-attested changes landed on this file and the merge is their union: SECURITY's `mod leaked;` and CLI's `mod live_renderer;`. Against the previously attested blob the delta is 5 lines ADDED and 2,162 REMOVED \u2014 the live-renderer consolidation that makes one renderer own interactive and snapshot frames, deleting the parallel fixture renderer and gallery. Characterised mechanically: 0 new URL or host literals, 0 new network calls, 0 new process/exec, 0 new filesystem writes, 0 new environment or credential reads. A change that is overwhelmingly DELETION is the safest direction for this manifest, and nothing it removed was an egress sink."
+    },
+    {
+      "path": "tui/src/live_renderer.rs",
+      "blob": "39cf11355f63a93a38a064962bf42e851f066328",
+      "reason": "NEW FILE, pure relocation of the existing customer-visible frame renderer out of main.rs. The interactive TUI, the screens snapshot command, and renderer tests now share this one owner. It adds no network destination, credential source, file read, or background execution."
     },
     {
       "path": "tui/src/model_migration.rs",
@@ -405,7 +410,7 @@
     },
     {
       "path": "tui/src/screens.rs",
-      "blob": "2be0b408d0dbff362dfcb357c1e5fc428433cd31",
+      "blob": "29c3b10c3eca623b97dc0793fc1fa9e479ac3a1a",
       "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added. RE-ATTESTED 2026-08-29: two bare tuple row types replaced by named aliases (RoutedModelRow, LocalModelRow) to satisfy clippy::type_complexity. Type names only; no behaviour change."
     },
     {
@@ -435,13 +440,13 @@
     },
     {
       "path": "tui/src/theme.rs",
-      "blob": "681fab62b5f3e37a08563b208ee0e052feda9fba",
+      "blob": "28334cdfc5a209255a658b0b07b8486947b97c5c",
       "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added. RE-ATTESTED 2026-08-29: a module-level `#![allow(clippy::disallowed_methods)]` plus the doc comment arguing for it. The workspace forbids Color::Rgb to keep ANSI portability; this module IS the brand palette (exact identity colours) and adapts via ScreenTheme Dark/Cream chosen from the DETECTED terminal background. No behaviour change, no destination, no credential."
     },
     {
       "path": "tui/src/top_level.rs",
-      "blob": "cb6c75450971fb502723948857b787254c8fe2b5",
-      "reason": "`brief` is a repository-confined local file transform; `setup` deliberately composes the already-audited authenticated /mcp, /ingest/start, /ingest/progress and /deep-search routes. The 4,000-file bound now reserves TypeScript and Go representation before filling in Git order, and doctor labels its accepted/total inventory as local-only rather than server proof. No new network destination or credential source was added. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them. RE-ATTESTED 2026-08-30: classifies `Leaked` with the other commands that never enter authenticated top-level dispatch; both match arms make accidental transport wiring a compile-time exhaustiveness failure."
+      "blob": "54e3315244132d5c8f74baa7c95325576dbc1ac4",
+      "reason": "`brief` is a repository-confined local file transform; `setup` deliberately composes the already-audited authenticated /mcp, /ingest/start, /ingest/progress and /deep-search routes. The 4,000-file bound now reserves TypeScript and Go representation before filling in Git order, and doctor labels its accepted/total inventory as local-only rather than server proof. No new network destination or credential source was added. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them. RE-ATTESTED 2026-08-30: classifies `Leaked` with the other commands that never enter authenticated top-level dispatch; both match arms make accidental transport wiring a compile-time exhaustiveness failure. RE-ATTESTED 2026-08-31 by coach during the R11 CLI integration. Delta against the attested blob is 130 added / 3 removed, carrying AFFINITY's `hardware advice` command and multimodal content-block handling. Characterised mechanically: 0 new URL or host literals and NO new endpoint path literal of any kind, 0 new process/exec, 0 new filesystem writes. \u26a0\ufe0f A first lexical pass reported 3 new network calls and 1 credential read; ALL FOUR WERE FALSE POSITIVES and were cleared by reading the lines: `token` appears in a doc comment warning that the field routinely contains env dumps and tokens, and the three `.get(` matches are `block.get(\"source\")`, `.get(\"media_type\")` and `.get(\"data\")` \u2014 JSON map lookups, not HTTP GETs. A grep cannot tell a map read from a request; the count is recorded here so the next reader knows the check was run AND resolved, not skipped."
     },
     {
       "path": "tui/src/transcript.rs",
