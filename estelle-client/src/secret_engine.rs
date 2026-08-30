@@ -15,7 +15,7 @@
 //!     over a [`WINDOW_CHARS`]-char window around the keyword hit, never over the whole line;
 //!   - the text is scanned in [`CHUNK_CHARS`] chunks with [`OVERLAP_CHARS`] of overlap so no
 //!     pathological line pins the CPU and no secret straddling a boundary is split;
-//!   - rules compile LAZILY on first use — most of the 230 never fire on a given corpus;
+//!   - rules compile LAZILY on first use — most of the 231 never fire on a given corpus;
 //!   - per-rule entropy gate and per-rule upstream allowlist apply to every candidate;
 //!   - a base64 sweep decodes plausible base64 spans and rescans their content, because agent
 //!     payloads carry encoded blobs and a secret inside one is invisible to the rules.
@@ -220,6 +220,17 @@ fn local_rules() -> Vec<SecretRule> {
             1,
             3.0,
             &[],
+        ),
+        // Railway exposes account, workspace, project and OAuth credentials but does not
+        // publish one stable lexical contract for all four. Keep the UUID rule for precision
+        // and fail toward caught for a labelled, high-entropy opaque Railway value.
+        rule(
+            "railway-token-loose",
+            &["railway"],
+            r#"(?i)[\w.-]{0,50}?(?:railway)(?:[ \t\w.-]{0,20})[\s'"]{0,3}(?:=|>|:{1,3}=|\|\||:|=>|\?=|,)[\x60'"\s=]{0,5}([A-Za-z0-9_-]{20,})"#,
+            1,
+            3.8,
+            &[r"(?i)^(?:your[_-]?railway[_-]?token|changeme|placeholder|redacted|example)$"],
         ),
         rule(
             "vercel-access-token",
@@ -819,11 +830,12 @@ mod tests {
     }
 
     #[test]
-    fn r11_estelle_and_classic_openai_rules_match_python_with_kill_switches() {
+    fn r11_estelle_openai_and_railway_rules_match_python_with_kill_switches() {
         let classic_body: String = "aB3xK9mQ7wZ2pL5nR8tV".chars().cycle().take(48).collect();
         let classic = format!("sk-{classic_body}");
         let estelle_body: String = "9f86d081884c7d65".chars().cycle().take(48).collect();
         let estelle = format!("estelle_live_{estelle_body}");
+        let railway = "X9mQ2vR7pL4wT8yZ3nB6jH5sF1dG0aKc".to_string();
 
         for (family, text, value, expected, dropped) in [
             (
@@ -839,6 +851,13 @@ mod tests {
                 estelle,
                 "estelle-live-key",
                 vec!["estelle-live-key", "estelle-live-key-loose"],
+            ),
+            (
+                "Railway opaque",
+                format!("railway: \"{railway}\"\n"),
+                railway,
+                "railway-token-loose",
+                vec!["railway-token-loose"],
             ),
         ] {
             assert_family_fires(&text, expected, &value);
@@ -937,7 +956,7 @@ mod tests {
             skipped.is_empty(),
             "rules the regex crate rejected: {skipped:?}"
         );
-        assert_eq!(compiled, 230); // 219 pinned gitleaks + 11 Estelle-local extensions
+        assert_eq!(compiled, 231); // 219 pinned gitleaks + 12 Estelle-local extensions
     }
 
     #[test]
