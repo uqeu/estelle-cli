@@ -5217,6 +5217,14 @@ tests/test_serve.py:88: AssertionError\n\
 
         assert_eq!(paths, ["main.rs"]);
 
+        // Instrument-can-fail proof: delete the production inventory's `--exclude-standard`
+        // control in this in-test mutant and the SAME ignored credential path/source tree reappear.
+        // The green above therefore measures Git ignore semantics, not an inventory that found nothing.
+        let unsafe_inventory = git_paths(root.path(), &["ls-files", "--cached", "--others", "-z"])
+            .expect("mutated Git inventory");
+        assert!(unsafe_inventory.contains(&PathBuf::from(".env")));
+        assert!(unsafe_inventory.contains(&PathBuf::from("testbed/vendor.js")));
+
         let (explicit, skipped) = collect_files(
             root.path(),
             &[PathBuf::from(".env"), PathBuf::from("testbed/vendor.js")],

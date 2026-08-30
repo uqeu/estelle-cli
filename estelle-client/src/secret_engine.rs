@@ -6,16 +6,16 @@
 //! sha256 f16d825ea56117eadc4a6ac870a34045881a6b409c80b3e152ed20d23cb40ec8. Its `metadata`
 //! block records the gitleaks pin it was generated from (219 rules, 3 dropped upstream, 22
 //! load-time rewrites, gitleaks is MIT-licensed and these are its rule definitions verbatim).
-//! The Estelle-local extension rules (LOCAL_RULES in the Python module — anthropic/openai
-//! loose shapes, the private-key header, loose slack, DSN credentials, Railway, Vercel, and
-//! the high-entropy .env assignment) are ported inline below; they are NOT from gitleaks.
+//! The Estelle-local extension rules (LOCAL_RULES in the Python module — Anthropic/OpenAI
+//! shapes, Estelle's own key, the private-key header, loose Slack, DSN credentials, Railway,
+//! Vercel, and the high-entropy .env assignment) are ported inline below; they are NOT from gitleaks.
 //!
 //! Architecture (same as the Python port, same as the vendor's `src/scan/`):
 //!   - a keyword prefilter selects the rules worth running; each selected rule's pattern runs
 //!     over a [`WINDOW_CHARS`]-char window around the keyword hit, never over the whole line;
 //!   - the text is scanned in [`CHUNK_CHARS`] chunks with [`OVERLAP_CHARS`] of overlap so no
 //!     pathological line pins the CPU and no secret straddling a boundary is split;
-//!   - rules compile LAZILY on first use — most of the 227 never fire on a given corpus;
+//!   - rules compile LAZILY on first use — most of the 230 never fire on a given corpus;
 //!   - per-rule entropy gate and per-rule upstream allowlist apply to every candidate;
 //!   - a base64 sweep decodes plausible base64 spans and rescans their content, because agent
 //!     payloads carry encoded blobs and a secret inside one is invisible to the rules.
@@ -160,6 +160,17 @@ fn local_rules() -> Vec<SecretRule> {
             0.0,
             &[],
         ),
+        // Classic OpenAI API keys remain valid in customer BYOK configurations. The pinned
+        // gitleaks rule recognises only the T3BlbkFJ subset; the classic shape is exactly
+        // `sk-` plus 48 alphanumeric characters.
+        rule(
+            "openai-classic-key",
+            &["sk-"],
+            r"\bsk-[A-Za-z0-9]{48}\b",
+            0,
+            0.0,
+            &[],
+        ),
         // gitleaks's private-key needs the full block (header + 64+ chars + footer) in ONE
         // scanned string; the line-oriented fence must flag the header alone.
         rule(
@@ -216,6 +227,24 @@ fn local_rules() -> Vec<SecretRule> {
             r#"(?i)[\w.-]{0,50}?(?:vercel)(?:[ \t\w.-]{0,20})[\s'"]{0,3}(?:=|>|:{1,3}=|\|\||:|=>|\?=|,)[\x60'"\s=]{0,5}([a-z0-9]{24})"#,
             1,
             3.0,
+            &[],
+        ),
+        // Estelle's own minted API key: exact current format plus a loose companion so a
+        // format change degrades to still-caught rather than silently uncovered.
+        rule(
+            "estelle-live-key",
+            &["estelle_live_"],
+            r"\bestelle_live_[0-9a-f]{48}\b",
+            0,
+            0.0,
+            &[],
+        ),
+        rule(
+            "estelle-live-key-loose",
+            &["estelle_live_"],
+            r"\bestelle_live_[A-Za-z0-9_-]{16,}\b",
+            0,
+            0.0,
             &[],
         ),
         // A bare high-entropy value under a secret-y name — the plain `.env` shape
@@ -790,6 +819,57 @@ mod tests {
     }
 
     #[test]
+    fn r11_estelle_and_classic_openai_rules_match_python_with_kill_switches() {
+        let classic_body: String = "aB3xK9mQ7wZ2pL5nR8tV".chars().cycle().take(48).collect();
+        let classic = format!("sk-{classic_body}");
+        let estelle_body: String = "9f86d081884c7d65".chars().cycle().take(48).collect();
+        let estelle = format!("estelle_live_{estelle_body}");
+
+        for (family, text, value, expected, dropped) in [
+            (
+                "OpenAI classic",
+                format!("provider value: {classic}\n"),
+                classic,
+                "openai-classic-key",
+                vec!["openai-classic-key"],
+            ),
+            (
+                "Estelle live",
+                format!("account value: {estelle}\n"),
+                estelle,
+                "estelle-live-key",
+                vec!["estelle-live-key", "estelle-live-key-loose"],
+            ),
+        ] {
+            assert_family_fires(&text, expected, &value);
+            let crippled = SecretEngine::new(
+                load_rules()
+                    .into_iter()
+                    .filter(|rule| !dropped.contains(&rule.id.as_str()))
+                    .collect(),
+            );
+            assert!(
+                crippled.redact(&text).contains(&value),
+                "{family}: the exact fixture did not reopen after deleting {dropped:?}"
+            );
+        }
+
+        // Negative controls: prefix prose and near-miss lengths are not credentials.
+        for text in [
+            "Estelle keys begin with estelle_live_".to_string(),
+            "classic OpenAI keys begin with sk-".to_string(),
+            format!("sk-{}", "aB3x".repeat(11)), // 44, not the exact 48-character body
+            format!("sk-{}x", classic_body),     // 49, not the exact shape
+        ] {
+            assert!(
+                find_secret_shapes(&text).is_empty(),
+                "negative fired: {text}"
+            );
+            assert_eq!(redact_secrets_engine(&text), text);
+        }
+    }
+
+    #[test]
     fn negative_controls_published_examples_and_checksums_survive() {
         // AWS's own documentation example key: allowlisted upstream, and its entropy actually
         // clears the gate — the ALLOWLIST, not the entropy, is what spares it.
@@ -857,7 +937,7 @@ mod tests {
             skipped.is_empty(),
             "rules the regex crate rejected: {skipped:?}"
         );
-        assert_eq!(compiled, 227); // 219 pinned gitleaks + 8 Estelle-local extensions
+        assert_eq!(compiled, 230); // 219 pinned gitleaks + 11 Estelle-local extensions
     }
 
     #[test]
