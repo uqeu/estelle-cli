@@ -20,7 +20,7 @@ fn test_key() -> ApiKey {
 
 #[test]
 fn endpoint_inventory_is_unique_and_matches_the_server_audit() {
-    assert_eq!(API_ENDPOINTS.len(), 84);
+    assert_eq!(API_ENDPOINTS.len(), 85);
     let unique = API_ENDPOINTS
         .iter()
         .map(|spec| spec.path)
@@ -98,6 +98,13 @@ fn govern_is_the_unscoped_session_compaction_owner() {
     assert_eq!(Endpoint::Govern.path(), "govern");
     assert_eq!(Endpoint::Govern.methods(), &[HttpMethod::Post]);
     assert!(!Endpoint::Govern.requires_repo());
+}
+
+#[test]
+fn hardware_advice_is_an_unscoped_post_endpoint() {
+    assert_eq!(Endpoint::HardwareAdvice.path(), "hardware/advice");
+    assert_eq!(Endpoint::HardwareAdvice.methods(), &[HttpMethod::Post]);
+    assert!(!Endpoint::HardwareAdvice.requires_repo());
 }
 
 #[tokio::test]

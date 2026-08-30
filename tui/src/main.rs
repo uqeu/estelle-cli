@@ -4445,6 +4445,11 @@ async fn execute_remote_command(
                 "Use: /presets set <coding|research|review> plan=<auto|provider:model> implement=<auto|provider:model> review=<auto|provider:model>".to_string(),
                 "No model was selected and nothing was sent.".to_string(),
             ],
+            commands::RouteError::InvalidHardwareArguments => [
+                "/hardware needs a positive RAM declaration.".to_string(),
+                "Use: /hardware ram=32 [vram=16] [unified=true] [backend=metal|cuda|rocm|vulkan] [bandwidth=400] [cpu=arm64|x86_64] [models=name,name] [context=8192]".to_string(),
+                "The CLI does not inspect your machine; nothing was sent.".to_string(),
+            ],
         })
     })?
     .ok_or_else(|| {
