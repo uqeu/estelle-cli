@@ -437,9 +437,10 @@ const CHECKPOINT_MAX_MESSAGES: usize = 400;
 const CHECKPOINT_MAX_CHARS: usize = 4_000;
 
 /// The text one transcript content-block contributes to the checkpoint, or "" when it must not
-/// travel. Kept: `text` (the conversation itself) and a short marker for `tool_use`. Dropped:
-/// `tool_result` — raw command output, which routinely contains env dumps, tokens and customer
-/// data — and `thinking`, the model's private reasoning. Neither belongs on the wire.
+/// travel. Kept: `text` (the conversation itself), an image-shape marker that never copies its
+/// base64 bytes, and a short marker for `tool_use`. Dropped: `tool_result` — raw command output,
+/// which routinely contains env dumps, tokens and customer data — and `thinking`, the model's
+/// private reasoning. Neither belongs on the wire.
 fn block_text(block: &Value) -> String {
     match block.get("type").and_then(Value::as_str) {
         Some("text") => block
@@ -447,11 +448,64 @@ fn block_text(block: &Value) -> String {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string(),
+        Some("image") => {
+            let source = block.get("source").unwrap_or(block);
+            let media_type = source
+                .get("media_type")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("unknown");
+            let size = source
+                .get("data")
+                .and_then(Value::as_str)
+                .and_then(base64_decoded_len)
+                .map(human_bytes)
+                .unwrap_or_else(|| "unknown size".to_string());
+            format!("[image: {media_type}, {size}; assistant description follows]")
+        }
         Some("tool_use") => format!(
             "[tool: {}]",
             block.get("name").and_then(Value::as_str).unwrap_or("?")
         ),
         _ => String::new(),
+    }
+}
+
+fn base64_decoded_len(value: &str) -> Option<usize> {
+    if value.is_empty() || !value.len().is_multiple_of(4) || !value.is_ascii() {
+        return None;
+    }
+    let content_len = value.find('=').unwrap_or(value.len());
+    if !value.as_bytes()[..content_len]
+        .iter()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
+        || !value.as_bytes()[content_len..]
+            .iter()
+            .all(|byte| *byte == b'=')
+    {
+        return None;
+    }
+    let padding = value
+        .as_bytes()
+        .iter()
+        .rev()
+        .take_while(|byte| **byte == b'=')
+        .count();
+    if padding > 2 {
+        return None;
+    }
+    value
+        .len()
+        .checked_div(4)?
+        .checked_mul(3)?
+        .checked_sub(padding)
+}
+
+fn human_bytes(bytes: usize) -> String {
+    if bytes < 1_000 {
+        format!("{bytes} B")
+    } else {
+        format!("{} kB", bytes.div_ceil(1_000))
     }
 }
 
@@ -4797,6 +4851,71 @@ tests/test_serve.py:88: AssertionError\n\
             json!(["src/retry.rs"]),
             "the file this session wrote, sidechain excluded"
         );
+    }
+
+    #[tokio::test]
+    async fn checkpoint_keeps_an_image_only_question_beside_the_assistants_description() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let transcript = root.path().join("transcript.jsonl");
+        let records = [
+            json!({"type": "user", "message": {"role": "user", "content": [{
+                "type": "image",
+                "source": {"type": "base64", "media_type": "image/png", "data": "AAEC"}
+            }]}}),
+            json!({"type": "assistant", "message": {"role": "assistant", "content": [{
+                "type": "text", "text": "The screenshot shows a failed release job."
+            }]}}),
+        ];
+        let raw = records
+            .iter()
+            .map(serde_json::to_string)
+            .collect::<Result<Vec<_>, _>>()
+            .expect("fixture JSONL")
+            .join("\n");
+        fs::write(&transcript, raw).expect("fixture transcript");
+        let state = root.path().join("state").join("last-session.json");
+        let payload: HookPayload = serde_json::from_value(json!({
+            "session_id": "image-session",
+            "transcript_path": transcript,
+            "cwd": root.path(),
+            "hook_event_name": "Stop",
+        }))
+        .expect("payload");
+
+        let body = checkpoint_local(&payload, Some(state.clone()))
+            .await
+            .expect("the image turn must produce a checkpoint body");
+        let messages = body["messages"].as_array().expect("messages");
+
+        assert_eq!(
+            messages.len(),
+            2,
+            "the image question and its answer both survive"
+        );
+        assert_eq!(
+            messages[0]["content"],
+            json!("[image: image/png, 3 B; assistant description follows]")
+        );
+        assert_eq!(
+            messages[1]["content"],
+            json!("The screenshot shows a failed release job.")
+        );
+        assert!(state.is_file(), "the checkpoint wrote its local state file");
+    }
+
+    #[test]
+    fn image_marker_refuses_malformed_base64_size_without_dropping_the_turn() {
+        for malformed in ["not-base64", "!!!!", "AA=A"] {
+            let marker = block_text(&json!({
+                "type": "image",
+                "source": {"media_type": "image/png", "data": malformed}
+            }));
+
+            assert_eq!(
+                marker,
+                "[image: image/png, unknown size; assistant description follows]"
+            );
+        }
     }
 
     #[test]

@@ -235,7 +235,7 @@
     },
     {
       "path": "tui/src/cols.rs",
-      "blob": "9a870787726ddd43d8528edb8195e8b584f26393",
+      "blob": "24cac6313e59afb0dba4811d87f8659a4c4a088f",
       "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
     },
     {
@@ -295,8 +295,13 @@
     },
     {
       "path": "tui/src/main.rs",
-      "blob": "2b39afcb0ddc7bc5b2fc112a1f6ce95cfd53a0cf",
+      "blob": "596f30be5c6d9d5e5c42fb9706fa827be57c4b92",
       "reason": "plain-English turns send the untouched prompt to the server-owned /turn/route classifier, then bind its closed action to an already-audited suite endpoint; the client carries no lexical classifier or model resolver, and ambiguous or unsupported actions stop before a second request. Preset PUTs use the existing authenticated client, while `brief` and dry-run `setup` remain local. No credential value is rendered and no new egress destination exists. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them. RE-ATTESTED 2026-08-29: adds `failure_advice` and `http_status`, which choose the two advice lines after a failed command from the HTTP status already present in the error string. Pure presentation \u2014 no request, no destination, no credential read, and an unrecognised status keeps the previous wording."
+    },
+    {
+      "path": "tui/src/live_renderer.rs",
+      "blob": "39cf11355f63a93a38a064962bf42e851f066328",
+      "reason": "NEW FILE, pure relocation of the existing customer-visible frame renderer out of main.rs. The interactive TUI, the screens snapshot command, and renderer tests now share this one owner. It adds no network destination, credential source, file read, or background execution."
     },
     {
       "path": "tui/src/model_migration.rs",
@@ -390,7 +395,7 @@
     },
     {
       "path": "tui/src/screens.rs",
-      "blob": "2be0b408d0dbff362dfcb357c1e5fc428433cd31",
+      "blob": "29c3b10c3eca623b97dc0793fc1fa9e479ac3a1a",
       "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added. RE-ATTESTED 2026-08-29: two bare tuple row types replaced by named aliases (RoutedModelRow, LocalModelRow) to satisfy clippy::type_complexity. Type names only; no behaviour change."
     },
     {
@@ -420,12 +425,12 @@
     },
     {
       "path": "tui/src/theme.rs",
-      "blob": "681fab62b5f3e37a08563b208ee0e052feda9fba",
+      "blob": "28334cdfc5a209255a658b0b07b8486947b97c5c",
       "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added. RE-ATTESTED 2026-08-29: a module-level `#![allow(clippy::disallowed_methods)]` plus the doc comment arguing for it. The workspace forbids Color::Rgb to keep ANSI portability; this module IS the brand palette (exact identity colours) and adapts via ScreenTheme Dark/Cream chosen from the DETECTED terminal background. No behaviour change, no destination, no credential."
     },
     {
       "path": "tui/src/top_level.rs",
-      "blob": "f314df127c81ec6800d732ae53dc919d93c17375",
+      "blob": "c7ed947dbfd69d230c7c7ce34dd0bb03be612e01",
       "reason": "`brief` is a repository-confined local file transform; `setup` deliberately composes the already-audited authenticated /mcp, /ingest/start, /ingest/progress and /deep-search routes. The 4,000-file bound now reserves TypeScript and Go representation before filling in Git order, and doctor labels its accepted/total inventory as local-only rather than server proof. No new network destination or credential source was added. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
     },
     {

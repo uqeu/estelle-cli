@@ -14,7 +14,6 @@ ESTELLE_ACTUAL_GALLERY_DIR=docs/actual-gallery \
 Open `index.html` to inspect the generated frames together. Each `.txt` file is the exact terminal-cell text;
 each `.svg` preserves the corresponding Ratatui foreground, background, and bold styles.
 
-The separate `../visual-gallery/` directory is labelled `DESIGN FIXTURE - NOT LIVE DATA`. It is the binding
-structural target, while this gallery is the evidence produced by the real renderer. A disagreement between
-matching frames is a product finding: structure is judged against the visual fixture and shipped behaviour
-is judged from this actual gallery. Regenerate and review both together.
+This is the only renderer gallery. The former parallel visual fixture was deleted because it could
+pass while the customer-facing TUI drifted. Layout and shipped behaviour are now judged from these
+frames together; every frame enters through the production `render_frame` function.
