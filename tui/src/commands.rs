@@ -2,7 +2,7 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 47] = [
+pub(crate) const SESSION_COMMANDS: [&str; 48] = [
     "help",
     "login",
     "logout",
@@ -44,6 +44,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 47] = [
     "mode",
     "routing",
     "presets",
+    "hardware",
     "status",
     "skills",
     "tools",
@@ -52,7 +53,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 47] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 47] = [
+const SESSION_HELP: [(&str, &str); 48] = [
     ("help", "what you can do here"),
     (
         "login",
@@ -145,6 +146,10 @@ const SESSION_HELP: [(&str, &str); 47] = [
         "presets",
         "show or set the server-owned plan/implement/review routing table",
     ),
+    (
+        "hardware",
+        "estimate which local models fit customer-declared hardware",
+    ),
     ("status", "endpoint, credential, repo and connection state"),
     ("skills", "browse Estelle playbooks"),
     ("tools", "list every MCP tool Estelle exposes"),
@@ -225,7 +230,7 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 22] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 47] {
+pub(crate) fn session_command_names() -> [&'static str; 48] {
     SESSION_COMMANDS
 }
 
@@ -553,6 +558,7 @@ pub(crate) struct RemoteRequest {
 pub(crate) enum RouteError {
     MissingDiff,
     InvalidPresetArguments,
+    InvalidHardwareArguments,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -678,6 +684,7 @@ pub(crate) fn remote_request(
         "model" if argument.is_empty() => get(Endpoint::Providers, json!({})),
         "presets" if argument.is_empty() => get(Endpoint::AgentPresets, json!({})),
         "presets" => put(Endpoint::AgentPresets, preset_update_body(argument)?),
+        "hardware" => post(Endpoint::HardwareAdvice, hardware_advice_body(argument)?),
         "grep" => post(Endpoint::Search, json!({"query": argument, "code": true})),
         "skill:" => {
             let mut parts = argument.splitn(2, char::is_whitespace);
@@ -791,6 +798,78 @@ fn preset_update_body(argument: &str) -> Result<Value, RouteError> {
     Ok(json!({"preset": preset, "routing_table": routing_table}))
 }
 
+fn hardware_advice_body(argument: &str) -> Result<Value, RouteError> {
+    let mut hardware = serde_json::Map::new();
+    let mut body = serde_json::Map::new();
+    let mut seen = std::collections::HashSet::new();
+    for assignment in argument.split_whitespace() {
+        let (name, raw) = assignment
+            .split_once('=')
+            .filter(|(name, raw)| !name.is_empty() && !raw.is_empty())
+            .ok_or(RouteError::InvalidHardwareArguments)?;
+        if !seen.insert(name) {
+            return Err(RouteError::InvalidHardwareArguments);
+        }
+        match name {
+            "ram" | "vram" | "bandwidth" => {
+                let value = raw
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|value| value.is_finite() && *value >= 0.0)
+                    .ok_or(RouteError::InvalidHardwareArguments)?;
+                if name == "ram" && value <= 0.0 {
+                    return Err(RouteError::InvalidHardwareArguments);
+                }
+                let field = match name {
+                    "ram" => "ram_gb",
+                    "vram" => "gpu_vram_gb",
+                    _ => "gpu_bandwidth_gbps",
+                };
+                hardware.insert(field.to_string(), json!(value));
+            }
+            "unified" => {
+                let value = match raw {
+                    "true" => true,
+                    "false" => false,
+                    _ => return Err(RouteError::InvalidHardwareArguments),
+                };
+                hardware.insert("unified_memory".to_string(), json!(value));
+            }
+            "backend" if matches!(raw, "metal" | "cuda" | "rocm" | "vulkan") => {
+                hardware.insert("gpu_backend".to_string(), json!(raw));
+            }
+            "cpu" if matches!(raw, "arm64" | "x86_64") => {
+                hardware.insert("cpu_arch".to_string(), json!(raw));
+            }
+            "models" => {
+                let models = raw
+                    .split(',')
+                    .filter(|model| !model.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
+                if models.is_empty() || models.len() > 64 || models.join(",") != raw {
+                    return Err(RouteError::InvalidHardwareArguments);
+                }
+                body.insert("models".to_string(), json!(models));
+            }
+            "context" => {
+                let value = raw
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|value| (1..=1_000_000).contains(value))
+                    .ok_or(RouteError::InvalidHardwareArguments)?;
+                body.insert("context_limit".to_string(), json!(value));
+            }
+            _ => return Err(RouteError::InvalidHardwareArguments),
+        }
+    }
+    if !hardware.contains_key("ram_gb") {
+        return Err(RouteError::InvalidHardwareArguments);
+    }
+    body.insert("hardware".to_string(), Value::Object(hardware));
+    Ok(Value::Object(body))
+}
+
 /// Whole-lockfile CVE attachments for /scan. When the measured diff TOUCHES a lockfile, the
 /// transitive-dep risk changed — and a per-added-line diff scan can't pair (name, version)
 /// across lines, so the server's whole-lockfile path exists (api_intel.py handle_scan).
@@ -841,6 +920,7 @@ pub(crate) fn scan_lockfile_attachments(root: &std::path::Path, diff: &str) -> V
 pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandReply) -> Vec<String> {
     match name {
         "presets" => render_agent_presets(reply),
+        "hardware" => render_hardware_advice(reply),
         "init" => {
             let Some(wiki) = reply
                 .wiki
@@ -2383,6 +2463,65 @@ fn render_agent_presets(reply: &estelle_client::CommandReply) -> Vec<String> {
     lines
 }
 
+fn render_hardware_advice(reply: &estelle_client::CommandReply) -> Vec<String> {
+    let source = reply
+        .extra
+        .get("source")
+        .and_then(Value::as_str)
+        .unwrap_or("not returned");
+    let mut lines = vec![format!(
+        "Local-model fit  |  {source} hardware  |  ADVISORY ONLY"
+    )];
+    let advisories = reply.extra.get("advisories").and_then(Value::as_array);
+    match advisories {
+        Some(rows) if !rows.is_empty() => {
+            for row in rows {
+                let field = |name: &str| {
+                    row.get(name)
+                        .map(json_scalar)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or_else(|| "?".to_string())
+                };
+                lines.push(format!(
+                    "{}  |  {} / {}  |  {} GB of {} GB  |  {} tok/s  |  ctx {}  |  {}",
+                    field("model"),
+                    field("fit").to_ascii_uppercase(),
+                    field("run_mode"),
+                    field("memory_required_gb"),
+                    field("memory_available_gb"),
+                    field("estimated_tps"),
+                    field("usable_context"),
+                    field("best_quant")
+                ));
+            }
+        }
+        _ => lines.push("No known model advisory was returned.".to_string()),
+    }
+    let unknown = reply
+        .extra
+        .get("unknown_models")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    if !unknown.is_empty() {
+        lines.push(format!(
+            "Unknown models (not guessed): {}",
+            unknown.join(", ")
+        ));
+    }
+    if let Some(note) = reply
+        .extra
+        .get("note")
+        .and_then(Value::as_str)
+        .filter(|note| !note.trim().is_empty())
+    {
+        lines.push(note.to_string());
+    }
+    lines
+}
+
 fn render_model_pool(reply: &estelle_client::CommandReply) -> Vec<String> {
     let configured = reply
         .extra
@@ -2989,7 +3128,7 @@ mod tests {
     }
 
     #[test]
-    fn session_inventory_is_exactly_the_47_accepted_commands() {
+    fn session_inventory_is_exactly_the_48_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
@@ -3034,6 +3173,7 @@ mod tests {
                 "mode",
                 "routing",
                 "presets",
+                "hardware",
                 "status",
                 "skills",
                 "tools",
@@ -3220,6 +3360,73 @@ mod tests {
             ),
             Err(RouteError::InvalidPresetArguments)
         );
+    }
+
+    #[test]
+    fn hardware_command_sends_only_the_customer_declaration() {
+        let request = remote_request(
+            "hardware",
+            "ram=32 vram=12 unified=false backend=cuda bandwidth=504 cpu=x86_64 models=qwen2.5:7b,llama3.3:70b context=16384",
+            None,
+            None,
+        )
+        .expect("valid hardware declaration")
+        .expect("hardware request");
+        assert_eq!(request.endpoint, Endpoint::HardwareAdvice);
+        assert_eq!(request.method, RemoteMethod::Post);
+        assert_eq!(
+            request.body,
+            Some(json!({
+                "hardware": {
+                    "ram_gb": 32.0,
+                    "gpu_vram_gb": 12.0,
+                    "unified_memory": false,
+                    "gpu_backend": "cuda",
+                    "gpu_bandwidth_gbps": 504.0,
+                    "cpu_arch": "x86_64"
+                },
+                "models": ["qwen2.5:7b", "llama3.3:70b"],
+                "context_limit": 16384
+            }))
+        );
+    }
+
+    #[test]
+    fn hardware_command_refuses_missing_ram_guesses_and_non_finite_numbers() {
+        for argument in ["", "vram=16", "ram=auto", "ram=NaN", "ram=32 mystery=yes"] {
+            assert_eq!(
+                remote_request("hardware", argument, None, None),
+                Err(RouteError::InvalidHardwareArguments),
+                "accepted {argument:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn hardware_reply_names_fit_unknowns_and_advisory_limit() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "source": "customer-declared",
+            "advisory_only": true,
+            "unknown_models": ["invented-90b"],
+            "advisories": [{
+                "model": "qwen2.5:7b",
+                "fit": "comfortable",
+                "run_mode": "gpu",
+                "memory_required_gb": 6.2,
+                "memory_available_gb": 12.0,
+                "estimated_tps": 42.1,
+                "usable_context": 16384,
+                "best_quant": "Q6_K"
+            }],
+            "note": "Fit estimates never remove a model from Affinity."
+        }))
+        .expect("hardware reply");
+        let rendered = render_remote_reply("hardware", &reply).join("\n");
+        assert!(rendered.contains("ADVISORY ONLY"));
+        assert!(rendered.contains("qwen2.5:7b"));
+        assert!(rendered.contains("COMFORTABLE / gpu"));
+        assert!(rendered.contains("Unknown models (not guessed): invented-90b"));
+        assert!(rendered.contains("never remove a model"));
     }
 
     #[test]
