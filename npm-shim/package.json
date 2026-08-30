@@ -1,7 +1,7 @@
 {
   "name": "@fatelabs/estelle",
   "version": "0.2.31",
-  "description": "Compatibility launcher for the native Estelle CLI",
+  "description": "Estelle \u2014 the trust layer under your AI coding agents. Grounds every model in your real codebase and refuses to ship what isn't true.",
   "bin": {
     "estelle": "bin/estelle.js"
   },
@@ -14,7 +14,7 @@
     "node": ">=18"
   },
   "license": "Apache-2.0",
-  "homepage": "https://fatelabs.ca/docs",
+  "homepage": "https://fatelabs.ca",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/uqeu/estelle-cli.git"
@@ -26,5 +26,26 @@
   "scripts": {
     "postinstall": "node install.js",
     "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "ai",
+    "coding-agent",
+    "llm",
+    "hallucination",
+    "code-grounding",
+    "static-analysis",
+    "memory",
+    "mcp",
+    "acp",
+    "claude",
+    "codex",
+    "developer-tools",
+    "cli",
+    "byok",
+    "code-review",
+    "secret-scanning"
+  ],
+  "bugs": {
+    "url": "https://github.com/uqeu/estelle-cli/issues"
   }
 }
