@@ -767,6 +767,39 @@ fn redact_secrets_replaces_the_value_with_a_named_marker_and_leaves_prose_alone(
 }
 
 #[test]
+fn the_wire_now_covers_the_full_catalogue_with_entropy_gates_and_allowlists_on() {
+    // Beyond the legacy seven: an invented slack token in prose is flagged by the engine and
+    // redacted with the engine's fingerprinted marker. The fixture is assembled, never a
+    // literal — a verbatim scanner-shaped token in source trips GitHub push protection.
+    let slack = format!(
+        "xoxb-{}-{}-{}",
+        "123456789012", "123456789012", "AbCdEfGhIjKlMnOpQrStUvWx"
+    );
+    let sentence = format!("here is the bot token {slack} please rotate it");
+    let (shape, line) = crate::find_secret_shape(&sentence).expect("engine coverage");
+    assert_eq!(shape, "slack-bot-token");
+    assert_eq!(line, 1);
+    let redacted = crate::redact_secrets(&sentence);
+    assert!(!redacted.contains(&slack));
+    assert!(redacted.contains("[REDACTED:slack-bot-token:"));
+    assert!(redacted.contains("please rotate it"));
+
+    // Negative controls on the WIRE path — allowlists and entropy gates are ON: AWS's own
+    // published example key and a git SHA-256 checksum survive untouched. Paired positive
+    // controls: a real-shaped AWS key and a real-shaped slack token DO fire.
+    let docs = "the AWS docs use AKIAIOSFODNN7EXAMPLE as their example";
+    assert_eq!(crate::redact_secrets(docs), docs);
+    assert_eq!(crate::find_secret_shape(docs), None);
+    let checksum = "checksum e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 ok";
+    assert_eq!(crate::redact_secrets(checksum), checksum);
+    assert_eq!(crate::find_secret_shape(checksum), None);
+    // The positive control is assembled like every other credential-shaped fixture — no
+    // scanner-shaped literal sits in source (GitHub push protection).
+    let live_aws = format!("key AKIA{} here", "QF7DMC5BAZ2W7XKP");
+    assert!(crate::find_secret_shape(&live_aws).is_some());
+}
+
+#[test]
 fn repo_resolver_prefers_override_and_parses_remote_shapes() {
     let override_repo = Repo::new("chosen/repo").expect("repo");
     let resolver = RepoResolver::new(Some(override_repo.clone()), "/definitely/not/a/repo");

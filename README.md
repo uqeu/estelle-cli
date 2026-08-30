@@ -26,3 +26,16 @@ in [`docs/SCORECARD.md`](docs/SCORECARD.md).
 
 To bypass credential storage immediately, set `ESTELLE_API_KEY` in the process environment; it takes
 precedence over `~/.estelle/auth.json` and is never persisted by Estelle.
+
+Before you trust an agent harness with your keys, see what it has already spilled — fully offline, no
+account, no network:
+
+```console
+$ estelle leaked
+estelle leaked: 213 files scanned under ~/.claude and ~/.codex — no exposed credentials found.
+```
+
+`estelle leaked` scans your own `~/.claude` and `~/.codex` trees with the shared secret engine
+(the pinned gitleaks rule set plus Estelle's extensions, entropy gates and upstream allowlists on, and a
+base64 sweep for encoded blobs). Findings print as `path:line — rule (fingerprint)`; the value is never
+printed. Exits non-zero when anything is found, so it gates CI too.

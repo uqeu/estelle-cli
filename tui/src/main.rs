@@ -10,6 +10,7 @@ mod doctor;
 mod history_import;
 mod hook_distil;
 mod hook_guard;
+mod leaked;
 mod local_provider;
 mod login;
 mod production_hud;
@@ -270,6 +271,9 @@ enum Command {
     },
     /// Diagnose credential stores and provider-runtime readiness without printing secrets.
     Doctor,
+    /// Scan your own ~/.claude and ~/.codex for exposed credentials. Fully offline: no network,
+    /// no account; prints rule + fingerprint + path + line, never the value.
+    Leaked,
     /// Configure Estelle for the current repository.
     Init {
         #[arg(long)]
@@ -7948,6 +7952,11 @@ fn failure_advice(error: &str) -> Vec<String> {
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = Args::parse();
+    // `leaked` is the offline self-audit: it must run before ANYTHING that can touch the
+    // network (the upgrade check, the version notice) — no network, no account, ever.
+    if matches!(args.command, Some(Command::Leaked)) {
+        return leaked::run();
+    }
     if let Some(Command::Upgrade { check }) = args.command {
         return run_upgrade(check).await;
     }

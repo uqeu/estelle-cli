@@ -64,6 +64,7 @@ fn contract(command: &Command) -> Contract {
     match command {
         Command::Login { .. }
         | Command::Doctor
+        | Command::Leaked
         | Command::Brief { .. }
         | Command::Serve { .. }
         | Command::Connect { .. }
@@ -1483,6 +1484,7 @@ async fn run_authenticated(
         Command::Gate { base } => gate(api, &repo, root, base.as_deref()).await,
         Command::Login { .. }
         | Command::Doctor
+        | Command::Leaked
         | Command::Brief { .. }
         | Command::Serve { .. }
         | Command::Connect { .. }
