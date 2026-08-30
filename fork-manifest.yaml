@@ -85,13 +85,23 @@
     },
     {
       "path": "estelle-client/Cargo.toml",
-      "blob": "2fd8fbc1a8de33277dbf58dd217903a7ed9ab47c",
-      "reason": "the Estelle API-key client no longer links its direct keyring or encrypted-secrets dependencies; inherited ChatGPT/provider authentication remains separately owned and this change adds no network destination RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
+      "blob": "efdedfb9b1ecc1b14b2daf45f327f4feb46dfdce",
+      "reason": "the Estelle API-key client no longer links its direct keyring or encrypted-secrets dependencies; inherited ChatGPT/provider authentication remains separately owned and this change adds no network destination RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them. RE-ATTESTED 2026-08-30: the shared local secret engine promotes base64 from test-only to runtime and adds sha2 for value-free fingerprints; regex was already a runtime dependency. These libraries perform local transformation only and add no credential source, filesystem access or network destination."
     },
     {
       "path": "estelle-client/src/auth.rs",
-      "blob": "095f6051732612323aef8ac978e363472b5f8e26",
-      "reason": "the Estelle API-key path resolves ESTELLE_API_KEY before storage and otherwise uses one stable ~/.estelle/auth.json identity, atomically written at mode 0600 under a mode-0700 directory; reads fail closed on group/world permission bits, no Keychain API remains on this path, and the old Keychain-backed ciphertext is deliberately not auto-migrated because reading it would recreate the customer prompt"
+      "blob": "6e7c1ef16a2d99c9b4b07205d5d4be655377143d",
+      "reason": "the Estelle API-key path resolves ESTELLE_API_KEY before storage and otherwise uses one stable ~/.estelle/auth.json identity, atomically written at mode 0600 under a mode-0700 directory; reads fail closed on group/world permission bits, no Keychain API remains on this path, and the old Keychain-backed ciphertext is deliberately not auto-migrated because reading it would recreate the customer prompt. RE-ATTESTED 2026-08-30: prompt/checkpoint redaction now calls the shared local 227-rule engine before its seven legacy contract shapes and respects the engine's upstream allowlists in both passes. The matched value is replaced before transport; only the existing caller decides whether the already-redacted text is sent to api.fatelabs.ca, so this adds no destination or credential source."
+    },
+    {
+      "path": "estelle-client/secret_rules.json",
+      "blob": "ce778b591ff36a5ac720a01d20b097f5a75860ed",
+      "reason": "NEW FILE, embedded rule data only: a byte-identical copy of the Python engine's generated 219-rule gitleaks set, with its source pin, three named exclusions, allowlists and load-time rewrites recorded in metadata. It contains detection patterns rather than credential values, executes nothing, and adds no I/O or network destination."
+    },
+    {
+      "path": "estelle-client/src/secret_engine.rs",
+      "blob": "5d23b05389244a6183c157959be7a2e7d421b27f",
+      "reason": "NEW FILE, local pure scanner: compiles the embedded rules lazily, bounds scans to 16 KiB chunks plus 1 KiB overlap and 512-character rule windows, applies entropy gates and allowlists, and rescans decoded base64. Its public finding type carries only rule ID, line and a 12-hex SHA-256 fingerprint; credential values are used transiently for matching/redaction and never stored or printed. It adds no filesystem or network primitive."
     },
     {
       "path": "estelle-client/src/endpoint.rs",
@@ -100,13 +110,13 @@
     },
     {
       "path": "estelle-client/src/lib.rs",
-      "blob": "d3474a2c3a2d6651fcb8861f4552c561b96949af",
-      "reason": "the shared authenticated HTTP seam adds one typed route_within_plan POST to api.fatelabs.ca/route. It carries repository identity, user text, and the provider-authenticated model slugs but never the ChatGPT plan credential; the existing Estelle credential boundary and receipt redaction remain unchanged. RE-ATTESTED 2026-08-29: adds `send_honoring_shed`, which retries a request the server explicitly shed with a bounded `Retry-After`. It sends the SAME request to the SAME destination up to SHED_MAX_ATTEMPTS=3, waiting at most SHED_MAX_WAIT=30s; it adds no destination, no header and no credential source. Retry is authorised by the header, never by the status alone. RE-ATTESTED 2026-08-29 (second time today): the ESTELLE_RECEIPT_PATH read MOVES from production() into new(), the one constructor every caller funnels through. This adds no destination and no credential source \u2014 it makes the LOCAL diagnostic trace, which the app already wrote on one of two construction paths, reachable on both. Opt-in: with the env var unset the field is None and nothing is written."
+      "blob": "98cca2fcec23b5963cd14482c8d741c0ce01f5ec",
+      "reason": "the shared authenticated HTTP seam adds one typed route_within_plan POST to api.fatelabs.ca/route. It carries repository identity, user text, and the provider-authenticated model slugs but never the ChatGPT plan credential; the existing Estelle credential boundary and receipt redaction remain unchanged. RE-ATTESTED 2026-08-29: adds `send_honoring_shed`, which retries a request the server explicitly shed with a bounded `Retry-After`. It sends the SAME request to the SAME destination up to SHED_MAX_ATTEMPTS=3, waiting at most SHED_MAX_WAIT=30s; it adds no destination, no header and no credential source. Retry is authorised by the header, never by the status alone. RE-ATTESTED 2026-08-29 (second time today): the ESTELLE_RECEIPT_PATH read MOVES from production() into new(), the one constructor every caller funnels through. This adds no destination and no credential source \u2014 it makes the LOCAL diagnostic trace, which the app already wrote on one of two construction paths, reachable on both. Opt-in: with the env var unset the field is None and nothing is written. RE-ATTESTED 2026-08-30: exports the local secret-engine module plus finding/redaction functions to the TUI; it adds no behavior beyond that separately reviewed module and no I/O primitive."
     },
     {
       "path": "estelle-client/src/tests.rs",
-      "blob": "e36b8954e8a90683b2b9753f67aa856a1a97e449",
-      "reason": "the endpoint denominator and typed contracts pin the new preset and untouched-prompt dispatch request shapes while the existing Estelle credential tests continue to prove mode-0600 creation, fail-closed rejection of mode 0644, environment precedence over deliberately unreadable-by-policy storage, and stable cross-build file identity RE-ATTESTED 2026-08-29: adds four tests for the above against a local wiremock server, including a negative control proving a 503 without `Retry-After` is NOT retried. Test-only. RE-ATTESTED 2026-08-29 (second time today): adds a static wiring proof that the receipt read lives in new() and is not duplicated into production(). Test-only."
+      "blob": "50949095413c9308a644949f7c9745c669154a6e",
+      "reason": "the endpoint denominator and typed contracts pin the new preset and untouched-prompt dispatch request shapes while the existing Estelle credential tests continue to prove mode-0600 creation, fail-closed rejection of mode 0644, environment precedence over deliberately unreadable-by-policy storage, and stable cross-build file identity RE-ATTESTED 2026-08-29: adds four tests for the above against a local wiremock server, including a negative control proving a 503 without `Retry-After` is NOT retried. Test-only. RE-ATTESTED 2026-08-29 (second time today): adds a static wiring proof that the receipt read lives in new() and is not duplicated into production(). Test-only. RE-ATTESTED 2026-08-30: adds a synthetic Slack positive control and published-AWS/checksum negative controls proving the full catalogue is active on the existing wire path. Fixtures are assembled and invalid; no live credential or network call exists."
     },
     {
       "path": "estelle-client/src/types.rs",
@@ -279,6 +289,11 @@
       "reason": "NEW FILE, reviewed by the version-check lane and NOT its author. Verified: no network primitive of any kind in the module (pure std::fs plus the already-audited codex_external_agent_migration::sessions helpers), reached only through the explicit opt-in `estelle connect --from <harness>` flag which defaults to None, so nothing is read without the customer naming a harness. \u26a0\ufe0f NAMED LIMIT, not signed off: `model_context()` concatenates every imported turn's question and answer VERBATIM with no redaction pass, so a secret pasted into another harness's transcript would reach the existing deep-search sink. That content-filtering question is open and belongs to the authoring lane; this entry unblocks the release and does not clear it."
     },
     {
+      "path": "tui/src/leaked.rs",
+      "blob": "4094bb2673d041000c6836712025b04261705afa",
+      "reason": "NEW FILE, explicit local read-only command: scans only ~/.claude and ~/.codex by default, never follows symlinks, skips dependency/cache directories and files over 8 MiB, and caps recursion at depth 12. Output contains path, line, rule and fingerprint but never the matched credential value; no account, telemetry, write, process spawn or network call exists. The command exits non-zero on findings so callers can gate on it."
+    },
+    {
       "path": "tui/src/lib.rs",
       "blob": "8bb41d880b4079ec19074ed29bd8a86cb06d77bb",
       "reason": "Parses a remote app-server address and decides whether that URL may carry an auth token (`websocket_url_supports_auth_token`). This RESTRICTS where a token may travel rather than adding a destination; the address is operator-supplied, not a new baked-in host."
@@ -295,8 +310,8 @@
     },
     {
       "path": "tui/src/main.rs",
-      "blob": "2b39afcb0ddc7bc5b2fc112a1f6ce95cfd53a0cf",
-      "reason": "plain-English turns send the untouched prompt to the server-owned /turn/route classifier, then bind its closed action to an already-audited suite endpoint; the client carries no lexical classifier or model resolver, and ambiguous or unsupported actions stop before a second request. Preset PUTs use the existing authenticated client, while `brief` and dry-run `setup` remain local. No credential value is rendered and no new egress destination exists. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them. RE-ATTESTED 2026-08-29: adds `failure_advice` and `http_status`, which choose the two advice lines after a failed command from the HTTP status already present in the error string. Pure presentation \u2014 no request, no destination, no credential read, and an unrecognised status keeps the previous wording."
+      "blob": "346bee141d19b2f1927513813ca5d014f5f05ad2",
+      "reason": "plain-English turns send the untouched prompt to the server-owned /turn/route classifier, then bind its closed action to an already-audited suite endpoint; the client carries no lexical classifier or model resolver, and ambiguous or unsupported actions stop before a second request. Preset PUTs use the existing authenticated client, while `brief` and dry-run `setup` remain local. No credential value is rendered and no new egress destination exists. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them. RE-ATTESTED 2026-08-29: adds `failure_advice` and `http_status`, which choose the two advice lines after a failed command from the HTTP status already present in the error string. Pure presentation \u2014 no request, no destination, no credential read, and an unrecognised status keeps the previous wording. RE-ATTESTED 2026-08-30: registers `estelle leaked` and returns through its local scanner before the upgrade check or any authenticated path can run. This makes the no-network claim structural at the entrypoint; output remains owned by the separately reviewed scanner."
     },
     {
       "path": "tui/src/model_migration.rs",
@@ -425,8 +440,8 @@
     },
     {
       "path": "tui/src/top_level.rs",
-      "blob": "f314df127c81ec6800d732ae53dc919d93c17375",
-      "reason": "`brief` is a repository-confined local file transform; `setup` deliberately composes the already-audited authenticated /mcp, /ingest/start, /ingest/progress and /deep-search routes. The 4,000-file bound now reserves TypeScript and Go representation before filling in Git order, and doctor labels its accepted/total inventory as local-only rather than server proof. No new network destination or credential source was added. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them."
+      "blob": "cb6c75450971fb502723948857b787254c8fe2b5",
+      "reason": "`brief` is a repository-confined local file transform; `setup` deliberately composes the already-audited authenticated /mcp, /ingest/start, /ingest/progress and /deep-search routes. The 4,000-file bound now reserves TypeScript and Go representation before filling in Git order, and doctor labels its accepted/total inventory as local-only rather than server proof. No new network destination or credential source was added. RE-ATTESTED 2026-08-29 after a blob drift. Mechanical egress scan of the drifted set found its only live destinations to be api.fatelabs.ca, api.github.com, docs.github.com, registry.npmjs.org and github.com \u2014 all already-declared sinks. Remaining URL literals are negative-test fixtures (attacker.invalid, evil.sh, provider.example, example.com, localhost/127.0.0.1) that exist to prove validation REJECTS them. RE-ATTESTED 2026-08-30: classifies `Leaked` with the other commands that never enter authenticated top-level dispatch; both match arms make accidental transport wiring a compile-time exhaustiveness failure."
     },
     {
       "path": "tui/src/transcript.rs",
