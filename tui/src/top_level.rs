@@ -138,7 +138,14 @@ pub(crate) async fn run(command: Command, repo: Repo, root: &Path) -> Result<Vec
             !no_pulse,
         ),
         command => {
-            let api = Api::resolve()?;
+            // `--key` is read HERE, at the one place a credential is resolved, so it cannot become a
+            // second credential path with weaker rules. It is one-shot: used for this command and
+            // discarded, never written to the store.
+            let inline_key = match &command {
+                Command::Init { key, .. } | Command::Sweep { key, .. } => key.as_deref(),
+                _ => None,
+            };
+            let api = Api::resolve_with_inline_key(inline_key)?;
             run_authenticated(command, repo, root, &api).await
         }
     }
@@ -1439,9 +1446,31 @@ struct Api {
 
 impl Api {
     fn resolve() -> Result<Self, String> {
-        let store = CredentialStore::default_location().map_err(|error| error.to_string())?;
-        let credential = store.resolve().map_err(|error| error.to_string())?;
-        let api_key = credential.api_key;
+        Self::resolve_with_inline_key(None)
+    }
+
+    /// Resolve a credential, preferring an inline `--key` over the stored one.
+    ///
+    /// 🔴 THE FLAG EXISTS BECAUSE EVERY DOC ALREADY PROMISED IT. `estelle init --key <key>` and
+    /// `estelle sweep --key <key>` are what the onboarding page, the home page, the docs, the
+    /// dashboard and `llms.txt` all hand a new user — and until 2026-08-31 the flag was undeclared,
+    /// so the first command a paying customer pasted failed with `unexpected argument '--key'` and
+    /// exit 2, before anything was ingested.
+    ///
+    /// ⚠️ ONE-SHOT BY CONSTRUCTION. It is validated through the same `ApiKey` type as every other
+    /// route and then dropped; it is never written to the credential store, so a key pasted into a
+    /// shell (and therefore into shell history) does not silently become this machine's durable
+    /// identity. `estelle login` remains the only thing that persists a credential.
+    fn resolve_with_inline_key(inline: Option<&str>) -> Result<Self, String> {
+        let api_key = match inline.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(value) => estelle_client::ApiKey::new(value.to_string())
+                .map_err(|error| format!("--key was rejected: {error}"))?,
+            None => {
+                let store =
+                    CredentialStore::default_location().map_err(|error| error.to_string())?;
+                store.resolve().map_err(|error| error.to_string())?.api_key
+            }
+        };
         let client = Client::production(api_key.clone()).map_err(|error| error.to_string())?;
         Ok(Self {
             client,
@@ -1457,7 +1486,7 @@ impl Api {
         result.map_err(|error| {
             if error.is_explicit_auth_rejection() {
                 format!(
-                    "{error} — the stored credential was rejected on {route} and was NOT removed; a single rejection can be route scope, not a bad key. Run estelle login only if you revoked it."
+                    "{error} — the credential was rejected on {route} and no stored credential was removed; a single rejection can be route scope, not a bad key. If you passed --key, check that key; otherwise run estelle login only if you revoked it."
                 )
             } else {
                 error.to_string()
@@ -1514,11 +1543,11 @@ async fn run_authenticated(
     api: &Api,
 ) -> Result<Vec<String>, String> {
     match command {
-        Command::Init { client, dry_run } => init(api, root, client.as_deref(), dry_run).await,
+        Command::Init { client, dry_run, .. } => init(api, root, client.as_deref(), dry_run).await,
         Command::Setup { client, dry_run } => {
             setup(api, &repo, root, client.as_deref(), dry_run).await
         }
-        Command::Sweep { path, dry_run } => {
+        Command::Sweep { path, dry_run, .. } => {
             sweep(api, &repo, path.as_deref().unwrap_or(root), dry_run).await
         }
         Command::Reindex {
@@ -1895,7 +1924,7 @@ async fn sweep(api: &Api, repo: &Repo, root: &Path, dry_run: bool) -> Result<Vec
         Err(SweepFailure::Client(error)) => {
             let message = if error.is_explicit_auth_rejection() {
                 format!(
-                    "{error} — the stored credential was rejected during the sweep and was NOT removed; a single rejection can be route scope, not a bad key. Run estelle login only if you revoked it."
+                    "{error} — the credential was rejected during the sweep and no stored credential was removed; a single rejection can be route scope, not a bad key. If you passed --key, check that key; otherwise run estelle login only if you revoked it."
                 )
             } else {
                 error.to_string()

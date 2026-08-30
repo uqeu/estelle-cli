@@ -282,6 +282,13 @@ enum Command {
         client: Option<String>,
         #[arg(long)]
         dry_run: bool,
+        /// One-shot Estelle API key. Equivalent to exporting ESTELLE_API_KEY for this command
+        /// only: it is used and discarded, never written to the credential store. Present because
+        /// every published onboarding surface hands the user `--key <their key>` and, until
+        /// 2026-08-31, the flag did not exist and the command exited 2 on the first thing a new
+        /// user was told to paste.
+        #[arg(long, value_name = "KEY")]
+        key: Option<String>,
     },
     /// Write or refresh Estelle's managed standing rule in agent instruction files.
     Brief {
@@ -307,6 +314,13 @@ enum Command {
         path: Option<PathBuf>,
         #[arg(long)]
         dry_run: bool,
+        /// One-shot Estelle API key. Equivalent to exporting ESTELLE_API_KEY for this command
+        /// only: it is used and discarded, never written to the credential store. Present because
+        /// every published onboarding surface hands the user `--key <their key>` and, until
+        /// 2026-08-31, the flag did not exist and the command exited 2 on the first thing a new
+        /// user was told to paste.
+        #[arg(long, value_name = "KEY")]
+        key: Option<String>,
     },
     /// Update changed or explicitly named files.
     Reindex {
@@ -5775,7 +5789,7 @@ fn failure_advice(error: &str) -> Vec<String> {
             "Nothing is wrong here — let the run in flight finish, then retry.",
         ),
         Some(401 | 403) => two(
-            "The stored credential was refused.",
+            "The credential was refused.",
             "Run `estelle login` to store a working key, then retry.",
         ),
         Some(402) => two(

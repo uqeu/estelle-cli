@@ -314,10 +314,19 @@ pub(crate) fn resolve_session_name(raw: &str) -> Option<&'static str> {
     {
         return Some(*exact);
     }
+    // 🔴 THE DROPPED LIST MUST BE HONOURED HERE TOO, AND ITS ABSENCE WAS DESTRUCTIVE.
+    // The exact-match arm above returns None for anything in DROPPED_COMMANDS. This near-miss arm
+    // did not, and `"logout"` is BOTH advertised in SESSION_COMMANDS and listed as dropped — so
+    // `/logout` answered "unknown command" while `/logot`, one edit away, resolved to it and ran
+    // `logout_local_credentials`, deleting the user's stored Estelle, ChatGPT, Claude, Copilot and
+    // local-provider credentials. The correct spelling did nothing; the typo wiped your keys.
+    // A suggestion arm that can reach a command the exact arm refuses is not a suggestion, it is a
+    // second dispatch table with weaker rules.
     let mut matches = SESSION_COMMANDS
         .iter()
         .copied()
         .chain(GRAFT_HELP.iter().map(|(name, _)| *name))
+        .filter(|candidate| !DROPPED_COMMANDS.contains(candidate))
         .filter(|candidate| one_edit(candidate, &name));
     let candidate = matches.next()?;
     matches.next().is_none().then_some(candidate)

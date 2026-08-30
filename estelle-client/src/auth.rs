@@ -142,7 +142,17 @@ impl CredentialStore {
     }
 
     pub fn resolve(&self) -> Result<ResolvedCredential, Error> {
-        self.resolve_with_environment(env::var_os("ESTELLE_API_KEY"))
+        // 🔴 BOTH NAMES ARE ACCEPTED, AND THAT IS NOT A CONVENIENCE — IT IS A CORRECTNESS FIX.
+        // `ESTELLE_API_KEY` is what this client has always read. `ESTELLE_KEY` is what the published
+        // documentation at fatelabs.ca/docs tells users to export, in eight separate places, and what
+        // the onboarding page hands them. Before 2026-08-31 a user who followed our own docs exported
+        // a variable nothing read, and got a credential error while looking at the instruction that
+        // caused it. Documentation IS a claim about the system; when the two disagree, one of them is
+        // a defect, and the cheaper honest fix is to make the claim true.
+        // `ESTELLE_API_KEY` still wins when both are set, so no existing setup changes behaviour.
+        self.resolve_with_environment(
+            env::var_os("ESTELLE_API_KEY").or_else(|| env::var_os("ESTELLE_KEY")),
+        )
     }
 
     pub(crate) fn resolve_with_environment(
