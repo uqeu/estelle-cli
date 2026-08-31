@@ -1,32 +1,32 @@
 ESTELLE  ·  uqeu/estelle  ·  repo graph current
 
-┌ CONVERSATION  Tab · Ctrl+←/→ focus ──────────────────────────────────────────────────────────────┐
-│Ask about uqeu/estelle                                                                            │
-│                                                                                                  │
-│/review  Read current changes                                                     ∷               │
-│/sweep   Refresh this repo's index                                                                │
-│?        Show shortcuts                                                         ·   ·             │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                      ⢀ ⠔⠠⠐⠂ ⠒⠠⠢                  │
-│                                                                     ⠄⠐⠠⣦⣸⣷⣹⣬⡞⣷⢾⣠⣜ ⠠              │
-│      ·       ·       ·       ·       ·       ·       ·   · · ·       ⢾⠳⠷⣽⣿⣿⣿⣿⡿⣛⣥⡿⢦⠉⠂ ·   ∷   ·   │
-│                                                                      ⠈  ⣀⡭⠿⡿⢿⣋⡉  ⠋               │
-│· · ∷   · · ·   · ∷ ∷ · ∷ · ·   · ∷ ·   · · ∷   · · ·   · · ·   ∷ · ·   ⠈⠁∷ ⡇ ⠈⠉·   ∷   ·   ·   · │
-│                                 ∷                               ∷          ⠁                     │
-│  ·   ∷   ·   ·   ·   ·   ∷ · · ∷ · ∷ · · · · ∷ · · · · ∷ · · · · ∷ · · · · ∷ · · · ∷ ∷ ∷ · · · ∷ │
-│                                                                                                  │
-│∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ · · · · ∷ · · · · ∷ · · · · ∷ · · · · ∷ · · · │
-│∷∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷                            │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ ASK ESTELLE ─────────────────────────────────────────────────────────────────────────────────────┐
-│                                                                                                  │
-│› Ask Estelle                                                                                     │
-│                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-shift+tab change mode  ·  tab move focus  ·  / commands  |  plan  ·  routing auto
+╌╌ session · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌  │  ╌╌ production · uqeu/estelle ╌╌╌╌╌╌╌╌
+Ask about uqeu/estelle                                      │  APP HEALTH · repo uqeu/estelle
+                                                            │  Connecting to Estelle...
+/review  Read current changes                     ·         │
+/sweep   Refresh this repo's index                          │  AGENT HEALTH
+?        Show shortcuts                         ·   ·       │  State unavailable · no read contract
+                                                            │  · send POST /agent/events.
+                                                            │
+                                                            │  ESTELLE STATUS
+                                                            │  Waiting for the live issue feed...
+                                                            │
+                                                            │  ESTELLE QUEUE
+                                                            │  Queue empty · no repair work is
+                                          ⠠⠂⠂ ⠐⠄⡀           │  reported.
+                                        ⢀⠈⢰⡼⣾⢰⡷⣇⡆           │  Issue selection: /monitor issues
+      ·       ·       ·       ·       ·  ⢰⠻⣝⣷⣼⣿⣫⢷⠑    ∷     │
+                                         ⠈ ⣈⠽⡿⣋⠁⠘           │  GITHUB
+· · ∷   · · ∷   · · ·   ∷ · ·   · ∷ ·   · · ∷ ⠈⠁·   ·   ·   │  Waiting for measured GitHub
+                   ∷                         ⠁              │  connection state...
+  ·   ∷   ·   · ∷ · · · · ∷ · · · · ∷ · · · · ∷ · · ∷ · ∷   │
+                                                   ∷        │
+∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ · · · · ∷ · · · · ∷ · · ·   │
+∷∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷                  │
+╌╌ ask · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+› Ask Estelle
+
+
+  ? for shortcuts
+tab focus · shift+tab autonomy · ctrl+t tasks · alt+m context · / commands  |  plan  ·  routing auto

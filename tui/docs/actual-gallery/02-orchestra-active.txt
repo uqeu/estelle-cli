@@ -1,34 +1,34 @@
 ESTELLE  ·  uqeu/estelle  ·  repo graph current  ·  1,993 files
 
-┌ ORCHESTRA  Ctrl+←/→ focus ────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ ┌ CONTEXT  Alt+M · /context ─────────────┐
-│8 agents tracing 24 production assignments across three model pools                                                                    │ │Repo graph · team's swept copy          │
-│                                                                                                                                       │ │1,993 files indexed                     │
-│Estelle Orchestra · Trace checkout failures ×24                                                                                        │ │billing/charge.rs:82                    │
-│Participants · Claude Opus 4.1 · GPT-5.5 · Gemini 2.5 Pro                                                                              │ │  symbol  charge_card                   │
-│                                                                                                                                       │ │                                        │
-│001 [∷∷∷∷∷∷∷∷∷∷] ✓ Bound … 002 [∷∷∷∷∷·····] [2/4] Re… 003 [∷∷∷·······] [1/3] Gr… 004 [··········] Queued... 005 [∷∷∷∷∷∷∷∷∷∷] ✓ Verifi… │ │Working memory · local request context  │
-│006 [∷∷∷·······] [1/3] Co… 007 [··········] Unknown … 008 [··········] [0/2] Ch…                                                       │ │Sent through the configured Estelle     │
-│                                                                                                                                       │ │model path.                             │
-│◑ Working... [━━━━━━━━━━━━━━━━━━━━━━──────────────────────────] 11/24                                                                  │ │Not added to the team's Repo graph.     │
-│                                                                                                                                       │ │billing/charge.rs · local, not pushed   │
-│                                                                                                                                       │ │billing/retry.rs · local, not pushed    │
-│                                                                                                                                       │ │                                        │
-│                                                                                                                                       │ │Alt+M or /context closes                │
-│                                                                                                                                       │ │                                        │
-│                                                                                                                                       │ │                                        │
-│                                                                                                                                       │ │                                        │
-│                                                                                                                                       │ │                                        │
-│                                                                                                                                       │ │                                        │
-│                                                                                                                                       │ │                                        │
-│                                                                                                                                       │ │                                        │
-│                                                                                                                                       │ │                                        │
-│                                                                                                                                       │ │                                        │
-│                                                                                                                                       │ │                                        │
-│                                                                                                                                       │ │                                        │
-└───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ └────────────────────────────────────────┘
-┌ ASK ESTELLE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                                                                                                                                                                  │
-│› Ask Estelle                                                                                                                                                                     │
-│                                                                                                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-shift+tab change mode  ·  tab move focus  ·  / commands  |  plan  ·  routing auto
+╌╌ session · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌  │  ┌ CONTEXT  Alt+M · /context ─────────────────────────────────────┐
+8 agents tracing 24 production assignments across three model pools                                            │  │Repo graph · team's swept copy                                  │
+                                                                                                               │  │1,993 files indexed                                             │
+Estelle Orchestra · Trace checkout failures ×24                                                                │  │billing/charge.rs:82                                            │
+Participants · Claude Opus 4.1 · GPT-5.5 · Gemini 2.5 Pro                                                      │  │  symbol  charge_card                                           │
+                                                                                                               │  │                                                                │
+001 [∷∷∷∷∷∷∷∷] ✓ Bou… 002 [∷∷∷∷····] [2/4]… 003 [∷∷······] [1/3]… 004 [········] Queue… 005 [∷∷∷∷∷∷∷∷] ✓ Ver…  │  │Working memory · local request context                          │
+006 [∷∷······] [1/3]… 007 [········] Unkno… 008 [········] [0/2]…                                              │  │Sent through the configured Estelle model path.                 │
+                                                                                                               │  │Not added to the team's Repo graph.                             │
+◒ Working... [━━━━━━━━━━━━━━━━━━━━━━──────────────────────────] 11/24                                          │  │billing/charge.rs · local, not pushed                           │
+                                                                                                               │  │billing/retry.rs · local, not pushed                            │
+                                                                                                               │  │                                                                │
+                                                                                                               │  │Alt+M or /context closes                                        │
+                                                                                                               │  │                                                                │
+                                                                                                               │  │                                                                │
+                                                                                                               │  │                                                                │
+                                                                                                               │  │                                                                │
+                                                                                                               │  │                                                                │
+                                                                                                               │  │                                                                │
+                                                                                                               │  │                                                                │
+                                                                                                               │  │                                                                │
+                                                                                                               │  │                                                                │
+                                                                                                               │  │                                                                │
+                                                                                                               │  │                                                                │
+                                                                                                               │  └────────────────────────────────────────────────────────────────┘
+╌╌ ask · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+› Ask Estelle
+
+
+  ? for shortcuts
+tab focus · shift+tab autonomy · ctrl+t tasks · alt+m context · / commands  |  plan  ·  routing auto

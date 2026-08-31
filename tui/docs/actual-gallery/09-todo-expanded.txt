@@ -1,36 +1,36 @@
 ESTELLE  ·  uqeu/estelle
 
-┌ TASKS  Ctrl+T expand · Ctrl+←/→ focus ─────────────────────────────────────────────────────────────────────────────────────────┐
-│Todo                                                                                                                            │
-│✓ Bind checkout timeout — billing/charge.rs:82                                                                                  │
-│✓ Run the gate regression — 18/18 passed                                                                                        │
-│● Inspect the proposed diff — 2 files                                                                                           │
-│○ Open a reviewable PR                                                                                                          │
-│? Unverified: Confirm the account model                                                                                         │
-│✓ Trace the deploy — deploy-8e17                                                                                                │
-│○ Check GitHub connection                                                                                                       │
-│○ Record the final verdict                                                                                                      │
-│ctrl+t to collapse                                                                                                              │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ ASK ESTELLE ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                                                                                                                │
-│› Ask Estelle                                                                                                                   │
-│                                                                                                                                │
-└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-shift+tab change mode  ·  tab move focus  ·  / commands  |  plan  ·  routing auto
+╌╌ session · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌  │  ╌╌ production · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+Todo                                                                           │  APP HEALTH · repo uqeu/estelle
+✓ Bind checkout timeout — billing/charge.rs:82                                 │  Connecting to Estelle...
+✓ Run the gate regression — 18/18 passed                                       │
+● Inspect the proposed diff — 2 files                                          │  AGENT HEALTH
+○ Open a reviewable PR                                                         │  State unavailable · no read contract · send POST
+? Unverified: Confirm the account model                                        │  /agent/events.
+✓ Trace the deploy — deploy-8e17                                               │
+○ Check GitHub connection                                                      │  ESTELLE STATUS
+○ Record the final verdict                                                     │  Waiting for the live issue feed...
+ctrl+t to collapse                                                             │
+                                                                               │  ESTELLE QUEUE
+                                                                               │  Queue empty · no repair work is reported.
+                                                                               │  Issue selection: /monitor issues
+                                                                               │
+                                                                               │  GITHUB
+                                                                               │  Waiting for measured GitHub connection state...
+                                                                               │
+                                                                               │
+                                                                               │
+                                                                               │
+                                                                               │
+                                                                               │
+                                                                               │
+                                                                               │
+                                                                               │
+                                                                               │
+╌╌ ask · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+› Ask Estelle
+
+
+  ? for shortcuts
+tab focus · shift+tab autonomy · ctrl+t tasks · alt+m context · / commands  |  plan  ·  routing auto

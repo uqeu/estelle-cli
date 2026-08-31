@@ -21,32 +21,53 @@ pub enum ScreenTheme {
 }
 
 pub struct Palette {
+    pub ground: Color,
     pub dim: Color,
     pub mid: Color,
+    pub bright: Color,
     pub red: Color,
     pub green: Color,
     pub warn: Color,
     pub cite: Color,
+    pub plan: Color,
+    pub skill: Color,
+    pub tint: Color,
+    pub diff_add: Color,
+    pub diff_del: Color,
 }
 
 impl ScreenTheme {
     pub fn palette(self) -> Palette {
         match self {
             Self::Dark => Palette {
+                ground: Color::Rgb(0x16, 0x13, 0x0f),
                 dim: Color::Rgb(0x6f, 0x6a, 0x5e),
                 mid: Color::Rgb(0x94, 0x8e, 0x81),
+                bright: Color::Rgb(0xe9, 0xe6, 0xdc),
                 red: Color::Rgb(0xc5, 0x24, 0x16),
                 green: Color::Rgb(0x5f, 0x9e, 0x6e),
                 warn: Color::Rgb(0xc9, 0xa2, 0x27),
                 cite: Color::Rgb(0x7f, 0xb3, 0xc8),
+                plan: Color::Rgb(0x9f, 0xc4, 0xe0),
+                skill: Color::Rgb(0xd4, 0x8f, 0xb0),
+                tint: Color::Rgb(0x24, 0x1f, 0x19),
+                diff_add: Color::Rgb(0x1b, 0x2e, 0x1d),
+                diff_del: Color::Rgb(0x36, 0x1a, 0x18),
             },
             Self::Cream => Palette {
+                ground: Color::Rgb(0xe9, 0xe6, 0xdc),
                 dim: Color::Rgb(0x8b, 0x85, 0x78),
                 mid: Color::Rgb(0x57, 0x50, 0x43),
+                bright: Color::Rgb(0x1f, 0x1c, 0x17),
                 red: Color::Rgb(0xb0, 0x21, 0x0f),
                 green: Color::Rgb(0x3d, 0x75, 0x50),
                 warn: Color::Rgb(0x96, 0x75, 0x1a),
                 cite: Color::Rgb(0x38, 0x70, 0x8c),
+                plan: Color::Rgb(0x35, 0x6a, 0x8c),
+                skill: Color::Rgb(0xb0, 0x6a, 0x8c),
+                tint: Color::Rgb(0xdc, 0xd7, 0xc9),
+                diff_add: Color::Rgb(0xd2, 0xdf, 0xcc),
+                diff_del: Color::Rgb(0xeb, 0xd3, 0xcf),
             },
         }
     }

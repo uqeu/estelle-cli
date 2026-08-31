@@ -240,27 +240,30 @@ pub(super) fn status_line(app: &App, now: Instant) -> Line<'static> {
     Line::from(spans)
 }
 
+/// The footer carries the design's key hints ahead of the live status.
+///
+/// ⚠️ `KEY_HINTS` is the catalog's screen-9 wording verbatim. The demo mockup shows
+/// `enter send` and `esc stop` beside them; neither exists in the restored design code, so
+/// neither is printed here.
 pub(super) fn footer_line(app: &App, now: Instant, width: u16) -> Line<'static> {
-    if app.active.is_some() || !app.queue.is_empty() {
-        return status_line(app, now);
-    }
-    let mut spans = vec![
-        Span::styled("shift+tab", Style::default().fg(app.theme.primary())),
-        Span::styled(" change mode  ·  ", Style::default().fg(app.theme.ghost())),
-    ];
-    if width >= 96 {
+    let status = status_line(app, now);
+    let status_width = status
+        .spans
+        .iter()
+        .map(|span| span.content.chars().count())
+        .sum::<usize>();
+    let budget = usize::from(width)
+        .saturating_sub(status_width)
+        .saturating_sub(5);
+    let hints = session_view::key_hints(budget);
+    let mut spans = Vec::new();
+    if !hints.is_empty() {
         spans.extend([
-            Span::styled("tab", Style::default().fg(app.theme.primary())),
-            Span::styled(" move focus  ·  ", Style::default().fg(app.theme.ghost())),
+            Span::styled(hints, Style::default().fg(app.theme.ghost())),
+            Span::styled("  |  ", Style::default().fg(app.theme.ghost())),
         ]);
     }
-    if width >= 64 {
-        spans.extend([
-            Span::styled("/", Style::default().fg(app.theme.primary())),
-            Span::styled(" commands  |  ", Style::default().fg(app.theme.ghost())),
-        ]);
-    }
-    spans.extend(status_line(app, now).spans);
+    spans.extend(status.spans);
     Line::from(spans)
 }
 
@@ -1541,26 +1544,35 @@ pub(super) fn render_prod_panel(frame: &mut Frame<'_>, area: Rect, app: &App, no
             .iter()
             .any(|issue| issue.status != "resolved")
     });
+    let palette = app.theme.screen_palette();
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .split(area);
+    frame.render_widget(
+        Paragraph::new(session_view::production_rule(
+            app.repo.as_str(),
+            usize::from(rows[0].width),
+            &palette,
+        ))
+        .style(Style::default().fg(if has_unresolved {
+            app.theme.alert()
+        } else {
+            app.theme.ghost()
+        })),
+        rows[0],
+    );
     frame.render_widget(
         Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(
-                        Style::default().fg(if app.focus == FocusSurface::Auxiliary {
-                            app.theme.primary()
-                        } else {
-                            if has_unresolved {
-                                app.theme.alert()
-                            } else {
-                                app.theme.ghost()
-                            }
-                        }),
-                    )
-                    .title(" LIVE PRODUCTION "),
-            )
+            .block(Block::default().border_style(Style::default().fg(
+                if app.focus == FocusSurface::Auxiliary {
+                    app.theme.primary()
+                } else {
+                    app.theme.ghost()
+                },
+            )))
             .wrap(Wrap { trim: false }),
-        area,
+        rows[1],
     );
 }
 
@@ -1774,48 +1786,46 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         rows[0],
     );
     let surface_rows = [rows[1]];
+    let palette = app.theme.screen_palette();
 
-    let diff_as_rail = app.diff_panel_visible && area.width >= 110;
-    let prod_as_rail = !app.diff_panel_visible
-        && app.prod_panel_visible
-        && area.width >= 110
-        && app.gate_modal.is_none()
-        && app.picker.is_none()
-        && app.resume_picker.is_none();
+    // 🔴 THE COLUMN ENGINE DECIDES THE LIVE FRAME. Until this call the live TUI referenced
+    // `cols` zero times while the whole redesign was built on it, so the customer saw a
+    // different design language from the catalog. `split`/`split_areas`/`divider` all read the
+    // SAME `[Col; 3]`, which is why the glyph cannot drift away from the split.
+    let design_columns = session_view::split(surface_rows[0].width);
+    let design_split = session_view::split_areas(surface_rows[0]);
+    let modal_open =
+        app.gate_modal.is_some() || app.picker.is_some() || app.resume_picker.is_some();
+
+    let diff_as_rail = app.diff_panel_visible && design_split.is_some();
     let show_diff_panel = app.diff_panel_visible && !diff_as_rail;
-    let show_prod_panel = app.prod_panel_visible && !prod_as_rail && !app.diff_panel_visible;
-    let show_context_panel = !app.diff_panel_visible && !prod_as_rail && app.context_panel_visible;
+    let show_context_panel =
+        !app.diff_panel_visible && app.context_panel_visible && design_split.is_some();
     let show_citation_pane = !app.diff_panel_visible
-        && !prod_as_rail
         && !show_context_panel
-        && area.width >= 100
-        && !app.citations.is_empty();
+        && !app.citations.is_empty()
+        && design_split.is_some();
+    // The design gives production a PERMANENT home on the right, not a `/prod` toggle: a rail
+    // you have to remember to open is, from the user's seat, a rail that is not there.
+    let prod_as_rail = !app.diff_panel_visible
+        && !show_context_panel
+        && !show_citation_pane
+        && !modal_open
+        && design_split.is_some();
+    let show_prod_panel =
+        app.prod_panel_visible && !app.diff_panel_visible && design_split.is_none();
     let show_auxiliary_pane =
         diff_as_rail || prod_as_rail || show_context_panel || show_citation_pane;
-    let main_areas = if show_auxiliary_pane {
-        let pane_width = if diff_as_rail {
-            54.min(area.width.saturating_sub(54))
-        } else if prod_as_rail {
-            48.min(area.width.saturating_sub(54))
-        } else if show_citation_pane {
-            36
-        } else if area.width >= 90 {
-            42.min(area.width.saturating_sub(44))
-        } else {
-            area.width.saturating_sub(30).max(24)
-        };
-        let areas = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Min(30),
-                Constraint::Length(1),
-                Constraint::Length(pane_width),
-            ])
-            .split(surface_rows[0])
-            .to_vec();
-        vec![areas[0], areas[2]]
-    } else {
-        vec![surface_rows[0]]
+    let main_areas = match (show_auxiliary_pane, design_split, design_columns.as_ref()) {
+        (true, Some((session, _, rail)), Some(columns)) => {
+            let divider = session_view::divider(columns, &palette);
+            frame.render_widget(
+                Paragraph::new(vec![divider; usize::from(surface_rows[0].height)]),
+                surface_rows[0],
+            );
+            vec![session, rail]
+        }
+        _ => vec![surface_rows[0]],
     };
 
     if show_prod_panel {
@@ -1823,25 +1833,22 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
     } else if show_diff_panel {
         render_diff_panel(frame, surface_rows[0], app);
     } else {
-        let primary_title = if app.fleet.is_some() {
-            " ORCHESTRA  Ctrl+←/→ focus "
-        } else if app.todo_visible {
-            " TASKS  Ctrl+T expand · Ctrl+←/→ focus "
-        } else {
-            " CONVERSATION  Tab · Ctrl+←/→ focus "
-        };
-        let primary_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(
-                Style::default().fg(if app.focus == FocusSurface::Transcript {
-                    app.theme.primary()
-                } else {
-                    app.theme.ghost()
-                }),
-            )
-            .title(primary_title);
-        let primary_area = primary_block.inner(main_areas[0]);
-        frame.render_widget(primary_block, main_areas[0]);
+        // "┌ CONVERSATION ─┐" was the old language. The design opens the left column on a
+        // rule that names the repo, which is what the founder's demo shows and what every
+        // screen in the catalog does.
+        let session_rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(main_areas[0]);
+        frame.render_widget(
+            Paragraph::new(session_view::session_rule(
+                app.repo.as_str(),
+                usize::from(session_rows[0].width),
+                &palette,
+            )),
+            session_rows[0],
+        );
+        let primary_area = session_rows[1];
 
         let transcript_band = if let Some(fleet) = &app.fleet {
             let raw_lines = commands::fleet_view_lines(fleet, primary_area.width);
@@ -1913,7 +1920,7 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             let plan_lines = progress
                 .plan
                 .as_ref()
-                .map(|plan| work_plan::lines(plan, &app.theme.screen_palette()))
+                .map(|plan| work_plan::lines_at(plan, &palette, usize::from(transcript_band.width)))
                 .unwrap_or_default();
             let plan_height = u16::try_from(plan_lines.len()).unwrap_or(u16::MAX);
             let work_rows = Layout::default()
@@ -2007,7 +2014,10 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             && !app.todo_visible
             && app.picker.is_none()
             && app.resume_picker.is_none()
-            && !show_auxiliary_pane;
+            // The production rail is permanent now, so it can no longer be a reason to drop
+            // the empty-state ground: the art lives in the session column, which is still
+            // empty. A rail the user asked for (diff, context, evidence) still displaces it.
+            && (!show_auxiliary_pane || prod_as_rail);
         if show_ground {
             render_symbol_ground(frame, transcript_root, app);
         }
@@ -2041,40 +2051,55 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
                     ])
                 })
                 .collect::<Vec<_>>();
+            let cited_rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(1), Constraint::Min(1)])
+                .split(citation_area);
+            frame.render_widget(
+                Paragraph::new(session_view::cited_rule(
+                    app.repo.as_str(),
+                    usize::from(cited_rows[0].width),
+                    &palette,
+                )),
+                cited_rows[0],
+            );
             frame.render_widget(
                 Paragraph::new(lines)
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(
-                                if app.focus == FocusSurface::Auxiliary {
-                                    app.theme.primary()
-                                } else {
-                                    Color::DarkGray
-                                },
-                            ))
-                            .title(" CITED EVIDENCE "),
+                    .style(
+                        Style::default().fg(if app.focus == FocusSurface::Auxiliary {
+                            app.theme.primary()
+                        } else {
+                            Color::DarkGray
+                        }),
                     )
                     .wrap(Wrap { trim: false }),
-                citation_area,
+                cited_rows[1],
             );
         }
     }
+    // "┌ ASK ESTELLE ─┐" becomes the design's `╌╌ ask · <repo> ╌╌` rule with a bare prompt
+    // under it. The composer keeps its own behaviour; only its framing changes.
     let composer_area = if modal_owns_input {
         Rect::default()
     } else {
-        app.composer.render_bottom_pane(
-            rows[2],
-            frame.buffer_mut(),
-            "ASK ESTELLE",
-            app.focus == FocusSurface::Composer,
-            ComposerPanePalette {
-                background: app.theme.background(),
-                focused_border: app.theme.primary(),
-                idle_border: app.theme.ghost(),
-            },
+        let ask_rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(rows[2]);
+        frame.render_widget(
+            Paragraph::new(session_view::ask_rule(
+                app.repo.as_str(),
+                usize::from(ask_rows[0].width),
+                &palette,
+            )),
+            ask_rows[0],
         );
-        rows[2]
+        app.composer.render_ref_with_background(
+            ask_rows[1],
+            frame.buffer_mut(),
+            app.theme.background(),
+        );
+        ask_rows[1]
     };
     frame.render_widget(
         Paragraph::new(footer_line(app, now, rows[3].width)),
@@ -2088,7 +2113,7 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         render_gate_modal(frame, modal, rows[1], app);
     } else if !app.boot_active(now)
         && app.focus == FocusSurface::Composer
-        && let Some(position) = app.composer.bottom_pane_cursor_pos(composer_area)
+        && let Some(position) = app.composer.cursor_pos(composer_area)
     {
         frame.set_cursor_position(position);
     }

@@ -20,6 +20,7 @@ mod provider_keys;
 mod provider_store;
 mod screens;
 mod session_server;
+mod session_view;
 mod setup_flow;
 #[cfg(test)]
 mod test_gallery;
@@ -93,7 +94,6 @@ use estelle_client::mask_secret;
 use estelle_tui::ComposerAction;
 use estelle_tui::ComposerCommand;
 use estelle_tui::ComposerInput;
-use estelle_tui::ComposerPanePalette;
 use estelle_tui::ExternalResumePicker;
 use estelle_tui::ExternalResumeRow;
 use estelle_tui::boot_scene::BootPalette;
@@ -5966,7 +5966,10 @@ async fn main() -> ExitCode {
         // stderr, not stdout: stdout is the protocol channel and must stay clean.
         // REASON for the expect: same deny, same exemption. This runs before any terminal is
         // claimed, and stderr is deliberate — stdout is the ACP protocol channel and must stay clean.
-        #[expect(clippy::print_stderr, reason = "the ACP notice must not enter the stdout protocol")]
+        #[expect(
+            clippy::print_stderr,
+            reason = "the ACP notice must not enter the stdout protocol"
+        )]
         if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
             eprintln!(
                 "estelle acp is a protocol server, not an interactive command. It is now waiting for \
@@ -6792,7 +6795,7 @@ mod tests {
             serde_json::from_value(json!({"issues": [], "has_more": false}))
                 .expect("gallery empty issues"),
         );
-        capture("01-startup-home", &home, 160, 38, "ASK ESTELLE");
+        capture("01-startup-home", &home, 160, 38, "╌╌ ask · ");
 
         let mut waiting = test_app();
         waiting.auth_resolved = true;
@@ -7032,7 +7035,7 @@ mod tests {
         cream.prod_panel_visible = false;
         cream.header.indexed = Some(true);
         cream.theme = Theme::CreamInk;
-        capture("13-cream-ink", &cream, 120, 34, "ASK ESTELLE");
+        capture("13-cream-ink", &cream, 120, 34, "╌╌ ask · ");
 
         let mut autonomy = test_app();
         autonomy.prod_panel_visible = false;
@@ -7877,19 +7880,29 @@ mod tests {
         assert!(rendered.contains("/context"));
     }
 
+    /// 🔴 THE CONTRACT CHANGED, AND THIS TEST IS WHERE IT IS WRITTEN DOWN.
+    ///
+    /// Production used to be OPT-IN behind `/prod`, and the R9 finding named that as the
+    /// reason the redesign never reached the customer: the founder's demo has production on
+    /// the right of every frame, and a rail you must remember to open is, from the user's
+    /// seat, a rail that is not there. It is PERMANENT now — dropped only when the terminal
+    /// is too narrow to hold both of the design's columns.
     #[test]
-    fn production_home_is_opt_in_and_every_empty_section_has_an_action() {
+    fn production_is_a_permanent_rail_and_every_empty_section_has_an_action() {
         let mut app = test_app();
         app.auth_resolved = true;
 
-        let calm = rendered_frame_at_size(&app, Instant::now(), 140, 36);
-        assert!(!calm.contains("LIVE PRODUCTION"));
-
-        app.prod_panel_visible = true;
+        // ⚠️ THE CONTROL. Below the design's own minimum the rail is dropped, not squeezed,
+        // so the assertion above cannot be passing merely because the string is everywhere.
+        let narrow = rendered_frame_at_size(&app, Instant::now(), 70, 36);
+        assert!(!narrow.contains("╌╌ production · "), "{narrow}");
 
         let rendered = rendered_frame_at_size(&app, Instant::now(), 140, 36);
 
-        assert!(rendered.contains("LIVE PRODUCTION"));
+        assert!(
+            rendered.contains("╌╌ production · uqeu/estelle"),
+            "{rendered}"
+        );
         assert!(rendered.contains("APP HEALTH"));
         assert!(rendered.contains("AGENT HEALTH"));
         assert!(rendered.contains("ESTELLE STATUS"));
@@ -8056,11 +8069,10 @@ mod tests {
     fn production_and_review_are_auxiliary_rails_that_preserve_the_work_surface() {
         let mut production = test_app();
         production.auth_resolved = true;
-        production.prod_panel_visible = true;
         let rendered = rendered_frame_at_size(&production, Instant::now(), 120, 32);
-        assert!(rendered.contains(" LIVE PRODUCTION "));
-        assert!(rendered.contains(" CONVERSATION "));
-        assert!(rendered.contains(" ASK ESTELLE "));
+        assert!(rendered.contains("╌╌ production · "), "{rendered}");
+        assert!(rendered.contains("╌╌ session · "), "{rendered}");
+        assert!(rendered.contains("╌╌ ask · "), "{rendered}");
 
         let mut review = test_app();
         review.prod_panel_visible = false;
@@ -8070,9 +8082,168 @@ mod tests {
                 .to_string(),
         );
         let rendered = rendered_frame_at_size(&review, Instant::now(), 120, 32);
-        assert!(rendered.contains(" WORK DRAFT · /work · READ ONLY "));
-        assert!(rendered.contains(" CONVERSATION "));
-        assert!(rendered.contains(" ASK ESTELLE "));
+        assert!(
+            rendered.contains(" WORK DRAFT · /work · READ ONLY "),
+            "{rendered}"
+        );
+        assert!(rendered.contains("╌╌ session · "), "{rendered}");
+        assert!(rendered.contains("╌╌ ask · "), "{rendered}");
+        // ⚠️ The review rail displaces production; only one rail can own the column.
+        assert!(!rendered.contains("╌╌ production · "), "{rendered}");
+    }
+
+    /// 🔴 A HINT THE KEY DOES NOT HONOUR IS A HALLUCINATED AFFORDANCE.
+    ///
+    /// The catalog's screen-9 footer advertises `tab repo · ctrl+s spend · ctrl+m models`, and
+    /// **none of those three bindings exists in this binary**. A fixture screen may print an
+    /// unbuilt binding; the live footer may not. This pins every advertised key to the effect
+    /// the footer claims for it, so the next person to edit `KEY_HINTS` has to prove the key.
+    ///
+    /// Limit: it proves each key CHANGES the state the label names. It does not prove the
+    /// label is the best word for that state.
+    #[test]
+    fn every_advertised_key_is_a_binding_the_live_tui_actually_handles() {
+        let hints = session_view::KEY_HINTS;
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        assert!(hints.contains("tab focus"), "{hints}");
+        let mut app = test_app();
+        assert_eq!(app.focus, FocusSurface::Composer);
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            &tx,
+        );
+        assert_ne!(app.focus, FocusSurface::Composer, "tab did not move focus");
+
+        assert!(hints.contains("shift+tab autonomy"), "{hints}");
+        let mut app = test_app();
+        assert!(app.picker.is_none());
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+            &tx,
+        );
+        assert!(
+            app.picker.is_some(),
+            "shift+tab did not open the autonomy picker"
+        );
+
+        assert!(hints.contains("ctrl+t tasks"), "{hints}");
+        let mut app = test_app();
+        assert!(!app.todo_visible);
+        app.todo = Some(
+            serde_json::from_value(json!({
+                "observed_at": 1.0,
+                "items": [{"title": "ship the wire", "status": "pending"}]
+            }))
+            .expect("todo snapshot"),
+        );
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
+            &tx,
+        );
+        assert!(app.todo_visible, "ctrl+t did not open tasks");
+
+        assert!(hints.contains("alt+m context"), "{hints}");
+        let mut app = test_app();
+        let before = app.context_panel_visible;
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('m'), KeyModifiers::ALT),
+            &tx,
+        );
+        assert_ne!(
+            app.context_panel_visible, before,
+            "alt+m did not toggle the context panel"
+        );
+
+        assert!(hints.contains("/ commands"), "{hints}");
+        assert!(
+            !commands::composer_commands().is_empty(),
+            "/ advertises a command palette that has no commands"
+        );
+
+        // ⚠️ THE CONTROL. The catalog's own footer must NOT be what the live frame prints,
+        // because these three keys do nothing here.
+        assert!(!hints.contains("ctrl+s spend"), "{hints}");
+        assert!(!hints.contains("ctrl+m models"), "{hints}");
+        assert!(!hints.contains("tab repo"), "{hints}");
+    }
+
+    /// 🔴 THE WIRE THE REDESIGN NEVER HAD.
+    ///
+    /// `screens.rs` has carried the two-column design since 45495f9d8, and until this test the
+    /// live TUI referenced `cols` — the column engine that design is built on — ZERO times. So
+    /// the catalog shipped one design language and the customer's terminal drew another. This
+    /// asserts the frame `estelle` actually draws when you type is the restored design.
+    ///
+    /// Limit: this is a TestBackend buffer, not a customer terminal. It proves the composition,
+    /// not the rendering of these glyphs by any particular terminal emulator.
+    #[test]
+    fn the_live_frame_is_the_two_column_session_design_not_the_boxed_one() {
+        let mut app = test_app();
+        app.auth_resolved = true;
+
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 140, 40);
+
+        assert!(
+            rendered.contains("\u{254c}\u{254c} session \u{b7} uqeu/estelle"),
+            "the left column must open on the design's session rule\n{rendered}"
+        );
+        assert!(
+            rendered.contains("\u{254c}\u{254c} production \u{b7} uqeu/estelle"),
+            "the right column must open on the design's production rule\n{rendered}"
+        );
+        assert!(
+            rendered.contains("\u{254c}\u{254c} ask \u{b7} uqeu/estelle"),
+            "the composer must be framed by the design's ask rule\n{rendered}"
+        );
+        assert!(
+            rendered.contains(session_view::KEY_HINTS),
+            "the footer must carry the design's key hints\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("\u{250c} CONVERSATION"),
+            "the boxed language must be gone\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("\u{250c} ASK ESTELLE"),
+            "the boxed composer must be gone\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("\u{250c} LIVE PRODUCTION"),
+            "the boxed production rail must be gone\n{rendered}"
+        );
+    }
+
+    /// The design writes a tool call as `\u{23fa} Task(...)` with an `\u{23bf}` continuation, not as the
+    /// disclosure triangle the old renderer used.
+    #[test]
+    fn a_tool_call_renders_the_designs_transcript_glyphs() {
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.transcript.push(TranscriptEntry::Tool {
+            label: "Task(gate cluster \u{b7} 4 workers)".to_string(),
+            lines: vec!["\u{2713} w1 opus-4-8   41s  $0.212".to_string()],
+            expanded: true,
+        });
+
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 140, 40);
+
+        assert!(
+            rendered.contains("\u{23fa} Task(gate cluster"),
+            "the design opens a tool call with \u{23fa}\n{rendered}"
+        );
+        assert!(
+            rendered.contains("\u{23bf}"),
+            "the design continues a tool call with \u{23bf}\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("\u{25be} Task(gate cluster"),
+            "the disclosure triangle is the old language\n{rendered}"
+        );
     }
 
     #[test]
@@ -8104,34 +8275,37 @@ mod tests {
     #[test]
     fn bottom_dock_owns_one_separator_and_closes_each_visible_edge() {
         let mut app = test_app();
-        app.prod_panel_visible = false;
         app.composer.set_text("/m");
         let buffer = rendered_buffer_at_size(&app, Instant::now(), 100, 30);
         let rendered = test_gallery::buffer_text(&buffer);
 
-        let has_adjacent_rules = rendered
+        // The design frames the dock with ONE rule and nothing else. What this test has always
+        // guarded is that the dock does not stack a second frame on top of the first; with the
+        // box gone, the honest form of that claim is that the dock draws no box at all.
+        let dock = rendered
             .lines()
-            .collect::<Vec<_>>()
-            .windows(2)
-            .any(|rows| rows[0].contains("└──") && rows[1].contains("┌ COMMANDS"));
-        assert!(!has_adjacent_rules, "{rendered}");
-        let command_rule = rendered
-            .lines()
-            .find(|line| line.contains(" ASK ESTELLE "))
-            .expect("command dock rule");
-        assert!(command_rule.ends_with('┐'), "{rendered}");
-        assert!(
+            .position(|line| line.contains("╌╌ ask · "))
+            .expect("the design's ask rule opens the dock");
+        assert_eq!(
             rendered
                 .lines()
-                .any(|line| line.starts_with('└') && line.ends_with('┘')),
-            "{rendered}"
+                .filter(|line| line.contains("╌╌ ask · "))
+                .count(),
+            1,
+            "the dock must own exactly one separator\n{rendered}"
         );
+        for line in rendered.lines().skip(dock) {
+            assert!(
+                !line.contains('┌')
+                    && !line.contains('┐')
+                    && !line.contains('└')
+                    && !line.contains('┘'),
+                "the dock drew a box under its rule:\n{rendered}"
+            );
+        }
         assert!(
-            rendered
-                .lines()
-                .filter(|line| line.contains('│'))
-                .all(|line| line.ends_with('│')),
-            "right edges must share one terminal column:\n{rendered}"
+            rendered.lines().skip(dock).any(|line| line.contains("/me")),
+            "the command palette did not reach the dock\n{rendered}"
         );
     }
 
@@ -8297,8 +8471,8 @@ mod tests {
             120,
             34,
         );
-        assert!(finished.contains("ASK ESTELLE"));
-        assert!(finished.contains("shift+tab"));
+        assert!(finished.contains("╌╌ ask · "));
+        assert!(finished.contains("shift+tab autonomy"));
         assert!(!finished.contains("enter ask"));
         assert!(!finished.contains("shift+enter newline"));
     }
@@ -8440,15 +8614,33 @@ mod tests {
             app.handle_ui_event(event, &tx);
         }
 
-        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 34);
-        assert!(rendered.contains("caught · TimeoutError in charge_card"));
-        assert!(rendered.contains("billing.py:82"));
-        assert!(rendered.contains("drafted repair"), "{rendered}");
-        assert!(rendered.contains("awaiting human review"), "{rendered}");
-        assert!(rendered.contains("error counts"));
-        assert!(rendered.contains("request denominator unavailable"));
-        assert!(rendered.contains("checkout-agent"), "{rendered}");
-        assert!(rendered.contains("tool timeout"), "{rendered}");
+        // What this test is for is the FETCH, so the fetched fields are asserted on the panel
+        // MODEL, where a phrase cannot be split by the rail's word wrap. The frame assertion
+        // below is the separate claim that the rail reaches the customer at all.
+        let panel = production_workspace_lines(&app)
+            .into_iter()
+            .flat_map(|line| line.spans)
+            .map(|span| span.content.into_owned())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            panel.contains("caught · TimeoutError in charge_card"),
+            "{panel}"
+        );
+        assert!(panel.contains("billing.py:82"), "{panel}");
+        assert!(panel.contains("drafted repair"), "{panel}");
+        assert!(panel.contains("awaiting human review"), "{panel}");
+        assert!(panel.contains("error counts"), "{panel}");
+        assert!(panel.contains("request denominator unavailable"), "{panel}");
+        assert!(panel.contains("checkout-agent"), "{panel}");
+        assert!(panel.contains("tool timeout"), "{panel}");
+
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 160, 34);
+        assert!(
+            rendered.contains("╌╌ production · uqeu/estelle"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("billing.py:82"), "{rendered}");
         assert!(app.active.is_none());
     }
 
@@ -10196,7 +10388,12 @@ mod tests {
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
         assert!(rendered.contains("Since your last session"));
         assert!(rendered.contains("Welcome back. You were away about 5 hours."));
-        assert!(rendered.contains("│you"));
+        assert!(
+            rendered
+                .lines()
+                .any(|line| line.trim_start_matches('"').starts_with("you")),
+            "{rendered}"
+        );
         assert!(rendered.contains("› what changed?"));
     }
 
@@ -10219,13 +10416,16 @@ mod tests {
         let app = test_app();
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
         let lines = rendered.lines().collect::<Vec<_>>();
+        // The design opens the input on `╌╌ ask · <repo> ╌╌`; the box is the old language.
+        // The BOUND is what this test is for and it is unchanged: the input still owns only
+        // the bottom of the frame.
         let composer = lines
             .iter()
-            .position(|line| line.contains("ASK ESTELLE"))
-            .expect("bounded composer title");
+            .position(|line| line.contains("╌╌ ask · "))
+            .expect("the design's ask rule opens the input surface");
 
         assert!(composer >= lines.len().saturating_sub(7));
-        assert!(lines[composer].contains('┌'));
+        assert!(!lines[composer].contains('┌'));
         assert!(rendered.contains("› Ask Estelle"));
     }
 
@@ -10468,8 +10668,13 @@ mod tests {
                 .filter(|line| line.contains(needle))
                 .count()
         };
+        // The design has no left border, so the speaker label opens the row instead of
+        // following a `│`. What is asserted is unchanged: exactly one labelled turn each.
         assert_eq!(
-            row_count("│you"),
+            rendered
+                .lines()
+                .filter(|line| line.trim_start_matches('"').starts_with("you"))
+                .count(),
             1,
             "exactly one user-labelled turn\n{rendered}"
         );
@@ -10491,11 +10696,18 @@ mod tests {
                         .iter()
                         .map(ratatui::buffer::Cell::symbol)
                         .collect::<String>();
-                    text.contains(needle).then(|| row[1].clone())
+                    text.contains(needle).then(|| {
+                        // The design has no left border, so the label's first cell is the
+                        // first non-blank one rather than a fixed column behind a `│`.
+                        row.iter()
+                            .find(|cell| cell.symbol() != " ")
+                            .cloned()
+                            .unwrap_or_else(|| row[0].clone())
+                    })
                 })
                 .unwrap_or_else(|| panic!("no rendered row for {needle:?}"))
         };
-        let user_label = label_cell("│you");
+        let user_label = label_cell("you");
         let estelle_label = label_cell("estelle  grounded");
         assert_ne!(
             user_label.fg, estelle_label.fg,

@@ -1,38 +1,38 @@
 ESTELLE  ·  uqeu/estelle  ·  Fate Labs · owner
 
-┌ CONVERSATION  Tab · Ctrl+←/→ focus ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│Since your last session                                                                                                                                       │
-│Welcome back - you were last here about 3 hours ago.                                                                                                          │
-│Code you touched has changed since:                                                                                                                           │
-│- billing/charge.rs - by Dana, about 2 hours ago - bound retry telemetry                                                                                      │
-│Signed in · khai@fatelabs.ca · team                                                                                                                           │
-│Team · Fate Labs · owner                                                                                                                                      │
-│                                                                                                                                                              │
-│you  What changed while I was away?                                                                                                                           │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ ASK ESTELLE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                                                                                                                                              │
-│› Ask Estelle                                                                                                                                                 │
-│                                                                                                                                                              │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-still waiting for Estelle  83s  |  Esc cancels  |  no response received yet
+╌╌ session · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌  │  ╌╌ production · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+Since your last session                                                                           │  APP HEALTH · repo uqeu/estelle
+Welcome back - you were last here about 3 hours ago.                                              │  Loading a real Monitor window...
+Code you touched has changed since:                                                               │
+- billing/charge.rs - by Dana, about 2 hours ago - bound retry telemetry                          │  AGENT HEALTH
+Signed in · khai@fatelabs.ca · team                                                               │  State unavailable · no read contract · send POST
+Team · Fate Labs · owner                                                                          │  /agent/events.
+                                                                                                  │
+you                                                                                               │  ESTELLE STATUS
+                                                                                                  │  Waiting for the live issue feed...
+                                                                                                  │
+› What changed while I was away?                                                                  │  ESTELLE QUEUE
+                                                                                                  │  Queue empty · no repair work is reported.
+                                                                                                  │  Issue selection: /monitor issues
+                                                                                                  │
+                                                                                                  │  GITHUB
+                                                                                                  │  Waiting for measured GitHub connection state...
+                                                                                                  │
+                                                                                                  │
+                                                                                                  │
+                                                                                                  │
+                                                                                                  │
+                                                                                                  │
+                                                                                                  │
+                                                                                                  │
+                                                                                                  │
+                                                                                                  │
+                                                                                                  │
+                                                                                                  │
+╌╌ ask · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+› Ask Estelle
+
+
+  ? for shortcuts
+tab focus · shift+tab autonomy · ctrl+t tasks · alt+m context · / commands  |  still waiting for Estelle  1m 23s  |  Esc cancels  |  no response received yet

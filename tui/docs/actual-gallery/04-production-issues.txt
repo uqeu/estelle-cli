@@ -1,38 +1,38 @@
 ESTELLE  ·  uqeu/estelle  ·  Fate Labs · owner
 
-┌ CONVERSATION  Tab · Ctrl+←/→ focus ─────────────────────────────────────────────────────────────────────────┐ ┌ LIVE PRODUCTION ─────────────────────────────┐
-│                                                                                                             │ │APP HEALTH · repo uqeu/estelle                │
-│                                                                                                             │ │error counts · ▂▅▃█  14                       │
-│                                                                                                             │ │measured · 14/3292 requests                   │
-│                                                                                                             │ │uptime checks · 4/4 up                        │
-│                                                                                                             │ │                                              │
-│                                                                                                             │ │AGENT HEALTH                                  │
-│                                                                                                             │ │State unavailable · no read contract · send   │
-│                                                                                                             │ │POST /agent/events.                           │
-│                                                                                                             │ │                                              │
-│                                                                                                             │ │ESTELLE STATUS                                │
-│                                                                                                             │ │caught · Checkout timeout after deploy        │
-│                                                                                                             │ │grouped · 47 event(s) · traced to ·           │
-│                                                                                                             │ │billing/charge.rs:82                          │
-│                                                                                                             │ │                                              │
-│                                                                                                             │ │ESTELLE QUEUE                                 │
-│                                                                                                             │ │drafted repair · Checkout timeout after deploy│
-│                                                                                                             │ │· awaiting human review                       │
-│                                                                                                             │ │       gate absent · awaiting the proposed    │
-│                                                                                                             │ │patch                                         │
-│                                                                                                             │ │                                              │
-│                                                                                                             │ │GITHUB                                        │
-│                                                                                                             │ │Connection state not loaded in this pane.     │
-│                                                                                                             │ │Run estelle github status.                    │
-│                                                                                                             │ │                                              │
-│                                                                                                             │ │                                              │
-│                                                                                                             │ │                                              │
-│                                                                                                             │ │                                              │
-│                                                                                                             │ │                                              │
-└─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ └──────────────────────────────────────────────┘
-┌ ASK ESTELLE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                                                                                                                                              │
-│› Ask Estelle                                                                                                                                                 │
-│                                                                                                                                                              │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-shift+tab change mode  ·  tab move focus  ·  / commands  |  plan  ·  routing auto
+╌╌ session · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌  │  ╌╌ production · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+Ask about uqeu/estelle                                                                            │  APP HEALTH · repo uqeu/estelle
+                                                                                                  │  error counts · ▂▅▃█  14
+Since your last session                                                           ∷               │  measured · 14/3292 requests
+Welcome back - you were last here about 3 hours ago.                                              │  uptime checks · 4/4 up
+Code you touched has changed since:                                         ·   ·   ·   ·         │
+- billing/charge.rs - by Dana, about 2 hours ago - bound retry telemetry                          │  AGENT HEALTH
+                                                                                                  │  State unavailable · no read contract · send POST
+Signed in · khai@fatelabs.ca · team                                                               │  /agent/events.
+Team · Fate Labs · owner                                                                          │
+                                                                                                  │  ESTELLE STATUS
+/review  Read current changes                                                                     │  caught · Checkout timeout after deploy
+/sweep   Index or refresh this repo                                                               │  grouped · 47 event(s) · traced to · billing/charge.rs:82
+?        Show shortcuts                                                                           │
+                                                                                                  │  ESTELLE QUEUE
+                                                                                                  │  drafted repair · Checkout timeout after deploy · awaiting
+                                                                       ⢀ ⣄   ⡀                    │  human review
+                                                            ·   ∷   · ⠈ ⣅⣠⡄⣄⣄⢀⡑ ⢄                 │         gate absent · awaiting the proposed patch
+                                                                   ⠐⠈⠁⢻⢷⣻⣧⣿⣿⣹⣯⣧⣶⡄⡐                │         diff unavailable - unavailable
+  ·       ·       ·       ∷       ·       ∷       ·     ∷ ·       ∷ ⠰⡟⠻⣦⣿⣿⣿⣷⣿⢟⣥⣾⢶⡄⠁     · ∷ ∷     │
+                                                                     ⠃  ⢉⣛⣿⣿⡟⠋⠁ ⠸                 │  GITHUB
+∷   · · ·   · · · · ∷ ∷ ·   · ∷ ·   · · ∷   · · ·   · · ·   ∷ · ·   · ∷ ⠋⠁⢸⠈⠙⠿⠆ ∷   ·   ·   ·     │  Waiting for measured GitHub connection state...
+                                                                          ⠸                       │
+  ∷   ·   ·   ·   ·   ∷   ·   ∷ ∷ ∷   ·   ∷ · ·   · ∷ ·   · · ∷ ∷ ∷ · ·   · · ·   ∷ ∷ ·   · ∷ ·   │
+                               ∷                                                       ∷          │
+· · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · ∷ · · · ·   │
+ ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷                                                            │
+∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ · · ∷ · · · · ∷ · · · · ∷ · · · · ∷   │
+∷  ∷       ∷       ∷       ∷       ∷       ∷       ∷       ∷       ∷                              │
+╌╌ ask · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+› Ask Estelle
+
+
+  ? for shortcuts
+tab focus · shift+tab autonomy · ctrl+t tasks · alt+m context · / commands  |  plan  ·  routing auto

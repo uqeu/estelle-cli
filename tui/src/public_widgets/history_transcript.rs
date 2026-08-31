@@ -13,6 +13,13 @@ use crate::history_cell::HistoryCell;
 use crate::history_cell::PlainHistoryCell;
 use crate::history_cell::new_user_prompt;
 
+/// The design's tool-call glyphs, from `screens.rs`'s `tools` and `everything` screens.
+/// ⚠️ These are the transcript's identity: `⏺` opens a call, `⎿` continues it. They are not
+/// a disclosure control — expansion state is still carried by the click target, not the glyph.
+const TOOL_MARKER: &str = "⏺ ";
+const TOOL_CONTINUATION: &str = "  ⎿  ";
+const TOOL_INDENT: &str = "     ";
+
 /// One committed transcript item rendered by the maintained history-cell machinery.
 pub enum HistoryTranscriptItem {
     /// A user turn with the native filled, wrapped user-message treatment.
@@ -139,8 +146,11 @@ pub fn render_interactive_history_transcript(
                     id,
                     line: rendered.len(),
                 });
+                // The design writes a tool call as `⏺ Task(...)` with an `⎿` continuation —
+                // the glyphs the founder's demo shows and the ones `screens.rs` has always
+                // used. The disclosure triangle was the boxed language.
                 let mut tool_lines = vec![Line::from(vec![
-                    if expanded { "▾ " } else { "▸ " }.into(),
+                    TOOL_MARKER.into(),
                     label.fg(semantic_color),
                     format!(
                         "  ·  {} line{}",
@@ -150,7 +160,16 @@ pub fn render_interactive_history_transcript(
                     .dark_gray(),
                 ])];
                 if expanded {
-                    tool_lines.extend(lines);
+                    tool_lines.extend(lines.into_iter().enumerate().map(|(index, line)| {
+                        let lead = if index == 0 {
+                            TOOL_CONTINUATION
+                        } else {
+                            TOOL_INDENT
+                        };
+                        let mut spans = vec![ratatui::text::Span::from(lead)];
+                        spans.extend(line.spans);
+                        Line::from(spans)
+                    }));
                 }
                 Box::new(PlainHistoryCell::new(tool_lines))
             }
@@ -238,7 +257,12 @@ mod tests {
             Path::new("."),
         );
         let collapsed_debug = format!("{:?}", collapsed.text);
-        assert!(collapsed_debug.contains("▸ "));
+        // ⚠️ THE GLYPH NO LONGER CARRIES THE DISCLOSURE STATE, AND THAT IS A DELIBERATE LOSS.
+        // The design opens every tool call with `⏺` in both states; what distinguishes them is
+        // the `⎿` BODY, which is present only when expanded. The `▸`/`▾` triangle belonged to
+        // the boxed language this renderer no longer speaks.
+        assert!(collapsed_debug.contains("⏺ "), "{collapsed_debug}");
+        assert!(!collapsed_debug.contains("⎿"), "{collapsed_debug}");
         assert!(!collapsed_debug.contains("first"));
         assert_eq!(
             collapsed.interactive_rows,
@@ -257,7 +281,8 @@ mod tests {
             Path::new("."),
         );
         let expanded_debug = format!("{:?}", expanded.text);
-        assert!(expanded_debug.contains("▾ "));
+        assert!(expanded_debug.contains("⏺ "), "{expanded_debug}");
+        assert!(expanded_debug.contains("⎿"), "{expanded_debug}");
         assert!(expanded_debug.contains("first"));
     }
 }

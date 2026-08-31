@@ -5,7 +5,30 @@ use ratatui::text::{Line, Span};
 use crate::cols::{Cell, Col, head, row};
 use crate::theme::Palette;
 
-const PLAN_COLUMNS: &[Col] = &[Col::l(2), Col::l(4), Col::l(45), Col::l(41)];
+/// The catalog's plan table: glyph, state, step, evidence. The two text columns are `45:41`
+/// there, and that ratio is what survives a narrower surface — never the absolute widths, or
+/// the evidence column (the half that makes the plan honest) is the half that gets truncated.
+const PLAN_GLYPH: usize = 2;
+const PLAN_STATE: usize = 4;
+const PLAN_STEP: usize = 45;
+const PLAN_EVIDENCE: usize = 41;
+const PLAN_GAP: usize = 2;
+/// `2 + 2 + 4 + 2 + 45 + 2 + 41`
+pub(crate) const PLAN_WIDTH: usize =
+    PLAN_GLYPH + PLAN_GAP + PLAN_STATE + PLAN_GAP + PLAN_STEP + PLAN_GAP + PLAN_EVIDENCE;
+
+fn plan_columns(width: usize) -> [Col; 4] {
+    let fixed = PLAN_GLYPH + PLAN_GAP + PLAN_STATE + PLAN_GAP + PLAN_GAP;
+    let text = width.saturating_sub(fixed).max(PLAN_GLYPH);
+    let step = (text * PLAN_STEP / (PLAN_STEP + PLAN_EVIDENCE)).max(1);
+    let evidence = text.saturating_sub(step).max(1);
+    [
+        Col::l(PLAN_GLYPH),
+        Col::l(PLAN_STATE),
+        Col::l(step),
+        Col::l(evidence),
+    ]
+}
 
 fn status(status: &str) -> (&'static str, &'static str) {
     match status {
@@ -27,6 +50,14 @@ fn owned(line: Line<'_>) -> Line<'static> {
 }
 
 pub(crate) fn lines(plan: &WorkPlan, palette: &Palette) -> Vec<Line<'static>> {
+    lines_at(plan, palette, PLAN_WIDTH)
+}
+
+/// The plan sized to the surface that will show it. The live session column is narrower than
+/// the catalog's page, and a plan whose evidence column falls off the right edge is a plan
+/// with no evidence in it.
+pub(crate) fn lines_at(plan: &WorkPlan, palette: &Palette, width: usize) -> Vec<Line<'static>> {
+    let columns = plan_columns(width);
     let mut output = vec![
         Line::from(vec![
             Span::styled(
@@ -40,12 +71,7 @@ pub(crate) fn lines(plan: &WorkPlan, palette: &Palette) -> Vec<Line<'static>> {
                 Style::default().fg(palette.dim),
             ),
         ]),
-        head(
-            PLAN_COLUMNS,
-            &["", "state", "step", "evidence"],
-            palette.dim,
-            0,
-        ),
+        head(&columns, &["", "state", "step", "evidence"], palette.dim, 0),
     ];
     for step in &plan.steps {
         let (glyph, state) = status(&step.status);
@@ -61,7 +87,7 @@ pub(crate) fn lines(plan: &WorkPlan, palette: &Palette) -> Vec<Line<'static>> {
             _ => palette.dim,
         };
         output.push(owned(row(
-            PLAN_COLUMNS,
+            &columns,
             &[
                 Cell(glyph, glyph_color),
                 Cell(state, palette.dim),

@@ -40,7 +40,7 @@ fn tool_output_stays_collapsed_until_its_exact_row_is_clicked() {
     });
 
     let collapsed = rendered_frame_at_size(&app, Instant::now(), 100, 24);
-    assert!(collapsed.contains("▸ !cargo test"));
+    assert!(collapsed.contains("⏺ !cargo test"));
     assert!(!collapsed.contains("hidden tool body"));
     let target = app.tool_click_targets.borrow()[0];
 
@@ -71,7 +71,7 @@ fn tool_output_stays_collapsed_until_its_exact_row_is_clicked() {
         },
     );
     let expanded = rendered_frame_at_size(&app, Instant::now(), 100, 24);
-    assert!(expanded.contains("▾ !cargo test"));
+    assert!(expanded.contains("⏺ !cargo test"));
     assert!(expanded.contains("hidden tool body"));
 }
 
