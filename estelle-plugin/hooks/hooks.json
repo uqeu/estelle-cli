@@ -8,7 +8,7 @@
           {
             "type": "command",
             "command": "npx -y @fatelabs/estelle@0 hook ground",
-            "timeout": 15,
+            "timeout": 30,
             "statusMessage": "Estelle hook ground"
           }
         ]
@@ -32,7 +32,7 @@
           {
             "type": "command",
             "command": "npx -y @fatelabs/estelle@0 hook sync",
-            "timeout": 20,
+            "timeout": 30,
             "async": true,
             "statusMessage": "Estelle hook sync"
           }
@@ -105,7 +105,7 @@
           {
             "type": "command",
             "command": "npx -y @fatelabs/estelle@0 hook context",
-            "timeout": 10,
+            "timeout": 30,
             "statusMessage": "Estelle hook context"
           }
         ]
