@@ -171,36 +171,20 @@ const GRAFT_HELP: &[(&str, &str)] = &[
     ("grep", "search code with server-side structure"),
     ("permissions", "view the effective autonomy boundary"),
     ("keymap", "composer keymap status"),
-    ("approve", "approval ownership status"),
+
     ("review", "run Estelle's grounded merge gate"),
-    ("rename", "session-title ownership status"),
-    ("new", "new-session ownership status"),
-    ("archive", "archive ownership status"),
-    ("delete", "delete-session ownership status"),
-    ("fork", "fork-session ownership status"),
+
     (
         "compact",
         "ask Guardian for a bounded replacement projection",
     ),
-    ("goal", "long-running goal ownership status"),
-    ("side", "ephemeral side-question ownership status"),
-    ("btw", "ephemeral side-question ownership status"),
+
     ("diff", "show the local working-tree diff"),
-    ("feedback", "feedback transport ownership status"),
-    ("ps", "background process ownership status"),
-    ("stop", "background process ownership status"),
+
     ("task", "view server orchestra work"),
     // Kimi interaction surfaces not already present above.
     ("version", "show this Estelle build"),
-    ("editor", "external-editor ownership status"),
-    ("changelog", "release-note ownership status"),
-    ("add-dir", "additional-directory ownership status"),
-    ("export", "session export ownership status"),
-    ("web", "web application ownership status"),
-    ("vis", "trace visualizer ownership status"),
-    ("upgrade", "upgrade ownership status"),
-    ("yolo", "deleted unbounded-approval mode"),
-    ("afk", "deleted unattended local-agent mode"),
+
 ];
 
 #[cfg(test)]
@@ -403,7 +387,6 @@ pub(crate) fn inherited_command_lines(name: &str) -> Option<Vec<String>> {
         vec![
             format!("/{name} is owned by {owner}."),
             command.to_string(),
-            "Nothing was inferred from an inherited Codex backend.".to_string(),
         ]
     };
     match name {
