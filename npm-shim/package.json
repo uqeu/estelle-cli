@@ -1,20 +1,21 @@
 {
   "name": "@fatelabs/estelle",
   "version": "0.2.32",
-  "description": "Estelle \u2014 the trust layer under your AI coding agents. Grounds every model in your real codebase and refuses to ship what isn't true.",
+  "description": "The trust layer under your AI coding agents. Grounds every model in your real codebase and refuses to ship what isn't true: repository memory, a deterministic grounding gate, and grounded review. Model-agnostic, BYOK.",
   "bin": {
     "estelle": "bin/estelle.js"
   },
   "files": [
     "bin",
     "install.js",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=18"
   },
   "license": "Apache-2.0",
-  "homepage": "https://fatelabs.ca",
+  "homepage": "https://www.fatelabs.ca/docs/install",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/uqeu/estelle-cli.git"
@@ -29,20 +30,22 @@
   },
   "keywords": [
     "ai",
+    "ai-agents",
     "coding-agent",
     "llm",
     "hallucination",
+    "grounding",
     "code-grounding",
+    "codebase-memory",
+    "code-search",
+    "code-review",
     "static-analysis",
-    "memory",
     "mcp",
     "acp",
-    "claude",
-    "codex",
+    "claude-code",
     "developer-tools",
     "cli",
     "byok",
-    "code-review",
     "secret-scanning"
   ],
   "bugs": {
