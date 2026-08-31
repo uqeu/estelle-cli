@@ -140,9 +140,19 @@ check("one server, with the pinned name", list(servers) == [MCP_SERVER_NAME], st
 entry = servers.get(MCP_SERVER_NAME) or {}
 check("server is remote http", entry.get("type") == "http", str(entry.get("type")))
 check("server url is the hosted endpoint", entry.get("url") == MCP_URL, str(entry.get("url")))
-check("authorization EXPANDS from the environment, never a literal key",
-      entry.get("headers", {}).get("Authorization") == "Bearer ${ESTELLE_API_KEY}")
-check("nothing unexplained rides along", set(entry) == {"type", "url", "headers"}, str(set(entry)))
+# 🔴 THIS CLAUSE USED TO DEMAND THE OPPOSITE, AND IT WAS LEFT BEHIND BY THE FIX IT GUARDS.
+# Until 2026-08-31 it asserted `Authorization: Bearer ${ESTELLE_API_KEY}` — the exact header
+# 2ee1454c4 deleted from `estelle-plugin/.mcp.json` the day before, because a `${VAR}` in a plugin
+# manifest is expanded by a SHELL and the GUI installer never runs one: the placeholder reaches the
+# server as a literal bearer token and authentication fails for every marketplace install. That
+# commit changed the manifest and NOTHING ELSE, so this release gate was left asserting the defect,
+# and `release.yml`'s validate job would have refused v0.2.32 on a correct manifest.
+# ⚠️ The clause is INVERTED, not deleted: a header re-appearing here is still a shipping defect, so
+# the promise it now pins is that the door carries NO credential at all and negotiates OAuth, which
+# is the only credential path a GUI installer can complete.
+check("the door carries NO credential — a ${VAR} a GUI cannot expand is worse than none",
+      "headers" not in entry, str(sorted(entry)))
+check("nothing unexplained rides along", set(entry) == {"type", "url"}, str(set(entry)))
 check("no live key value is committed",
       "estelle_live_" not in json.dumps(mcp) and "estelle_live_" not in json.dumps(manifest))
 

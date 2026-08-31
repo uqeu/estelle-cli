@@ -84,28 +84,79 @@ instead of 2**. The retaining merge restores the required 2 and uninstall reprod
 
 ## Live customer-visible proof
 
-These are the literal JSON frames emitted by the real Rust binary against production.
+These are the literal JSON frames emitted by the real Rust binary against production. The four grounding
+lines and the two transport lines below were **re-measured on 2026-08-31** after the wording was rewritten
+(see "The line the founder reads" below); the earlier `Estelle FLAGGED` / `Estelle PASSED` /
+`Estelle ABSTAINED` / `Estelle UNREACHABLE` spellings are history, not current output.
 
 Fabricated symbol in swept `uqeu/estelle`:
 
 ```json
-{"systemMessage":"Estelle FLAGGED p4_probe.py: not defined in this repo: GhostScopeP4","hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"Estelle's grounding gate FLAGGED this edit to p4_probe.py: not defined in this repo: GhostScopeP4. The finding is advisory because the server does not yet attest index freshness."}}
+{"systemMessage":"Estelle flagged p4_probe.py: not defined in this repo: GhostScopeP4. Edit not blocked.","hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"Estelle's grounding gate flagged this edit to p4_probe.py: not defined in this repo: GhostScopeP4. NOT BLOCKED, and the reason is freshness rather than doubt about the finding: the server does not yet attest that the index is current for this file, so a flagged symbol may be one it has not seen yet. Treat it as unverified, not as absent."}}
 ```
 
 Real symbol in the same repo:
 
 ```json
-{"systemMessage":"Estelle PASSED p4_probe.py: grounded against uqeu/estelle."}
+{"systemMessage":"Estelle checked p4_probe.py: grounded against uqeu/estelle."}
 ```
 
-The same real symbol scoped to fresh, unswept `uqeu/estelle-p4-unswept-cKKEB6`:
+Real symbol called with the wrong arity — the same run, so the gate is doing arity as well as existence:
 
 ```json
-{"systemMessage":"Estelle ABSTAINED on p4_probe.py: this repo has not been swept — nothing to ground against","hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"Estelle's grounding gate ABSTAINED on this edit to p4_probe.py: this repo has not been swept — nothing to ground against. This is not a pass; no symbol in this edit was certified."}}
+{"systemMessage":"Estelle flagged p4_probe.py: signature mismatch: resolve_grounding_scope() missing required positional argument(s): expected at least 3, got 0. Edit not blocked."}
 ```
 
-Each process exited `0`: P4 is advisory by default, but the three states are not visually or structurally
+An abstention (a repo with nothing to ground against) reads:
+
+```json
+{"systemMessage":"Estelle could not verify p4_probe.py: this repo has not been swept — nothing to ground against. Edit not blocked.","hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"Estelle's grounding gate ABSTAINED on this edit to p4_probe.py: this repo has not been swept — nothing to ground against. This is NOT a pass - no symbol in this edit was checked, and the edit was ALLOWED to proceed anyway. Do not treat any API used here as confirmed to exist."}}
+```
+
+Each process exited `0`: P4 is advisory by default, but the states are not visually or structurally
 interchangeable.
+
+## The line the founder reads
+
+🔴 **"UNREACHABLE" WAS ONE WORD FOR FOUR OPPOSITE FACTS, AND IT NAMED THE WRONG ONE.** A deadline the
+client chose, a refused connection, a name that does not resolve, a missing credential and a server that
+ANSWERED with a status all printed `Estelle UNREACHABLE - {file} was NOT grounded: {error}`. Measured
+2026-08-31: production answered `/health` 200 in 0.303s / 0.305s / 0.299s while the hook called it
+unreachable, and the founder read it as an outage and lost the afternoon. Three of those five facts are
+not an outage at all, and they send a reader to different systems.
+
+The two transport frames, both taken live from this binary against `api.fatelabs.ca` on 2026-08-31:
+
+```json
+{"systemMessage":"Estelle did not check billing.py: answered and declined (http 401) — the server is reachable. Edit not blocked."}
+{"systemMessage":"Estelle did not check billing.py: has no usable credential on this machine (run estelle login, or estelle doctor to see why). Edit not blocked."}
+```
+
+What 0.2.31 printed for those same two runs, same host, same second:
+
+```json
+{"systemMessage":"Estelle UNREACHABLE - billing.py was NOT grounded: Estelle returned HTTP 401 Unauthorized: unknown or missing api key — the credential was rejected on verify and no stored credential was removed; a single rejection can be route scope, not a bad key. If you passed --key, check that key; otherwise run estelle login only if you revoked it."}
+{"systemMessage":"Estelle UNREACHABLE - billing.py was NOT grounded: no Estelle credential is configured"}
+```
+
+Three defects in one line, all fixed: the **subject** was wrong (a 401 is a server that answered), the
+**subject was stated three times** ("UNREACHABLE", "was NOT grounded", and again inside the error), and
+the **raw error text was interpolated** — `reqwest`'s own `Display` is `error sending request for url
+(https://…)`, so a transport failure put the endpoint and anything in its query string into the
+customer's terminal and their on-disk transcript.
+
+`classify_transport_failure` names timeout / refused / dns / http NNN / bad-response / cancelled, and
+returns **none of the error's own text**. The DNS and refused branches are separated by a measured fact
+rather than by matching prose: a refused connection ends its source chain in an `io::Error` of kind
+`ConnectionRefused` carrying `errno 61`, while `getaddrinfo` reports through `gai_strerror` and sets no
+`errno` at all. A resolver that did set one would fall through to "could not be reached", which
+understates the failure rather than misnaming it.
+
+⚠️ **LIMIT.** The `timeout` branch is very hard to reach from the plugin: the client deadline is
+`estelle_client::DEFAULT_TIMEOUT` (300s) while `estelle-plugin/hooks/hooks.json` gives `hook ground` a
+**15s** host budget, and the measured `/gate` latency on 2026-08-31 was **16.6s**. The host kills the hook
+first, and no message of ours is printed at all. Raising that host budget is a separate change and is not
+made here.
 
 ## Measurements and corrections
 

@@ -186,6 +186,149 @@ struct GroundVerdict {
     detail: String,
 }
 
+/// 🔴 "UNREACHABLE" WAS ONE WORD FOR FOUR OPPOSITE FACTS, AND IT NAMED THE WRONG ONE.
+///
+/// A deadline WE chose, a refused connection, a name that does not resolve and a server that
+/// ANSWERED with a status all printed `Estelle UNREACHABLE`, and three of the four are not an
+/// outage at all. Measured 2026-08-31: prod answered `/health` 200 in 0.303s / 0.305s / 0.299s
+/// while the hook called it unreachable — the founder read it as an outage and lost the
+/// afternoon. A timeout is a claim about OUR patience; unreachable is a claim about THEIR
+/// liveness, and the two send a reader to different systems.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TransportFailure {
+    /// We hung up on a live request. Raise the budget, or make the server faster.
+    Timeout,
+    /// Nothing is listening on that port. Start it, or fix the configured URL.
+    Refused,
+    /// The host name does not resolve. Check the URL and the network.
+    Dns,
+    /// The server ANSWERED and declined. It is reachable; read the status.
+    Http(u16),
+    /// It answered with something this hook could not parse.
+    BadResponse,
+    /// The caller stood the request down. Nothing at all is known about the server.
+    Cancelled,
+    /// Nothing above could be established — and this branch never claims more than that.
+    Unknown,
+}
+
+/// How far to walk an error's `source()` chain before giving up (Power of Ten #2: every loop has
+/// a fixed, stated bound, and the bound is a named constant). The measured `reqwest` connect
+/// chain is four frames deep.
+const TRANSPORT_CAUSE_DEPTH: usize = 8;
+
+/// A missing or unusable credential is NOT an outage, and it used to print the same
+/// `Estelle UNREACHABLE` line as a dead server — the worst wrong subject in the set, because it
+/// sends the reader to the server when the fix is on their own machine.
+///
+/// ⚠️ The resolver's own message is deliberately not interpolated: `Error::CredentialIo` wraps an
+/// `io::Error` that can carry a local path, and this line goes into a customer's terminal and
+/// their transcript. `estelle doctor` names which of the credential failures it was.
+const NO_CREDENTIAL_DETAIL: &str =
+    "has no usable credential on this machine (run estelle login, or estelle doctor to see why)";
+
+/// Name the transport failure in words a reader can act on.
+///
+/// Pure — it reads only the typed error, so it is unit-checked without a socket — and it NEVER
+/// returns any of the error's own text: `reqwest`'s `Display` is literally
+/// `error sending request for url (…)`, and a URL carries a query string.
+fn classify_transport_failure(error: &Error) -> TransportFailure {
+    match error {
+        Error::Http { status, .. } => TransportFailure::Http(status.as_u16()),
+        Error::Json(_) | Error::EmptyResponse | Error::InvalidProgressStream => {
+            TransportFailure::BadResponse
+        }
+        Error::Cancelled => TransportFailure::Cancelled,
+        Error::Transport(transport) => classify_reqwest_failure(transport),
+        // Everything else is a credential or a request-construction fault. Saying "could not be
+        // reached" understates it; inventing a network cause for it would misname it.
+        _ => TransportFailure::Unknown,
+    }
+}
+
+/// MEASURED, not assumed (`reqwest` 0.12.28, macOS, 2026-08-31): a refused connection ends its
+/// source chain in `io::ErrorKind::ConnectionRefused` carrying `errno 61`; a name that does not
+/// resolve ends it in an `Uncategorized` `io::Error` with **no OS errno at all**, because
+/// `getaddrinfo` reports through `gai_strerror` and never sets `errno`. That absence is the
+/// discriminator — a fact about the error, not a match on its prose, which would rot on the next
+/// `hyper` release.
+///
+/// ⚠️ LIMIT, stated rather than hidden: a resolver that reported through `errno` would fall
+/// through to `Unknown` ("could not be reached"). That understates the failure instead of
+/// misnaming it, which is the safe direction to be wrong in — and it is the whole point here.
+fn classify_reqwest_failure(error: &reqwest::Error) -> TransportFailure {
+    if error.is_timeout() {
+        return TransportFailure::Timeout;
+    }
+    if error.is_decode() {
+        return TransportFailure::BadResponse;
+    }
+    let cause = transport_io_cause(error);
+    match cause.map(std::io::Error::kind) {
+        Some(std::io::ErrorKind::ConnectionRefused) => TransportFailure::Refused,
+        Some(std::io::ErrorKind::TimedOut) => TransportFailure::Timeout,
+        _ if error.is_connect() && cause.is_some_and(|io| io.raw_os_error().is_none()) => {
+            TransportFailure::Dns
+        }
+        _ => TransportFailure::Unknown,
+    }
+}
+
+/// The first `io::Error` under a transport error — the only frame in the chain carrying a
+/// machine-readable fact rather than prose. The walk is bounded, so a deep or cyclic chain
+/// cannot hang a hook that runs before every edit.
+fn transport_io_cause(error: &reqwest::Error) -> Option<&std::io::Error> {
+    let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    for _ in 0..TRANSPORT_CAUSE_DEPTH {
+        let current = cause?;
+        if let Some(io) = current.downcast_ref::<std::io::Error>() {
+            return Some(io);
+        }
+        cause = current.source();
+    }
+    None
+}
+
+/// THE ONE PLACE a transport error becomes words a customer reads — so there is exactly one line
+/// to audit for rule 3, and exactly one line a mutation has to break to prove the guard bites.
+///
+/// 🔴 IT TAKES THE ERROR AND RETURNS NONE OF ITS TEXT. `reqwest`'s `Display` is
+/// `error sending request for url (https://…?…)`; the old call sites interpolated that straight
+/// into `systemMessage`, putting the endpoint and anything in its query into the customer's
+/// terminal and their on-disk transcript.
+fn transport_failure_detail(error: &Error) -> String {
+    transport_detail(classify_transport_failure(error))
+}
+
+/// The human half of a transport failure, saying WHOSE problem it is.
+///
+/// ⚠️ EVERY BRANCH IS A PREDICATE, never a sentence starting with "Estelle" — the callers
+/// interpolate it after their own subject, and the first live line of the Python fix read
+/// "Estelle Estelle answered and declined (http 429)". A fragment that assumes it begins the
+/// sentence is a fragment that will be pasted into the middle of one.
+fn transport_detail(failure: TransportFailure) -> String {
+    match failure {
+        // The deadline named is OURS, and the word "client" says so: the plugin host kills the
+        // hook on its own, shorter budget long before this one can fire.
+        TransportFailure::Timeout => format!(
+            "did not answer within the {}s client deadline (it may be up but slow — check /admin/load)",
+            estelle_client::DEFAULT_TIMEOUT.as_secs()
+        ),
+        TransportFailure::Refused => {
+            "is not listening at the configured URL (connection refused)".to_string()
+        }
+        TransportFailure::Dns => "has a host name that does not resolve (DNS)".to_string(),
+        TransportFailure::Http(status) => {
+            format!("answered and declined (http {status}) — the server is reachable")
+        }
+        TransportFailure::BadResponse => {
+            "answered with something this hook could not parse".to_string()
+        }
+        TransportFailure::Cancelled => "was asked to stop before it answered".to_string(),
+        TransportFailure::Unknown => "could not be reached".to_string(),
+    }
+}
+
 async fn run_hook(
     mode: &str,
     expected_event: Option<&str>,
@@ -806,6 +949,49 @@ fn ground_request_body(code: &str) -> Value {
     json!({"answer": code})
 }
 
+/// The customer-facing line and the model-facing context for one grounding verdict.
+///
+/// ONE SENTENCE EACH, SENTENCE CASE, AND THE SUBJECT STATED EXACTLY ONCE.
+/// `Estelle UNREACHABLE - billing.py was NOT grounded: {error}` said the same thing three times,
+/// named the wrong fact of four, and pasted `reqwest`'s own `error sending request for url (…)`
+/// — endpoint, query string and all — into the customer's terminal and their transcript.
+///
+/// Split out of `ground_hook` so the wording is checked without a socket or a credential: the
+/// hook itself now only decides WHICH verdict, and this decides how it reads.
+fn ground_report(
+    verdict: &GroundVerdict,
+    name: &str,
+    path: &str,
+    repo: &Repo,
+) -> (String, Option<String>) {
+    let detail = verdict.detail.as_str();
+    match verdict.kind {
+        GroundKind::Unreachable => (
+            format!("Estelle did not check {name}: {detail}. Edit not blocked."),
+            None,
+        ),
+        // ADVISORY, AND IT SAYS SO. This branch lets the edit through, which is a real decision
+        // and not an oversight — but "could not verify" printed as a bare warning was the worst
+        // of both: loud enough to look like a guard, silent about the fact that nothing stopped.
+        GroundKind::Unverified => (
+            format!("Estelle could not verify {name}: {detail}. Edit not blocked."),
+            Some(format!(
+                "Estelle's grounding gate ABSTAINED on this edit to {path}: {detail}. This is NOT a pass - no symbol in this edit was checked, and the edit was ALLOWED to proceed anyway. Do not treat any API used here as confirmed to exist."
+            )),
+        ),
+        GroundKind::Flagged => (
+            format!("Estelle flagged {name}: {detail}. Edit not blocked."),
+            Some(format!(
+                "Estelle's grounding gate flagged this edit to {path}: {detail}. NOT BLOCKED, and the reason is freshness rather than doubt about the finding: the server does not yet attest that the index is current for this file, so a flagged symbol may be one it has not seen yet. Treat it as unverified, not as absent."
+            )),
+        ),
+        GroundKind::Clean => (
+            format!("Estelle checked {name}: grounded against {repo}."),
+            None,
+        ),
+    }
+}
+
 async fn ground_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>, String> {
     let (path, code) = edited_file(payload);
     if !path.ends_with(".py") || code.trim().is_empty() {
@@ -815,61 +1001,26 @@ async fn ground_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>, 
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(path.as_str());
-    let api = match Api::resolve() {
-        Ok(api) => api,
-        Err(error) => {
-            return Ok(vec![hook_message(
-                Some(format!(
-                    "Estelle UNREACHABLE - {name} was NOT grounded: {error}"
-                )),
-                None,
-                "PreToolUse",
-            )]);
-        }
+    let verdict = match Api::resolve() {
+        // The resolver's own message is NOT interpolated — it is not a transport fact, and
+        // `Error::CredentialIo` can carry a local path. See `NO_CREDENTIAL_DETAIL`.
+        Err(_) => GroundVerdict {
+            kind: GroundKind::Unreachable,
+            detail: NO_CREDENTIAL_DETAIL.to_string(),
+        },
+        Ok(api) => match api
+            .post_scoped_typed(Endpoint::Verify, repo, &ground_request_body(&code))
+            .await
+        {
+            Ok(report) => ground_verdict(Some(&report)),
+            // The TYPED error, classified into a fact — never its formatted text.
+            Err(error) => GroundVerdict {
+                kind: GroundKind::Unreachable,
+                detail: transport_failure_detail(&error),
+            },
+        },
     };
-    let report = match api
-        .post_scoped(Endpoint::Verify, repo, &ground_request_body(&code))
-        .await
-    {
-        Ok(report) => report,
-        Err(error) => {
-            return Ok(vec![hook_message(
-                Some(format!(
-                    "Estelle UNREACHABLE - {name} was NOT grounded: {error}"
-                )),
-                None,
-                "PreToolUse",
-            )]);
-        }
-    };
-    let verdict = ground_verdict(Some(&report));
-    let (message, context) = match verdict.kind {
-        GroundKind::Unreachable => (
-            format!(
-                "Estelle UNREACHABLE - {name} was NOT grounded: {}",
-                verdict.detail
-            ),
-            None,
-        ),
-        GroundKind::Unverified => (
-            format!("Estelle ABSTAINED on {name}: {}", verdict.detail),
-            Some(format!(
-                "Estelle's grounding gate ABSTAINED on this edit to {path}: {}. This is not a pass; no symbol in this edit was certified.",
-                verdict.detail
-            )),
-        ),
-        GroundKind::Flagged => (
-            format!("Estelle FLAGGED {name}: {}", verdict.detail),
-            Some(format!(
-                "Estelle's grounding gate FLAGGED this edit to {path}: {}. The finding is advisory because the server does not yet attest index freshness.",
-                verdict.detail
-            )),
-        ),
-        GroundKind::Clean => (
-            format!("Estelle PASSED {name}: grounded against {repo}."),
-            None,
-        ),
-    };
+    let (message, context) = ground_report(&verdict, name, &path, repo);
     Ok(vec![hook_message(Some(message), context, "PreToolUse")])
 }
 
@@ -1033,9 +1184,12 @@ fn hook_message(message: Option<String>, context: Option<String>, event: &str) -
 
 fn ground_verdict(report: Option<&Value>) -> GroundVerdict {
     let Some(report) = report else {
+        // No report and no classified failure: the honest floor, identical to the Python hook's
+        // `_transport_detail()` with nothing recorded. It never says "unreachable", which is a
+        // claim about the server that this branch has no evidence for.
         return GroundVerdict {
             kind: GroundKind::Unreachable,
-            detail: "unreachable".to_string(),
+            detail: transport_detail(TransportFailure::Unknown),
         };
     };
     if let Some(error) = report.get("error").filter(|value| json_truthy(value)) {
@@ -1558,6 +1712,21 @@ impl Api {
             .post_scoped(endpoint, repo, body, &self.cancel)
             .await;
         self.finish(result, endpoint.path())
+    }
+
+    /// The TYPED error, for the one caller that must say WHICH transport failure happened.
+    ///
+    /// `finish` formats an error for display, and a formatted `String` is both unclassifiable
+    /// (a timeout and a 429 become the same prose) and URL-bearing. The hook needs the fact.
+    async fn post_scoped_typed(
+        &self,
+        endpoint: Endpoint,
+        repo: &Repo,
+        body: &Value,
+    ) -> Result<Value, Error> {
+        self.client
+            .post_scoped(endpoint, repo, body, &self.cancel)
+            .await
     }
 
     async fn put(&self, endpoint: Endpoint, body: &Value) -> Result<Value, String> {
@@ -3858,7 +4027,7 @@ mod tests {
             json!({"unverified_reason": "surface too thin", "ungrounded": ["x"]}),
         ];
         let recorded = [
-            ("unreachable", "unreachable"),
+            ("unreachable", "could not be reached"),
             ("unreachable", "could not verify (no provider key)"),
             ("unreachable", "could not verify (refused)"),
             ("unreachable", "could not verify (refused)"),
@@ -3893,6 +4062,236 @@ mod tests {
                 &json!([expected_kind, expected_detail]),
             );
         }
+    }
+
+    /// Every kind of transport failure the ground hook can meet, and the fact each one asserts.
+    /// The four this used to collapse into the single word "unreachable" send a reader to four
+    /// different systems, so a wrong one costs an afternoon (2026-08-31: prod answered `/health`
+    /// 200 in 0.30s three times while the hook called it unreachable).
+    #[test]
+    fn transport_failures_are_classified_not_collapsed() {
+        let cases: Vec<(Error, TransportFailure)> = vec![
+            (
+                Error::Http {
+                    status: reqwest::StatusCode::TOO_MANY_REQUESTS,
+                    message: "too many concurrent requests".to_string(),
+                },
+                TransportFailure::Http(429),
+            ),
+            (
+                Error::Http {
+                    status: reqwest::StatusCode::SERVICE_UNAVAILABLE,
+                    message: "database connection pool exhausted".to_string(),
+                },
+                TransportFailure::Http(503),
+            ),
+            (
+                Error::Json(
+                    serde_json::from_str::<Value>("{not json").expect_err("malformed fixture"),
+                ),
+                TransportFailure::BadResponse,
+            ),
+            (Error::EmptyResponse, TransportFailure::BadResponse),
+            (
+                Error::InvalidProgressStream,
+                TransportFailure::BadResponse,
+            ),
+            (Error::Cancelled, TransportFailure::Cancelled),
+            (Error::NoCredential, TransportFailure::Unknown),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(
+                classify_transport_failure(&error),
+                expected,
+                "{error:?} was classified wrongly"
+            );
+        }
+    }
+
+    /// The three socket-level shapes, taken from REAL `reqwest` errors rather than a hand-rolled
+    /// double — the classifier reads `is_timeout()` and the `io::Error` at the bottom of the
+    /// source chain, and a fake that returned either would model a library we do not ship.
+    /// ⚠️ LIMIT: the DNS case needs a resolver that honours RFC 2606 `.invalid` (it must NOT
+    /// answer). A wildcard-hijacking resolver turns it into a connect failure and this goes red;
+    /// that is the correct direction to be wrong in.
+    #[tokio::test]
+    async fn live_socket_failures_are_named_by_the_classifier() {
+        let client = reqwest::Client::new();
+        // Port 1 on loopback: nothing listens, the kernel refuses, no network is touched.
+        let refused = client
+            .get("http://127.0.0.1:1/verify")
+            .send()
+            .await
+            .expect_err("port 1 must refuse");
+        assert_eq!(
+            classify_transport_failure(&Error::Transport(refused)),
+            TransportFailure::Refused
+        );
+        let dns = client
+            .get("http://estelle-no-such-host.invalid/verify")
+            .send()
+            .await
+            .expect_err(".invalid must not resolve");
+        assert_eq!(
+            classify_transport_failure(&Error::Transport(dns)),
+            TransportFailure::Dns
+        );
+        // 10.255.255.1 black-holes rather than refusing, so the client's own deadline fires.
+        let slow = reqwest::Client::builder()
+            .timeout(Duration::from_millis(1))
+            .build()
+            .expect("client");
+        let timeout = slow
+            .get("http://10.255.255.1/verify")
+            .send()
+            .await
+            .expect_err("a 1ms deadline must fire");
+        assert_eq!(
+            classify_transport_failure(&Error::Transport(timeout)),
+            TransportFailure::Timeout
+        );
+    }
+
+    /// 🔴 EVERY DETAIL IS A PREDICATE, NEVER A SENTENCE. The callers interpolate it after their
+    /// own subject, and the first live Python line read "Estelle Estelle answered and declined
+    /// (http 429)". A fragment that assumes it begins the sentence gets pasted into the middle
+    /// of one.
+    #[test]
+    fn transport_details_are_predicates_that_never_repeat_the_subject() {
+        let failures = [
+            TransportFailure::Timeout,
+            TransportFailure::Refused,
+            TransportFailure::Dns,
+            TransportFailure::Http(429),
+            TransportFailure::BadResponse,
+            TransportFailure::Cancelled,
+            TransportFailure::Unknown,
+        ];
+        let mut seen = BTreeSet::new();
+        for failure in failures {
+            let detail = transport_detail(failure);
+            assert!(!detail.is_empty(), "{failure:?} produced no detail");
+            assert!(
+                !detail.contains("Estelle"),
+                "{failure:?} repeats the subject: {detail}"
+            );
+            assert!(
+                !detail.ends_with('.'),
+                "{failure:?} is a sentence, not a predicate: {detail}"
+            );
+            assert!(
+                detail.starts_with(char::is_lowercase),
+                "{failure:?} starts a sentence: {detail}"
+            );
+            assert!(seen.insert(detail), "{failure:?} shares another's wording");
+        }
+    }
+
+    /// An HTTP status means the server ANSWERED and DECLINED — the opposite of unreachable, and
+    /// the exact confusion that cost the afternoon. The line must say so in words.
+    #[test]
+    fn an_http_status_says_the_server_is_reachable() {
+        let detail = transport_detail(TransportFailure::Http(429));
+        assert!(detail.contains("http 429"), "{detail}");
+        assert!(detail.contains("the server is reachable"), "{detail}");
+        assert!(
+            !detail.contains("unreachable"),
+            "an answered request is not unreachable: {detail}"
+        );
+        assert!(
+            transport_detail(TransportFailure::Refused).contains("refused"),
+            "a refused connection must say so"
+        );
+    }
+
+    /// 🔴 A TRANSPORT ERROR CARRIES THE URL AND A URL CARRIES A QUERY STRING. `reqwest`'s own
+    /// Display is literally `error sending request for url (http://…)`, so the old
+    /// `"...: {error}"` put the endpoint — and anything in its query — into the customer's
+    /// terminal and their transcript. Proven against a REAL error, not a stub.
+    #[tokio::test]
+    async fn no_user_visible_line_carries_the_raw_error_text() {
+        let raw = reqwest::Client::new()
+            .get("http://127.0.0.1:1/verify?account=secret-account-id")
+            .send()
+            .await
+            .expect_err("port 1 must refuse");
+        assert!(
+            raw.to_string().contains("secret-account-id"),
+            "fixture is inert: reqwest no longer echoes the URL, so this guard proves nothing"
+        );
+        let detail = transport_failure_detail(&Error::Transport(raw));
+        let repo = Repo::new("acme/widgets").expect("repo");
+        let verdict = GroundVerdict {
+            kind: GroundKind::Unreachable,
+            detail,
+        };
+        let (message, context) = ground_report(&verdict, "billing.py", "src/billing.py", &repo);
+        for line in [Some(message), context].into_iter().flatten() {
+            assert!(!line.contains("secret-account-id"), "leaked URL: {line}");
+            assert!(!line.contains("127.0.0.1"), "leaked host: {line}");
+            assert!(!line.contains("http://"), "leaked scheme: {line}");
+        }
+    }
+
+    /// The four customer-facing lines, whole. One sentence each, sentence case, no emoji, and the
+    /// subject stated exactly once — "Estelle UNREACHABLE - billing.py was NOT grounded: …" said
+    /// the same thing three times and named the wrong fact.
+    #[test]
+    fn the_customer_facing_lines_state_the_subject_once() {
+        let repo = Repo::new("acme/widgets").expect("repo");
+        let cases = [
+            (
+                GroundKind::Unreachable,
+                "answered and declined (http 429) — the server is reachable",
+                "Estelle did not check billing.py: answered and declined (http 429) — the server is reachable. Edit not blocked.",
+            ),
+            (
+                GroundKind::Unverified,
+                "grounding surface too thin",
+                "Estelle could not verify billing.py: grounding surface too thin. Edit not blocked.",
+            ),
+            (
+                GroundKind::Flagged,
+                "not defined in this repo: frobnicate",
+                "Estelle flagged billing.py: not defined in this repo: frobnicate. Edit not blocked.",
+            ),
+            (
+                GroundKind::Clean,
+                "",
+                "Estelle checked billing.py: grounded against acme/widgets.",
+            ),
+        ];
+        for (kind, detail, expected) in cases {
+            let verdict = GroundVerdict {
+                kind,
+                detail: detail.to_string(),
+            };
+            let (message, _) = ground_report(&verdict, "billing.py", "src/billing.py", &repo);
+            assert_eq!(message, expected);
+            assert_eq!(
+                message.matches("Estelle").count(),
+                1,
+                "the subject is stated more than once: {message}"
+            );
+            assert!(
+                message
+                    .chars()
+                    .all(|glyph| !('\u{2190}'..='\u{2BFF}').contains(&glyph)
+                        && !('\u{1F000}'..='\u{1FAFF}').contains(&glyph)),
+                "no emoji and no warning glyph: {message}"
+            );
+        }
+    }
+
+    /// A missing credential is not an outage. It used to print the same "Estelle UNREACHABLE"
+    /// line as a dead server — the worst wrong subject in the set, because it sends the reader
+    /// to the server when the fix is on their own machine.
+    #[test]
+    fn a_missing_credential_is_not_reported_as_an_outage() {
+        assert!(!NO_CREDENTIAL_DETAIL.contains("Estelle"));
+        assert!(!NO_CREDENTIAL_DETAIL.contains("unreachable"));
+        assert!(NO_CREDENTIAL_DETAIL.contains("credential"));
+        assert!(NO_CREDENTIAL_DETAIL.contains("estelle login"));
     }
 
     /// The guard fixtures, verbatim from the retiring Python↔JS contract

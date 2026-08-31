@@ -5827,7 +5827,13 @@ async fn main() -> ExitCode {
         return leaked::run();
     }
     if matches!(args.command, Some(Command::Version)) {
-        println!("estelle {}", env!("CARGO_PKG_VERSION"));
+        // REASON for the expect: the crate-level `deny` exists so nothing writes over the TUI's
+        // alternate screen. `estelle version` runs before any terminal is claimed and printing the
+        // version to stdout is the entire command — a scripted `estelle version | ...` depends on it.
+        #[expect(clippy::print_stdout, reason = "`estelle version` IS a stdout command")]
+        {
+            println!("estelle {}", env!("CARGO_PKG_VERSION"));
+        }
         return ExitCode::SUCCESS;
     }
     if let Some(Command::Upgrade { check }) = args.command {
@@ -5958,6 +5964,9 @@ async fn main() -> ExitCode {
         // and exits 0; given a terminal it correctly waits for a client that will never type. To the
         // person who just ran it, silence and a hang are the same observation — so say which it is.
         // stderr, not stdout: stdout is the protocol channel and must stay clean.
+        // REASON for the expect: same deny, same exemption. This runs before any terminal is
+        // claimed, and stderr is deliberate — stdout is the ACP protocol channel and must stay clean.
+        #[expect(clippy::print_stderr, reason = "the ACP notice must not enter the stdout protocol")]
         if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
             eprintln!(
                 "estelle acp is a protocol server, not an interactive command. It is now waiting for \

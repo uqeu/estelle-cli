@@ -878,7 +878,7 @@ mod tests {
             "Estelle keys begin with estelle_live_".to_string(),
             "classic OpenAI keys begin with sk-".to_string(),
             format!("sk-{}", "aB3x".repeat(11)), // 44, not the exact 48-character body
-            format!("sk-{}x", classic_body),     // 49, not the exact shape
+            format!("sk-{classic_body}x"),       // 49, not the exact shape
         ] {
             assert!(
                 find_secret_shapes(&text).is_empty(),
