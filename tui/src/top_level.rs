@@ -374,6 +374,15 @@ fn context_hook_offline(payload: &HookPayload, gate_disabled: bool) -> Option<Ve
     }
 }
 
+/// How long the UserPromptSubmit context hook may spend before giving up and injecting nothing.
+///
+/// Bounded, and the bound is a named constant, because this runs on the hot path of every single
+/// message a person sends. The Claude Code plugin allows the hook 10 seconds; this sits well under
+/// that so the hook always returns cleanly rather than being killed with its work discarded.
+/// Deliberately much smaller than the measured 13.4 s server latency: the honest behaviour when
+/// recall is slow is to skip enrichment, not to make the user wait for it.
+const CONTEXT_HOOK_BUDGET: std::time::Duration = std::time::Duration::from_secs(4);
+
 async fn context_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>, String> {
     let gate_disabled = std::env::var_os("ESTELLE_GATE_DISABLED").is_some();
     if let Some(lines) = context_hook_offline(payload, gate_disabled) {
@@ -385,13 +394,33 @@ async fn context_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>,
     // Same scoping rule as `ground` — the hook reads the namespace the sync hook writes.
     // Any failure at all (no credentials, offline, slow server, no memory yet) is total
     // silence: never a stall and never an error on the hot path of every send.
+    //
+    // 🔴 THAT SENTENCE WAS A CLAIM THIS CODE DID NOT HAVE, AND THE FOUNDER FOUND IT THE HARD WAY.
+    // The comment promised "never a stall", and there was no deadline anywhere: the call simply
+    // inherited whatever the server took. Measured on production 2026-08-31, `POST /search` scoped to
+    // a real repo answers in **13.4 seconds** and returns 54 KB. The Claude Code plugin gives this
+    // hook a 10-second budget, so EVERY prompt the user typed spent ten seconds blocked, was killed
+    // mid-flight, printed `UserPromptSubmit hook timed out after 10s — output discarded`, and threw
+    // the work away. The feature cost ten seconds a message and delivered nothing.
+    //
+    // ⚠️ AND THE SAME PROBE FOUND WORSE NEXT DOOR: `POST /search` with NO repo scope does not answer
+    // at all — 90 seconds, no status, no body — while an empty query WITH a repo correctly 400s in
+    // four. That is a server defect and a resource-exhaustion vector, and it is filed for the serve
+    // lane; it is NOT what this deadline fixes. This fixes only our half: an OPTIONAL enrichment must
+    // never be able to hold a person's keystroke hostage, whatever the server does.
     let Ok(api) = Api::resolve() else {
         return Ok(Vec::new());
     };
-    let Ok(result) = api
-        .post_scoped(Endpoint::Search, repo, &json!({"query": query}))
-        .await
+    let Ok(Ok(Ok(result))) = tokio::time::timeout(
+        CONTEXT_HOOK_BUDGET,
+        api.post_scoped(Endpoint::Search, repo, &json!({"query": query})),
+    )
+    .await
+    .map(Ok::<_, ()>)
     else {
+        // Expired or errored: return NOTHING, exit 0. Silence is the correct outcome — the model
+        // simply does not get the extra context this turn, and the human sees no error, because a
+        // failure to enrich is not a failure of their prompt.
         return Ok(Vec::new());
     };
     let recall = result
