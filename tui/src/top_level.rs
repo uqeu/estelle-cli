@@ -1640,7 +1640,8 @@ fn setup_dry_run(root: &Path) -> Result<Vec<String>, String> {
                 .map(|file| (file.path.clone(), file.content.clone())),
         ) {
             Some(question) => format!("Would prove with: {question}"),
-            None => "No TypeScript or Go symbol could be named; no proving question was invented."
+            None => "No symbol this setup step recognises could be named, so no proving question \
+                     was invented. The sweep still runs — the proof step is a nicety on top."
                 .to_string(),
         },
     );
@@ -3250,13 +3251,33 @@ async fn setup(
         });
         return Ok(lines);
     }
-    let question = question.ok_or_else(|| {
-        "the sweep inventory has no named TypeScript or Go symbol; refusing to invent a proving question"
-            .to_string()
-    })?;
+    // 🔴 THE SWEEP RUNS FIRST, AND A MISSING PROVING SYMBOL NO LONGER ABORTS IT.
+    //
+    // This used to `ok_or_else(...)?` on the question BEFORE the sweep, so any repository whose
+    // language the symbol parser did not recognise got `init` and `brief` written to disk, then an
+    // error, and **nothing ingested**. `setup` is the guided onboarding command, so that turned a
+    // narrow parser gap into "the product does not work here" for a Python, Rust, Java, Ruby, PHP,
+    // C# or Swift user — including Estelle's own backend, which is Python.
+    //
+    // Ingest never depended on the question: `collect_files` accepts every language the boundary
+    // allows. The proof step is a NICETY on top. So the value the user came for is delivered first,
+    // and the proof degrades to an honest sentence instead of taking the ingest down with it.
     lines.extend(sweep(api, repo, root, false).await?);
-    lines.push(format!("Proving question: {question}"));
-    lines.extend(ask(api, repo, std::slice::from_ref(&question)).await?);
+    match question {
+        Some(question) => {
+            lines.push(format!("Proving question: {question}"));
+            lines.extend(ask(api, repo, std::slice::from_ref(&question)).await?);
+        }
+        None => {
+            // Say what happened and what to do — never invent a symbol to ask about.
+            lines.push(
+                "Your repository is ingested. No proving question was invented, because no symbol \
+                 in a language this setup step recognises could be named — that is a limit of the \
+                 proof step, not of the ingest. Ask your own question with `estelle ask \"...\"`."
+                    .to_string(),
+            );
+        }
+    }
     Ok(lines)
 }
 
