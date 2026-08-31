@@ -426,11 +426,18 @@ enum Command {
     /// Report whether this CLI is behind the newest published release.
     ///
     /// Prints the install command; it never runs it. Tell, then let them run it.
+    /// `update` is what people type. It errored with `unrecognized subcommand 'update'` and a tip
+    /// pointing at `upgrade` — a papercut on the command a user reaches for the moment they suspect
+    /// they are behind. Aliased rather than renamed, so every existing doc and script keeps working.
+    #[command(visible_alias = "update")]
     Upgrade {
         /// Ignore the once-a-day cache and ask GitHub now.
         #[arg(long)]
         check: bool,
     },
+    /// Print the version. `--version` already did this; `estelle version` did not, and errored with a
+    /// tip suggesting `verify`. Both spellings now work.
+    Version,
 }
 
 struct TerminalSession;
@@ -5819,6 +5826,10 @@ async fn main() -> ExitCode {
     if matches!(args.command, Some(Command::Leaked)) {
         return leaked::run();
     }
+    if matches!(args.command, Some(Command::Version)) {
+        println!("estelle {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
     if let Some(Command::Upgrade { check }) = args.command {
         return run_upgrade(check).await;
     }
@@ -5942,6 +5953,18 @@ async fn main() -> ExitCode {
         };
     }
     if matches!(args.command, Some(Command::Acp)) {
+        // 🔴 THIS LOOKED LIKE A HANG AND IT IS NOT ONE, WHICH IS ITS OWN DEFECT.
+        // `acp` speaks the Agent Client Protocol over stdio. Piped a valid `initialize` it replies
+        // and exits 0; given a terminal it correctly waits for a client that will never type. To the
+        // person who just ran it, silence and a hang are the same observation — so say which it is.
+        // stderr, not stdout: stdout is the protocol channel and must stay clean.
+        if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            eprintln!(
+                "estelle acp is a protocol server, not an interactive command. It is now waiting for \
+                 an ACP client to speak JSON-RPC on stdin, so nothing will appear here. Point your \
+                 editor's ACP agent setting at `estelle acp`; press Ctrl-C to stop."
+            );
+        }
         let result = async {
             let store = CredentialStore::default_location()?;
             let credential = store.resolve()?;

@@ -76,7 +76,8 @@ fn contract(command: &Command) -> Contract {
         | Command::Mcp { .. }
         | Command::McpServer
         | Command::Screens { .. }
-        | Command::Upgrade { .. } => Contract::Local,
+        | Command::Upgrade { .. }
+        | Command::Version => Contract::Local,
         Command::Init { .. }
         | Command::Setup { .. }
         | Command::Sweep { .. }
@@ -1608,7 +1609,10 @@ async fn run_authenticated(
         | Command::Mcp { .. }
         | Command::McpServer
         | Command::Screens { .. }
-        | Command::Upgrade { .. } => Err("local command reached the remote dispatcher".to_string()),
+        | Command::Upgrade { .. }
+        | Command::Version => {
+            Err("local command reached the remote dispatcher".to_string())
+        }
     }
 }
 
