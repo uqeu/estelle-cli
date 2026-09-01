@@ -2701,28 +2701,106 @@ fn render_structural_search(reply: &estelle_client::CommandReply) -> Vec<String>
 }
 
 fn render_skill_reply(reply: &estelle_client::CommandReply) -> Vec<String> {
+    let skill = reply.extra.get("skill").and_then(Value::as_str);
+    let answer = reply
+        .extra
+        .get("reply")
+        .and_then(Value::as_str)
+        .filter(|answer| !answer.trim().is_empty());
+    let grounding = reply.extra.get("grounding").and_then(Value::as_object);
+    let attached = grounding
+        .and_then(|grounding| grounding.get("attached"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let repo = grounding
+        .and_then(|grounding| grounding.get("repo"))
+        .and_then(Value::as_str)
+        .filter(|repo| !repo.trim().is_empty());
+
+    // 🔴 **THE WHOLE REPLY WAS `grounding  not attached  |  khai`, AND THAT IS NOT AN ANSWER.**
+    //
+    // The founder ran `/skill:api-call-ground` from `~` and got three cryptic words. The refusal was
+    // CORRECT — there is no swept repo in a home directory, so a grounded playbook has nothing to
+    // ground against, and fabricating a result would be the exact failure Estelle exists to
+    // prevent. But a refusal that does not name what is missing or what fixes it is
+    // indistinguishable from a broken feature, and the user's only move is to guess.
+    //
+    // ⚠️ This branch fires ONLY when the run produced no answer AND grounding was not attached.
+    // A skill that answered is still shown; a skill that answered UNGROUNDED is shown with the
+    // caveat, because silently presenting an ungrounded result as a grounded one is the other half
+    // of the same dishonesty.
+    if answer.is_none() && !attached {
+        return skill_needs_grounding_lines(skill.unwrap_or("this playbook"), repo);
+    }
+
     let mut lines = Vec::new();
-    if let Some(skill) = reply.extra.get("skill").and_then(Value::as_str) {
+    if let Some(skill) = skill {
         lines.push(format!("skill:{skill}"));
     }
-    if let Some(answer) = reply.extra.get("reply").and_then(Value::as_str) {
+    if let Some(answer) = answer {
         lines.extend(answer.lines().map(str::to_string));
     }
-    if let Some(grounding) = reply.extra.get("grounding").and_then(Value::as_object) {
-        let attached = grounding
-            .get("attached")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let repo = grounding
-            .get("repo")
-            .and_then(Value::as_str)
-            .unwrap_or("unresolved");
-        lines.push(format!(
-            "grounding  {}  |  {repo}",
-            if attached { "attached" } else { "not attached" }
-        ));
+    if grounding.is_some() {
+        let repo = repo.unwrap_or("unresolved");
+        lines.push(if attached {
+            format!("grounding  attached  ·  {repo}")
+        } else {
+            // The answer exists but nothing backed it. Say so beside the answer, not in a footnote.
+            format!(
+                "grounding  NOT attached  ·  {repo}  ·  this answer was not checked against a repo graph"
+            )
+        });
     }
     nonblank_or(lines, "The skill returned no displayable result.")
+}
+
+/// The refusal a grounded playbook gives when there is no repo graph to ground against.
+///
+/// Three rows: what happened, where you are, and the exact next command. Lowercase labels and `·`
+/// separators, matching the surrounding design voice — no boxes, no invented status glyphs.
+fn skill_needs_grounding_lines(skill: &str, repo: Option<&str>) -> Vec<String> {
+    let here = match repo {
+        Some(repo) => format!("{repo}  ·  not a swept repository"),
+        None => "not a repository".to_string(),
+    };
+    vec![
+        format!("skill:{skill}  needs a grounded repo"),
+        format!("this directory   {here}"),
+        "to ground it     cd into your repo, then run /sweep".to_string(),
+        "nothing was fabricated: a grounded playbook with no repo graph has nothing to read"
+            .to_string(),
+    ]
+}
+
+/// How many registry rows a TRANSCRIPT reply may print.
+///
+/// 🔴 **THE FOUNDER TYPED `/skills` AND THE SCREEN FILLED WITH 247 PLAYBOOKS**, each carrying its
+/// full multi-line description, scrolling for pages. The thing he was trying to do — pick one — was
+/// buried under the list of everything he did not pick.
+///
+/// ⚠️ **THERE WAS ALREADY A BOUND AND IT DID NOT SAVE IT.** The old code did `.take(40)`: a bare
+/// literal, undocumented, that silently dropped 207 rows *after* announcing "247 playbooks". The
+/// header and the body disagreed and nothing said so. A bound that is not named, and not reported
+/// when it BITES, is a truncation pretending to be a listing.
+const REGISTRY_TRANSCRIPT_ROWS: usize = 12;
+
+/// Longest single-line summary a registry row may contribute.
+const REGISTRY_SUMMARY_WIDTH: usize = 96;
+
+/// Collapse a multi-line description to one bounded line.
+///
+/// Summaries arrive as prose with embedded newlines; printed verbatim, one row becomes five. Both
+/// the newlines and the length are bounded here, at the boundary, rather than trusted.
+fn registry_summary(description: &str) -> String {
+    let collapsed = description.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() <= REGISTRY_SUMMARY_WIDTH {
+        return collapsed;
+    }
+    collapsed
+        .chars()
+        .take(REGISTRY_SUMMARY_WIDTH.saturating_sub(1))
+        .chain(std::iter::once('\u{2026}'))
+        .collect()
 }
 
 fn render_registry(value: Option<&Value>, label: &str, description_key: &str) -> Vec<String> {
@@ -2731,7 +2809,7 @@ fn render_registry(value: Option<&Value>, label: &str, description_key: &str) ->
         return vec![format!("No {label} were returned.")];
     }
     let mut lines = vec![format!("{} {label}", rows.len())];
-    for row in rows.iter().take(40) {
+    for row in rows.iter().take(REGISTRY_TRANSCRIPT_ROWS) {
         let name = row
             .get("name")
             .map(json_scalar)
@@ -2741,11 +2819,21 @@ fn render_registry(value: Option<&Value>, label: &str, description_key: &str) ->
             .or_else(|| row.get("short"))
             .map(json_scalar)
             .unwrap_or_default();
+        let description = registry_summary(&description);
         lines.push(if description.is_empty() {
             name
         } else {
             format!("{name}  |  {description}")
         });
+    }
+    // 🔴 SAY THAT THE BOUND BIT. A capped read means "cannot show it all here", never "that's all
+    // there is" — the old code announced the full count and then quietly showed a fraction.
+    if let Some(hidden) = rows.len().checked_sub(REGISTRY_TRANSCRIPT_ROWS)
+        && hidden > 0
+    {
+        lines.push(format!(
+            "{hidden} more not shown here \u{b7} the picker lists them all and filters as you type"
+        ));
     }
     lines
 }
@@ -3357,6 +3445,115 @@ mod tests {
                 "/{command} has no ported, repointed, or deleted owner"
             );
         }
+    }
+
+    /// 🔴 **`grounding  not attached  |  khai` WAS THE ENTIRE REPLY TO A SKILL RUN.**
+    ///
+    /// The founder ran `/skill:api-call-ground` from his home directory and got three cryptic
+    /// words. Refusing was RIGHT — there is no swept repo in `~`, and a grounded playbook that
+    /// invents a result is the exact failure Estelle exists to prevent. But a refusal that names
+    /// neither the missing thing nor the remedy is indistinguishable from a broken feature.
+    #[test]
+    fn a_skill_that_cannot_ground_says_what_is_missing_and_what_fixes_it() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(serde_json::json!({
+            "skill": "api-call-ground",
+            "grounding": {"attached": false, "repo": "khai"}
+        }))
+        .expect("skill reply");
+
+        let lines = render_skill_reply(&reply);
+        let rendered = lines.join("\n");
+
+        // The remedy must be present and executable, not a description of the problem.
+        assert!(rendered.contains("/sweep"), "no remedy named: {rendered}");
+        assert!(
+            rendered.contains("needs a grounded repo"),
+            "the missing thing is not named: {rendered}"
+        );
+        assert!(
+            rendered.contains("api-call-ground"),
+            "the refusal must name the playbook: {rendered}"
+        );
+        // 🔴 THE CONTROL, and it is the assertion that pins the defect: the bare status line must
+        // be GONE, not merely accompanied by better words.
+        assert!(
+            !rendered.contains("grounding  not attached"),
+            "the cryptic line survived: {rendered}"
+        );
+        // Refusing must not be mistaken for a result.
+        assert!(
+            rendered.contains("nothing was fabricated"),
+            "the refusal must say it refused: {rendered}"
+        );
+
+        // ⚠️ CONTROL 2. A skill that DID answer must still show its answer — this branch must not
+        // swallow real results whenever grounding happens to be absent.
+        let answered: estelle_client::CommandReply = serde_json::from_value(serde_json::json!({
+            "skill": "api-call-ground",
+            "reply": "the call is bound to billing/charge.rs:82",
+            "grounding": {"attached": false, "repo": "khai"}
+        }))
+        .expect("answered reply");
+        let answered = render_skill_reply(&answered).join("\n");
+        assert!(answered.contains("billing/charge.rs:82"), "{answered}");
+        assert!(
+            answered.contains("not checked against a repo graph"),
+            "an ungrounded answer must carry its caveat: {answered}"
+        );
+
+        // ⚠️ CONTROL 3. A grounded answer keeps the plain attached line.
+        let grounded: estelle_client::CommandReply = serde_json::from_value(serde_json::json!({
+            "skill": "api-call-ground",
+            "reply": "bound",
+            "grounding": {"attached": true, "repo": "fatelabs/estelle"}
+        }))
+        .expect("grounded reply");
+        let grounded = render_skill_reply(&grounded).join("\n");
+        assert!(grounded.contains("grounding  attached"), "{grounded}");
+        assert!(!grounded.contains("needs a grounded repo"), "{grounded}");
+    }
+
+    /// A registry reply is bounded, one line per row, and SAYS when the bound bit.
+    #[test]
+    fn a_large_registry_reply_is_bounded_and_reports_what_it_hid() {
+        let rows = (0..247)
+            .map(|index| {
+                serde_json::json!({
+                    "name": format!("playbook-{index:03}"),
+                    "summary": format!("Line one for {index}.\nLine two.\nLine three keeps going and going and going and going and going and going and going and going."),
+                })
+            })
+            .collect::<Vec<_>>();
+        let value = serde_json::json!(rows);
+
+        let lines = render_registry(Some(&value), "playbooks", "summary");
+
+        assert_eq!(lines[0], "247 playbooks", "the true total must still lead");
+        // header + bounded rows + the "more" line
+        assert_eq!(lines.len(), REGISTRY_TRANSCRIPT_ROWS + 2, "{lines:#?}");
+        assert!(
+            lines.iter().all(|line| !line.contains('\n')),
+            "a multi-line summary became several transcript rows"
+        );
+        assert!(
+            lines
+                .iter()
+                .all(|line| line.chars().count() <= REGISTRY_SUMMARY_WIDTH + 64),
+            "a row exceeded its width bound"
+        );
+        assert!(
+            lines
+                .last()
+                .is_some_and(|line| line.contains("235 more not shown")),
+            "the bound bit and said nothing: {:?}",
+            lines.last()
+        );
+
+        // ⚠️ CONTROL. A registry that FITS must not claim anything was hidden.
+        let small = serde_json::json!([{"name": "review", "summary": "look at it"}]);
+        let small = render_registry(Some(&small), "playbooks", "summary");
+        assert_eq!(small.len(), 2, "{small:?}");
+        assert!(small.iter().all(|line| !line.contains("more not shown")));
     }
 
     #[test]
