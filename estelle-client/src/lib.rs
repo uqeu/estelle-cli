@@ -19,6 +19,7 @@ pub use endpoint::HttpMethod;
 use futures::StreamExt;
 pub use repo::Repo;
 pub use repo::RepoResolver;
+pub use repo::is_repository;
 pub use repo::repo_from_remote_url;
 use reqwest::Method;
 use serde::Serialize;

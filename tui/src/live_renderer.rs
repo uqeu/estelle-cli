@@ -41,7 +41,7 @@ pub(super) fn header_line(app: &App, _width: u16) -> Line<'static> {
         ),
         Span::styled("  ·  ", Style::default().fg(app.theme.ghost())),
         Span::styled(
-            app.repo.to_string(),
+            repo_label(app).to_string(),
             Style::default().fg(app.theme.primary()),
         ),
     ];
@@ -184,6 +184,25 @@ pub(super) fn observed_model(reply: &CommandReply) -> Option<&str> {
 /// See [`run_state`]: idle says nothing. The line is still returned (rather than an `Option`)
 /// because the row keeps its place in the layout so the input bar cannot jump when work starts —
 /// what changes between idle and working is the row's CONTENT, never the frame's shape.
+/// What the rules and headings CALL this session's repository.
+///
+/// 🔴 **ONE OWNER FOR "WHAT DO WE CALL THIS REPO ON SCREEN".** Seven call sites passed
+/// `app.repo.as_str()` straight into a rule, so an unresolved repository printed the placeholder
+/// `unknown/repo` on every one of them — and before that, `basename($PWD)`, which is how running
+/// from `~` produced `session · khai`. Routing all seven through here means the absence is
+/// rendered once, correctly, and a new heading cannot reintroduce the fabrication by forgetting
+/// to check.
+///
+/// ⚠️ DISPLAY ONLY. The wire value is untouched: `Repo::as_str` still carries whatever the server
+/// contract expects, and this is never sent anywhere.
+pub(super) fn repo_label(app: &App) -> &str {
+    if app.repo.is_unresolved() {
+        "no repo"
+    } else {
+        app.repo.as_str()
+    }
+}
+
 pub(super) fn status_bar_line(app: &App, now: Instant, width: usize) -> Line<'static> {
     let palette = app.theme.screen_palette();
     let Some((mark, left)) = run_state(app, now) else {
@@ -794,12 +813,35 @@ pub(super) fn render_empty_state(frame: &mut Frame<'_>, area: Rect, app: &App) {
         Some(false) => "Index this repo before asking grounded questions",
         None => "Index or refresh this repo",
     };
-    let mut lines = vec![Line::styled(
-        format!("Ask about {}", app.repo),
-        Style::default()
-            .fg(app.theme.primary())
-            .add_modifier(Modifier::BOLD),
-    )];
+    // 🔴 `Ask about khai` WAS THE EMPTY STATE INVITING A QUESTION ABOUT A REPOSITORY THAT DOES
+    // NOT EXIST. Run from a home directory, the old copy interpolated `basename($PWD)` and asked
+    // the user to interrogate it. With nothing resolved, the surface says so and says what would
+    // change it instead of naming a subject it invented.
+    //
+    // ⚠️ The advice names `cd` and NOT `estelle init`: `init` is documented as "configure Estelle
+    // for the current repository", so outside a repository it is not the door. Advertising a
+    // command that cannot work here is the defect this frame already carries three of.
+    let mut lines = if app.repo.is_unresolved() {
+        vec![
+            Line::styled(
+                "No repository here",
+                Style::default()
+                    .fg(app.theme.primary())
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Line::styled(
+                "cd into a git repository to ask grounded questions",
+                Style::default().fg(palette.dim),
+            ),
+        ]
+    } else {
+        vec![Line::styled(
+            format!("Ask about {}", app.repo),
+            Style::default()
+                .fg(app.theme.primary())
+                .add_modifier(Modifier::BOLD),
+        )]
+    };
     if let Some(context) = &app.session_context {
         lines.push(Line::default());
         lines.push(Line::styled(
@@ -1267,7 +1309,7 @@ fn app_health_lines(app: &App, palette: &theme::Palette, width: usize) -> Vec<Li
         .prod_issues
         .as_ref()
         .and_then(|response| response.repo.as_deref())
-        .unwrap_or_else(|| app.repo.as_str());
+        .unwrap_or_else(|| repo_label(app));
     let app_name = app.prod_overview.as_ref().and_then(|overview| {
         ["app", "app_name", "service", "service_name"]
             .into_iter()
@@ -1894,7 +1936,7 @@ pub(super) fn render_prod_panel(frame: &mut Frame<'_>, area: Rect, app: &App, no
     });
     frame.render_widget(
         Paragraph::new(session_view::production_rule(
-            app.repo.as_str(),
+            repo_label(app),
             usize::from(rows[0].width),
             &palette,
         ))
@@ -2310,7 +2352,7 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             .split(main_areas[0]);
         frame.render_widget(
             Paragraph::new(session_view::session_rule(
-                app.repo.as_str(),
+                repo_label(app),
                 usize::from(session_rows[0].width),
                 &palette,
             )),
@@ -2322,8 +2364,8 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         frame.render_widget(
             Paragraph::new(Line::styled(
                 match app.branch.as_deref() {
-                    Some(branch) => format!("   {} · {branch}", app.repo.as_str()),
-                    None => format!("   {}", app.repo.as_str()),
+                    Some(branch) => format!("   {} · {branch}", repo_label(app)),
+                    None => format!("   {}", repo_label(app)),
                 },
                 Style::default().fg(palette.dim),
             )),
@@ -2535,7 +2577,7 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
                 .split(citation_area);
             frame.render_widget(
                 Paragraph::new(session_view::cited_rule(
-                    app.repo.as_str(),
+                    repo_label(app),
                     usize::from(cited_rows[0].width),
                     &palette,
                 )),
@@ -2594,7 +2636,7 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         );
         frame.render_widget(
             Paragraph::new(session_view::ask_rule(
-                app.repo.as_str(),
+                repo_label(app),
                 usize::from(ask_rows[2].width),
                 &palette,
             )),

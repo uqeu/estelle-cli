@@ -92,6 +92,7 @@ use estelle_client::Repo;
 use estelle_client::RepoResolver;
 use estelle_client::ReposResponse;
 use estelle_client::Source;
+use estelle_client::SuiteDispatch;
 use estelle_client::SuiteDispatchRequest;
 use estelle_client::is_secret_shaped;
 use estelle_client::mask_secret;
@@ -1907,13 +1908,25 @@ impl App {
     fn new(args: Args) -> Self {
         let root = std::env::current_dir().unwrap_or_default();
         let override_repo = args.repo.and_then(Repo::new);
+        // 🔴 TWO QUESTIONS, ASKED SEPARATELY, BECAUSE CONFLATING THEM IS THE BUG.
+        //
+        // `RepoResolver::resolve` answers "what name would a hook compute for this path", and it
+        // deliberately falls back to the directory's own name — a cross-language parity test pins
+        // that against the live Python `repo_name_for`. Asking it alone is how running from `~`
+        // labelled every surface `session · khai` for a repository that does not exist.
+        //
+        // `is_repository` answers "is there a git repository here at all", which is the question
+        // an INTERFACE has to answer before printing a name. An explicit `--repo` still wins, so
+        // a caller who states an identity is believed; otherwise a directory that is not a
+        // repository resolves to the unresolved state and the frame renders `no repo`.
+        //
+        // ⚠️ The second basename fallback that used to live here is gone: it re-derived the same
+        // fact with no git check of its own, so it would have reinstated exactly what this guard
+        // refuses.
+        let stated = override_repo.is_some();
         let repo = RepoResolver::new(override_repo, &root)
             .resolve()
-            .or_else(|| {
-                root.file_name()
-                    .and_then(|name| name.to_str())
-                    .and_then(Repo::new)
-            })
+            .filter(|_| stated || estelle_client::is_repository(&root))
             .unwrap_or_default();
         let boot_preferences = BootPreferences {
             already_seen: false,
@@ -4373,12 +4386,86 @@ async fn answer_question(
         .await?
         .dispatch;
 
-    if dispatch.action != "research.ask" {
-        return answer_dispatched_suite(client, repo, root, question, dispatch.action, cancel)
+    if dispatch.action == "research.ask" {
+        return answer_research_question(client, repo, root, question, session_context, cancel)
             .await;
     }
 
-    answer_research_question(client, repo, root, question, session_context, cancel).await
+    answer_dispatched_suite(client, repo, root, question, dispatch, cancel).await
+}
+
+/// What a dispatched action DOES to the caller's world.
+///
+/// The ONE owner of that judgement on this side of the wire. [`answer_dispatched_suite`] asks this
+/// BEFORE it picks an endpoint, so an action cannot reach a call by being added to the `match`
+/// alone. An action no table below names is [`ActionShape::Unbound`] and is named back to the
+/// caller rather than guessed at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ActionShape {
+    /// Reads, and the reply is a synthesised answer or typed rows the client formats. A plain
+    /// sentence may fire one directly.
+    Read,
+    /// Edits files, opens a PR, or spends autonomy. A typed sentence does not carry consent for
+    /// that, so one is never fired from this path.
+    Write,
+    /// The reply IS the retrieval evidence, which the renderers put verbatim into the answer slot.
+    Evidence,
+    /// Bound nowhere. Named back to the caller.
+    Unbound,
+}
+
+/// Every action the server's closed set can emit (`src/estelle/serve/suite_dispatch.py::_action`),
+/// paired with what it does.
+///
+/// Written out rather than derived from the `match` in [`answer_dispatched_suite`]: a table derived
+/// from those arms could never catch an arm added without a shape, which is the regression that
+/// matters here. `every_read_shaped_action_reaches_its_own_surface` is the clause-by-clause check
+/// that each entry actually reaches a distinct surface.
+const DISPATCH_ACTION_SHAPES: &[(&str, ActionShape)] = &[
+    ("research.ask", ActionShape::Read),
+    ("review.diff", ActionShape::Read),
+    ("guardian.verify_diff", ActionShape::Read),
+    ("affinity.route", ActionShape::Read),
+    ("monitor.logs", ActionShape::Read),
+    ("monitor.uptime", ActionShape::Read),
+    ("memory.list", ActionShape::Read),
+    // `POST /search` answers with `recall` — the raw text of the retrieved chunks — and
+    // `commands::render_structural_search` puts it straight into the answer slot. Routing a
+    // sentence here once printed 26,259 characters of repository source in place of an answer.
+    // The FIXED server no longer emits it (`suite_dispatch.reject_evidence_passthrough`) and a
+    // DEPLOYED server still can, which is exactly why the refusal has to live on this side too
+    // instead of only on the side that was patched.
+    ("memory.search", ActionShape::Evidence),
+];
+
+/// Classify one action. Unknown is not an error here — it is a shape, and it fails closed.
+fn action_shape(action: &str) -> ActionShape {
+    if let Some((_, shape)) = DISPATCH_ACTION_SHAPES
+        .iter()
+        .find(|(name, _)| *name == action)
+    {
+        return *shape;
+    }
+    // The two suites that EDIT. No shipped server build emits an action in either family today, so
+    // these are classified by FAMILY rather than by names this side would have to invent. The point
+    // is that the first such action to arrive is withheld by default, instead of arriving as an
+    // ordinary unknown that somebody later binds to a handler without noticing it writes.
+    if action.starts_with("work.") || action.starts_with("orchestra.") {
+        return ActionShape::Write;
+    }
+    ActionShape::Unbound
+}
+
+/// An answer that reports what was NOT done. `degraded` is set because the turn did not produce the
+/// suite's own reply, and `grounded` is `false` because no grounding gate ran over it.
+fn dispatch_refusal(text: String) -> AnswerReply {
+    AnswerReply {
+        text,
+        grounded: Some(false),
+        degraded: true,
+        sources: Vec::new(),
+        working_paths: Vec::new(),
+    }
 }
 
 async fn answer_research_question(
@@ -4436,21 +4523,54 @@ async fn answer_dispatched_suite(
     repo: Repo,
     root: PathBuf,
     question: String,
-    action: String,
+    dispatch: SuiteDispatch,
     cancel: &CancellationToken,
 ) -> Result<AnswerReply, Error> {
+    let action = dispatch.action.clone();
+    debug_assert!(
+        !action.trim().is_empty(),
+        "the server's dispatch always names an action"
+    );
+    debug_assert_ne!(
+        action, "research.ask",
+        "research is answered on its own path before this function is reached"
+    );
+    // Said once, so every refusal below discloses the same routing decision the caller never saw.
+    let routed = format!(
+        "Estelle routed this to the {} suite ({}), action {action:?}.",
+        dispatch.suite, dispatch.reason
+    );
+    match action_shape(&action) {
+        // Read-shaped: fall through to the call table below.
+        ActionShape::Read => {}
+        ActionShape::Evidence => {
+            return Ok(dispatch_refusal(format!(
+                "{routed} That action replies with raw retrieved text rather than an answer, so \
+                 nothing was sent. Ask again in words and the synthesis path will read the same \
+                 material and reply in prose."
+            )));
+        }
+        ActionShape::Write => {
+            return Ok(dispatch_refusal(format!(
+                "{routed} That suite EDITS your code, and a typed sentence does not carry consent \
+                 to do that, so nothing was run. Start it deliberately with /work when you want \
+                 the change proposed."
+            )));
+        }
+        ActionShape::Unbound => {
+            return Ok(dispatch_refusal(format!(
+                "{routed} This build binds no handler for that action, so nothing else was sent."
+            )));
+        }
+    }
     let (name, reply): (&str, CommandReply) = match action.as_str() {
         "review.diff" | "guardian.verify_diff" => {
             let measured = match git_diff(&root, "", cancel).await {
                 Ok(measured) if !measured.patch.trim().is_empty() => measured,
                 _ => {
-                    return Ok(AnswerReply {
-                        text: "I understood the request, but there is no readable local diff to inspect. Nothing was sent to Review or Guardian.".to_string(),
-                        grounded: Some(false),
-                        degraded: true,
-                        sources: Vec::new(),
-                        working_paths: Vec::new(),
-                    });
+                    return Ok(dispatch_refusal(
+                        "I understood the request, but there is no readable local diff to inspect. Nothing was sent to Review or Guardian.".to_string(),
+                    ));
                 }
             };
             let inspected = measured
@@ -4512,17 +4632,6 @@ async fn answer_dispatched_suite(
                 )
                 .await?,
         ),
-        "memory.search" => (
-            "grep",
-            client
-                .post_scoped(
-                    estelle_client::Endpoint::Search,
-                    &repo,
-                    &serde_json::json!({"query": question}),
-                    cancel,
-                )
-                .await?,
-        ),
         "memory.list" => (
             "memories",
             client
@@ -4535,15 +4644,13 @@ async fn answer_dispatched_suite(
                 .await?,
         ),
         _ => {
-            return Ok(AnswerReply {
-                text: format!(
-                    "The server returned unsupported dispatch action {action:?}. Nothing else was sent."
-                ),
-                grounded: Some(false),
-                degraded: true,
-                sources: Vec::new(),
-                working_paths: Vec::new(),
-            });
+            // `DISPATCH_ACTION_SHAPES` calls this action readable and no arm above calls it. The
+            // two disagree, which is a defect in THIS file rather than anything the caller did —
+            // so say that, instead of reporting the server sent something unsupported.
+            return Ok(dispatch_refusal(format!(
+                "{routed} This build lists that action as readable but has no call for it, so \
+                 nothing else was sent."
+            )));
         }
     };
     Ok(answer_from_command(name, reply, Vec::new()))
@@ -9465,113 +9572,6 @@ mod tests {
         assert!(rendered.contains("/blorp"));
     }
 
-    #[test]
-    fn login_asks_who_you_are_before_asking_who_pays() {
-        let (tx, _rx) = mpsc::unbounded_channel();
-        let mut app = test_app();
-        app.auth_resolved = true;
-
-        app.submit("/login".to_string(), &tx);
-
-        assert!(app.queue.is_empty(), "/login must stay local");
-        assert!(
-            app.active.is_none(),
-            "/login must not start an HTTP request"
-        );
-        let picker = app.picker.as_ref().expect("credential picker");
-        assert_eq!(picker.title, "Connect Estelle");
-        assert_eq!(picker.rows.len(), 1);
-        assert_eq!(picker.rows[0].label, "Estelle account");
-        assert!(picker.rows[0].detail.contains("grounding"));
-        assert!(picker.rows[0].detail.contains("never pays model tokens"));
-        assert!(picker.rows.iter().all(|row| row.label != "ChatGPT plan"));
-    }
-
-    #[test]
-    fn model_funding_is_a_second_four_way_question_without_identity_or_chatgpt() {
-        let picker =
-            PickerSurface::model_funding_with_machine("This machine · 32 GB RAM".to_string());
-
-        assert_eq!(picker.title, "Choose how model tokens are paid");
-        assert_eq!(picker.rows.len(), 4);
-        assert_eq!(picker.rows[0].label, "Claude subscription");
-        assert_eq!(picker.rows[1].label, "Provider API key");
-        assert_eq!(picker.rows[2].label, "Local model");
-        assert_eq!(picker.rows[3].label, "GitHub Copilot");
-        assert!(picker.rows[2].detail.contains("32 GB RAM"));
-        assert!(
-            picker
-                .rows
-                .iter()
-                .all(|row| row.label != "Estelle account" && row.label != "ChatGPT plan")
-        );
-    }
-
-    #[test]
-    fn cancelling_identity_login_does_not_reopen_the_picker() {
-        let (tx, _rx) = mpsc::unbounded_channel();
-        let mut app = test_app();
-        app.login_required = true;
-        app.picker = Some(PickerSurface::login());
-
-        app.finish_inline_login(
-            Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled")),
-            &tx,
-        );
-
-        assert!(app.picker.is_none(), "cancel is a decision, not a retry");
-        assert!(app.login_required, "the unsigned-in state remains visible");
-        assert!(
-            format!("{:?}", render_transcript(&app.transcript))
-                .contains("Credential flow cancelled")
-        );
-    }
-
-    #[test]
-    fn slash_provider_routes_match_the_shell_provider_meanings() {
-        let (tx, _rx) = mpsc::unbounded_channel();
-        let mut app = test_app();
-
-        app.submit("/login --provider openai".to_string(), &tx);
-        assert!(app.pending_login.is_none());
-        assert!(
-            format!("{:?}", render_transcript(&app.transcript))
-                .contains("will not guess an unknown provider route")
-        );
-
-        app.pending_login = None;
-        app.submit("/login --provider claude".to_string(), &tx);
-        assert_eq!(
-            app.pending_login,
-            Some(PendingLogin::EstelleThenProvider("claude"))
-        );
-
-        app.pending_login = None;
-        app.submit("/login --api-key openai".to_string(), &tx);
-        assert_eq!(
-            app.pending_login,
-            Some(PendingLogin::EstelleThenProvider("openai-api"))
-        );
-    }
-
-    #[test]
-    fn first_run_absence_opens_login_before_the_conversation_surface() {
-        let (tx, _rx) = mpsc::unbounded_channel();
-        let mut app = test_app();
-
-        app.handle_ui_event(UiEvent::Credential(Err(Error::NoCredential)), &tx);
-
-        assert!(app.auth_resolved);
-        assert_eq!(
-            app.picker.as_ref().map(|picker| picker.title.as_str()),
-            Some("Connect Estelle")
-        );
-        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 30);
-        assert!(rendered.contains("── connect estelle ─"), "{rendered}");
-        assert!(rendered.contains("grounds your coding agent in your real codebase"));
-        assert!(rendered.contains("never bills you for model tokens"));
-        assert!(!rendered.contains("Claude subscription"));
-        assert!(!rendered.contains("ChatGPT plan"));
     /// 🔴 **EVERY SUBMIT PRODUCES A SEND, A QUEUED ITEM, OR WORDS. NEVER SILENCE.**
     ///
     /// The founder typed `/skills:agent-injection-eval`, pressed enter, and got **absolutely
@@ -9695,6 +9695,113 @@ mod tests {
         assert_eq!(plural, singular, "the plural must queue the identical route");
     }
 
+    #[test]
+    fn login_asks_who_you_are_before_asking_who_pays() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+
+        app.submit("/login".to_string(), &tx);
+
+        assert!(app.queue.is_empty(), "/login must stay local");
+        assert!(
+            app.active.is_none(),
+            "/login must not start an HTTP request"
+        );
+        let picker = app.picker.as_ref().expect("credential picker");
+        assert_eq!(picker.title, "Connect Estelle");
+        assert_eq!(picker.rows.len(), 1);
+        assert_eq!(picker.rows[0].label, "Estelle account");
+        assert!(picker.rows[0].detail.contains("grounding"));
+        assert!(picker.rows[0].detail.contains("never pays model tokens"));
+        assert!(picker.rows.iter().all(|row| row.label != "ChatGPT plan"));
+    }
+
+    #[test]
+    fn model_funding_is_a_second_four_way_question_without_identity_or_chatgpt() {
+        let picker =
+            PickerSurface::model_funding_with_machine("This machine · 32 GB RAM".to_string());
+
+        assert_eq!(picker.title, "Choose how model tokens are paid");
+        assert_eq!(picker.rows.len(), 4);
+        assert_eq!(picker.rows[0].label, "Claude subscription");
+        assert_eq!(picker.rows[1].label, "Provider API key");
+        assert_eq!(picker.rows[2].label, "Local model");
+        assert_eq!(picker.rows[3].label, "GitHub Copilot");
+        assert!(picker.rows[2].detail.contains("32 GB RAM"));
+        assert!(
+            picker
+                .rows
+                .iter()
+                .all(|row| row.label != "Estelle account" && row.label != "ChatGPT plan")
+        );
+    }
+
+    #[test]
+    fn cancelling_identity_login_does_not_reopen_the_picker() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.login_required = true;
+        app.picker = Some(PickerSurface::login());
+
+        app.finish_inline_login(
+            Err(io::Error::new(io::ErrorKind::Interrupted, "cancelled")),
+            &tx,
+        );
+
+        assert!(app.picker.is_none(), "cancel is a decision, not a retry");
+        assert!(app.login_required, "the unsigned-in state remains visible");
+        assert!(
+            format!("{:?}", render_transcript(&app.transcript))
+                .contains("Credential flow cancelled")
+        );
+    }
+
+    #[test]
+    fn slash_provider_routes_match_the_shell_provider_meanings() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+
+        app.submit("/login --provider openai".to_string(), &tx);
+        assert!(app.pending_login.is_none());
+        assert!(
+            format!("{:?}", render_transcript(&app.transcript))
+                .contains("will not guess an unknown provider route")
+        );
+
+        app.pending_login = None;
+        app.submit("/login --provider claude".to_string(), &tx);
+        assert_eq!(
+            app.pending_login,
+            Some(PendingLogin::EstelleThenProvider("claude"))
+        );
+
+        app.pending_login = None;
+        app.submit("/login --api-key openai".to_string(), &tx);
+        assert_eq!(
+            app.pending_login,
+            Some(PendingLogin::EstelleThenProvider("openai-api"))
+        );
+    }
+
+    #[test]
+    fn first_run_absence_opens_login_before_the_conversation_surface() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+
+        app.handle_ui_event(UiEvent::Credential(Err(Error::NoCredential)), &tx);
+
+        assert!(app.auth_resolved);
+        assert_eq!(
+            app.picker.as_ref().map(|picker| picker.title.as_str()),
+            Some("Connect Estelle")
+        );
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 30);
+        assert!(rendered.contains("── connect estelle ─"), "{rendered}");
+        assert!(rendered.contains("grounds your coding agent in your real codebase"));
+        assert!(rendered.contains("never bills you for model tokens"));
+        assert!(!rendered.contains("Claude subscription"));
+        assert!(!rendered.contains("ChatGPT plan"));
         assert!(!rendered.contains("ASK ESTELLE"));
         assert!(!rendered.contains("Run estelle login"));
     }
@@ -10038,6 +10145,247 @@ mod tests {
         let requests = server.received_requests().await.expect("request recording");
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].url.path(), "/turn/route");
+    }
+
+    /// Mount `/turn/route` returning one arbitrary decision, so a test can drive any action the
+    /// server's closed set can emit — including the ones it emits only from an OLDER deployed build.
+    async fn mount_dispatch_action(server: &MockServer, prompt: &str, suite: &str, action: &str) {
+        Mock::given(method("POST"))
+            .and(path("/turn/route"))
+            .and(body_json(json!({"prompt": prompt})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "dispatch": {
+                    "suite": suite,
+                    "action": action,
+                    "confidence": 1.0,
+                    "reason": "matched a test signal"
+                }
+            })))
+            .expect(1)
+            .mount(server)
+            .await;
+    }
+
+    fn dispatch_test_client(server: &MockServer) -> Client {
+        Client::new(
+            &format!("{}/", server.uri()),
+            estelle_client::ApiKey::new("test-key").expect("key"),
+            Duration::from_secs(120),
+        )
+        .expect("client")
+    }
+
+    /// The defect this guards is a MEASURED one: routing "how much memory do i have left" to
+    /// `memory.search` put 26,259 characters of repository source and scraped marketing copy into
+    /// the answer slot, because `POST /search` answers with `recall` — the raw retrieved text —
+    /// and `render_structural_search`'s first act is to extend the rendered lines with it.
+    ///
+    /// The server stopped emitting the action, and that fix is NOT deployed, so a shipped binary
+    /// talking to production can still be handed it. The refusal therefore has to be here.
+    ///
+    /// The sentinel appears only in the SERVER's reply — never in the prompt — so this asserts the
+    /// absence of a string the caller could not have echoed back into the answer itself.
+    #[tokio::test]
+    async fn an_evidence_action_is_refused_rather_than_printed_as_the_answer() {
+        let server = MockServer::start().await;
+        let prompt = "how much memory do i have left in my account";
+        mount_dispatch_action(&server, prompt, "memory", "memory.search").await;
+        // Mounted on purpose: an UNMOUNTED /search would fail the call and pass this test for the
+        // wrong reason. Mounted, a client that still calls it renders the sentinel and goes red.
+        Mock::given(method("POST"))
+            .and(path("/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "recall": "SENTINEL_RAW_REPOSITORY_TEXT def held_tokens(account): ..."
+            })))
+            .mount(&server)
+            .await;
+
+        let reply = answer_question(
+            dispatch_test_client(&server),
+            Repo::new("fatelabs/estelle").expect("repo"),
+            tempfile::tempdir()
+                .expect("working tree")
+                .path()
+                .to_path_buf(),
+            prompt.to_string(),
+            None,
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("a refusal is still an answer");
+
+        assert!(
+            !reply.text.contains("SENTINEL_RAW_REPOSITORY_TEXT"),
+            "retrieval evidence reached the answer slot: {}",
+            reply.text
+        );
+        assert!(
+            reply.text.contains("memory.search"),
+            "the refusal names the action it refused: {}",
+            reply.text
+        );
+        let requests = server.received_requests().await.expect("request recording");
+        assert_eq!(
+            requests
+                .iter()
+                .map(|request| request.url.path())
+                .collect::<Vec<_>>(),
+            ["/turn/route"],
+            "the dispatch read is the only request the turn may make"
+        );
+    }
+
+    /// A sentence must not spend autonomy. No shipped server emits a `work.*` action yet, so this
+    /// drives the shape classifier through the family rule rather than through a name the server
+    /// would have to invent first — the same reason the server tests call
+    /// `reject_evidence_passthrough` directly.
+    #[tokio::test]
+    async fn a_write_shaped_action_is_withheld_and_named_rather_than_executed() {
+        let server = MockServer::start().await;
+        let prompt = "fix the login bug";
+        mount_dispatch_action(&server, prompt, "work", "work.start").await;
+
+        let reply = answer_question(
+            dispatch_test_client(&server),
+            Repo::new("fatelabs/estelle").expect("repo"),
+            tempfile::tempdir()
+                .expect("working tree")
+                .path()
+                .to_path_buf(),
+            prompt.to_string(),
+            None,
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("a refusal is still an answer");
+
+        assert!(
+            reply.text.contains("work.start"),
+            "the withheld reply names the action: {}",
+            reply.text
+        );
+        assert!(
+            reply.text.contains("/work"),
+            "a withheld EDIT says how to start it deliberately, and is not reported as unsupported: {}",
+            reply.text
+        );
+        assert!(reply.degraded, "nothing ran, so the turn is degraded");
+        let requests = server.received_requests().await.expect("request recording");
+        assert_eq!(
+            requests
+                .iter()
+                .map(|request| request.url.path())
+                .collect::<Vec<_>>(),
+            ["/turn/route"],
+            "a write-shaped action must reach no endpoint at all"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unbound_action_is_named_back_to_the_caller() {
+        let server = MockServer::start().await;
+        let prompt = "do the thing";
+        mount_dispatch_action(&server, prompt, "future", "future.unheard_of").await;
+
+        let reply = answer_question(
+            dispatch_test_client(&server),
+            Repo::new("fatelabs/estelle").expect("repo"),
+            tempfile::tempdir()
+                .expect("working tree")
+                .path()
+                .to_path_buf(),
+            prompt.to_string(),
+            None,
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("a refusal is still an answer");
+
+        assert!(
+            reply.text.contains("future.unheard_of"),
+            "an unknown action is named, never silently dropped: {}",
+            reply.text
+        );
+        assert!(reply.degraded);
+    }
+
+    /// The clause-by-clause check. `suite_dispatch.py::_action` owns the closed set of actions;
+    /// this list is WRITTEN OUT rather than derived, so an action losing its handler is a red test
+    /// instead of a silently shorter loop. Every row asserts the turn reached that action's OWN
+    /// surface — not merely that some request was made.
+    #[tokio::test]
+    async fn every_read_shaped_action_reaches_its_own_surface() {
+        // (action, suite, the endpoint only that action should reach)
+        let contract = [
+            ("research.ask", "research", "/deep-search"),
+            ("review.diff", "review", "/gate"),
+            ("guardian.verify_diff", "guardian", "/verify"),
+            ("affinity.route", "affinity", "/route"),
+            ("monitor.logs", "monitor", "/monitor/logs"),
+            ("monitor.uptime", "monitor", "/monitor/uptime"),
+            ("memory.list", "memory", "/memories"),
+        ];
+        // Every read-shaped row of the shipped table is covered, so this cannot pass by testing a
+        // subset of the contract while reading as a verdict on all of it.
+        let covered = contract
+            .iter()
+            .map(|(action, _, _)| *action)
+            .collect::<std::collections::BTreeSet<_>>();
+        let read_shaped = DISPATCH_ACTION_SHAPES
+            .iter()
+            .filter(|(_, shape)| *shape == ActionShape::Read)
+            .map(|(action, _)| *action)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            covered, read_shaped,
+            "every read-shaped action is exercised"
+        );
+
+        for (action, suite, endpoint) in contract {
+            let server = MockServer::start().await;
+            let prompt = format!("plain sentence for {action}");
+            mount_dispatch_action(&server, &prompt, suite, action).await;
+            // Both verbs, because the table mixes GET reads with POST calls and this test asserts
+            // the PATH, never the method.
+            for verb in ["GET", "POST"] {
+                Mock::given(method(verb))
+                    .and(path(endpoint))
+                    .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+                    .mount(&server)
+                    .await;
+            }
+            // The diff-reading suites refuse early on a clean tree, so give them a real change.
+            let root = dirty_working_tree();
+
+            let reply = answer_question(
+                dispatch_test_client(&server),
+                Repo::new("fatelabs/estelle").expect("repo"),
+                root.path().to_path_buf(),
+                prompt.clone(),
+                None,
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap_or_else(|error| panic!("{action} did not answer: {error}"));
+
+            let paths = server
+                .received_requests()
+                .await
+                .expect("request recording")
+                .iter()
+                .map(|request| request.url.path().to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                paths,
+                vec!["/turn/route".to_string(), endpoint.to_string()],
+                "{action} must reach {endpoint} and nothing else"
+            );
+            assert!(
+                !reply.text.contains("no handler"),
+                "{action} fell through to a refusal: {}",
+                reply.text
+            );
+        }
     }
 
     fn dirty_working_tree() -> tempfile::TempDir {
@@ -11674,6 +12022,93 @@ mod tests {
             status.contains("3 queued"),
             "the status row hides the queue exactly when it is non-empty\n{status}"
         );
+    }
+
+    /// 🔴 OUTSIDE A REPOSITORY THE FRAME SAYS SO, RATHER THAN NAMING THE DIRECTORY.
+    ///
+    /// The founder ran the binary from `~` and every surface labelled itself with his home
+    /// directory's name: `session · khai`, `production · khai`, `ask · khai`, `Ask about khai`.
+    /// There is no repository called `khai`. Taking `basename($PWD)` as an identity is the same
+    /// defect family as every fabricated number this repo has had to retract — a confident label
+    /// derived from something that does not carry the fact.
+    ///
+    /// ⚠️ Two DIFFERENT questions, and the fix must not conflate them: "is there a git repository
+    /// here or above" and "has Estelle swept it". This asserts only the first, which is the one
+    /// the rules are naming.
+    #[test]
+    fn outside_a_repository_the_rules_say_no_repo_and_never_the_directory_name() {
+        let mut app = test_app();
+        app.repo = Repo::default();
+
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
+        assert!(
+            rendered.contains("\u{2500}\u{2500} session \u{b7} no repo"),
+            "the session rule does not name the absent repository\n{rendered}"
+        );
+        assert!(
+            rendered.contains("\u{2500}\u{2500} ask \u{b7} no repo"),
+            "the ask rule does not name the absent repository\n{rendered}"
+        );
+        // The placeholder identity must not leak onto the frame either — `unknown/repo` reads as
+        // a repository called "repo" owned by "unknown".
+        assert!(
+            !rendered.contains("unknown/repo"),
+            "the placeholder repo identity reached the frame\n{rendered}"
+        );
+        // The empty state must not invite a question about a repository that does not exist,
+        // and its advice must name a door that works from OUTSIDE a repository.
+        assert!(
+            rendered.contains("No repository here"),
+            "the empty state does not name the absence\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("estelle init"),
+            "the empty state advertises `init`, which is documented as configuring the CURRENT \
+             repository and cannot help when there is none\n{rendered}"
+        );
+
+        // The negative control: a real repo still names itself, so the assertions above are not
+        // simply passing on a frame that names nothing.
+        let real = test_app();
+        let rendered = rendered_frame_at_size(&real, Instant::now(), 120, 32);
+        assert!(
+            rendered.contains("\u{2500}\u{2500} session \u{b7} uqeu/estelle"),
+            "a resolved repository stopped naming itself\n{rendered}"
+        );
+    }
+
+    /// A directory that is not a git repository resolves to NO repository, not to its own name.
+    ///
+    /// Pinned at the resolver rather than the frame, because there were TWO basename fallbacks —
+    /// one in `repo_for` and a second in `App::new` re-deriving the same fact — and a frame test
+    /// alone would not have said which of them fabricated the name.
+    #[test]
+    fn a_directory_that_is_not_a_repository_resolves_to_nothing() {
+        let temporary = std::env::temp_dir().join(format!(
+            "estelle-no-repo-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&temporary).expect("a scratch directory");
+        assert!(
+            !estelle_client::is_repository(&temporary),
+            "a plain directory was reported as a repository"
+        );
+        // ⚠️ The RESOLVER still names it, on purpose: that lenient answer is pinned against the
+        // live Python `repo_name_for` hook by
+        // `top_level::rust_repo_name_matches_the_python_hook_contract`. This is the negative
+        // control for the split — if the two functions ever agree, one of them has drifted into
+        // answering the other's question.
+        assert_eq!(
+            estelle_client::RepoResolver::new(None, &temporary)
+                .resolve()
+                .map(|repo| repo.as_str().to_string()),
+            temporary
+                .canonicalize()
+                .ok()
+                .and_then(|path| path.file_name().map(|name| name.to_string_lossy().to_string())),
+            "the name-computing function stopped computing a name"
+        );
+        let _ = std::fs::remove_dir_all(&temporary);
     }
 
     /// 🔴 IDLE SAYS NOTHING, AND SAYING NOTHING DOES NOT MOVE THE INPUT BAR.
