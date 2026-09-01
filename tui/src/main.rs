@@ -1613,6 +1613,19 @@ fn render_gate_blocker(blocker: &Value) -> String {
     )
 }
 
+/// How many requests may wait behind the one in flight.
+///
+/// 🔴 **POWER OF TEN RULE 2: THE GROWTH HAS A STATED BOUND AND THE BOUND IS A NAMED CONSTANT.**
+/// The queue had none. A held-down Enter, a paste that submits, or a script driving the terminal
+/// would grow it without limit — a memory leak wearing a user interface.
+///
+/// Sixteen is chosen to be far past any reasonable burst of typing and far short of a runaway:
+/// a person queuing seventeen turns behind one request has lost track of what they asked, and the
+/// honest answer is to say the queue is full rather than to accept work nobody is tracking. At the
+/// cap a send is REFUSED IN THE TRANSCRIPT — never silently dropped, which is the exact defect
+/// this bound exists to prevent.
+const MAX_QUEUED_REQUESTS: usize = 16;
+
 struct App {
     boot: Option<BootScene>,
     boot_started: Instant,
@@ -2046,6 +2059,19 @@ impl App {
             self.composer = estelle_composer();
             return;
         }
+        // 🔴 THE CAP IS CHECKED BEFORE THE ECHO, NOT AFTER IT. A message refused after being
+        // pushed to the transcript is precisely the shape the founder photographed — his own
+        // words on screen with nothing ever happening to them. Refusing here means the turn is
+        // never echoed unless it is genuinely accepted, so the "echoed implies accounted for"
+        // invariant holds by construction rather than by remembering to clean up.
+        if self.queue.len() >= MAX_QUEUED_REQUESTS {
+            self.transcript.push(TranscriptEntry::System(format!(
+                "The queue is full at {MAX_QUEUED_REQUESTS} waiting requests, so that message \
+                 was not accepted and was left in the composer. Wait for one to land, or press \
+                 esc to drop the queue."
+            )));
+            return;
+        }
         self.transcript_scroll = 0;
         self.dither_wake.clear();
         self.sweep_progress = None;
@@ -2095,9 +2121,11 @@ impl App {
                 name: None,
                 typed_name,
                 ..
-            } => self.transcript.push(TranscriptEntry::System(format!(
-                "Unknown command /{typed_name}; nothing ran and nothing was sent. Use /help."
-            ))),
+            } => {
+                for line in commands::unknown_command_lines(&typed_name) {
+                    self.transcript.push(TranscriptEntry::System(line));
+                }
+            }
             commands::ParsedInput::Command {
                 name: Some(name),
                 typed_name,
@@ -3005,13 +3033,16 @@ impl App {
                 model,
             } => {
                 let Some(client) = self.client.clone() else {
-                    self.handle_missing_client(QueuedRequest::Compact {
-                        messages,
-                        session_id,
-                        generation,
-                        task,
-                        model,
-                    });
+                    self.handle_missing_client(
+                        QueuedRequest::Compact {
+                            messages,
+                            session_id,
+                            generation,
+                            task,
+                            model,
+                        },
+                        tx,
+                    );
                     return;
                 };
                 let source = messages.clone();
@@ -3055,10 +3086,13 @@ impl App {
                     return;
                 }
                 let Some(client) = self.client.clone() else {
-                    self.handle_missing_client(QueuedRequest::Question {
-                        question,
-                        session_context,
-                    });
+                    self.handle_missing_client(
+                        QueuedRequest::Question {
+                            question,
+                            session_context,
+                        },
+                        tx,
+                    );
                     return;
                 };
                 let repo = self.repo.clone();
@@ -3088,7 +3122,7 @@ impl App {
                     return;
                 }
                 let Some(client) = self.client.clone() else {
-                    self.handle_missing_client(QueuedRequest::Sweep);
+                    self.handle_missing_client(QueuedRequest::Sweep, tx);
                     return;
                 };
                 let repo = self.repo.clone();
@@ -3135,7 +3169,7 @@ impl App {
                     return;
                 }
                 let Some(client) = self.client.clone() else {
-                    self.handle_missing_client(QueuedRequest::Command(command));
+                    self.handle_missing_client(QueuedRequest::Command(command), tx);
                     return;
                 };
                 let repo = self.repo.clone();
@@ -3186,7 +3220,23 @@ impl App {
         (id, cancel)
     }
 
-    fn handle_missing_client(&mut self, pending: QueuedRequest) {
+    /// Resolve a request that reached the front of the queue with no credential behind it.
+    ///
+    /// 🔴 **A SYNCHRONOUS FAILURE MUST DRIVE THE QUEUE, EXACTLY LIKE A SUCCESS DOES.** This
+    /// pushed a failure and returned, leaving the in-flight slot empty and every message behind
+    /// it parked until some unrelated event happened to call `start_next`. Every asynchronous
+    /// path drains on completion; this one settled instantly and drained nothing, so a burst of
+    /// messages resolved ONE PER EXTERNAL EVENT instead of one after another. That is the
+    /// mechanism behind two of the founder's four messages producing nothing at all.
+    ///
+    /// ⚠️ Parking while `auth_resolved` is false is NOT that bug and is kept: the request is
+    /// pushed back to the FRONT and the credential probe re-drives the queue when it lands. That
+    /// is a request waiting for a known event, not one waiting for nothing.
+    fn handle_missing_client(
+        &mut self,
+        pending: QueuedRequest,
+        tx: &mpsc::UnboundedSender<UiEvent>,
+    ) {
         let Some(client) = self.client.clone() else {
             if !self.auth_resolved {
                 self.queue.push_front(pending);
@@ -3197,20 +3247,53 @@ impl App {
                 "This client has no Estelle credential.".to_string(),
                 "Set ESTELLE_API_KEY or run /login, then retry.".to_string(),
             ]));
+            self.start_next(tx);
             return;
         };
         drop(client);
     }
 
+    /// Cancel the in-flight request, and SAY WHAT WAS AND WAS NOT CANCELLED.
+    ///
+    /// 🔴 "Request cancelled." is true and incomplete: with messages waiting behind the one that
+    /// was cancelled, it reads as "everything stopped" while the queue is still live. The founder
+    /// saw that line and then watched two more messages produce nothing, which is exactly the
+    /// ambiguity this copy has to remove — the sentence now names the depth left behind.
     fn cancel_active(&mut self) {
         if let Some(active) = self.active.take() {
             if let Some(session) = &self.session {
                 let _ = session.send(session_server::ClientRequest::Cancel { id: active.id });
             }
             active.cancel.cancel();
+            let waiting = self.queue.len();
             self.transcript
-                .push(TranscriptEntry::System("Request cancelled.".to_string()));
+                .push(TranscriptEntry::System(match waiting {
+                    0 => "Request cancelled.".to_string(),
+                    1 => "Request cancelled. 1 queued message is still waiting; esc again drops it."
+                        .to_string(),
+                    many => format!(
+                        "Request cancelled. {many} queued messages are still waiting; esc again \
+                         drops them."
+                    ),
+                }));
         }
+    }
+
+    /// Drop everything still waiting, and name how much was dropped.
+    ///
+    /// The queue must be REMOVABLE, not merely visible — and a drop that does not say what it
+    /// dropped is the same silent failure in the other direction.
+    fn drop_queue(&mut self) {
+        let dropped = self.queue.len();
+        if dropped == 0 {
+            return;
+        }
+        self.queue.clear();
+        self.transcript.push(TranscriptEntry::System(format!(
+            "Dropped {dropped} queued message{}. Nothing was sent for {}.",
+            if dropped == 1 { "" } else { "s" },
+            if dropped == 1 { "it" } else { "them" }
+        )));
     }
 
     /// Hand the mouse to the terminal emulator, or take it back, and say which happened.
@@ -5479,6 +5562,10 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
     }
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
         app.cancel_active();
+        // 🔴 `esc` drained the queue after cancelling and `ctrl+c` did not. That asymmetry left
+        // the in-flight slot empty with messages still behind it and nothing to start them —
+        // the mechanism by which an echoed turn waits forever.
+        app.start_next(tx);
         return true;
     }
     if let Some(picker) = app.resume_picker.as_mut() {
@@ -5613,6 +5700,13 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
     if key.code == KeyCode::Esc && app.active.is_some() {
         app.cancel_active();
         app.start_next(tx);
+        return false;
+    }
+    // esc with nothing in flight but a queue behind it DROPS the queue. The hint row advertises
+    // `esc stop`, and "stop" that leaves sixteen messages primed to fire is not a stop. Cancel
+    // first, drop second, each with its own sentence, so the two are never confused.
+    if key.code == KeyCode::Esc && !app.queue.is_empty() {
+        app.drop_queue();
         return false;
     }
     if key.code == KeyCode::Char('?') && key.modifiers.is_empty() && app.composer.is_empty() {
@@ -11280,6 +11374,182 @@ mod tests {
             (0..buffer.area.height).any(|y| (0..buffer.area.width)
                 .any(|x| buffer[(x, y)].symbol() == live_renderer::PROMPT_GLYPH)),
             "no cell in the frame carries the prompt glyph"
+        );
+    }
+
+    /// 🔴 THE INVARIANT WHOSE ABSENCE LET THREE MESSAGES VANISH.
+    ///
+    /// The founder typed four messages during one in-flight request. The first reported
+    /// "Request cancelled."; the second and third produced **nothing at all** — no reply, no
+    /// error, no notice — while sitting in the transcript as `you › hi`. A message that leaves
+    /// its own echo on screen and never resolves is the worst shape a failure can take: the user
+    /// has visual proof they asked, and none that anything happened.
+    ///
+    /// Stated as a property rather than four cases: **every user turn echoed into the transcript
+    /// is either in flight, still queued, or has reached a terminal state.** A turn that is none
+    /// of those three has been dropped.
+    #[test]
+    fn every_echoed_user_turn_is_in_flight_queued_or_resolved() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        // ⚠️ `auth_resolved` MATTERS AND THE TEST WOULD BE VACUOUS WITHOUT IT. While auth is
+        // still resolving, `handle_missing_client` deliberately parks each request at the FRONT
+        // of the queue, so every message is trivially "still queued" and the invariant below
+        // passes without testing anything. Resolved-with-no-credential is the state that
+        // actually drives requests to a terminal outcome.
+        app.auth_resolved = true;
+
+        for message in ["first", "second", "third", "fourth"] {
+            app.submit(message.to_string(), &tx);
+        }
+
+        let echoed = app
+            .transcript
+            .iter()
+            .filter(|entry| matches!(entry, TranscriptEntry::User(_)))
+            .count();
+        assert_eq!(echoed, 4, "not every message reached the transcript");
+
+        // Accounted for = the one in flight, plus everything still queued, plus everything that
+        // has already resolved into a reply, a system note or a failure.
+        let resolved = app
+            .transcript
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry,
+                    TranscriptEntry::Answer { .. }
+                        | TranscriptEntry::System(_)
+                        | TranscriptEntry::Failure(_)
+                        | TranscriptEntry::Command { .. }
+                )
+            })
+            .count();
+        let accounted = usize::from(app.active.is_some()) + app.queue.len() + resolved;
+        assert!(
+            accounted >= echoed,
+            "{} user turns are echoed but only {accounted} are accounted for \
+             (in flight: {}, queued: {}, resolved: {resolved}) — the rest were dropped",
+            echoed,
+            usize::from(app.active.is_some()),
+            app.queue.len()
+        );
+    }
+
+    /// 🔴 THE QUEUE IS BOUNDED, AND THE BOUND REFUSES OUT LOUD.
+    ///
+    /// Power of Ten rule 2: the growth has a stated bound and the bound is a named constant. An
+    /// unbounded queue fed by a held-down Enter is a memory leak with a UI. At the cap the send
+    /// is REFUSED with a message — never silently dropped, which is the defect this whole item
+    /// exists to remove.
+    #[test]
+    fn the_queue_is_bounded_and_the_cap_refuses_visibly_instead_of_dropping() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+
+        // One request goes in flight; the rest queue behind it.
+        for index in 0..MAX_QUEUED_REQUESTS + 8 {
+            app.submit(format!("message {index}"), &tx);
+        }
+
+        assert!(
+            app.queue.len() <= MAX_QUEUED_REQUESTS,
+            "the queue grew to {} past its cap of {MAX_QUEUED_REQUESTS}",
+            app.queue.len()
+        );
+        let rendered = format!("{:?}", render_transcript(&app.transcript));
+        assert!(
+            rendered.contains("queue is full"),
+            "the cap dropped a message without saying so\n{rendered}"
+        );
+
+        // The refusal must not itself be a drop: the queue length is unchanged by a refused send.
+        let before = app.queue.len();
+        app.submit("one more".to_string(), &tx);
+        assert_eq!(
+            app.queue.len(),
+            before,
+            "a refused send still changed the queue"
+        );
+    }
+
+    /// 🔴 A CANCELLED REQUEST MUST NOT STRAND THE QUEUE.
+    ///
+    /// `esc` called `start_next` after cancelling and `ctrl+c` did not, so a ctrl+c left the
+    /// in-flight slot empty with messages still queued behind it and nothing to drain them. That
+    /// asymmetry is the mechanism by which an echoed turn can wait forever.
+    ///
+    /// ⚠️ **THE FIRST VERSION OF THIS TEST WAS INERT AND A MUTANT CAUGHT IT.** It called `submit`
+    /// twice and assumed that left something in flight. With no client it does not: each submit
+    /// resolves straight to a failure, so the queue was already empty at `ctrl+c` and the
+    /// assertion passed on a fixture that never had a queue to strand. The in-flight request is
+    /// planted EXPLICITLY here, and removing `start_next` from the ctrl+c arm now fails.
+    #[test]
+    fn cancelling_the_in_flight_request_does_not_strand_the_queue() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.active = Some(ActiveRequest {
+            id: 7,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        app.submit("first".to_string(), &tx);
+        app.submit("second".to_string(), &tx);
+        assert_eq!(
+            app.queue.len(),
+            2,
+            "the premise is two messages waiting behind one in flight"
+        );
+
+        // ctrl+c, the path that used to leave the queue with no driver.
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+            &tx,
+        );
+
+        assert!(
+            app.active.is_some() || app.queue.is_empty(),
+            "the queue still holds {} message(s) with nothing in flight to drain them",
+            app.queue.len()
+        );
+    }
+
+    /// The queue's depth is visible WHILE something is in flight, which is the only time it can
+    /// be non-empty. `run_state` returned the working line and never reached the queue branch, so
+    /// "3 queued" was reachable only in a state where the queue is necessarily empty.
+    ///
+    /// ⚠️ **ALSO INERT IN ITS FIRST VERSION, ALSO CAUGHT BY A MUTANT.** Without an in-flight
+    /// request `run_state` falls through to its IDLE queue branch, which already said `{n}
+    /// queued` — so the test passed while asserting nothing about the working row. The request
+    /// is planted explicitly, which is the only state where the founder's three waiting messages
+    /// could exist and the only branch that was hiding them.
+    #[test]
+    fn the_queue_depth_is_visible_while_a_request_is_in_flight() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.active = Some(ActiveRequest {
+            id: 11,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        for index in 0..3 {
+            app.submit(format!("message {index}"), &tx);
+        }
+        assert_eq!(app.queue.len(), 3, "the premise is three waiting messages");
+
+        let status = format!("{:?}", status_bar_line(&app, Instant::now(), 120));
+        assert!(
+            status.contains("Working"),
+            "this must be the IN-FLIGHT branch, not the idle one\n{status}"
+        );
+        assert!(
+            status.contains("3 queued"),
+            "the status row hides the queue exactly when it is non-empty\n{status}"
         );
     }
 

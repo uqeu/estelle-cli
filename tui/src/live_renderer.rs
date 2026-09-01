@@ -287,8 +287,17 @@ fn run_state(app: &App, now: Instant) -> Option<(marks::Mark, String)> {
                 text.push_str(" · no response received yet");
             }
         }
+        // 🔴 THE QUEUE WAS ONLY REPORTABLE IN THE ONE STATE WHERE IT IS NECESSARILY EMPTY.
+        // This branch returned before the queue branch below, and `start_next` refuses to pop
+        // while something is in flight — so a non-empty queue implies an active request, which
+        // implies this early return, which meant `{n} queued` was unreachable. The founder had
+        // three messages waiting and the frame told him nothing about any of them.
+        if !app.queue.is_empty() {
+            text.push_str(&format!(" · {} queued", app.queue.len()));
+        }
         return Some((marks::Mark::InFlight, text));
     }
+    // Reachable only in the window between a request settling and the next one starting.
     if !app.queue.is_empty() {
         return Some((marks::Mark::Queued, format!("{} queued", app.queue.len())));
     }
