@@ -4,6 +4,7 @@ use crate::agent::AgentControl;
 use crate::codex_thread::CodexThread;
 use crate::config::Config;
 use crate::config::test_config;
+use crate::test_stack_bound::block_on_with_test_stack;
 use crate::thread_manager::ThreadManagerState;
 use codex_features::Feature;
 use codex_login::CodexAuth;
@@ -19,8 +20,19 @@ use codex_protocol::protocol::TurnCompleteEvent;
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
 
-#[tokio::test]
-async fn residency_slot_reservation_unloads_oldest_idle_v2_agent() {
+// These two tests walk the full session-startup chain, which needs more stack than
+// libtest hands a test thread. See `crate::test_stack_bound` for the measurement:
+// the chain is 54 frames and 2,106,480 bytes with no recursion in it, the abort
+// below was silent, and this sibling clears the default by only 16 KiB.
+#[test]
+fn residency_slot_reservation_unloads_oldest_idle_v2_agent() {
+    block_on_with_test_stack(
+        "residency_slot_reservation_unloads_oldest_idle_v2_agent",
+        residency_slot_reservation_unloads_oldest_idle_v2_agent_body,
+    );
+}
+
+async fn residency_slot_reservation_unloads_oldest_idle_v2_agent_body() {
     let mut config = test_config().await;
     let _ = config.features.enable(Feature::MultiAgentV2);
     config.multi_agent_v2.max_concurrent_threads_per_session = 2;
@@ -67,8 +79,15 @@ async fn residency_slot_reservation_unloads_oldest_idle_v2_agent() {
     assert!(manager.get_thread(second.thread_id).await.is_ok());
 }
 
-#[tokio::test]
-async fn interrupted_v2_agent_is_lost_after_residency_eviction() {
+#[test]
+fn interrupted_v2_agent_is_lost_after_residency_eviction() {
+    block_on_with_test_stack(
+        "interrupted_v2_agent_is_lost_after_residency_eviction",
+        interrupted_v2_agent_is_lost_after_residency_eviction_body,
+    );
+}
+
+async fn interrupted_v2_agent_is_lost_after_residency_eviction_body() {
     let mut config = test_config().await;
     let _ = config.features.enable(Feature::MultiAgentV2);
     config.multi_agent_v2.max_concurrent_threads_per_session = 2;

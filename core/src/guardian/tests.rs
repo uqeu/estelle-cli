@@ -2639,7 +2639,10 @@ async fn guardian_review_does_not_retry_valid_denial() -> anyhow::Result<()> {
 #[tokio::test]
 async fn guardian_ephemeral_retry_preserves_parallel_trunk_and_fork_history() -> anyhow::Result<()>
 {
-    const TEST_STACK_SIZE_BYTES: usize = 4 * 1024 * 1024;
+    // One owner for this bound: `crate::test_stack_bound`. This site used to
+    // declare its own 4 MiB while nine others declared 8 MiB and the session
+    // residency tests declared nothing at all and aborted the suite.
+    use crate::test_stack_bound::TEST_STACK_SIZE_BYTES;
 
     let handle =
         std::thread::Builder::new()

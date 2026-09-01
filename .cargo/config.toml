@@ -1,3 +1,34 @@
+# 🔴 THE THREAD STACK BOUND IS DECLARED HERE, NOT REMEMBERED.
+#
+# This file already owns the *main*-thread stack bound on Windows (the `/STACK:`
+# link-args below). Everywhere else the bound lived in a human's memory or in one
+# CI file, and on 2026-09-01 that cost the whole `codex-core --lib` suite: it
+# printed ten `... ok` lines and then SIGABRTed on a stack overflow at test 11 of
+# 2,147, so 2,136 tests were never run and the output looked like a truncated pass.
+#
+# The overflow is NOT recursion. `ThreadManager::start_thread` -> `Session::spawn`
+# -> `Session::new` -> `Session::schedule_startup_prewarm` is 54 frames of large
+# async state machines summing 2,106,480 bytes — measured, see
+# `core/src/test_stack_bound.rs`. libtest gives a spawned test thread exactly
+# 2 MiB, and Tokio gives a worker thread the same, so the chain misses both by
+# roughly 64 KiB. A census on that date found 34 named tests in
+# `agent::control::tests` over the line, plus at least one `tokio-rt-worker`
+# thread that no per-test `stack_size()` can reach — which is why the bound is
+# set for the whole workspace here instead of test by test.
+#
+# 8 MiB is the number `release.yml:88` and nine of the ten ad-hoc
+# `TEST_STACK_SIZE_BYTES` declarations in this tree already use, and a full-suite
+# run at 8 MiB completes with no abort. It leaves ~4x headroom over the measured
+# 2,128 KiB requirement. 16 MiB (production's `TOKIO_WORKER_STACK_SIZE_BYTES`,
+# `arg0/src/lib.rs:25`) was measured on the same machine and is NOT free: it took
+# the suite from 49.6s to 105.6s and timed out a websocket test that passes in
+# isolation. More stack than the measurement calls for is a cost, not a margin.
+#
+# `[env]` is non-forcing: an explicit `RUST_MIN_STACK` in the environment still
+# wins, which is what `core/src/test_stack_bound.rs`'s load-bearing guard needs.
+[env]
+RUST_MIN_STACK = "8388608"
+
 [target.'cfg(all(windows, target_env = "msvc"))']
 rustflags = ["-C", "link-arg=/STACK:8388608", "-C", "target-feature=+crt-static"]
 
