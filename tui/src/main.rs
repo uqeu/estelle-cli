@@ -12772,6 +12772,269 @@ mod tests {
         );
     }
 
+    /// 🔴 "WHERE'S THE PINK? I DON'T SEE ANY PINK. THE SKILLS AREN'T EVEN PINK."
+    ///
+    /// `palette.skill` (`#d48fb0` dark / `#b06a8c` cream) is a role the palette has carried all
+    /// along. Measured before this test: **7 uses in `screens.rs` — the catalog — and 0 anywhere
+    /// the customer can reach.** Another design element that made it to the mockup and never to
+    /// the product, the same family as the boxes, the shouted headings and the bullets.
+    ///
+    /// The design's own vocabulary for it is `screens.rs:932`: `» ` in `p.skill` ahead of a skill
+    /// name also in `p.skill`. This asserts the skill NAME is drawn in that role on the live
+    /// picker, on the BUFFER — a text dump cannot see a colour, which is exactly why the gap
+    /// survived this long.
+    #[test]
+    fn skill_names_are_drawn_in_the_skill_role_on_the_live_picker() {
+        let reply: CommandReply = serde_json::from_value(json!({
+            "skills": [
+                {"name": "review", "summary": "Review the current change against evidence"},
+                {"name": "trace", "summary": "Trace an issue to a bound repository symbol"}
+            ]
+        }))
+        .expect("skills reply");
+        let mut app = test_app();
+        app.prod_panel_visible = false;
+        app.skill_catalog = PickerSurface::skill_catalog(&reply);
+        app.picker = Some(PickerSurface::skills_filtered(&app.skill_catalog, ""));
+
+        let buffer = rendered_buffer_at_size(&app, Instant::now(), 130, 34);
+        let skill = app.theme.screen_palette().skill;
+        let row_of = |needle: &str| {
+            (0..buffer.area.height)
+                .find(|y| {
+                    (0..buffer.area.width)
+                        .map(|x| buffer[(x, *y)].symbol())
+                        .collect::<String>()
+                        .contains(needle)
+                })
+                .unwrap_or_else(|| panic!("no row carrying {needle:?}"))
+        };
+        let row = row_of("review");
+        let painted = (0..buffer.area.width)
+            .filter(|x| buffer[(*x, row)].fg == skill)
+            .count();
+        assert!(
+            painted >= "review".len(),
+            "the skill name is not drawn in palette.skill — {painted} cells carry the role"
+        );
+
+        // The negative control: the row's SUMMARY must not borrow the role, or "the skill colour
+        // is present somewhere on the row" would pass on a row painted entirely pink.
+        assert!(
+            painted < usize::from(buffer.area.width),
+            "the whole row is painted in the skill role, so the assertion above proves nothing"
+        );
+    }
+
+    /// 🔴 THE AFFORDANCE THAT MAKES THE QUEUE DISCOVERABLE, AND IT IS ONE STRING.
+    ///
+    /// Claude Code puts `Press up to edit queued messages` in the composer's placeholder position
+    /// the moment anything is queued, and removes it when the queue empties. That single line is
+    /// why its users know the queue exists without being told — and its absence is why the
+    /// founder concluded ours was broken while it was working.
+    ///
+    /// ⚠️ The affordance is a PLACEHOLDER: it may only appear where the user's own draft would
+    /// otherwise be, so it must never show while there is text in the composer.
+    #[test]
+    fn the_recall_affordance_appears_only_while_something_is_queued() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let in_flight = |app: &mut App| {
+            app.auth_resolved = true;
+            app.active = Some(ActiveRequest {
+                id: 21,
+                label: "thinking".to_string(),
+                started: Instant::now(),
+                cancel: CancellationToken::new(),
+            });
+        };
+
+        // Nothing queued: no affordance.
+        let mut quiet = test_app();
+        in_flight(&mut quiet);
+        let rendered = rendered_frame_at_size(&quiet, Instant::now(), 120, 34);
+        assert!(
+            !rendered.contains("press up to edit"),
+            "the affordance is shown with an empty queue\n{rendered}"
+        );
+
+        // One queued: the affordance, singular.
+        let mut one = test_app();
+        in_flight(&mut one);
+        one.submit("hi".to_string(), &tx);
+        let rendered = rendered_frame_at_size(&one, Instant::now(), 120, 34);
+        assert!(
+            rendered.contains("press up to edit 1 queued message"),
+            "no recall affordance with one message queued\n{rendered}"
+        );
+
+        // Several queued: the affordance carries the COUNT.
+        let mut many = test_app();
+        in_flight(&mut many);
+        for message in ["hi", "hellow", "how are ou"] {
+            many.submit(message.to_string(), &tx);
+        }
+        let rendered = rendered_frame_at_size(&many, Instant::now(), 120, 34);
+        assert!(
+            rendered.contains("press up to edit 3 queued messages"),
+            "the affordance does not carry the count\n{rendered}"
+        );
+
+        // A draft in progress owns the placeholder position; the affordance stands down.
+        many.composer.set_text("half typed");
+        let rendered = rendered_frame_at_size(&many, Instant::now(), 120, 34);
+        assert!(
+            rendered.contains("half typed"),
+            "the draft is not on screen\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("press up to edit"),
+            "the affordance overwrote the user's own draft\n{rendered}"
+        );
+    }
+
+    /// 🔴 ONE KEY, TWO MEANINGS, AND BOTH BRANCHES ARE ASSERTED.
+    ///
+    /// `up` recalls the queue when something is waiting and walks draft history otherwise. Testing
+    /// only the recall branch would ship a silent regression in the behaviour that was already
+    /// there — the composer's own history — which is the more used of the two.
+    #[test]
+    fn up_walks_draft_history_when_nothing_is_queued() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+        // ⚠️ Submitted through a real ENTER, not `App::submit`. Draft history belongs to the
+        // COMPOSER and is recorded when the composer itself submits; calling `App::submit`
+        // directly bypasses it, and a fixture built that way would assert on an empty history
+        // and call the result a regression.
+        app.composer.set_text("the first thing i asked");
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &tx,
+        );
+        assert!(app.queue.is_empty(), "the premise is an EMPTY queue");
+        assert!(app.composer.is_empty());
+
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+            &tx,
+        );
+
+        assert_eq!(
+            app.composer.text(),
+            "the first thing i asked",
+            "up stopped walking draft history when the queue was empty"
+        );
+    }
+
+    /// 🔴 THE CARET LANDS RIGHT AFTER THE TYPED TEXT — ROW **AND** COLUMN, READ BACK OFF THE
+    /// BACKEND AFTER THE WHOLE FRAME IS DRAWN.
+    ///
+    /// The distinction matters and it is the whole point of this test. A caret assertion against
+    /// the position the composer *requests* can pass while some later widget moves where the
+    /// terminal actually ends up. `rendered_buffer_and_cursor` calls
+    /// `Backend::get_cursor_position` AFTER `Terminal::draw` has returned, so what is asserted is
+    /// the position the terminal receives — including everything drawn after the composer, the
+    /// hint row on the frame's last row among them.
+    ///
+    /// The fixture is the founder's screenshot exactly: `hi` typed, nothing else.
+    #[test]
+    fn the_caret_follows_the_typed_text_and_no_later_widget_moves_it() {
+        let mut app = test_app();
+        // ⚠️ `set_text_content` leaves the caret at offset 0, so a fixture that only sets the
+        // text asserts the caret sits ON the first character and would call a correct renderer
+        // wrong. `End` puts it where a person who just typed `hi` would have left it.
+        let (tx, _rx) = mpsc::unbounded_channel();
+        app.composer.set_text("hi");
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::End, KeyModifiers::NONE),
+            &tx,
+        );
+        assert_eq!(app.composer.text(), "hi", "the draft was not set");
+
+        let (buffer, cursor) = rendered_buffer_and_cursor(&app, Instant::now(), 120, 32);
+        let row_text = |y: u16| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        };
+        let prompt = (0..buffer.area.height)
+            .find_map(|y| {
+                (0..buffer.area.width)
+                    .find(|x| buffer[(*x, y)].symbol() == live_renderer::PROMPT_GLYPH)
+                    .map(|x| (y, x))
+            })
+            .expect("a prompt glyph");
+
+        assert_eq!(
+            cursor.y, prompt.0,
+            "the caret is not on the prompt row. prompt row {}: {:?}   caret row {}: {:?}",
+            prompt.0,
+            row_text(prompt.0),
+            cursor.y,
+            row_text(cursor.y)
+        );
+        // Immediately past `hi`: the glyph, its one-column gap, then two characters.
+        assert_eq!(
+            cursor.x,
+            prompt.1 + 2 + 2,
+            "the caret is not sitting after the typed text on {:?}",
+            row_text(cursor.y)
+        );
+        // And explicitly NOT on the hint row, which is the row it was photographed on.
+        let hint = (0..buffer.area.height)
+            .find(|y| row_text(*y).contains(&ask_hints_line()))
+            .expect("a hint row");
+        assert_ne!(
+            cursor.y, hint,
+            "the caret is on the hint row — a later widget moved it"
+        );
+    }
+
+    /// The idle flourish is GROUND, not debris: flush to the pane's bottom edge and the full
+    /// width of it.
+    ///
+    /// The founder saw the previous version — 44 columns anchored bottom-right — as "a scatter of
+    /// dots low in the pane, roughly two-thirds across… debris rather than a flourish". At 190
+    /// columns the session pane's right edge IS about two-thirds across the terminal, so a
+    /// corner-anchored patch with empty space on two sides read as an artifact. Spanning the
+    /// width and touching the bottom is what makes it read as a surface instead.
+    #[test]
+    fn the_idle_flourish_is_a_full_width_horizon_on_the_panes_bottom_edge() {
+        let pane = ratatui::layout::Rect::new(0, 4, 120, 24);
+        let flourish = live_renderer::flourish_area(pane).expect("a flourish at this size");
+
+        assert_eq!(flourish.x, pane.x, "the flourish is inset from the left");
+        assert_eq!(
+            flourish.width, pane.width,
+            "the flourish does not span the pane — a patch with space on both sides is the \
+             thing that read as debris"
+        );
+        assert_eq!(
+            flourish.bottom(),
+            pane.bottom(),
+            "the flourish is floating above the pane's bottom edge"
+        );
+        assert!(
+            flourish.height <= 6 && flourish.height >= 2,
+            "the flourish is {} rows — it is a horizon, not a field",
+            flourish.height
+        );
+        // It must never reach the empty state's text, which reads from the top-left.
+        assert!(
+            flourish.y > pane.y,
+            "the flourish starts at the top of the pane and will sit under the empty state"
+        );
+
+        // A pane too narrow to spare the room drops the art rather than cramming it.
+        assert!(
+            live_renderer::flourish_area(ratatui::layout::Rect::new(0, 0, 20, 24)).is_none(),
+            "a narrow pane still drew the flourish"
+        );
+    }
+
     /// 🔴 IDLE SAYS NOTHING, AND SAYING NOTHING DOES NOT MOVE THE INPUT BAR.
     ///
     /// `● Ready` announced the default state of every CLI ever written; the founder asked for it

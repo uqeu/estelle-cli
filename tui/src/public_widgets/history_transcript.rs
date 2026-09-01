@@ -215,9 +215,21 @@ fn band(line: Line<'static>, width: u16) -> Line<'static> {
         return line;
     }
     let mut spans = line.spans;
-    spans.push(ratatui::text::Span::raw(" ".repeat(padding)));
+    // ⚠️ **THE PAD IS BORROWED, NOT ALLOCATED, AND THAT IS A MEASURED DECISION.** `" ".repeat(n)`
+    // per user line cost ~50ms over a 6669-entry scrollback — the whole of the frame budget that
+    // `a_long_transcript_must_not_make_a_frame_exceed_its_budget` allows, spent on spaces.
+    // Slicing a static keeps the common case free; the allocation survives only for a terminal
+    // wider than the constant, where one allocation per line is not the dominant cost anyway.
+    spans.push(match PAD.get(..padding) {
+        Some(pad) => ratatui::text::Span::raw(pad),
+        None => ratatui::text::Span::raw(" ".repeat(padding)),
+    });
     Line { spans, ..line }
 }
+
+/// Spaces for [`band`] to slice. Sized past any terminal width worth optimising for; a wider one
+/// falls back to allocating, which is correct and merely slower.
+const PAD: &str = "                                                                                                                                                                                                                                                                ";
 
 /// Markdown's wrapping pass intentionally emits one span per word. Merge adjacent spans with the
 /// same style after semantic recolouring so plain prose remains one selectable terminal run while

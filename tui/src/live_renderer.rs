@@ -418,6 +418,18 @@ pub(super) fn render_picker(frame: &mut Frame<'_>, picker: &PickerSurface, area:
         ]),
         _ => None,
     };
+    // 🔴 **THE PINK EXISTED FOR MONTHS AND NEVER REACHED A CUSTOMER.** `palette.skill` had SEVEN
+    // uses in `screens.rs` — the catalog — and ZERO anywhere the product renders. The founder
+    // noticed before any test did: "where's the pink? I don't see any pink. The skills aren't
+    // even pink." A role defined in the palette and used only by the mockup is a design decision
+    // that was made and then not shipped, which is the same family as the boxes and the shouted
+    // headings this frame has already had to take back.
+    //
+    // ⚠️ Keyed on the picker's TITLE, which is how `login_context` directly above already selects
+    // its copy — the same smell, and deliberately not a second mechanism. The skills surface is
+    // the only one whose rows name a SKILL, and `title` is what distinguishes it. The filtered
+    // titles read `Skills · 3 of 247 · type to filter`, so the test is a prefix, not equality.
+    let skill_rows = picker.title.starts_with("Skills");
     let context_height = login_context.as_ref().map_or(0, |lines| lines.len());
     let height = u16::try_from(
         picker
@@ -460,12 +472,22 @@ pub(super) fn render_picker(frame: &mut Frame<'_>, picker: &PickerSurface, area:
                             badge,
                             truncate_display(&row.label, label_width),
                         ),
-                        if selected {
-                            Style::default()
+                        match (skill_rows, selected) {
+                            // A selected skill keeps the role AND gains the weight, so the
+                            // selection is still legible without the row changing identity.
+                            (true, selected) => {
+                                Style::default()
+                                    .fg(palette.skill)
+                                    .add_modifier(if selected {
+                                        Modifier::BOLD
+                                    } else {
+                                        Modifier::empty()
+                                    })
+                            }
+                            (false, true) => Style::default()
                                 .fg(app.theme.primary())
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default().fg(palette.mid)
+                                .add_modifier(Modifier::BOLD),
+                            (false, false) => Style::default().fg(palette.mid),
                         },
                     ),
                     Span::styled(
@@ -716,27 +738,40 @@ pub(super) fn symbol_ground_layout(width: usize, height: usize) -> Arc<SymbolGro
     layout
 }
 
-/// The idle art's share of the pane: a corner flourish, not a field.
+/// The idle art's share of the pane: a horizon along the bottom edge, not a field and not a blob.
 ///
-/// The founder's words were "shrink it to an idle flourish" - he likes the dither and it was in
-/// the wrong place at the wrong size, filling most of the session column behind the empty state.
-/// Anchored bottom-right so it never sits under the text of the empty state, which reads from the
-/// top-left, and bounded so a very tall terminal does not turn it back into a field.
-const FLOURISH_MAX_WIDTH: u16 = 44;
-const FLOURISH_MAX_HEIGHT: u16 = 8;
+/// The founder's words were "shrink it to an idle flourish" — he likes the dither, and it was
+/// first fixed by shrinking it to 44 columns in the bottom-RIGHT corner. That was still wrong,
+/// and he said so after running it: *"a scatter of dots low in the pane, roughly two-thirds
+/// across… it reads as debris rather than a flourish."*
+///
+/// 🔴 **BOTH COMPLAINTS ARE ABOUT THE SAME THING AND ONLY THE SECOND ONE NAMES IT: a small patch
+/// of texture with empty space on every side reads as a RENDERING ARTIFACT, whatever corner it is
+/// anchored to.** At 190 columns the session pane's right edge is about two-thirds across the
+/// terminal, so a corner-anchored patch looked like it was floating in the middle of the screen —
+/// which is exactly what he described. Anchoring harder could not fix it; the patch had to stop
+/// being a patch.
+///
+/// So the flourish now spans the pane's FULL WIDTH along its bottom edge. Touching two edges and
+/// running the whole way across, it reads as ground rather than debris. It stays short, and it
+/// still never sits under the empty state's text, which reads from the top-left.
+///
+/// ⚠️ Unverified visually — this is a judgement about how a texture reads, made without being
+/// able to look at it. If it is still wrong the next move is to drop it from this surface
+/// entirely, which the founder has already been offered.
+const FLOURISH_MAX_HEIGHT: u16 = 6;
 /// Below this the pane has no room to spare and the art is dropped entirely.
 const FLOURISH_MIN_WIDTH: u16 = 24;
 
 pub(super) fn flourish_area(area: Rect) -> Option<Rect> {
-    let width = area.width.min(FLOURISH_MAX_WIDTH);
-    let height = (area.height / 3).min(FLOURISH_MAX_HEIGHT);
-    if width < FLOURISH_MIN_WIDTH || height < 2 {
+    let height = (area.height / 4).min(FLOURISH_MAX_HEIGHT);
+    if area.width < FLOURISH_MIN_WIDTH || height < 2 {
         return None;
     }
     Some(Rect {
-        x: area.right().checked_sub(width)?,
+        x: area.x,
         y: area.bottom().checked_sub(height)?,
-        width,
+        width: area.width,
         height,
     })
 }
@@ -2181,7 +2216,7 @@ pub(super) fn github_diff_lines(diff: &str, width: usize, app: &App) -> Vec<Line
 ///
 /// A popup is drawn ABOVE the prompt, so nothing here can clip one. When no prompt is on screen
 /// (a popup owns the whole area) this is a no-op rather than a guess.
-fn collapse_composer_tail(frame: &mut Frame<'_>, area: Rect, background: Color) {
+fn collapse_composer_tail(frame: &mut Frame<'_>, area: Rect, background: Color) -> Option<(u16, u16)> {
     let Some((prompt_row, prompt_col)) = (area.y..area.bottom()).find_map(|y| {
         (area.x..area.right())
             .find(|x| {
@@ -2190,7 +2225,7 @@ fn collapse_composer_tail(frame: &mut Frame<'_>, area: Rect, background: Color) 
             })
             .map(|x| (y, x))
     }) else {
-        return;
+        return None;
     };
     // The composer widget draws U+203A, a small angle quote. Repainted HERE rather than in the
     // composer, because 80 lib snapshots carry that glyph and another lane is editing those same
@@ -2225,6 +2260,48 @@ fn collapse_composer_tail(frame: &mut Frame<'_>, area: Rect, background: Color) 
                 .set_style(Style::default().bg(background));
         }
     }
+    Some((prompt_row, prompt_col))
+}
+
+/// `press up to edit 3 queued messages` — the affordance that makes the queue discoverable.
+///
+/// 🔴 **ONE STRING IS MOST OF THE FIX.** Claude Code puts `Press up to edit queued messages` in
+/// the composer's placeholder position the moment anything is queued, and that is why its users
+/// know the queue exists without being told. Ours had a working queue and no such line, so the
+/// founder concluded it was broken.
+///
+/// ⚠️ It is a PLACEHOLDER, so it may only occupy space the user's own draft is not using. It is
+/// drawn only when the composer is empty; a draft in progress always wins its own row.
+fn render_queue_affordance(
+    frame: &mut Frame<'_>,
+    app: &App,
+    prompt: (u16, u16),
+    area: Rect,
+    palette: &theme::Palette,
+) {
+    let waiting = app.queue.len();
+    if waiting == 0 || !app.composer.is_empty() {
+        return;
+    }
+    let (row, column) = prompt;
+    // Past the glyph and its one-column gap — the same cells a draft would start in.
+    let x = column.saturating_add(2);
+    if x >= area.right() {
+        return;
+    }
+    let text = format!(
+        "press up to edit {waiting} queued message{}",
+        if waiting == 1 { "" } else { "s" }
+    );
+    frame.render_widget(
+        Paragraph::new(Line::styled(text, Style::default().fg(palette.dim))),
+        Rect {
+            x,
+            y: row,
+            width: area.right().saturating_sub(x),
+            height: 1,
+        },
+    );
 }
 
 /// The rows the composer reserves before a single character is typed.
@@ -2698,7 +2775,11 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             )),
             ask_rows[2],
         );
-        collapse_composer_tail(frame, composer_with_padding, app.theme.background());
+        if let Some(prompt) =
+            collapse_composer_tail(frame, composer_with_padding, app.theme.background())
+        {
+            render_queue_affordance(frame, app, prompt, composer_with_padding, &palette);
+        }
         // 🔴 THE CARET IS COMPUTED AGAINST THE RECTANGLE THE COMPOSER WAS RENDERED INTO.
         // It used to be `ask_rows[3]` — one row lower and one row shorter than
         // `composer_with_padding` — so the composer's own padding row was counted twice and the
