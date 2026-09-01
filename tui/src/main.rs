@@ -1759,6 +1759,19 @@ struct App {
     composer: ComposerInput,
     transcript: Vec<TranscriptEntry>,
     queue: VecDeque<QueuedRequest>,
+    /// The messages `↑` pulled back out of the queue, still as SEPARATE items.
+    ///
+    /// 🔴 **THE MESSAGE BOUNDARIES LIVE HERE, NOT IN THE DRAFT TEXT.** Recall shows the messages
+    /// joined by newlines because that is the only way a plain text area can display several of
+    /// them — but the join is a VIEW. Sending re-reads this vector, so two messages stay two
+    /// turns and a single pasted message that happens to contain a newline stays one. Splitting
+    /// the draft on `\n` at send time cannot tell those two cases apart, which is precisely the
+    /// bug this field exists to make impossible.
+    recalled: Vec<String>,
+    /// The exact draft text produced by the last recall, so an UNEDITED draft is recognisable.
+    /// Once the user edits the merged view, the boundaries are genuinely unknowable and the draft
+    /// becomes one message — stated as a limit rather than guessed at.
+    recall_draft: String,
     active: Option<ActiveRequest>,
     header: HeaderState,
     account: Option<AccountResponse>,
@@ -2090,6 +2103,8 @@ impl App {
             composer: estelle_composer(),
             transcript: Vec::new(),
             queue: VecDeque::new(),
+            recalled: Vec::new(),
+            recall_draft: String::new(),
             active: None,
             header: HeaderState::default(),
             account: None,
@@ -2186,7 +2201,40 @@ impl App {
         }
     }
 
+    /// Send what the user typed — or, when the draft is an untouched recall, send the messages it
+    /// was made from, each as its own turn.
+    ///
+    /// 🔴 **TWO THINGS SAID ARE TWO TURNS.** Recall joins the queue into one editable string, and
+    /// the previous version sent that string: four messages became one turn carrying newlines, and
+    /// the server answered "I don't have enough context to determine what '2' and '3' refer to"
+    /// because it had received one. The boundaries are read back from [`Self::recalled`] — DATA,
+    /// never re-derived from the text, because a message may contain a newline of its own and no
+    /// split can tell that apart from two messages.
+    ///
+    /// ⚠️ **LIMIT, STATED:** once the merged draft is EDITED the boundaries are genuinely
+    /// unknowable, and the edit is treated as one message. That is the conservative reading of
+    /// "the user rewrote this", and it is the one case where recall cannot preserve the split.
     fn submit(&mut self, text: String, tx: &mpsc::UnboundedSender<UiEvent>) {
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        if !self.recalled.is_empty() {
+            let recalled = std::mem::take(&mut self.recalled);
+            let unedited = text == std::mem::take(&mut self.recall_draft).trim();
+            if unedited {
+                // Bounded by construction: `recalled` came out of a queue capped at
+                // MAX_QUEUED_REQUESTS and was emptied above, so no item re-enters this branch.
+                for message in recalled {
+                    self.submit_one(message, tx);
+                }
+                return;
+            }
+        }
+        self.submit_one(text, tx);
+    }
+
+    fn submit_one(&mut self, text: String, tx: &mpsc::UnboundedSender<UiEvent>) {
         self.trim_transcript();
         let text = text.trim().to_string();
         if text.is_empty() {
@@ -3591,7 +3639,12 @@ impl App {
             .collect::<Vec<_>>();
         self.queue.clear();
         let count = recalled.len();
-        self.composer.set_text(recalled.join("\n"));
+        // ⚠️ The join is a VIEW for editing. The items themselves are kept so that sending an
+        // untouched draft sends them back as SEPARATE turns — see `submit`.
+        let draft = recalled.join("\n");
+        self.recalled = recalled;
+        self.recall_draft = draft.clone();
+        self.composer.set_text(draft);
         self.transcript.push(TranscriptEntry::System(format!(
             "Recalled {count} queued message{} into the composer. \
              {} not sent; edit and press enter to send {}.",
@@ -11783,9 +11836,15 @@ mod tests {
                 .next()
                 .is_some_and(|character| ('\u{2801}'..='\u{28ff}').contains(&character));
             if is_braille {
+                // ⚠️ **THE PROPERTY IS UNCHANGED; ONLY THE INK MOVED.** Braille material still
+                // belongs to the spider lily alone — that is what this clause is for. It is no
+                // longer RED: the founder saw `FATE_RED` on an idle startup frame and read it as
+                // a fault, and red is reserved for refusal (`■`) and break (`▲`) in this
+                // interface. See `the_idle_startup_frame_paints_no_red_anywhere`.
                 assert_eq!(
-                    cell.fg, FATE_RED,
-                    "only the earned red spider lily may use Braille material"
+                    cell.fg,
+                    app.theme.screen_palette().mid,
+                    "only the spider lily may use Braille material, and never in red"
                 );
             }
         }
@@ -12248,18 +12307,27 @@ mod tests {
         assert!(scene_coverage(50, 95, 100, 100) > 0.30);
     }
 
+    /// ⚠️ **UPDATED DELIBERATELY, AND IT RETIRES A DESIGNED FEATURE'S COLOUR.** This asserted the
+    /// "earned RED lily" painted in `FATE_RED` at a wide terminal. The founder saw it in a real
+    /// terminal and called it *"a random red… kinda broken, the flower got cut off"*. Red is a
+    /// MEANING in this interface — `■` refusal, `▲` break — and decoration must not borrow it.
+    ///
+    /// The lily itself is KEPT: it matches the website's scene anchors and deleting it would be
+    /// throwing away the design rather than fixing the defect. What changed is its ink (`mid`, not
+    /// red) and that it is confined to a box of its own proportions. Measured off the LAYOUT
+    /// rather than the buffer's colour, because `mid` is used all over the frame and a colour
+    /// search would no longer isolate the motif.
     #[test]
     fn persistent_lily_stays_subtle_at_a_wide_terminal_size() {
-        let app = test_app();
-        let buffer = rendered_buffer_at_size(&app, Instant::now(), 190, 50);
-        let points = buffer
-            .content
+        let layout = live_renderer::symbol_ground_layout(190, 12);
+        let points = layout
+            .ink
             .iter()
             .enumerate()
-            .filter(|(_, cell)| cell.fg == FATE_RED && !cell.symbol().trim().is_empty())
+            .filter(|(_, level)| **level == 2)
             .map(|(index, _)| (index % 190, index / 190))
             .collect::<Vec<_>>();
-        assert!(!points.is_empty(), "the earned red lily did not paint");
+        assert!(!points.is_empty(), "the lily did not paint");
         let min_x = points.iter().map(|(x, _)| *x).min().unwrap_or(0);
         let max_x = points.iter().map(|(x, _)| *x).max().unwrap_or(0);
         let min_y = points.iter().map(|(_, y)| *y).min().unwrap_or(0);
@@ -13601,6 +13669,214 @@ mod tests {
             grounded.fg, ungrounded.fg,
             "grounded and ungrounded replies are indistinguishable"
         );
+    }
+
+    /// 🔴 RECALL MUST NOT MERGE N MESSAGES INTO ONE. TWO THINGS SAID ARE TWO TURNS.
+    ///
+    /// I built the combining behaviour on instruction, citing Claude Code. The founder has now
+    /// used it and rejected it: *"it makes it get appended to it instead of keeping the nature of
+    /// the send where 3 is under 2 since they are two different things said."* He recalled four
+    /// messages, pressed enter, and Estelle answered *"I don't have enough context to determine
+    /// what '2' and '3' refer to"* — because it received ONE turn carrying newlines, not four.
+    ///
+    /// ⚠️ **THE BOUNDARIES ARE CARRIED AS DATA AND NEVER RE-DERIVED FROM THE TEXT.** Splitting the
+    /// draft on `\n` at send time is the same defect wearing a different hat: a single message may
+    /// itself contain newlines, and a split cannot tell that apart from two messages. `recalled`
+    /// holds the exact items, so an unedited draft sends exactly what was queued.
+    #[test]
+    fn recall_then_send_preserves_message_boundaries_and_a_newline_is_not_one() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let in_flight = |app: &mut App| {
+            app.auth_resolved = true;
+            app.active = Some(ActiveRequest {
+                id: 31,
+                label: "thinking".to_string(),
+                started: Instant::now(),
+                cancel: CancellationToken::new(),
+            });
+        };
+        let labels = |app: &App| {
+            app.queue
+                .iter()
+                .map(QueuedRequest::label)
+                .collect::<Vec<_>>()
+        };
+
+        // Two separate messages, recalled and sent untouched, stay two.
+        let mut app = test_app();
+        in_flight(&mut app);
+        app.submit("2".to_string(), &tx);
+        app.submit("3".to_string(), &tx);
+        app.recall_queue_into_composer();
+        assert!(app.queue.is_empty(), "recall did not take the queue");
+        let draft = app.composer.text();
+        assert_eq!(draft, "2\n3", "the editable view should show them on their own lines");
+        app.submit(draft, &tx);
+        assert_eq!(
+            labels(&app),
+            vec!["2".to_string(), "3".to_string()],
+            "recall merged two separately-sent messages into one turn"
+        );
+
+        // 🔴 THE CONTROL THAT MAKES THE ABOVE MEAN SOMETHING: one message that CONTAINS a newline
+        // must stay one. A `split('\n')` implementation passes the first assertion and fails
+        // this one, which is exactly the bug being avoided.
+        let mut pasted = test_app();
+        in_flight(&mut pasted);
+        pasted.submit("line one\nline two".to_string(), &tx);
+        assert_eq!(pasted.queue.len(), 1);
+        pasted.recall_queue_into_composer();
+        let draft = pasted.composer.text();
+        pasted.submit(draft, &tx);
+        assert_eq!(
+            labels(&pasted),
+            vec!["line one\nline two".to_string()],
+            "a single pasted message was split into two turns at its own newline"
+        );
+    }
+
+    /// 🔴 A MULTI-LINE QUEUED ENTRY MUST NOT RENDER AS A DIFFERENT VALUE.
+    ///
+    /// The waiting list showed `○ 23` for a queued message whose two lines were `2` and `3`.
+    /// Newlines were dropped with nothing put in their place, so two lines became the number
+    /// twenty-three — a value that reads as a DIFFERENT value, which is worse than truncation.
+    #[test]
+    fn a_multi_line_queued_entry_never_renders_as_its_lines_concatenated() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.active = Some(ActiveRequest {
+            id: 33,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        app.submit("2\n3".to_string(), &tx);
+        assert_eq!(app.queue.len(), 1, "the premise is ONE two-line message");
+
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 34);
+        // ⚠️ Anchored to the `N waiting` header, NOT to the queued glyph: the production rail
+        // marks its unread rows `○` too, and a bare glyph search finds `○ agents` in the right
+        // column instead. A test that reads the wrong row proves nothing about the right one.
+        let rows = rendered.lines().collect::<Vec<_>>();
+        let header = rows
+            .iter()
+            .position(|line| line.contains("1 waiting"))
+            .expect("the waiting header");
+        let band = rows[header + 1].to_string();
+        assert!(
+            !band.contains("23"),
+            "two lines rendered as the number twenty-three: {band:?}"
+        );
+        // The boundary must be recoverable by eye: the first line, and a sign that more follows.
+        assert!(band.contains('2'), "the first line is missing: {band:?}");
+        assert!(
+            band.contains("+1 more") || band.contains('\u{23ce}'),
+            "no indication that the entry continues: {band:?}"
+        );
+    }
+
+    /// 🔴 THE IDLE FLOURISH PAINTS NO RED, AND IS NOT CLIPPED.
+    ///
+    /// The founder: *"there's a random red and it's kinda broken, the flower got cut off too."*
+    /// Two faults, one cause. `symbol_ground_layout` draws a RED LILY — a brand motif — at
+    /// `ink == 2`, coloured `FATE_RED`, in NORMALISED unit space (`x / width`, `y / height`). So it
+    /// always "fits" arithmetically and never fits visually: when I made the flourish a full-width
+    /// 6-row horizon, a shape that wants a roughly square box was stretched about 26:1 into a dense
+    /// red smear two-thirds across. That is exactly what he photographed.
+    ///
+    /// ⚠️ **RED IS A MEANING IN THIS INTERFACE, NOT A HUE.** `■` red is a refusal and `▲` warn is a
+    /// break; a decorative texture borrowing that ink says "something is wrong" on an idle startup
+    /// frame. The empty frame is asserted to contain NO red cell at all — the strongest form,
+    /// because on an idle frame there is nothing that legitimately warrants it.
+    #[test]
+    fn the_idle_startup_frame_paints_no_red_anywhere() {
+        let app = test_app();
+        let buffer = rendered_buffer_at_size(&app, Instant::now(), 130, 34);
+        let palette = app.theme.screen_palette();
+
+        let reds = (0..buffer.area.height)
+            .flat_map(|y| (0..buffer.area.width).map(move |x| (x, y)))
+            .filter(|(x, y)| {
+                let fg = buffer[(*x, *y)].fg;
+                fg == palette.red || fg == FATE_RED || fg == FATE_RED_SOFT
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            reds.is_empty(),
+            "the idle frame paints {} red cell(s), first at {:?} — red means refusal here",
+            reds.len(),
+            reds.first()
+        );
+
+        // 🔴 **THE ASSERTION ABOVE WAS A PARTIAL GUARD AND A MUTANT PROVED IT.** Restoring
+        // `FATE_RED` on the motif left it GREEN, because the aspect gate stops the lily being
+        // drawn on a wide short horizon at all — so the frame test was covering the GATE and was
+        // silent about the INK. This half renders the ground into a box the lily DOES fit, which
+        // is the only place `ink == 2` is reachable, and asserts the colour there.
+        let square = TestBackend::new(48, 40);
+        let mut terminal = Terminal::new(square).expect("test terminal");
+        terminal
+            .draw(|frame| render_symbol_ground(frame, frame.area(), &app))
+            .expect("render ground");
+        let buffer = terminal.backend().buffer().clone();
+        let layout = live_renderer::symbol_ground_layout(48, 40);
+        assert!(
+            layout.ink.iter().any(|level| *level == 2),
+            "this fixture must actually DRAW the motif, or it asserts nothing about its colour"
+        );
+        let reds = (0..buffer.area.height)
+            .flat_map(|y| (0..buffer.area.width).map(move |x| (x, y)))
+            .filter(|(x, y)| {
+                let fg = buffer[(*x, *y)].fg;
+                fg == palette.red || fg == FATE_RED || fg == FATE_RED_SOFT
+            })
+            .count();
+        assert_eq!(
+            reds, 0,
+            "the motif paints red where it DOES fit — decoration must never borrow the \
+             refusal ink"
+        );
+    }
+
+    /// The flourish fits the rect it is given, in both axes.
+    ///
+    /// "The flower got cut off" is a clipping report, and clipping is what happens when a motif
+    /// with an intrinsic shape is drawn into a box that cannot hold it. The layout is asserted to
+    /// produce exactly the requested cell count — no row or column beyond the rect — and the lily
+    /// is asserted ABSENT from a band too short to hold it rather than drawn squashed.
+    #[test]
+    fn the_flourish_fits_its_rect_and_drops_the_lily_when_it_cannot_fit() {
+        // A wide, short horizon — the shape `flourish_area` actually produces.
+        let wide = live_renderer::symbol_ground_layout(130, 5);
+        assert_eq!(
+            wide.cells.len(),
+            130 * 5,
+            "the layout produced a different number of cells than the rect has"
+        );
+        assert_eq!(wide.ink.len(), 130 * 5);
+
+        // The motif is DRAWN — it is a brand element and deleting it is not the fix — but it is
+        // confined to a box of its own proportions instead of stretched across the whole horizon.
+        let columns = wide
+            .ink
+            .iter()
+            .enumerate()
+            .filter(|(_, level)| **level == 2)
+            .map(|(index, _)| index % 130)
+            .collect::<Vec<_>>();
+        assert!(!columns.is_empty(), "the lily vanished from the flourish");
+        let span = columns.iter().max().unwrap_or(&0) - columns.iter().min().unwrap_or(&0);
+        assert!(
+            span <= 5 * 3,
+            "the lily spans {span} columns of a 5-row band — it is stretched, which is what \
+             rendered as a smear"
+        );
+
+        // Given a box with room, it may use all of it; what must never happen is a squashed one.
+        let tall = live_renderer::symbol_ground_layout(60, 30);
+        assert_eq!(tall.cells.len(), 60 * 30);
+        assert!(tall.ink.iter().any(|level| *level == 2));
     }
 
     /// 🔴 A REPLY OPENS WITH A MARK, NOT WITH THE WORD "ESTELLE".

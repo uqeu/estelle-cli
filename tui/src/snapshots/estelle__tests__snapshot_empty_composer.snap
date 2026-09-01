@@ -1,6 +1,6 @@
 ---
 source: tui/src/main.rs
-assertion_line: 8053
+assertion_line: 8205
 expression: "rendered_frame(&app, Instant::now())"
 ---
 "ESTELLE  ·  uqeu/estelle                                                        "
@@ -16,7 +16,7 @@ expression: "rendered_frame(&app, Instant::now())"
 "                                                                                "
 "                                                                                "
 "                                                                                "
-"∷                                                        ⠐ ⠈⠘⠒⠒⠓⠚  ⠂            "
+"∷                                                                             ⠘ "
 "                                                                                "
 "                                                                                "
 "── ask · uqeu/estelle ──────────────────────────────────────────────────────────"

@@ -365,7 +365,7 @@ fn queue_band_lines(app: &App, palette: &theme::Palette, width: usize) -> Vec<Li
                 Style::default().fg(marks::Mark::Queued.colour(palette)),
             ),
             Span::styled(
-                truncate_display(&pending.label(), width.saturating_sub(QUEUE_MARK_COLS)),
+                queue_entry_summary(&pending.label(), width.saturating_sub(QUEUE_MARK_COLS)),
                 Style::default().fg(palette.dim),
             ),
         ])
@@ -375,6 +375,33 @@ fn queue_band_lines(app: &App, palette: &theme::Palette, width: usize) -> Vec<Li
         Style::default().fg(palette.dim),
     ));
     lines
+}
+
+/// One waiting entry, on one row, WITHOUT its line breaks silently deleted.
+///
+/// 🔴 **DROPPING A NEWLINE PRODUCES A DIFFERENT VALUE, NOT A SHORTER ONE.** A queued message whose
+/// two lines were `2` and `3` rendered as `○ 23` — the number twenty-three. The founder read it as
+/// one value when it was two, which is worse than truncation: truncation is visibly incomplete,
+/// while `23` is a confident wrong answer. Same family as the boundary bug in `submit`: the queue's
+/// items were being flattened into a string, and a flattened string cannot be read back correctly.
+///
+/// The first line is shown with an explicit `⏎ +N more`, so the boundary is recoverable by eye and
+/// the row can never be mistaken for the concatenation.
+fn queue_entry_summary(label: &str, width: usize) -> String {
+    let mut lines = label.split('\n');
+    let first = lines.next().unwrap_or_default();
+    let remaining = lines.count();
+    if remaining == 0 {
+        return truncate_display(first, width);
+    }
+    // The suffix is reserved BEFORE the text is truncated, so it can never itself be cut off —
+    // a `+N more` that gets clipped to `+N mo` is the same defect one layer up.
+    let suffix = format!(" \u{23ce} +{remaining} more");
+    // Measured the same way `truncate_display` measures, so the reservation and the truncation
+    // cannot disagree about how wide the suffix is.
+    let reserved = suffix.chars().map(|ch| ch.width().unwrap_or(0)).sum::<usize>();
+    let room = width.saturating_sub(reserved);
+    format!("{}{suffix}", truncate_display(first, room))
 }
 
 pub(super) fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
@@ -684,8 +711,11 @@ pub(super) fn scene_coverage(x: usize, y: usize, width: usize, height: usize) ->
 
 #[derive(Debug)]
 pub(super) struct SymbolGroundLayout {
-    cells: Vec<char>,
-    ink: Vec<u8>,
+    /// ⚠️ Visible to the module so a test can assert the layout FILLS its rect exactly and that
+    /// the lily is absent from a band too short to hold it. A clipping bug is invisible from the
+    /// rendered frame alone, because a clipped motif still paints legal cells.
+    pub(super) cells: Vec<char>,
+    pub(super) ink: Vec<u8>,
 }
 
 type SymbolGroundCache = Mutex<HashMap<(usize, usize), Arc<SymbolGroundLayout>>>;
@@ -694,6 +724,16 @@ static SYMBOL_GROUND_CACHE: OnceLock<SymbolGroundCache> = OnceLock::new();
 
 // No `dimmed` variant: the scene's lifecycle owner is "has the first message been submitted",
 // not "is the composer empty". It renders full-strength until submission, then not at all.
+/// How many columns of lily per row of band — the motif's own aspect, as a named constant.
+///
+/// 🔴 **THE LILY IS A DESIGNED BRAND ELEMENT AND IS NOT DELETED HERE.** It matches the website's
+/// scene anchors (`terminal_lily_uses_the_websites_scene_anchors_and_full_petal_mass`). What was
+/// wrong is that `red_lily_braille` normalises over the WHOLE box, so a full-width 6-row horizon
+/// stretched it about 26:1 into a smear — "a random red… the flower got cut off". It gets its own
+/// aspect-correct sub-box now, anchored at the right where it has always sat, so it is drawn whole
+/// and small rather than stretched and clipped. Power of Ten rule 2: the bound is named.
+const LILY_ASPECT: usize = 3;
+
 pub(super) fn symbol_ground_layout(width: usize, height: usize) -> Arc<SymbolGroundLayout> {
     let key = (width, height);
     let cache = SYMBOL_GROUND_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -707,6 +747,10 @@ pub(super) fn symbol_ground_layout(width: usize, height: usize) -> Arc<SymbolGro
     }
 
     let opacity = 1.0;
+    // The motif's own box: as wide as its aspect allows, never wider than the band, anchored at
+    // the right edge. Everything outside it is plain dither, which is what a horizon should be.
+    let lily_width = height.saturating_mul(LILY_ASPECT).min(width).max(1);
+    let lily_x0 = width.saturating_sub(lily_width);
     let mut cells = vec![' '; width.saturating_mul(height)];
     let mut ink = vec![0_u8; width.saturating_mul(height)];
     for y in 0..height {
@@ -715,7 +759,16 @@ pub(super) fn symbol_ground_layout(width: usize, height: usize) -> Arc<SymbolGro
             let index = y * width + x;
             let coverage = scene_coverage(x, y, width, height) * opacity;
             let threshold = (f64::from(BAYER_8[y % 8][x % 8]) + 0.5) / 64.0;
-            if let Some(symbol) = red_lily_braille(x, y, width, height, opacity) {
+            // 🔴 **THE MOTIF IS DRAWN IN NORMALISED SPACE, SO IT ALWAYS "FITS" AND CAN STILL BE
+            // RUINED.** `red_lily_braille` maps `x / width` and `y / height`, which means a
+            // full-width 6-row horizon stretches a roughly-square flower about 26:1 — the founder
+            // saw "a random red" blob "kinda broken, the flower got cut off". Arithmetic fit is
+            // not visual fit. The lily is drawn only where the box can hold its proportions;
+            // elsewhere the flourish is pure dither, which is the graceful degradation.
+            if x >= lily_x0
+                && let Some(symbol) =
+                    red_lily_braille(x - lily_x0, y, lily_width, height, opacity)
+            {
                 cells[index] = symbol;
                 ink[index] = 2;
                 x += 1;
@@ -810,7 +863,13 @@ pub(super) fn render_symbol_ground(frame: &mut Frame<'_>, area: Rect, app: &App)
             spans.push(Span::styled(
                 cells[start..end].iter().collect::<String>(),
                 match ink_level {
-                    2 => Style::default().fg(FATE_RED).add_modifier(Modifier::BOLD),
+                    // ⚠️ **NOT RED.** Red is a MEANING in this interface — `■` refusal, `▲` break —
+                    // and a decorative texture wearing it says "something is wrong" on an idle
+                    // startup frame. The motif keeps its shape and gives up the brand ink; the
+                    // frame is asserted to contain no red cell at all while idle.
+                    2 => Style::default()
+                        .fg(palette.mid)
+                        .add_modifier(Modifier::BOLD),
                     1 => Style::default().fg(if app.theme == Theme::CreamInk {
                         palette.bright
                     } else {
@@ -839,7 +898,8 @@ pub(super) fn render_symbol_ground(frame: &mut Frame<'_>, area: Rect, app: &App)
             "·"
         };
         frame.render_widget(
-            Paragraph::new(glyph).style(Style::default().fg(FATE_RED)),
+            // Same rule as the texture above: the wake is decoration, so it takes `dim`, not red.
+            Paragraph::new(glyph).style(Style::default().fg(palette.dim)),
             Rect::new(
                 area.x.saturating_add(u16::try_from(x).unwrap_or(u16::MAX)),
                 area.y.saturating_add(u16::try_from(y).unwrap_or(u16::MAX)),
