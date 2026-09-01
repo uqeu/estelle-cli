@@ -175,27 +175,27 @@ pub(crate) fn divider(columns: &[Col; 3], palette: &Palette) -> Line<'static> {
     ))
 }
 
-/// `╌╌ session · <repo> ╌╌╌…` — the design's replacement for `┌ CONVERSATION ─┐`.
+/// `── session · <repo> ───…` — the design's replacement for `┌ CONVERSATION ─┐`.
 pub(crate) fn session_rule(repo: &str, width: usize, palette: &Palette) -> Line<'static> {
     design_rule("session", repo, width, palette, palette.cite)
 }
 
-/// `╌╌ production · <repo> ╌╌╌…` — the right rail's heading.
+/// `── production · <repo> ───…` — the right rail's heading.
 pub(crate) fn production_rule(repo: &str, width: usize, palette: &Palette) -> Line<'static> {
     design_rule("production", repo, width, palette, palette.green)
 }
 
-/// `╌╌ ask · <repo> ╌╌╌…` — the design's replacement for `┌ ASK ESTELLE ─┐`.
+/// `── ask · <repo> ───…` — the design's replacement for `┌ ASK ESTELLE ─┐`.
 pub(crate) fn ask_rule(repo: &str, width: usize, palette: &Palette) -> Line<'static> {
     design_rule("ask", repo, width, palette, palette.cite)
 }
 
-/// `╌╌ cited · <repo> ╌╌╌…` — the evidence rail's heading.
+/// `── cited · <repo> ───…` — the evidence rail's heading.
 pub(crate) fn cited_rule(repo: &str, width: usize, palette: &Palette) -> Line<'static> {
     design_rule("cited", repo, width, palette, palette.warn)
 }
 
-/// `╌╌ <label> · <mode> ╌╌╌…` for a section INSIDE a pane — the production rail's `app`,
+/// `── <label> · <mode> ───…` for a section INSIDE a pane — the production rail's `app`,
 /// `services`, `agents`, `queue` and `github` bands.
 ///
 /// 🔴 **THESE WERE BOLD ALL-CAPS HEADINGS (`APP HEALTH`, `AGENT HEALTH`, `GITHUB`) UNTIL NOW.**
@@ -217,10 +217,10 @@ pub(crate) fn section_rule(
 /// 🔴 **THIS IS WHAT REPLACES `Block::default().borders(Borders::ALL).title(" MODEL POOL ")`.**
 /// Eight of the live frame's eighteen surfaces still drew a box while the catalog drew none, and
 /// one rendered row carried both languages at once:
-/// `╌╌ session · uqeu/estelle ╌╌╌  │  ┌ CONTEXT  Alt+M · /context ────┐`.
+/// `── session · uqeu/estelle ───  │  ┌ CONTEXT  Alt+M · /context ────┐`.
 ///
 /// The title's first ` · ` splits label from mode, and BOTH are lowercased: the shouted
-/// `┌ SETTINGS ┐` heading is the old language, and `╌╌ settings ╌╌` is this one.
+/// `┌ SETTINGS ┐` heading is the old language, and `── settings ──` is this one.
 pub(crate) fn title_rule(
     title: &str,
     width: usize,
@@ -380,13 +380,13 @@ mod tests {
         let palette = ScreenTheme::Dark.palette();
         assert!(
             text(&session_rule("fernpost/checkout-api", 60, &palette))
-                .starts_with("╌╌ session · fernpost/checkout-api ╌")
+                .starts_with("── session · fernpost/checkout-api ─")
         );
         assert!(
             text(&production_rule("fernpost", 40, &palette))
-                .starts_with("╌╌ production · fernpost ╌")
+                .starts_with("── production · fernpost ─")
         );
-        assert!(text(&ask_rule("fernpost", 40, &palette)).starts_with("╌╌ ask · fernpost ╌"));
+        assert!(text(&ask_rule("fernpost", 40, &palette)).starts_with("── ask · fernpost ─"));
     }
 
     /// 🔴 A RULE WIDER THAN ITS FRAME IS NOT A RULE — IT IS TWO WRAPPED ROWS.

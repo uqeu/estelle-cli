@@ -1,7 +1,7 @@
 //! The `Gate refused` block, in the catalog's design language, for BOTH callers.
 //!
 //! 🔴 **THE REFUSAL IS THE PRODUCT'S LOUDEST MOMENT AND IT WAS DRAWN TWICE.** Screen 10 of the
-//! catalog (`screens.rs::broken`) drew the design — a `╌╌ gate · refused ╌╌` rule, a pulsing
+//! catalog (`screens.rs::broken`) drew the design — a `── gate · refused ──` rule, a pulsing
 //! `⏹ Gate refused`, and one row per blocker naming the CLAIM and the FINDING against it. The live
 //! session drew a bordered `┌ gate · deterministic · no model ┐` modal with a scatter chart and
 //! `{:>6}  {path}` hand-positioned text. Only the second one ever reached a customer. This module
@@ -17,7 +17,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use crate::cols::{Cell, Col, row, rule};
-use crate::theme::{Palette, pulse};
+use crate::theme::Palette;
 
 /// One reason the gate refused: the CLAIM the change made, and the FINDING against it.
 ///
@@ -123,18 +123,18 @@ pub(crate) fn lines(
             palette.red,
         )),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("⏹ ", pulse(palette.red, tick, pulse_enabled)),
-            Span::styled("Gate refused", pulse(palette.red, tick, pulse_enabled)),
-            Span::styled(
-                if refusal.detail.trim().is_empty() {
-                    String::new()
-                } else {
-                    format!("  ·  {}", refusal.detail.trim())
-                },
-                Style::default().fg(palette.dim),
-            ),
-        ]),
+        // 🔴 `⏹` became `■` (the founder's set 2A) and the WORDS STOPPED PULSING. This row used
+        // to apply `pulse(...)` to both spans, so the whole headline dimmed and brightened on a
+        // 1.4s cycle — the exact thing the spec forbids. `marks::headline` can only pulse the
+        // mark, which is why the fix is a call and not a correction.
+        crate::marks::headline(
+            crate::marks::Mark::Refused,
+            "Gate refused",
+            refusal.detail,
+            palette,
+            tick,
+            pulse_enabled,
+        ),
     ];
     if let Some(note) = refusal.note.map(str::trim).filter(|note| !note.is_empty()) {
         output.push(Line::styled(
@@ -245,16 +245,18 @@ mod tests {
             true,
         ));
 
-        assert!(rendered.starts_with("╌╌ gate · refused ╌"), "{rendered}");
+        assert!(rendered.starts_with("── gate · refused ─"), "{rendered}");
         assert!(
-            rendered.contains("⏹ Gate refused  ·  repairing · round 1 of 3"),
+            rendered.contains("■ Gate refused  ·  repairing · round 1 of 3"),
             "{rendered}"
         );
         assert!(rendered.contains("reqwest::Client::retry()"), "{rendered}");
         assert!(rendered.contains("does not exist"), "{rendered}");
         // No BOXED panel: the corners and the solid rule are the old language. `│` stays — it is
         // the design's own blocker marker, not a border.
-        for boxed in ['┌', '┐', '└', '┘', '├', '┤', '┬', '┴', '┼', '─'] {
+        // ⚠️ `─` is NOT in this list any more: since the founder picked the solid rule it IS
+        // the rule texture. Corners and tees are what make a box, and they stay forbidden.
+        for boxed in ['┌', '┐', '└', '┘', '├', '┤', '┬', '┴', '┼'] {
             assert!(
                 !rendered.contains(boxed),
                 "a box glyph {boxed:?} survived\n{rendered}"

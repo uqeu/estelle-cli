@@ -1,7 +1,6 @@
 use crate::cols::{Cell, Col, head, row};
 use crate::mask_secret;
 use crate::theme::Palette;
-use crate::theme::pulse;
 use estelle_client::{Client, MonitorOverviewResponse, Repo};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -310,21 +309,20 @@ pub fn lines(
         palette,
         palette.red,
     ));
-    output.push(Line::from(vec![
-        Span::styled("▲ ", pulse(palette.red, tick, pulse_enabled)),
-        Span::styled(
-            if graph.failing_symbol.is_empty() {
-                "unbound symbol".to_string()
-            } else {
-                graph.failing_symbol.clone()
-            },
-            pulse(palette.red, tick, pulse_enabled),
-        ),
-        Span::styled(
-            format!("  {}", graph.failing_file),
-            Style::default().fg(palette.dim),
-        ),
-    ]));
+    // ⚠️ The symbol's NAME used to pulse with the mark. It is the one string on this pane a
+    // reader has to copy accurately, and it was the one moving.
+    output.push(crate::marks::headline(
+        crate::marks::Mark::Blocked,
+        if graph.failing_symbol.is_empty() {
+            "unbound symbol"
+        } else {
+            graph.failing_symbol.as_str()
+        },
+        &graph.failing_file,
+        palette,
+        tick,
+        pulse_enabled,
+    ));
 
     let related = related_columns(width);
     if graph.blast_radius.is_empty() {
@@ -555,8 +553,12 @@ mod tests {
             .flat_map(|line| line.spans.iter())
             .collect::<Vec<_>>();
 
+        // ⚠️ The failing symbol moved from red to WARN with the mark vocabulary: the demo frame
+        // draws a production incident as `▲` in warn (`▲ 03:41:02 checkout-worker
+        // SignatureMismatch`), and red is reserved for a REFUSAL — something Estelle declined to
+        // do. Nothing refused this; it broke. The colour now says which.
         assert!(spans.iter().any(|span| {
-            span.content.contains("charge_card") && span.style.fg == Some(palette.red)
+            span.content.contains("charge_card") && span.style.fg == Some(palette.warn)
         }));
         assert!(spans.iter().any(|span| {
             span.content.contains("checkout.py") && span.style.fg == Some(palette.warn)

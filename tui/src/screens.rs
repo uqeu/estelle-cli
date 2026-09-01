@@ -3,8 +3,8 @@
 
 use crate::cols::{Cell, Col, head, row, rule};
 use crate::production_hud::ProductionGraph;
+use crate::theme::Palette;
 use crate::theme::ScreenTheme;
-use crate::theme::{Palette, pulse};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::style::{Modifier, Style};
@@ -1051,17 +1051,14 @@ fn everything(p: &Palette, tick: u64, on: bool) -> Vec<Line<'static>> {
         p.skill,
     );
     v.push(blank());
-    v.push(Line::from(vec![
-        Span::styled("▲ ".to_string(), pulse(p.red, tick, on)),
-        Span::styled(
-            "postgrest has been restarting for 4m".to_string(),
-            pulse(p.red, tick, on),
-        ),
-        Span::styled(
-            "  ·  monitor opened a repair".to_string(),
-            Style::default().fg(p.dim),
-        ),
-    ]));
+    v.push(crate::marks::headline(
+        crate::marks::Mark::Blocked,
+        "postgrest has been restarting for 4m",
+        "monitor opened a repair",
+        p,
+        tick,
+        on,
+    ));
     v.push(blank());
     v.push(dim(p, "❯   tab repo · ctrl+s spend · ctrl+m models"));
     v
@@ -1094,14 +1091,14 @@ fn broken(p: &Palette, tick: u64, on: bool) -> Vec<Line<'static>> {
         on,
     );
     v.push(blank());
-    v.push(Line::from(vec![
-        Span::styled("▲ ".to_string(), pulse(p.warn, tick, on)),
-        Span::styled("compact BLOCKED".to_string(), pulse(p.warn, tick, on)),
-        Span::styled(
-            "   latest_turn_exceeds_usable_window".to_string(),
-            Style::default().fg(p.dim),
-        ),
-    ]));
+    v.push(crate::marks::headline(
+        crate::marks::Mark::Blocked,
+        "compact BLOCKED",
+        "latest_turn_exceeds_usable_window",
+        p,
+        tick,
+        on,
+    ));
     v.push(dim(
         p,
         "   your last message alone is larger than the model's window.",
@@ -1265,17 +1262,14 @@ fn monitor(p: &Palette, tick: u64, on: bool) -> Vec<Line<'static>> {
     }
 
     v.push(blank());
-    v.push(Line::from(vec![
-        Span::styled("▲ ".to_string(), pulse(p.warn, tick, on)),
-        Span::styled(
-            "31 of 2,014 returned empty".to_string(),
-            pulse(p.warn, tick, on),
-        ),
-        Span::styled(
-            "   all of them q=\"\"  ·  search.py:41".to_string(),
-            Style::default().fg(p.dim),
-        ),
-    ]));
+    v.push(crate::marks::headline(
+        crate::marks::Mark::Blocked,
+        "31 of 2,014 returned empty",
+        "all of them q=\"\"  ·  search.py:41",
+        p,
+        tick,
+        on,
+    ));
     v.push(Line::from(vec![
         Span::styled(
             "  monitor opened a repair  ·  ".to_string(),

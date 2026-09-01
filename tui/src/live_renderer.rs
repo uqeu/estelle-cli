@@ -4,6 +4,7 @@
 //! must enter through `render_frame`; a second hand-built representation is forbidden.
 
 use super::*;
+use crate::cols::{self, Cell, Col};
 #[cfg(test)]
 pub(super) fn render_transcript(entries: &[TranscriptEntry]) -> Text<'static> {
     render_transcript_with_citations(entries, true, Theme::Dark, 120).text
@@ -135,15 +136,6 @@ pub(super) fn session_tabs_line(app: &App) -> Line<'static> {
     Line::from(spans)
 }
 
-/// A value the server RESOLVED reads as body text; one it did not reads as tertiary.
-///
-/// ⚠️ Takes the palette rather than reaching for `Color::Gray`/`Color::DarkGray`: those are the
-/// USER'S terminal's idea of grey, so on a solarized or light profile the "unresolved" style could
-/// be the more legible of the two — inverting the meaning this function exists to carry.
-pub(super) fn value_style(resolved: bool, palette: &theme::Palette) -> Style {
-    Style::default().fg(if resolved { palette.mid } else { palette.dim })
-}
-
 pub(super) fn commas(value: u64) -> String {
     let digits = value.to_string();
     let mut output = String::with_capacity(digits.len() + digits.len() / 3);
@@ -172,106 +164,122 @@ pub(super) fn observed_model(reply: &CommandReply) -> Option<&str> {
         })
 }
 
-pub(super) fn status_line(app: &App, now: Instant) -> Line<'static> {
-    let palette = app.theme.screen_palette();
-    if let Some(active) = &app.active {
-        let elapsed = now.saturating_duration_since(active.started).as_secs();
-        let local_shell = active.label.starts_with("local shell");
-        let label = if elapsed >= 30 && active.label.starts_with("/gate ·") {
-            format!("{} · still waiting for Estelle", active.label)
-        } else if elapsed >= 30 && !local_shell {
-            "still waiting for Estelle".to_string()
-        } else {
-            active.label.clone()
-        };
-        let mut spans = vec![
-            Span::styled(label, Style::default().fg(palette.warn)),
-            Span::raw(format!(
-                "  {}  |  Esc cancels",
-                estelle_tui::fmt_elapsed_compact(elapsed)
-            )),
-        ];
-        if elapsed >= 30 {
-            spans.push(Span::raw(if local_shell {
-                "  |  local command has not exited"
-            } else {
-                "  |  no response received yet"
-            }));
-        }
-        return Line::from(spans);
-    }
-    if !app.queue.is_empty() {
-        return Line::styled(
-            format!("{} queued", app.queue.len()),
-            Style::default().fg(palette.mid),
-        );
-    }
-    let mode = commands::mode_name(commands::effective_mode(
-        &app.local_mode,
-        app.server_mode.as_deref(),
-    ));
-    let (model, model_resolved) = app.active_model.as_ref().map_or_else(
-        || ("routing auto".to_string(), false),
-        |model| {
-            let freshness = if app
-                .active_model_observed_at
-                .is_some_and(|observed| now.saturating_duration_since(observed).as_secs() <= 300)
-            {
-                "observed"
-            } else {
-                "stale"
-            };
-            (format!("model {model} · {freshness}"), true)
-        },
-    );
-    let mut spans = vec![
-        Span::styled(mode.to_string(), Style::default().fg(palette.mid)),
-        Span::styled("  ·  ", Style::default().fg(palette.dim)),
-        Span::styled(model, value_style(model_resolved, &palette)),
-    ];
-    if let Some(count) = app.header.memories {
-        spans.extend([
-            Span::styled("  ·  ", Style::default().fg(palette.dim)),
-            Span::styled(
-                format!("memory {}", commas(count)),
-                value_style(true, &palette),
-            ),
-        ]);
-    }
-    if app.header.connected {
-        spans.extend([
-            Span::styled("  ·  ", Style::default().fg(palette.dim)),
-            Span::styled("connected", value_style(true, &palette)),
-        ]);
-    }
-    Line::from(spans)
-}
-
 /// The footer carries the design's key hints ahead of the live status.
 ///
 /// ⚠️ `KEY_HINTS` is the catalog's screen-9 wording verbatim. The demo mockup shows
 /// `enter send` and `esc stop` beside them; neither exists in the restored design code, so
 /// neither is printed here.
-pub(super) fn footer_line(app: &App, now: Instant, width: u16) -> Line<'static> {
-    let status = status_line(app, now);
-    let status_width = status
-        .spans
-        .iter()
-        .map(|span| span.content.chars().count())
-        .sum::<usize>();
-    let budget = usize::from(width)
-        .saturating_sub(status_width)
-        .saturating_sub(5);
-    let hints = session_view::key_hints(budget);
-    let mut spans = Vec::new();
-    if !hints.is_empty() {
-        spans.extend([
-            Span::styled(hints, Style::default().fg(app.theme.ghost())),
-            Span::styled("  |  ", Style::default().fg(app.theme.ghost())),
-        ]);
+/// The demo frame's status row: the run state on the left, spend and gate on the right.
+///
+/// 🔴 **THIS ROW DID NOT EXIST.** The bottom of the frame was a hint line and a status tail
+/// (`tab focus · shift+tab autonomy · … | plan · routing auto`) crammed onto one row under the
+/// composer. The demo puts the run state where the eye already is — directly above the thing you
+/// type into — and pushes money and refusals to the right edge where a number belongs.
+///
+/// ⚠️ **AN ABSENT CELL IS OMITTED, NEVER ZEROED.** `$0.000` and `gate · 0 refused` are claims
+/// that a measurement happened. Spend has no producer in this client at all (see
+/// `SPEND_HAS_NO_PRODUCER`), so its cell is simply not drawn.
+pub(super) fn status_bar_line(app: &App, now: Instant, width: usize) -> Line<'static> {
+    let palette = app.theme.screen_palette();
+    let (mark, left) = run_state(app, now);
+    let mut right = String::new();
+    if let Some(spend) = app.session_spend_usd {
+        right.push_str(&format!("${spend:.3}"));
     }
-    spans.extend(status.spans);
+    let gate = (app.gate_refusals > 0).then(|| format!("gate · {} refused", app.gate_refusals));
+    let mut spans = vec![
+        mark.span(&palette, pulse_tick(app, now), true),
+        Span::styled(left.clone(), Style::default().fg(palette.mid)),
+    ];
+    let tail_width = right.chars().count()
+        + gate.as_ref().map_or(0, |gate| gate.chars().count() + 4)
+        + usize::from(!right.is_empty());
+    let used = 2 + left.chars().count();
+    let gap = width.saturating_sub(used).saturating_sub(tail_width).max(1);
+    if !right.is_empty() || gate.is_some() {
+        spans.push(Span::raw(" ".repeat(gap)));
+    }
+    if !right.is_empty() {
+        spans.push(Span::styled(right, Style::default().fg(palette.green)));
+    }
+    if let Some(gate) = gate {
+        let (label, count) = gate.split_at("gate · ".chars().count());
+        spans.push(Span::styled(
+            format!("    {label}"),
+            Style::default().fg(palette.mid),
+        ));
+        spans.push(Span::styled(
+            count.to_string(),
+            Style::default().fg(palette.red),
+        ));
+    }
     Line::from(spans)
+}
+
+/// `✓ Done · 7 of 7 landed · production green` / `◐ Working · 4 of 7 landed · <active step>`.
+///
+/// The counts come from the plan the server sent, and the trailing phrase is the ACTIVE STEP's
+/// own text — the demo's footer names the step, so the footer and the plan cannot disagree about
+/// what is happening.
+fn run_state(app: &App, now: Instant) -> (marks::Mark, String) {
+    if let Some(plan) = app
+        .work_progress
+        .as_ref()
+        .and_then(|progress| progress.plan.as_ref())
+    {
+        let total = plan.steps.len();
+        let landed = plan
+            .steps
+            .iter()
+            .filter(|step| marks::StepMark::from_status(&step.status) == marks::StepMark::Done)
+            .count();
+        let active = plan
+            .steps
+            .iter()
+            .find(|step| marks::StepMark::from_status(&step.status) == marks::StepMark::Active)
+            .map(|step| step.step.clone());
+        return match active {
+            Some(step) => (
+                marks::Mark::InFlight,
+                format!("Working · {landed} of {total} landed · {step}"),
+            ),
+            None if landed == total && total > 0 => (
+                marks::Mark::Landed,
+                format!("Done · {landed} of {total} landed"),
+            ),
+            None => (
+                marks::Mark::Queued,
+                format!("Idle · {landed} of {total} landed"),
+            ),
+        };
+    }
+    if let Some(active) = &app.active {
+        // The 30-second escalation survives the redesign. It is the line that tells a user the
+        // silence is the SERVER's and not the terminal's, and losing it to a prettier row would
+        // have been the redesign quietly removing an honesty feature.
+        let elapsed = now.saturating_duration_since(active.started).as_secs();
+        let local_shell = active.label.starts_with("local shell");
+        let mut text = format!(
+            "Working · {} · {}",
+            active.label,
+            estelle_tui::fmt_elapsed_compact(elapsed)
+        );
+        if elapsed >= 30 {
+            text.push_str(if local_shell {
+                " · local command has not exited"
+            } else {
+                " · still waiting for Estelle"
+            });
+            if !local_shell {
+                text.push_str(" · no response received yet");
+            }
+        }
+        return (marks::Mark::InFlight, text);
+    }
+    if !app.queue.is_empty() {
+        return (marks::Mark::Queued, format!("{} queued", app.queue.len()));
+    }
+    (marks::Mark::Landed, "Ready".to_string())
 }
 
 pub(super) fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
@@ -623,6 +631,31 @@ pub(super) fn symbol_ground_layout(width: usize, height: usize) -> Arc<SymbolGro
     layout
 }
 
+/// The idle art's share of the pane: a corner flourish, not a field.
+///
+/// The founder's words were "shrink it to an idle flourish" - he likes the dither and it was in
+/// the wrong place at the wrong size, filling most of the session column behind the empty state.
+/// Anchored bottom-right so it never sits under the text of the empty state, which reads from the
+/// top-left, and bounded so a very tall terminal does not turn it back into a field.
+const FLOURISH_MAX_WIDTH: u16 = 44;
+const FLOURISH_MAX_HEIGHT: u16 = 8;
+/// Below this the pane has no room to spare and the art is dropped entirely.
+const FLOURISH_MIN_WIDTH: u16 = 24;
+
+pub(super) fn flourish_area(area: Rect) -> Option<Rect> {
+    let width = area.width.min(FLOURISH_MAX_WIDTH);
+    let height = (area.height / 3).min(FLOURISH_MAX_HEIGHT);
+    if width < FLOURISH_MIN_WIDTH || height < 2 {
+        return None;
+    }
+    Some(Rect {
+        x: area.right().checked_sub(width)?,
+        y: area.bottom().checked_sub(height)?,
+        width,
+        height,
+    })
+}
+
 pub(super) fn render_symbol_ground(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let palette = app.theme.screen_palette();
     let width = usize::from(area.width);
@@ -949,7 +982,7 @@ pub(super) fn render_context_panel(frame: &mut Frame<'_>, area: Rect, app: &App)
         Style::default().fg(palette.dim),
     ));
     // ⚠️ This box was the one that rendered BESIDE the new language in a single row:
-    // `╌╌ session · uqeu/estelle ╌╌╌  │  ┌ CONTEXT  Alt+M · /context ────┐`.
+    // `── session · uqeu/estelle ───  │  ┌ CONTEXT  Alt+M · /context ────┐`.
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(1)])
@@ -1103,7 +1136,7 @@ pub(super) fn production_health_lines(
 ///
 /// 🔴 **THE RAIL SPOKE A DIFFERENT DESIGN FROM THE COLUMN IT SITS IN.** Its sections opened on
 /// shouted bold headings (`APP HEALTH`, `AGENT HEALTH`, `ESTELLE STATUS`, `ESTELLE QUEUE`,
-/// `GITHUB`) in `app.theme.primary()` while the frame around it opened on `╌╌ production · repo ╌╌`
+/// `GITHUB`) in `app.theme.primary()` while the frame around it opened on `── production · repo ──`
 /// from the palette. Every section now opens on a rule from [`crate::cols::rule`] and every colour
 /// comes from [`crate::theme::Palette`], so the rail and its frame are one design.
 ///
@@ -1124,6 +1157,65 @@ pub(super) fn production_workspace_lines(app: &App, width: usize) -> Vec<Line<'s
         lines.extend(section);
     }
     lines
+}
+
+/// The rail's row: a mark, a label, a value — specimen sheet variant A, the founder's pick.
+///
+/// 🔴 **THE RAIL WAS PROSE.** `State unavailable · no read contract · send POST /agent/events.`
+/// wrapped across two rows in a 30-column rail and read as an apology. A row cannot wrap, so the
+/// honesty has to fit in a value: `agents   no read contract`. The endpoint moves into the value
+/// where it fits and is dropped where it does not — the label still says WHICH thing is missing,
+/// which is the part that cannot be lost.
+const RAIL_LABEL: usize = 16;
+const RAIL_GAP: usize = 2;
+const RAIL_MARK: usize = 2;
+const MIN_RAIL_VALUE: usize = 8;
+
+fn rail_columns(width: usize) -> [Col; 3] {
+    let fixed = RAIL_MARK + RAIL_GAP + RAIL_GAP;
+    let text = width.saturating_sub(fixed).max(RAIL_LABEL + MIN_RAIL_VALUE);
+    let label = RAIL_LABEL.min(text.saturating_sub(MIN_RAIL_VALUE));
+    let value = text.saturating_sub(label).max(MIN_RAIL_VALUE);
+    [Col::l(RAIL_MARK), Col::l(label), Col::l(value)]
+}
+
+/// One `mark · label · value` row.
+fn rail_row(
+    mark: marks::Mark,
+    label: &str,
+    value: &str,
+    palette: &theme::Palette,
+    width: usize,
+    value_colour: Color,
+) -> Line<'static> {
+    let columns = rail_columns(width);
+    Line::from(
+        cols::row(
+            &columns,
+            &[
+                Cell(mark.glyph(), mark.colour(palette)),
+                Cell(label, palette.mid),
+                Cell(value, value_colour),
+            ],
+            0,
+        )
+        .spans
+        .into_iter()
+        .map(|span| Span::styled(span.content.into_owned(), span.style))
+        .collect::<Vec<_>>(),
+    )
+}
+
+/// The thin rule that splits one group of rail rows from the next (specimen variant A).
+fn rail_split(palette: &theme::Palette, width: usize) -> Line<'static> {
+    Line::styled(
+        format!(
+            "{}{}",
+            " ".repeat(RAIL_MARK + RAIL_GAP),
+            cols::RULE.repeat(width.saturating_sub(RAIL_MARK + RAIL_GAP).max(4))
+        ),
+        Style::default().fg(palette.dim),
+    )
 }
 
 fn dim_line(text: String, palette: &theme::Palette) -> Line<'static> {
@@ -1207,27 +1299,40 @@ fn app_health_lines(app: &App, palette: &theme::Palette, width: usize) -> Vec<Li
             .sum::<u64>();
         let has_denominator = overview.requests_source() != Some("unavailable")
             && buckets.iter().all(|bucket| bucket.requests.is_some());
-        lines.push(mid_line(
-            format!(
-                "error counts · {}  {errors}",
-                error_count_sparkline(&buckets)
-            ),
+        lines.push(rail_row(
+            if errors > 0 {
+                marks::Mark::Blocked
+            } else {
+                marks::Mark::Landed
+            },
+            "error counts",
+            &format!("{} {errors}", error_count_sparkline(&buckets)),
             palette,
+            width,
+            palette.mid,
         ));
         if has_denominator {
-            lines.push(mid_line(
-                format!("measured · {errors}/{requests} requests"),
+            lines.push(rail_row(
+                marks::Mark::Landed,
+                "measured",
+                &format!("{errors}/{requests} requests"),
                 palette,
+                width,
+                palette.mid,
             ));
         } else {
-            lines.push(dim_line(
-                "request denominator unavailable".to_string(),
+            lines.push(rail_row(
+                marks::Mark::Queued,
+                "requests",
+                "request denominator unavailable",
                 palette,
+                width,
+                palette.dim,
             ));
         }
     }
 
-    lines.push(Line::from(""));
+    lines.push(rail_split(palette, width));
     let uptime = &overview.uptime;
     lines.push(session_view::section_rule(
         "services",
@@ -1272,32 +1377,48 @@ fn agent_health_lines(app: &App, palette: &theme::Palette, width: usize) -> Vec<
         return lines;
     }
     let Some(health) = &app.prod_agent_health else {
-        lines.push(dim_line(
-            "GET /agent/health has not returned yet · send POST /agent/events.".to_string(),
+        lines.push(rail_row(
+            marks::Mark::Queued,
+            "agents",
+            "no read yet · GET /agent/health",
             palette,
+            width,
+            palette.dim,
         ));
         return lines;
     };
     match health.enabled {
         Some(false) => {
-            lines.push(dim_line(
-                "Agent telemetry not enabled · send POST /agent/events after enabling it."
-                    .to_string(),
+            lines.push(rail_row(
+                marks::Mark::Queued,
+                "telemetry",
+                "Agent telemetry not enabled",
                 palette,
+                width,
+                palette.dim,
+            ));
+            lines.push(rail_row(
+                marks::Mark::Queued,
+                "to enable",
+                "POST /agent/events",
+                palette,
+                width,
+                palette.dim,
             ));
             return lines;
         }
         None => {
-            lines.push(dim_line(
-                format!(
-                    "Agent health unknown · {}",
-                    health
-                        .enabled_absent_reason
-                        .as_deref()
-                        .filter(|reason| !reason.trim().is_empty())
-                        .unwrap_or("server returned no reason")
-                ),
+            lines.push(rail_row(
+                marks::Mark::Blocked,
+                "agent health",
+                health
+                    .enabled_absent_reason
+                    .as_deref()
+                    .filter(|reason| !reason.trim().is_empty())
+                    .unwrap_or("server returned no reason"),
                 palette,
+                width,
+                palette.warn,
             ));
             return lines;
         }
@@ -1379,7 +1500,14 @@ fn estelle_status_lines(app: &App, palette: &theme::Palette, width: usize) -> Ve
     let Some(response) = app.prod_issues.as_ref() else {
         return vec![
             session_view::section_rule("estelle", "unread", width, palette, palette.dim),
-            dim_line("GET /issues has not returned yet.".to_string(), palette),
+            rail_row(
+                marks::Mark::Queued,
+                "issues",
+                "no read yet · GET /issues",
+                palette,
+                width,
+                palette.dim,
+            ),
         ];
     };
     let unresolved = response
@@ -1470,13 +1598,21 @@ fn queue_lines(app: &App, palette: &theme::Palette, width: usize) -> Vec<Line<'s
         },
     )];
     if queued.is_empty() {
-        lines.push(dim_line(
-            "Queue empty · no repair work is reported.".to_string(),
+        lines.push(rail_row(
+            marks::Mark::Queued,
+            "repairs",
+            "none reported",
             palette,
+            width,
+            palette.dim,
         ));
-        lines.push(dim_line(
-            "Issue selection: /monitor issues".to_string(),
+        lines.push(rail_row(
+            marks::Mark::Queued,
+            "select",
+            "/monitor issues",
             palette,
+            width,
+            palette.dim,
         ));
         return lines;
     }
@@ -1592,9 +1728,13 @@ fn github_lines(app: &App, palette: &theme::Palette, width: usize) -> Vec<Line<'
             }
         }
     } else {
-        lines.push(dim_line(
-            "GET /github/status has not returned yet.".to_string(),
+        lines.push(rail_row(
+            marks::Mark::Queued,
+            "connection",
+            "no read yet · GET /github/status",
             palette,
+            width,
+            palette.dim,
         ));
     }
 
@@ -1920,6 +2060,63 @@ pub(super) fn github_diff_lines(diff: &str, width: usize, app: &App) -> Vec<Line
     lines
 }
 
+/// Take back every row the composer drew BELOW its prompt, and put the demo's hint row there.
+///
+/// The composer owns its own chrome: one blank row of padding, then the prompt, then more blank
+/// rows, then `? for shortcuts`. The demo has the hint line IMMEDIATELY under the prompt and no
+/// second hint at all. Rather than fight the widget's height - which the slash palette and the
+/// command popup legitimately need - the frame finds the prompt row in the rendered buffer and
+/// overwrites what follows it.
+///
+/// A popup is drawn ABOVE the prompt, so nothing here can clip one. When no prompt is on screen
+/// (a popup owns the whole area) this is a no-op rather than a guess.
+fn collapse_composer_tail(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    palette: &theme::Palette,
+    background: Color,
+) {
+    let prompt_row = (area.y..area.bottom()).find(|y| {
+        (area.x..area.right()).any(|x| frame.buffer_mut()[(x, *y)].symbol() == PROMPT_GLYPH)
+    });
+    let Some(prompt_row) = prompt_row else {
+        return;
+    };
+    // Clear only what is the composer's OWN chrome: blank padding rows and its `? for shortcuts`
+    // footer. A row with anything else on it belongs to the slash palette or the command popup,
+    // which are drawn below the prompt and must survive - a hint row is not worth eating a menu.
+    for y in prompt_row.saturating_add(1)..area.bottom() {
+        let row = (area.x..area.right())
+            .map(|x| frame.buffer_mut()[(x, y)].symbol().to_string())
+            .collect::<String>();
+        if !row.trim().is_empty() && !row.contains("for shortcuts") {
+            break;
+        }
+        for x in area.x..area.right() {
+            frame.buffer_mut()[(x, y)]
+                .set_symbol(" ")
+                .set_style(Style::default().bg(background));
+        }
+    }
+    if prompt_row.saturating_add(1) < area.bottom() {
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                format!("  {}", crate::ask_hints_line()),
+                Style::default().fg(palette.dim),
+            )),
+            Rect {
+                y: prompt_row.saturating_add(1),
+                height: 1,
+                ..area
+            },
+        );
+    }
+}
+
+/// The demo's prompt: U+3009, the tall right angle bracket. NOT U+203A, the small angle quote the
+/// composer used to draw - at terminal size they read as different characters entirely.
+pub(super) const PROMPT_GLYPH: &str = "\u{3009}";
+
 pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
     app.tool_click_targets.borrow_mut().clear();
     let area = frame.area();
@@ -1932,6 +2129,16 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         area,
     );
     let content_area = area;
+    // `bottom_pane_desired_height` includes the composer's OWN chrome - its hint row and the
+    // padding around it - which is what left a blank row between the ask rule and the prompt
+    // and pushed the hints two rows down. The frame draws that chrome itself now, so the
+    // composer is given exactly the rows its text needs and not one more.
+    // The text area gets exactly the rows the TYPED TEXT needs. `desired_height` bundles the
+    // composer's own footer into its answer, and that footer is `? for shortcuts` - a second
+    // hint line competing with the demo's. Sized to the text, the chrome has nowhere to draw.
+    // The composer keeps its own height, because the slash palette and the command popup are
+    // drawn INSIDE it and shrinking the area silently truncates them. What the frame takes back
+    // is the rows BELOW the prompt - see `collapse_composer_tail`.
     let composer_height = app
         .composer
         .bottom_pane_desired_height(content_area.width)
@@ -1944,7 +2151,12 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         .constraints([
             Constraint::Length(2),
             Constraint::Min(1),
-            Constraint::Length(composer_height),
+            // status row + blank + ask rule + the text area + the hint row.
+            Constraint::Length(if composer_height == 0 {
+                0
+            } else {
+                composer_height.saturating_add(4)
+            }),
             Constraint::Length(1),
         ])
         .split(content_area);
@@ -2009,7 +2221,11 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         // screen in the catalog does.
         let session_rows = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Min(1),
+            ])
             .split(main_areas[0]);
         frame.render_widget(
             Paragraph::new(session_view::session_rule(
@@ -2019,7 +2235,20 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             )),
             session_rows[0],
         );
-        let primary_area = session_rows[1];
+        // The demo frame carries repo AND branch on the line BENEATH the rule, dim and indented -
+        // it is not part of the rule. An unread branch prints the repo alone; the line never
+        // invents a name for a detached HEAD or a directory git does not own.
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                match app.branch.as_deref() {
+                    Some(branch) => format!("   {} · {branch}", app.repo.as_str()),
+                    None => format!("   {}", app.repo.as_str()),
+                },
+                Style::default().fg(palette.dim),
+            )),
+            session_rows[1],
+        );
+        let primary_area = session_rows[2];
 
         // 🔴 THE ORCHESTRA BAND IS THE DESIGN'S WORKER TABLE NOW. It was a five-across grid of
         // plain strings re-coloured by searching each line for `✓`/`×`/`◷` — so the colour was a
@@ -2185,7 +2414,9 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             // empty. A rail the user asked for (diff, context, evidence) still displaces it.
             && (!show_auxiliary_pane || prod_as_rail);
         if show_ground {
-            render_symbol_ground(frame, transcript_root, app);
+            if let Some(flourish) = flourish_area(transcript_root) {
+                render_symbol_ground(frame, flourish, app);
+            }
         }
         frame.render_widget(paragraph.scroll((scroll, 0)), transcript_root);
         if show_ground {
@@ -2243,34 +2474,45 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             );
         }
     }
-    // "┌ ASK ESTELLE ─┐" becomes the design's `╌╌ ask · <repo> ╌╌` rule with a bare prompt
-    // under it. The composer keeps its own behaviour; only its framing changes.
+    // THE INPUT BAR, ROW FOR ROW, FROM THE DEMO FRAME. It was seven rows and every one of them
+    // was wrong: no status row at all, the wrong prompt glyph, an "Ask Estelle" placeholder the
+    // demo does not have, two blank rows the demo does not have, a "? for shortcuts" line the
+    // demo does not have, and a hint line naming different keys. It is five rows now: the status
+    // row, ONE blank, the ask rule, the bare prompt, and the hint line under it.
     let composer_area = if modal_owns_input {
         Rect::default()
     } else {
         let ask_rows = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Min(1),
+            ])
             .split(rows[2]);
+        frame.render_widget(
+            Paragraph::new(status_bar_line(app, now, usize::from(ask_rows[0].width))),
+            ask_rows[0],
+        );
+        // Row 2 is deliberately blank. The demo clumps the status row against the rule, and that
+        // is the one place the founder is deliberately improving on the demo.
         frame.render_widget(
             Paragraph::new(session_view::ask_rule(
                 app.repo.as_str(),
-                usize::from(ask_rows[0].width),
+                usize::from(ask_rows[2].width),
                 &palette,
             )),
-            ask_rows[0],
+            ask_rows[2],
         );
         app.composer.render_ref_with_background(
-            ask_rows[1],
+            ask_rows[3],
             frame.buffer_mut(),
             app.theme.background(),
         );
-        ask_rows[1]
+        collapse_composer_tail(frame, ask_rows[3], &palette, app.theme.background());
+        ask_rows[3]
     };
-    frame.render_widget(
-        Paragraph::new(footer_line(app, now, rows[3].width)),
-        rows[3],
-    );
     if let Some(picker) = &app.resume_picker {
         render_resume_picker(frame, picker, rows[1], app);
     } else if let Some(picker) = &app.picker {

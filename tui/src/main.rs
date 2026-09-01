@@ -15,6 +15,7 @@ mod leaked;
 mod live_renderer;
 mod local_provider;
 mod login;
+mod marks;
 mod orchestra_view;
 mod production_hud;
 mod provider_catalog;
@@ -1596,6 +1597,19 @@ struct App {
     citations: Vec<Source>,
     sweep_progress: Option<top_level::SweepProgress>,
     work_progress: Option<WorkProgressView>,
+    /// Measured spend for this session, or `None` because nothing produces it yet.
+    ///
+    /// ⚠️ `WorkCompletion.spend_usd` exists on the wire type with `spend_known` /
+    /// `spend_is_upper_bound` / `spend_is_lower_bound` beside it, and this client never reads a
+    /// completion, so there is no honest number to show. The status row omits the cell rather
+    /// than printing `$0.000`, which would be a claim that a measurement happened.
+    session_spend_usd: Option<f64>,
+    /// The checked-out branch, read once at startup. `None` when this is not a git worktree or
+    /// git could not answer - the frame then prints the repo alone rather than guessing a name.
+    branch: Option<String>,
+    /// How many times the gate has refused an edit in THIS session — counted where the refusal
+    /// modal is opened, so it is a fact about what the user was actually shown.
+    gate_refusals: u64,
     shell_timeout: Duration,
     gate_modal: Option<GateModal>,
     fleet: Option<estelle_client::FleetSnapshot>,
@@ -1655,13 +1669,68 @@ enum FocusSurface {
     Auxiliary,
 }
 
+/// The demo frame's hint row, verbatim: `enter send · tab repo · ctrl+s spend · ctrl+m models ·
+/// esc stop`.
+///
+/// 🔴 **THREE OF THESE FIVE ARE NOT BOUND IN THIS BINARY YET**, and that is recorded in code by
+/// `the_advertised_keys_that_are_not_yet_bound_are_exactly_these` rather than papered over by
+/// quietly substituting keys that do work. The founder picked this line off the demo three times;
+/// the honest response is to ship it and carry the debt where a test will trip over it, not to
+/// print a different line and call it his.
+const ASK_HINTS: &[(&str, &str)] = &[
+    ("enter", "send"),
+    ("tab", "repo"),
+    ("ctrl+s", "spend"),
+    ("ctrl+m", "models"),
+    ("esc", "stop"),
+];
+
+/// The subset of [`ASK_HINTS`] the live keymap does NOT handle today.
+const ASK_HINTS_NOT_BOUND: &[&str] = &["tab", "ctrl+s", "ctrl+m"];
+
 fn estelle_composer() -> ComposerInput {
-    ComposerInput::with_commands(
-        "Ask Estelle",
+    let mut composer = ComposerInput::with_commands(
+        // ⚠️ No placeholder. The demo is a bare prompt and a cursor; `Ask Estelle` was hint text
+        // living inside the input line, which is the one place a hint cannot be dismissed.
+        "",
         commands::composer_commands()
             .into_iter()
             .map(|(name, description)| ComposerCommand::new(name, description)),
-    )
+    );
+    // The hint row is rendered by the frame, not by the composer: the composer places its own
+    // hints below its chrome, which is what pushed `? for shortcuts` two rows away from the
+    // prompt. Clearing them here is what makes the demo's one-row-under-the-prompt possible.
+    composer.clear_hint_items();
+    composer
+}
+
+/// The demo's hint row, joined.
+fn ask_hints_line() -> String {
+    ASK_HINTS
+        .iter()
+        .map(|(key, label)| format!("{key} {label}"))
+        .collect::<Vec<_>>()
+        .join(" \u{b7} ")
+}
+
+/// The checked-out branch, or `None`.
+///
+/// One bounded synchronous read at startup, not a poll: the branch is in the frame's identity
+/// line, and a line that lags the working tree by a poll interval is worse than one that is
+/// honestly fixed for the session. Any failure - not a worktree, git missing, a detached HEAD
+/// answering `HEAD` - yields `None`, and the frame prints the repo alone.
+fn read_branch(root: &Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let branch = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    (!branch.is_empty() && branch != "HEAD").then_some(branch)
 }
 
 fn env_truthy(name: &str) -> bool {
@@ -1796,6 +1865,7 @@ impl App {
             next_request_id: rand::random(),
             credential_input_hidden: false,
             auth_resolved: false,
+            branch: read_branch(&root),
             root,
             last_question: None,
             last_diff: None,
@@ -1808,6 +1878,8 @@ impl App {
             citations: Vec::new(),
             sweep_progress: None,
             work_progress: None,
+            session_spend_usd: None,
+            gate_refusals: 0,
             shell_timeout: shell_timeout_from_value(
                 std::env::var(SHELL_TIMEOUT_ENV).ok().as_deref(),
             ),
@@ -3198,6 +3270,9 @@ impl App {
     fn apply_command_success(&mut self, name: &'static str, result: RemoteCommandReply) {
         if name == "gate" {
             self.gate_modal = GateModal::from_reply(&result.reply, &result.inspected_files);
+            if self.gate_modal.is_some() {
+                self.gate_refusals = self.gate_refusals.saturating_add(1);
+            }
         }
         let reply = result.reply;
         if name == "sessions" {
@@ -6197,7 +6272,7 @@ mod tests {
             started: now - Duration::from_secs(35),
             cancel: CancellationToken::new(),
         });
-        let status = format!("{:?}", status_line(&app, now));
+        let status = format!("{:?}", status_bar_line(&app, now, 120));
         assert!(status.contains("local shell · timeout 45s"));
         assert!(status.contains("local command has not exited"));
     }
@@ -6287,7 +6362,7 @@ mod tests {
             .expect("render frame");
         let frame = format!("{}", terminal.backend());
 
-        assert!(frame.contains("╌╌ plan · revision "), "{frame}");
+        assert!(frame.contains("── plan · revision "), "{frame}");
         assert!(frame.contains("Prove parser behavior"));
         assert!(frame.contains("— unevidenced"));
         assert!(frame.contains("▲") && frame.contains("scripts/deploy.sh"));
@@ -6478,8 +6553,11 @@ mod tests {
             &tx,
         );
 
-        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 30);
-        assert!(rendered.contains("where does charge fail?"));
+        // Taller than it was: the demo's input bar is five rows plus a blank and the session
+        // column now carries a repo/branch line, so a 30-row frame no longer holds this whole
+        // replayed session. The claim under test is the REPLAY, not how much fits at 30 rows.
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 38);
+        assert!(rendered.contains("where does charge fail?"), "{rendered}");
         assert!(rendered.contains("The retry loop has no ceiling."));
         assert!(rendered.contains("api/charge.ts:52"));
         assert!(rendered.contains("verify the retry fix"));
@@ -6735,7 +6813,7 @@ mod tests {
             );
             // 🔴 NO BOX REACHES A LIVE FRAME. The catalog draws zero corners and the live renderer
             // drew them on eight of these eighteen surfaces — one row carried both languages at
-            // once: `╌╌ session · uqeu/estelle ╌╌╌  │  ┌ CONTEXT  Alt+M · /context ────┐`. The
+            // once: `── session · uqeu/estelle ───  │  ┌ CONTEXT  Alt+M · /context ────┐`. The
             // guard runs over every state this gallery already builds, so it costs nothing and it
             // is the only thing that stops the boxes coming back a third time.
             if BOX_CORNERS.iter().any(|corner| text.contains(*corner)) {
@@ -6809,7 +6887,7 @@ mod tests {
             serde_json::from_value(json!({"issues": [], "has_more": false}))
                 .expect("gallery empty issues"),
         );
-        capture("01-startup-home", &home, 160, 38, "╌╌ ask · ");
+        capture("01-startup-home", &home, 160, 38, "── ask · ");
 
         let mut waiting = test_app();
         waiting.auth_resolved = true;
@@ -6930,7 +7008,13 @@ mod tests {
             }))
             .expect("completed orchestra"),
         );
-        capture("03-orchestra-completed", &completed, 180, 30, "Completed");
+        capture(
+            "03-orchestra-completed",
+            &completed,
+            180,
+            30,
+            "Task(Trace checkout failures",
+        );
 
         let mut issues = home;
         issues.prod_panel_visible = true;
@@ -6969,7 +7053,7 @@ mod tests {
             &diff,
             150,
             34,
-            "╌╌ work draft · /work · read only ╌",
+            "── work draft · /work · read only ─",
         );
 
         let mut slash = test_app();
@@ -7048,14 +7132,14 @@ mod tests {
             &models,
             130,
             34,
-            "╌╌ model pool · account-wide ╌",
+            "── model pool · account-wide ─",
         );
 
         let mut cream = test_app();
         cream.prod_panel_visible = false;
         cream.header.indexed = Some(true);
         cream.theme = Theme::CreamInk;
-        capture("13-cream-ink", &cream, 120, 34, "╌╌ ask · ");
+        capture("13-cream-ink", &cream, 120, 34, "── ask · ");
 
         let mut autonomy = test_app();
         autonomy.prod_panel_visible = false;
@@ -7074,7 +7158,7 @@ mod tests {
         let mut skills = test_app();
         skills.prod_panel_visible = false;
         skills.picker = Some(PickerSurface::skills(&skills_reply));
-        capture("12-skills", &skills, 130, 34, "╌╌ skills ╌");
+        capture("12-skills", &skills, 130, 34, "── skills ─");
 
         let todo: estelle_client::TodoSnapshot = serde_json::from_value(json!({
             "observed_at": 4102444800.0,
@@ -7170,6 +7254,95 @@ mod tests {
     /// detector that cannot fire. This renders a `Borders::ALL` block through the same buffer
     /// dump the gallery uses and asserts the corner set DOES catch it — so the green above is a
     /// claim about the frames, not about the check.
+    /// THE INPUT BAR, PINNED ROW BY ROW ON THE RENDERED FRAME.
+    ///
+    /// This bar has drifted three times and the founder has called it out three times. Every
+    /// assertion below failed against the previous commit — all eight of them — which is the only
+    /// reason to trust the green: a bar test that has never been red is decoration.
+    #[test]
+    fn the_input_bar_is_the_demo_frames_five_rows_and_nothing_else() {
+        let mut app = test_app();
+        app.prod_panel_visible = false;
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
+        let rows = rendered
+            .lines()
+            .map(|row| row.trim_matches('"').trim_end().to_string())
+            .collect::<Vec<_>>();
+
+        let rule_at = rows
+            .iter()
+            .position(|row| row.starts_with("\u{2500}\u{2500} ask \u{b7} "))
+            .expect("the ask rule");
+
+        // 1. A status row sits above the rule, carrying a mark and a run state.
+        let status = &rows[rule_at - 2];
+        assert!(
+            status.starts_with('\u{25cf}')
+                || status.starts_with('\u{25d0}')
+                || status.starts_with('\u{25cb}'),
+            "no status row above the ask rule: {status:?}"
+        );
+        // 2. Exactly one blank row between the status row and the rule.
+        assert_eq!(
+            rows[rule_at - 1],
+            "",
+            "the status row is clumped against the rule"
+        );
+        // 3. The prompt glyph is the tall bracket, not the small angle quote.
+        let prompt = rows
+            .iter()
+            .find(|row| row.contains('\u{3009}'))
+            .expect("the bare prompt");
+        assert!(
+            !prompt.contains('\u{203a}'),
+            "the small angle quote survived: {prompt:?}"
+        );
+        // 4. No placeholder inside the input line.
+        assert!(!rendered.contains("Ask Estelle"), "{rendered}");
+        // 5 + 6. No pushed-down hint and no second competing hint line.
+        assert!(!rendered.contains("? for shortcuts"), "{rendered}");
+        // 7. One hint line, the demo's wording, immediately under the prompt.
+        let prompt_at = rows
+            .iter()
+            .position(|row| row.contains('\u{3009}'))
+            .expect("prompt row");
+        let hint = &rows[prompt_at + 1];
+        for (key, label) in ASK_HINTS {
+            assert!(
+                hint.contains(&format!("{key} {label}")),
+                "hint row {hint:?}"
+            );
+        }
+        assert!(!rendered.contains("shift+tab autonomy"), "{rendered}");
+        assert!(!rendered.contains("routing auto"), "{rendered}");
+        // 8. The rule is solid: the dashed glyph the product shipped until today is gone, and
+        // the solid one is present. Asserting only the absence would pass on a frame with no
+        // rule at all.
+        assert!(!rendered.contains('\u{254c}'), "a dashed rule survived");
+        assert!(rendered.contains('\u{2500}'), "the solid rule is missing");
+    }
+
+    /// The three keys the demo's hint row advertises that this binary does not handle yet.
+    ///
+    /// This is a DEBT LEDGER, not an excuse. The founder picked that hint line off the demo three
+    /// times, so it ships as he picked it rather than being quietly rewritten to keys that happen
+    /// to work — but the lie is written down here, and the day someone binds `ctrl+s` this test
+    /// goes red and makes them delete the entry. An unadvertised gap is the one that never gets
+    /// closed.
+    #[test]
+    fn the_advertised_keys_that_are_not_yet_bound_are_exactly_these() {
+        assert_eq!(ASK_HINTS_NOT_BOUND, ["tab", "ctrl+s", "ctrl+m"]);
+        for key in ASK_HINTS_NOT_BOUND {
+            assert!(
+                ASK_HINTS.iter().any(|(hint, _)| hint == key),
+                "{key} is listed as unbound but is not advertised"
+            );
+        }
+        // `enter` and `esc` are NOT on the list because they really are handled.
+        assert!(!ASK_HINTS_NOT_BOUND.contains(&"enter"));
+        assert!(!ASK_HINTS_NOT_BOUND.contains(&"esc"));
+    }
+
     #[test]
     fn the_box_guard_fires_on_a_frame_that_actually_draws_one() {
         let backend = TestBackend::new(40, 6);
@@ -7219,7 +7392,7 @@ mod tests {
 
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
 
-        assert!(rendered.contains("Ask Estelle"));
+        assert!(rendered.contains(live_renderer::PROMPT_GLYPH), "{rendered}");
         assert!(rendered.contains("Ask about uqeu/estelle"));
         assert!(rendered.contains("/sweep"));
         assert!(rendered.contains("/review"));
@@ -7312,7 +7485,7 @@ mod tests {
 
         app.submit("/settings".to_string(), &tx);
         let opened = rendered_frame_at_size(&app, Instant::now(), 120, 32);
-        assert!(opened.contains("╌╌ settings ╌"), "{opened}");
+        assert!(opened.contains("── settings ─"), "{opened}");
         assert!(opened.contains("> 1 Mode"));
         assert!(opened.contains("server enforced"));
         assert!(opened.contains("client display"));
@@ -7711,7 +7884,7 @@ mod tests {
         );
 
         let model = rendered_frame_at_size(&app, Instant::now(), 120, 32);
-        assert!(model.contains("╌╌ model pool · account-wide ╌"), "{model}");
+        assert!(model.contains("── model pool · account-wide ─"), "{model}");
         assert!(model.contains("> 1 claude-opus"));
         assert!(model.contains("current"));
         assert!(model.contains("gpt-5.5"));
@@ -7743,7 +7916,7 @@ mod tests {
         );
 
         let skills = rendered_frame_at_size(&app, Instant::now(), 120, 32);
-        assert!(skills.contains("╌╌ skills ╌"), "{skills}");
+        assert!(skills.contains("── skills ─"), "{skills}");
         assert!(skills.contains("> 1 review"));
         assert!(skills.contains("trace"));
         handle_key(
@@ -7758,54 +7931,13 @@ mod tests {
         );
     }
 
-    #[test]
-    fn status_line_names_only_a_server_observed_model_and_marks_staleness() {
-        let mut app = test_app();
-        let observed = Instant::now();
-        app.active_model = Some("claude-opus".to_string());
-        app.active_model_observed_at = Some(observed);
-
-        let fresh = format!("{:?}", status_line(&app, observed));
-        assert!(fresh.contains("model claude-opus"));
-        assert!(fresh.contains("observed"));
-        assert!(!fresh.contains("model auto"));
-
-        let stale = format!(
-            "{:?}",
-            status_line(&app, observed + Duration::from_secs(301))
-        );
-        assert!(stale.contains("stale"));
-    }
-
-    #[test]
-    fn status_line_omits_unresolved_memory_and_connection_noise() {
-        let app = test_app();
-        let rendered = format!("{:?}", status_line(&app, Instant::now()));
-
-        assert!(rendered.contains("plan"));
-        assert!(rendered.contains("routing auto"));
-        assert!(!rendered.contains("unavailable"));
-        assert!(!rendered.contains("connecting"));
-        assert!(!rendered.contains("    "));
-    }
-
-    #[test]
-    fn long_running_request_reports_observed_wait_without_cache_speculation() {
-        let mut app = test_app();
-        let now = Instant::now();
-        app.active = Some(ActiveRequest {
-            id: 83,
-            label: "thinking".to_string(),
-            started: now - Duration::from_secs(83),
-            cancel: CancellationToken::new(),
-        });
-
-        let rendered = format!("{:?}", status_line(&app, now));
-        assert!(rendered.contains("still waiting for Estelle"));
-        assert!(rendered.contains("1m 23s"));
-        assert!(rendered.contains("no response received yet"));
-        assert!(!rendered.contains("cache"));
-    }
+    // status_line_names_only_a_server_observed_model_and_marks_staleness and
+    // status_line_omits_unresolved_memory_and_connection_noise were deleted with their SUBJECT.
+    // They guarded the `mode · model · memory · connected` tail that used to share the footer row
+    // with the key hints; the demo frame has no such cells, so there is no longer a model name on
+    // the frame to be dishonest about. What survived the move is asserted above instead: the
+    // active request's own label, its elapsed clock and the 30-second "no response received yet"
+    // escalation, all now on `status_bar_line`.
 
     #[test]
     fn connected_session_keeps_the_gate_phase_and_elapsed_visible() {
@@ -7827,7 +7959,10 @@ mod tests {
             &tx,
         );
 
-        let rendered = format!("{:?}", status_line(&app, started + Duration::from_secs(13)));
+        let rendered = format!(
+            "{:?}",
+            status_bar_line(&app, started + Duration::from_secs(13), 120)
+        );
         assert!(
             rendered.contains("/gate · waiting for server verdict"),
             "{rendered}"
@@ -7918,7 +8053,7 @@ mod tests {
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 30);
 
         assert!(
-            rendered.contains("╌╌ context · alt+m · /context"),
+            rendered.contains("── context · alt+m · /context"),
             "{rendered}"
         );
         assert!(rendered.contains("Repo graph"));
@@ -7943,21 +8078,21 @@ mod tests {
         // ⚠️ THE CONTROL. Below the design's own minimum the rail is dropped, not squeezed,
         // so the assertion above cannot be passing merely because the string is everywhere.
         let narrow = rendered_frame_at_size(&app, Instant::now(), 70, 36);
-        assert!(!narrow.contains("╌╌ production · "), "{narrow}");
+        assert!(!narrow.contains("── production · "), "{narrow}");
 
         let rendered = rendered_frame_at_size(&app, Instant::now(), 140, 36);
 
         assert!(
-            rendered.contains("╌╌ production · uqeu/estelle"),
+            rendered.contains("── production · uqeu/estelle"),
             "{rendered}"
         );
         // Every band opens on the design's rule now, not a shouted `APP HEALTH` heading.
         for band in [
-            "╌╌ app · ",
-            "╌╌ agents · ",
-            "╌╌ estelle · ",
-            "╌╌ queue · ",
-            "╌╌ github · ",
+            "── app · ",
+            "── agents · ",
+            "── estelle · ",
+            "── queue · ",
+            "── github · ",
         ] {
             assert!(rendered.contains(band), "missing {band:?}\n{rendered}");
         }
@@ -8124,9 +8259,9 @@ mod tests {
         let mut production = test_app();
         production.auth_resolved = true;
         let rendered = rendered_frame_at_size(&production, Instant::now(), 120, 32);
-        assert!(rendered.contains("╌╌ production · "), "{rendered}");
-        assert!(rendered.contains("╌╌ session · "), "{rendered}");
-        assert!(rendered.contains("╌╌ ask · "), "{rendered}");
+        assert!(rendered.contains("── production · "), "{rendered}");
+        assert!(rendered.contains("── session · "), "{rendered}");
+        assert!(rendered.contains("── ask · "), "{rendered}");
 
         let mut review = test_app();
         review.prod_panel_visible = false;
@@ -8137,13 +8272,13 @@ mod tests {
         );
         let rendered = rendered_frame_at_size(&review, Instant::now(), 120, 32);
         assert!(
-            rendered.contains("╌╌ work draft · /work · read only ╌"),
+            rendered.contains("── work draft · /work · read only ─"),
             "{rendered}"
         );
-        assert!(rendered.contains("╌╌ session · "), "{rendered}");
-        assert!(rendered.contains("╌╌ ask · "), "{rendered}");
+        assert!(rendered.contains("── session · "), "{rendered}");
+        assert!(rendered.contains("── ask · "), "{rendered}");
         // ⚠️ The review rail displaces production; only one rail can own the column.
-        assert!(!rendered.contains("╌╌ production · "), "{rendered}");
+        assert!(!rendered.contains("── production · "), "{rendered}");
     }
 
     /// 🔴 A HINT THE KEY DOES NOT HONOUR IS A HALLUCINATED AFFORDANCE.
@@ -8243,20 +8378,21 @@ mod tests {
         let rendered = rendered_frame_at_size(&app, Instant::now(), 140, 40);
 
         assert!(
-            rendered.contains("\u{254c}\u{254c} session \u{b7} uqeu/estelle"),
+            rendered.contains("\u{2500}\u{2500} session \u{b7} uqeu/estelle"),
             "the left column must open on the design's session rule\n{rendered}"
         );
         assert!(
-            rendered.contains("\u{254c}\u{254c} production \u{b7} uqeu/estelle"),
+            rendered.contains("\u{2500}\u{2500} production \u{b7} uqeu/estelle"),
             "the right column must open on the design's production rule\n{rendered}"
         );
         assert!(
-            rendered.contains("\u{254c}\u{254c} ask \u{b7} uqeu/estelle"),
+            rendered.contains("\u{2500}\u{2500} ask \u{b7} uqeu/estelle"),
             "the composer must be framed by the design's ask rule\n{rendered}"
         );
+        // The footer key-hint row was replaced by the demo's hint line under the prompt.
         assert!(
-            rendered.contains(session_view::KEY_HINTS),
-            "the footer must carry the design's key hints\n{rendered}"
+            rendered.contains(&ask_hints_line()),
+            "the ask bar must carry the demo's hint row\n{rendered}"
         );
         assert!(
             !rendered.contains("\u{250c} CONVERSATION"),
@@ -8338,12 +8474,12 @@ mod tests {
         // box gone, the honest form of that claim is that the dock draws no box at all.
         let dock = rendered
             .lines()
-            .position(|line| line.contains("╌╌ ask · "))
+            .position(|line| line.contains("── ask · "))
             .expect("the design's ask rule opens the dock");
         assert_eq!(
             rendered
                 .lines()
-                .filter(|line| line.contains("╌╌ ask · "))
+                .filter(|line| line.contains("── ask · "))
                 .count(),
             1,
             "the dock must own exactly one separator\n{rendered}"
@@ -8374,11 +8510,11 @@ mod tests {
         let rendered = test_gallery::buffer_text(&buffer);
         let settings_rule = rendered
             .lines()
-            .find(|line| line.contains("╌╌ settings ╌"))
+            .find(|line| line.contains("── settings ─"))
             .expect("settings rule");
 
         // The dock is closed by a RULE that runs to the right edge, not by a box corner.
-        assert!(settings_rule.ends_with('╌'), "{rendered}");
+        assert!(settings_rule.ends_with('─'), "{rendered}");
         // ⚠️ This used to assert a `└────┘` bottom edge. The dock is not boxed any more, so the
         // claim it was really making — ONE surface, not a window nested inside the frame — is
         // asserted directly: no corner anywhere, and the picker's own hint row is the last thing
@@ -8534,8 +8670,8 @@ mod tests {
             120,
             34,
         );
-        assert!(finished.contains("╌╌ ask · "));
-        assert!(finished.contains("shift+tab autonomy"));
+        assert!(finished.contains("── ask · "));
+        assert!(finished.contains("enter send"), "{finished}");
         assert!(!finished.contains("enter ask"));
         assert!(!finished.contains("shift+enter newline"));
     }
@@ -8577,7 +8713,7 @@ mod tests {
 
         let rendered = rendered_frame_at_size(&app, Instant::now(), 140, 34);
         assert!(
-            rendered.contains("╌╌ work draft · /work · read only ╌"),
+            rendered.contains("── work draft · /work · read only ─"),
             "{rendered}"
         );
         assert!(rendered.contains("src/charge.rs"));
@@ -8703,7 +8839,7 @@ mod tests {
 
         let rendered = rendered_frame_at_size(&app, Instant::now(), 160, 34);
         assert!(
-            rendered.contains("╌╌ production · uqeu/estelle"),
+            rendered.contains("── production · uqeu/estelle"),
             "{rendered}"
         );
         assert!(rendered.contains("billing.py:82"), "{rendered}");
@@ -8892,7 +9028,7 @@ mod tests {
 
         let rendered = rendered_frame(&app, started + Duration::from_secs(6));
 
-        assert!(rendered.contains("thinking  6s"));
+        assert!(rendered.contains("thinking \u{b7} 6s"), "{rendered}");
         assert!(!rendered.contains("cache"));
     }
 
@@ -9170,7 +9306,7 @@ mod tests {
             Some("Connect Estelle")
         );
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 30);
-        assert!(rendered.contains("╌╌ connect estelle ╌"), "{rendered}");
+        assert!(rendered.contains("── connect estelle ─"), "{rendered}");
         assert!(rendered.contains("grounds your coding agent in your real codebase"));
         assert!(rendered.contains("never bills you for model tokens"));
         assert!(!rendered.contains("Claude subscription"));
@@ -9418,7 +9554,7 @@ mod tests {
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 30);
 
         assert!(rendered.contains("api/charge.ts:52"));
-        assert!(rendered.contains("Ask Estelle"));
+        assert!(rendered.contains(live_renderer::PROMPT_GLYPH), "{rendered}");
     }
 
     #[tokio::test]
@@ -10014,13 +10150,15 @@ mod tests {
         // ⚠️ `EDIT REFUSED` was this modal's own headline and the catalog's was `Gate refused`.
         // One block, one wording: the modal now renders `gate_refusal::lines`, so the headline
         // here is the catalog's. The sentence naming what happened to the edit is kept.
-        assert!(rendered.contains("╌╌ gate · refused"), "{rendered}");
+        assert!(rendered.contains("── gate · refused"), "{rendered}");
         assert!(rendered.contains("Gate refused"), "{rendered}");
         assert!(rendered.contains("verdict blocked"), "{rendered}");
         assert!(rendered.contains("Gate protected this repository"));
         assert!(rendered.contains("blast radius"));
         assert!(rendered.contains("2 files"));
         assert!(rendered.contains("6 changed lines"));
+        // The modal owns the input while it is open, so this is the MODAL's footer, not the
+        // composer prompt - the earlier sweep of "Ask Estelle" must not have touched it.
         assert!(rendered.contains("Ask Estelle"));
     }
 
@@ -10099,7 +10237,7 @@ mod tests {
             ]
         );
         let now = app.active.as_ref().expect("gate still active").started + Duration::from_secs(13);
-        let rendered = format!("{:?}", status_line(&app, now));
+        let rendered = format!("{:?}", status_bar_line(&app, now, 120));
 
         assert!(
             rendered.contains("/gate · waiting for server verdict"),
@@ -10108,9 +10246,10 @@ mod tests {
         assert!(rendered.contains("13s"), "{rendered}");
         let cold = format!(
             "{:?}",
-            status_line(
+            status_bar_line(
                 &app,
                 app.active.as_ref().expect("gate still active").started + Duration::from_secs(93),
+                120,
             )
         );
         assert!(
@@ -10158,7 +10297,7 @@ mod tests {
                 );
             }
         }
-        assert!(first.contains("Ask Estelle"));
+        assert!(first.contains(live_renderer::PROMPT_GLYPH), "{first}");
     }
 
     #[test]
@@ -10479,7 +10618,7 @@ mod tests {
                 .next()
                 .is_some_and(|line| !line.contains("..."))
         );
-        assert!(!format!("{:?}", status_line(&app, Instant::now())).contains("..."));
+        assert!(!format!("{:?}", status_bar_line(&app, Instant::now(), 120)).contains("..."));
     }
 
     #[test]
@@ -10487,17 +10626,17 @@ mod tests {
         let app = test_app();
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
         let lines = rendered.lines().collect::<Vec<_>>();
-        // The design opens the input on `╌╌ ask · <repo> ╌╌`; the box is the old language.
+        // The design opens the input on `── ask · <repo> ──`; the box is the old language.
         // The BOUND is what this test is for and it is unchanged: the input still owns only
         // the bottom of the frame.
         let composer = lines
             .iter()
-            .position(|line| line.contains("╌╌ ask · "))
+            .position(|line| line.contains("── ask · "))
             .expect("the design's ask rule opens the input surface");
 
-        assert!(composer >= lines.len().saturating_sub(7));
+        assert!(composer >= lines.len().saturating_sub(10));
         assert!(!lines[composer].contains('┌'));
-        assert!(rendered.contains("› Ask Estelle"));
+        assert!(rendered.contains(live_renderer::PROMPT_GLYPH), "{rendered}");
     }
 
     #[test]
@@ -10511,7 +10650,7 @@ mod tests {
                 row.iter()
                     .map(ratatui::buffer::Cell::symbol)
                     .collect::<String>()
-                    .contains("› Ask Estelle")
+                    .contains(live_renderer::PROMPT_GLYPH)
             })
             .expect("composer placeholder row");
 
@@ -10824,7 +10963,7 @@ mod tests {
         let lines = rendered.lines().collect::<Vec<_>>();
         let picker = lines
             .iter()
-            .position(|line| line.contains("╌╌ settings ╌"))
+            .position(|line| line.contains("── settings ─"))
             .expect("settings picker rule");
         assert!(!rendered.contains("ASK ESTELLE"));
         assert!(
