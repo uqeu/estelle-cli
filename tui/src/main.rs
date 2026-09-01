@@ -2262,7 +2262,20 @@ impl App {
         {
             self.transcript.push(TranscriptEntry::SessionHandoff(lines));
         }
-        self.transcript.push(TranscriptEntry::User(text));
+        // 🔴 **A QUEUED MESSAGE IS AN INTENTION; THE TRANSCRIPT IS A RECORD OF WHAT HAPPENED.**
+        // This used to echo EVERY submission immediately, so seven messages waiting behind one
+        // in-flight request drew seven `you › …` bands in the session pane — duplicating the
+        // waiting list below and reading, correctly, as if the queue had fired them all at once.
+        //
+        // A message that enqueues is echoed by `begin_active` at the moment it is SENT, which is
+        // the moment it becomes true. A message handled LOCALLY (a refusal, a picker, an unknown
+        // command) is echoed here, because for those the exchange has already happened.
+        //
+        // ⚠️ The position is RECORDED rather than appended: the local branches below push their
+        // own reply first, so appending afterwards would print the answer above the question.
+        // `insert` at the mark puts the row exactly where the old unconditional push had it.
+        let echo_at = self.transcript.len();
+        let queued_before = self.queue.len();
         match parsed {
             commands::ParsedInput::Ask(question) => {
                 self.has_submitted_question = true;
@@ -2336,6 +2349,10 @@ impl App {
                     }));
                 }
             }
+        }
+        // Nothing was enqueued, so this input was answered locally and belongs in the record now.
+        if self.queue.len() == queued_before {
+            self.transcript.insert(echo_at, TranscriptEntry::User(text));
         }
         self.start_next(tx);
     }
@@ -3243,10 +3260,13 @@ impl App {
         let Some(pending) = self.queue.pop_front() else {
             return;
         };
+        // Captured before `pending` is moved into the match. One string, handed to whichever
+        // branch starts the turn, so no branch can invent its own spelling of what the user typed.
+        let echo = pending.label();
         match pending {
             QueuedRequest::Shell { command, timeout } => {
                 let (id, cancel) =
-                    self.begin_active(&format!("local shell · timeout {}s", timeout.as_secs()));
+                    self.begin_active(&format!("local shell · timeout {}s", timeout.as_secs()), &echo);
                 let tx = tx.clone();
                 let root = self.root.clone();
                 tokio::spawn(async move {
@@ -3261,7 +3281,7 @@ impl App {
             }
             QueuedRequest::Apply { diff, reverse } => {
                 let name = if reverse { "undo" } else { "apply" };
-                let (id, cancel) = self.begin_active(name);
+                let (id, cancel) = self.begin_active(name, &echo);
                 let tx = tx.clone();
                 let root = self.root.clone();
                 tokio::spawn(async move {
@@ -3296,7 +3316,7 @@ impl App {
                 };
                 let source = messages.clone();
                 let response_session_id = session_id.clone();
-                let (id, cancel) = self.begin_active("/compact");
+                let (id, cancel) = self.begin_active("/compact", &echo);
                 let tx = tx.clone();
                 tokio::spawn(async move {
                     let result = transcript::request_compaction(
@@ -3317,7 +3337,7 @@ impl App {
                 session_context,
             } => {
                 if let Some(session) = self.session.clone() {
-                    let (id, _cancel) = self.begin_active("thinking");
+                    let (id, _cancel) = self.begin_active("thinking", &echo);
                     self.session_questions.insert(id);
                     if let Err(error) = session.send(session_server::ClientRequest::Ask {
                         id,
@@ -3346,7 +3366,7 @@ impl App {
                 };
                 let repo = self.repo.clone();
                 let root = self.root.clone();
-                let (id, cancel) = self.begin_active("thinking");
+                let (id, cancel) = self.begin_active("thinking", &echo);
                 let tx = tx.clone();
                 tokio::spawn(async move {
                     let result =
@@ -3357,7 +3377,7 @@ impl App {
             }
             QueuedRequest::Sweep => {
                 if let Some(session) = self.session.clone() {
-                    let (id, _cancel) = self.begin_active("/sweep");
+                    let (id, _cancel) = self.begin_active("/sweep", &echo);
                     self.session_questions.insert(id);
                     if let Err(error) = session.send(session_server::ClientRequest::Sweep { id }) {
                         self.active = None;
@@ -3376,7 +3396,7 @@ impl App {
                 };
                 let repo = self.repo.clone();
                 let root = self.root.clone();
-                let (id, cancel) = self.begin_active("/sweep");
+                let (id, cancel) = self.begin_active("/sweep", &echo);
                 let tx = tx.clone();
                 tokio::spawn(async move {
                     let progress_tx = tx.clone();
@@ -3398,7 +3418,7 @@ impl App {
             QueuedRequest::Command(command) => {
                 if let Some(session) = self.session.clone() {
                     let name = command.name;
-                    let (id, _cancel) = self.begin_active(&format!("/{name}"));
+                    let (id, _cancel) = self.begin_active(&format!("/{name}"), &echo);
                     self.session_questions.insert(id);
                     if let Err(error) = session.send(session_server::ClientRequest::Command {
                         id,
@@ -3424,7 +3444,7 @@ impl App {
                 let repo = self.repo.clone();
                 let root = self.root.clone();
                 let name = command.name;
-                let (id, cancel) = self.begin_active(&format!("/{name}"));
+                let (id, cancel) = self.begin_active(&format!("/{name}"), &echo);
                 let tx = tx.clone();
                 tokio::spawn(async move {
                     let progress_events: Option<WorkProgressSink> = (name == "work").then(|| {
@@ -3456,7 +3476,20 @@ impl App {
         }
     }
 
-    fn begin_active(&mut self, label: &str) -> (u64, CancellationToken) {
+    /// Mark a request as the one in flight, and PUT IT IN THE TRANSCRIPT.
+    ///
+    /// 🔴 **THIS IS THE SINGLE POINT WHERE A QUEUED MESSAGE BECOMES PART OF THE RECORD**, because
+    /// it is the single point where a turn actually starts: every dispatch in `start_next` — the
+    /// session path and the HTTP path, for questions, commands, sweeps, compactions, shells and
+    /// patches — calls this immediately before sending. Echoing here rather than at submit time
+    /// means the transcript can never contain a message that was not sent, and `app.queue` is the
+    /// only owner of "what is waiting" — so there are no two lists to correlate.
+    ///
+    /// ⚠️ A request PARKED by `handle_missing_client` while auth resolves never reaches here, which
+    /// is correct: it has not been sent, so it is not in the record.
+    fn begin_active(&mut self, label: &str, echo: &str) -> (u64, CancellationToken) {
+        self.transcript
+            .push(TranscriptEntry::User(echo.to_string()));
         let id = self.next_request_id;
         self.next_request_id = self.next_request_id.wrapping_add(1);
         let cancel = CancellationToken::new();
@@ -3491,6 +3524,14 @@ impl App {
                 self.queue.push_front(pending);
                 return;
             }
+            // ⚠️ **A REFUSED TURN IS STILL A TURN, SO IT IS ECHOED HERE.** `begin_active` owns the
+            // echo for every request that STARTS, and this branch is the one place a queued
+            // request settles WITHOUT starting — it reached the front and was definitively
+            // refused. Without this the failure below would be orphaned: a "not sent" banner with
+            // no question above it, and the user's own words gone from the record entirely.
+            // The PARK path above deliberately does not echo; that request has not settled.
+            self.transcript
+                .push(TranscriptEntry::User(pending.label()));
             self.transcript.push(TranscriptEntry::Failure([
                 "The request was not sent.".to_string(),
                 "This client has no Estelle credential.".to_string(),
@@ -3966,7 +4007,8 @@ impl App {
                 {
                     tab.active = false;
                 }
-                if self.active.as_ref().is_some_and(|active| active.id == id) {
+                let was_current = self.active.as_ref().is_some_and(|active| active.id == id);
+                if was_current {
                     if self
                         .active
                         .as_ref()
@@ -3975,6 +4017,12 @@ impl App {
                         self.work_progress = None;
                     }
                     self.active = None;
+                    // 🔴 THIRD SITE IN THIS FAMILY. `ctrl+c` and `handle_missing_client` both
+                    // released the in-flight slot without driving the queue, and both stranded
+                    // every message behind them. This one is the SERVER cancelling a turn — it
+                    // emptied the slot and left the queue with nothing to start it. Every path
+                    // that clears `active` must hand the queue on, or the queue stops forever.
+                    self.start_next(tx);
                 }
             }
             session_server::ServerMessage::SweepProgress { id, progress } => {
@@ -12228,9 +12276,16 @@ mod tests {
         );
     }
 
+    /// ⚠️ **UPDATED DELIBERATELY: `auth_resolved` IS NOW LOAD-BEARING HERE.** A submitted message
+    /// no longer echoes into the transcript at submit time — it enters the record when it is
+    /// SENT. With auth still resolving, `handle_missing_client` PARKS the request at the front of
+    /// the queue, so it has not been sent and correctly has no row. Resolving auth lets it settle
+    /// (refused, for want of a credential), which is when the `you` row appears. The property
+    /// under test is unchanged: the handoff and the user's turn coexist, handoff first.
     #[test]
     fn first_question_keeps_the_session_handoff_in_the_transcript() {
         let mut app = test_app();
+        app.auth_resolved = true;
         app.session_context = Some(session_gap::SessionContext {
             human_lines: vec![
                 "Welcome back. You were away about 5 hours.".to_string(),
@@ -13321,6 +13376,233 @@ mod tests {
         );
     }
 
+    /// 🔴 A QUEUED MESSAGE IS AN INTENTION. THE TRANSCRIPT IS A RECORD OF WHAT HAPPENED.
+    ///
+    /// The founder queued seven messages behind one in-flight request and every one of them ALSO
+    /// rendered as a `you › …` band in the transcript, filling the session pane and duplicating
+    /// the waiting list below it. His words: *"it shows up in the chat still, it's not supposed to
+    /// show up in chat, it's supposed to show up in the queue."*
+    ///
+    /// ⚠️ **I SHIPPED THIS AND FLAGGED IT AS A DELIBERATE DIVERGENCE.** The previous commit said
+    /// recalled messages keep their echoes because removing them "needs a transcript-row-to-queue
+    /// correlation this client cannot soundly derive". That reasoning accepted the wrong premise:
+    /// the fix is not to correlate two lists, it is to **never create the second list**. A message
+    /// enters the transcript at the moment it is SENT — which is also the moment it becomes true.
+    #[test]
+    fn a_queued_message_is_absent_from_the_transcript_until_it_is_actually_sent() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.active = Some(ActiveRequest {
+            id: 41,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+
+        let queued = ["dbleh", "d", "1", "2", "3"];
+        for message in queued {
+            app.submit(message.to_string(), &tx);
+        }
+        assert_eq!(app.queue.len(), queued.len(), "the premise is a full queue");
+
+        let user_rows = |app: &App| {
+            app.transcript
+                .iter()
+                .filter_map(|entry| match entry {
+                    TranscriptEntry::User(text) => Some(text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            user_rows(&app).is_empty(),
+            "waiting messages are in the transcript before they were sent: {:?}",
+            user_rows(&app)
+        );
+
+        // Release the in-flight slot and let the queue drain. With auth resolved and no
+        // credential, each request settles synchronously into a failure and drives the next.
+        app.active = None;
+        app.start_next(&tx);
+
+        assert!(app.queue.is_empty(), "the queue did not drain");
+        assert_eq!(
+            user_rows(&app),
+            queued.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
+            "a sent message must appear exactly once, in the order it was sent"
+        );
+    }
+
+    /// 🔴 ONE TURN IN FLIGHT AT A TIME, AND THE REPLY IS IN THE RECORD BEFORE THE NEXT GOES OUT.
+    ///
+    /// The report was that the queue dispatches CONCURRENTLY, so each request carries a stale
+    /// conversation tail and two turns answer the same question from different histories. Ordering
+    /// the SENDS is not the same as serialising the TURNS, and no test distinguished them.
+    ///
+    /// This asserts the distinction directly rather than inferring it from order:
+    ///   1. while a request is in flight, `start_next` dispatches NOTHING, however often it runs;
+    ///   2. one settled reply releases EXACTLY ONE queued message, never two;
+    ///   3. the reply is in the transcript BEFORE the next message's own row — which is the
+    ///      property `chat_continuity` depends on, since it reads the tail server-side.
+    #[test]
+    fn only_one_turn_is_ever_in_flight_and_its_reply_lands_before_the_next_is_sent() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.active = Some(ActiveRequest {
+            id: 77,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        for message in ["where do i live", "second", "third"] {
+            app.submit(message.to_string(), &tx);
+        }
+        assert_eq!(app.queue.len(), 3);
+
+        // 1. Nothing dispatches while a turn is in flight, no matter how often the pump runs.
+        for _ in 0..10 {
+            app.start_next(&tx);
+        }
+        assert_eq!(
+            app.queue.len(),
+            3,
+            "a queued message was dispatched while another turn was in flight"
+        );
+        assert_eq!(app.active.as_ref().map(|active| active.id), Some(77));
+
+        // 2. One settled reply releases exactly one message.
+        app.handle_ui_event(
+            UiEvent::Answer {
+                id: 77,
+                result: Ok(AnswerReply {
+                    text: "You live in Toronto.".to_string(),
+                    grounded: None,
+                    degraded: false,
+                    sources: Vec::new(),
+                    working_paths: Vec::new(),
+                }),
+            },
+            &tx,
+        );
+
+        // 3. The reply is recorded BEFORE the next message's row. Positions, not presence:
+        //    presence would pass on any interleaving.
+        let position = |needle: &str| {
+            app.transcript
+                .iter()
+                .position(|entry| match entry {
+                    TranscriptEntry::User(text) => text.contains(needle),
+                    TranscriptEntry::Answer { text, .. } => text.contains(needle),
+                    _ => false,
+                })
+                .unwrap_or_else(|| {
+                    panic!("no transcript entry for {needle:?}")
+                })
+        };
+        assert!(
+            position("You live in Toronto") < position("second"),
+            "the next message was sent before the previous reply was recorded — its \
+             conversation tail is stale by construction"
+        );
+    }
+
+    /// 🔴 EVERY PATH THAT RELEASES THE IN-FLIGHT SLOT MUST HAND THE QUEUE ON — THIRD SITE.
+    ///
+    /// `ctrl+c` and `handle_missing_client` were both found releasing `active` without calling
+    /// `start_next`, stranding every message behind them. A SERVER-side cancel was the third and
+    /// was never checked: `ServerMessage::Cancelled` emptied the slot and returned, so a turn the
+    /// server cancelled left the queue with nothing to start it, forever.
+    #[test]
+    fn a_server_cancelled_turn_hands_the_queue_on() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.active = Some(ActiveRequest {
+            id: 12,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        app.submit("still waiting".to_string(), &tx);
+        assert_eq!(app.queue.len(), 1, "the premise is one message waiting");
+
+        app.handle_session_message(session_server::ServerMessage::Cancelled { id: 12 }, &tx);
+
+        assert!(
+            app.active.is_some() || app.queue.is_empty(),
+            "the server cancelled a turn and left {} message(s) with nothing to start them",
+            app.queue.len()
+        );
+    }
+
+    /// 🔴 `○` MEANT TWO THINGS AT ONCE, AND THE FOUNDER READ THE SCREEN WRONG BECAUSE OF IT.
+    ///
+    /// The waiting band marks a queued message `○` (`Mark::Queued` — "queued · idle"), and the
+    /// previous commit ALSO gave `○` to an ungrounded reply. His screenshot then showed a single
+    /// column mixing `○ It looks like you sent "d."` (a reply) with `○ d` (a message not yet
+    /// sent), indistinguishable, which is what made the queue look like it was answering itself
+    /// out of order. Power of Ten rule 8: one meaning per name.
+    ///
+    /// `○` stays with the queue, which is its literal meaning. A reply is always `●` — it LANDED —
+    /// and grounding is carried by the colour plus the citations in the evidence gutter, which is
+    /// a structural difference rather than a second glyph.
+    #[test]
+    fn the_queued_mark_and_the_reply_mark_are_never_the_same_glyph() {
+        let mut app = test_app();
+        app.prod_panel_visible = false;
+        app.transcript.push(TranscriptEntry::Answer {
+            text: "answered from the model".to_string(),
+            grounded: None,
+            degraded: false,
+            sources: Vec::new(),
+        });
+        app.transcript.push(TranscriptEntry::Answer {
+            text: "answered from your code".to_string(),
+            grounded: Some(true),
+            degraded: false,
+            sources: Vec::new(),
+        });
+
+        let buffer = rendered_buffer_at_size(&app, Instant::now(), 120, 34);
+        let palette = app.theme.screen_palette();
+        let opener = |needle: &str| {
+            (0..buffer.area.height)
+                .find_map(|y| {
+                    let text = (0..buffer.area.width)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>();
+                    text.contains(needle).then(|| {
+                        (0..buffer.area.width)
+                            .find(|x| buffer[(*x, y)].symbol().trim() != "")
+                            .map(|x| buffer[(x, y)].clone())
+                            .expect("a painted cell")
+                    })
+                })
+                .unwrap_or_else(|| panic!("no row for {needle:?}"))
+        };
+
+        let ungrounded = opener("answered from the model");
+        let grounded = opener("answered from your code");
+        // Neither reply may wear the QUEUED mark — that glyph belongs to the waiting band.
+        assert_ne!(
+            ungrounded.symbol(),
+            marks::Mark::Queued.glyph(),
+            "an ungrounded reply is wearing the queued mark"
+        );
+        assert_ne!(grounded.symbol(), marks::Mark::Queued.glyph());
+        // Both replies landed, so both carry the landed glyph; grounding is the COLOUR.
+        assert_eq!(grounded.symbol(), marks::Mark::Landed.glyph());
+        assert_eq!(ungrounded.symbol(), marks::Mark::Landed.glyph());
+        assert_eq!(grounded.fg, palette.green);
+        assert_eq!(ungrounded.fg, palette.dim);
+        assert_ne!(
+            grounded.fg, ungrounded.fg,
+            "grounded and ungrounded replies are indistinguishable"
+        );
+    }
+
     /// 🔴 A REPLY OPENS WITH A MARK, NOT WITH THE WORD "ESTELLE".
     ///
     /// The founder: *"Claude does not say Claude, Claude just writes a dot. Why is Estelle
@@ -13376,25 +13658,25 @@ mod tests {
         let grounded = opener("retry gate moved");
         let ungrounded = opener("I am doing well");
 
-        // CHANNEL 1 — the glyph.
+        // ⚠️ **UPDATED: THE GLYPH IS NO LONGER THE CHANNEL, AND THAT IS A CORRECTION.** This
+        // first asserted `●` grounded / `○` ungrounded — but `○` is the WAITING BAND's mark for a
+        // message that has not been sent, so the two collided on screen and the founder read a
+        // column of replies and unsent messages as one list. See
+        // `the_queued_mark_and_the_reply_mark_are_never_the_same_glyph`. Both replies landed, so
+        // both are `●`; grounding is the colour, and the structural second channel is the `cited`
+        // lines a grounded answer carries in the evidence gutter.
         assert_eq!(grounded.symbol(), "\u{25cf}", "a grounded reply must open with ●");
         assert_eq!(
             ungrounded.symbol(),
-            "\u{25cb}",
-            "an ungrounded reply must open with ○"
-        );
-        // CHANNEL 2 — the colour.
-        assert_eq!(grounded.fg, palette.green);
-        assert_eq!(ungrounded.fg, palette.dim);
-        assert_ne!(
-            grounded.symbol(),
-            ungrounded.symbol(),
-            "grounded and ungrounded replies are indistinguishable by glyph"
+            "\u{25cf}",
+            "an ungrounded reply must open with ● too — it landed"
         );
         assert_ne!(
             grounded.fg, ungrounded.fg,
             "grounded and ungrounded replies are indistinguishable by colour"
         );
+        assert_eq!(grounded.fg, palette.green);
+        assert_eq!(ungrounded.fg, palette.dim);
 
         // And the words are gone. ⚠️ Asserted at the START OF A LINE, not anywhere on the frame:
         // the repo is `uqeu/estelle` and the header reads `ESTELLE · uqeu/estelle`, so a bare

@@ -205,14 +205,24 @@ pub(crate) fn render(
                 //
                 // A word survives ONLY on the two states a warn mark cannot disambiguate between.
                 // A healthy reply says nothing, which is the point.
-                let (mark, qualifier) = if *degraded {
-                    (marks::Mark::Blocked, Some("degraded"))
+                // 🔴 **`○` BELONGS TO THE QUEUE AND MUST NOT ALSO MEAN "UNGROUNDED".** The first
+                // version of this gave an ungrounded reply `Mark::Queued`, which is the SAME glyph
+                // the waiting band puts on a message that has not been sent. The founder's screen
+                // then showed one column mixing `○ It looks like you sent "d."` (a reply) with
+                // `○ d` (a message not yet sent) — indistinguishable, and it is why the queue
+                // looked like it was answering itself out of order. One meaning per name.
+                //
+                // A reply always LANDED, so a reply is always `●`. Grounding is the COLOUR, and
+                // the second channel is structural rather than chromatic: a grounded answer
+                // carries `cited …` lines in the evidence gutter and an ungrounded one does not.
+                let (mark, ink, qualifier) = if *degraded {
+                    (marks::Mark::Blocked, palette.warn, Some("degraded"))
                 } else if *grounded == Some(false) {
-                    (marks::Mark::Blocked, Some("not grounded"))
+                    (marks::Mark::Blocked, palette.warn, Some("not grounded"))
                 } else if *grounded == Some(true) {
-                    (marks::Mark::Landed, None)
+                    (marks::Mark::Landed, palette.grounded, None)
                 } else {
-                    (marks::Mark::Queued, None)
+                    (marks::Mark::Landed, palette.ungrounded, None)
                 };
                 let heading = qualifier
                     .map(|word| {
@@ -244,17 +254,9 @@ pub(crate) fn render(
                     trailing,
                     semantic_color: Some(palette.semantic),
                     // ⚠️ The GLYPH comes from `marks::Mark` so the five-mark vocabulary keeps one
-                    // owner; the COLOUR comes from this palette, because `Mark::colour` needs a
-                    // `theme::Palette` and reaching for a hardcoded `ScreenTheme::Dark` here would
-                    // paint Cream Ink with the dark theme's ink.
-                    mark: Some((
-                        mark.glyph().to_string(),
-                        match mark {
-                            marks::Mark::Landed => palette.grounded,
-                            marks::Mark::Blocked => palette.warn,
-                            _ => palette.ungrounded,
-                        },
-                    )),
+                    // owner; the COLOUR is chosen above, because two different groundings now
+                    // share one glyph and a `match` on the mark could no longer tell them apart.
+                    mark: Some((mark.glyph().to_string(), ink)),
                 });
             }
             TranscriptEntry::System(message) => {
