@@ -521,11 +521,116 @@ fn context_hook_offline(payload: &HookPayload, gate_disabled: bool) -> Option<Ve
 /// How long the UserPromptSubmit context hook may spend before giving up and injecting nothing.
 ///
 /// Bounded, and the bound is a named constant, because this runs on the hot path of every single
-/// message a person sends. The Claude Code plugin allows the hook 10 seconds; this sits well under
-/// that so the hook always returns cleanly rather than being killed with its work discarded.
-/// Deliberately much smaller than the measured 13.4 s server latency: the honest behaviour when
-/// recall is slow is to skip enrichment, not to make the user wait for it.
-const CONTEXT_HOOK_BUDGET: std::time::Duration = std::time::Duration::from_secs(4);
+/// message a person sends. The plugin manifest allows this hook 30 s
+/// (`estelle-plugin/hooks/hooks.json`, `UserPromptSubmit`), so this sits well inside the host's
+/// budget and the hook always returns cleanly rather than being killed with its work discarded.
+///
+/// 🔴 **IT WAS 4 s, AND AT 4 s IT COULD NEVER SUCCEED — 0 OF 15 PROMPTS ENRICHED.** The number was
+/// picked to sit under a 10 s host budget, not measured against the server it calls, and that is
+/// the whole defect: **a deadline chosen from the CALLER's constraint and never checked against the
+/// CALLEE's floor is not a deadline, it is a guaranteed no-op with a delay attached.** Measured
+/// 2026-09-01 against production, `POST /search` with `{"code": false}` (this hook's exact wire
+/// shape) has a hard floor of **5.93 s** — n=15 across prompt lengths 26…2846 chars, min 5.93 s,
+/// median 6.11 s, max 22.83 s — of which the server's own `timings.total_s` accounts for only
+/// 2.06–2.19 s; the remaining ~3.9 s is time-to-first-byte the server does not measure
+/// (DNS+TCP+TLS is 90 ms, so it is not the connection). A 4 s budget is BELOW the floor, so it
+/// expired on every prompt: measured end-to-end at 4.01–4.03 s with **0/15** injections. It cost
+/// the user four seconds a message and delivered nothing, which is worse than the bug it replaced.
+///
+/// ⛰️ **THE FLOOR IS THE SERVER'S, AND IT IS NOT MOVING THIS ROUND.** The server lane measured
+/// the same afternoon against prod `e8c0f20d`: an **EMPTY** query — rejected at `api_intel.py:331`
+/// *before any search runs* — still costs **3.9–4.1 s**, because the caller is resolved three
+/// times per request (`api_shared.py:181`, `api_shared.py:248`, `estelle_server.py:4705` →
+/// `endpoint_runs.py:112`) plus `ledger.may_serve` and `_admit_recall`
+/// (`estelle_server.py:9518-9528`) at ~352 ms per Postgres round trip. That is a **~4.0 s
+/// pre-handler floor before the query is even read**, and it is an auth change nobody is making
+/// today. So this constant is chosen against a floor it cannot lower.
+///
+/// ⚠️ **20 s IS A JUDGEMENT CALL ON A MEASURED DISTRIBUTION, AND HERE IS ITS LIMIT.** Four numbers
+/// bound it: the observed floor **5.93 s**, the server lane's independent whole-request floor
+/// **~8.2 s** with `code_terms` at zero, the observed max **22.83 s**, and the host's kill at
+/// **30 s** (`estelle-plugin/hooks/hooks.json`). 20 s leaves a **10 s margin under the host kill**,
+/// which is the margin that matters: being killed by the host is the original defect — the work is
+/// done, the answer is discarded, and the user's prompt goes with it. It clears 14 of 15 samples;
+/// the one it drops is the 22.83 s outlier, and dropping that is the deadline doing its job, not
+/// failing. 25 s would cover it and halve the margin; that trade was taken deliberately.
+///
+/// 🚫 **AND THE COMMENT THAT USED TO LIVE HERE CLAIMED "never a stall" WHILE THE SHIPPED BINARY
+/// HAD NO BOUND AT ALL.** That sentence is why the founder's input was discarded. n=15 on one
+/// machine against one loaded production server on one afternoon is a thin basis for a hot-path
+/// constant and a hostile reader should say so out loud. **The durable fix is the server floor,
+/// not this number** — no client-side deadline can make a 6 s call fast, it can only choose
+/// between waiting and giving up. Re-measure before moving it, and move it DOWN the day the
+/// server does.
+const CONTEXT_HOOK_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// The exact body the context hook puts on the wire, as one named function, so the shape is
+/// assertable without a network and pinned by a test that reads the real request bytes.
+///
+/// 🔴 `"code": false` IS THE WHOLE FIX, AND OMITTING IT IS NOT THE SAME AS SENDING IT.
+/// The server reads `body.get("code", True)` — an ABSENT key means TRUE, so the previous body
+/// `{"query": …}` asked for the full code branch on every keystroke. Measured against production
+/// on 2026-09-01 with this hook's exact wire shape: `{"query": Q}` = 133.4 s
+/// (`code_terms` 94.6 s over 200 terms · `code_search` 21.0 s returning ZERO matches ·
+/// `graph_lookup` 3.2 s · `recall` 12.7 s) against `{"query": Q, "code": false}` = 8.4 s. **15.9×.**
+/// [`context_recall_lines`] reads ONLY `recall`, so 89% of that work was computed and discarded
+/// unread — the hook paid for citations it then threw away, and the founder's prompt was killed
+/// mid-flight and dropped for it.
+///
+/// ⚠️ THE LIMIT, SAID OUT LOUD: this makes the hook stop ASKING for code. It does not make the
+/// server fast, and it is not the deadline — [`CONTEXT_HOOK_BUDGET`] is. Both are needed: a
+/// cheaper request still has no bound on it, and a bound alone still wastes 89% of the work.
+///
+/// ⛔ DO NOT COPY THIS INTO THE SIBLING CALL SITE. `recall` (`top_level.rs`, the `estelle recall`
+/// command) sends the same body and READS `reply["code"]` through `append_citations`; setting
+/// `code: false` there silently deletes its citations. The rule is not "the hook is fast", it is
+/// "ask only for the fields you read".
+fn context_search_body(query: &str) -> Value {
+    json!({"query": query, "code": false})
+}
+
+/// The NETWORK half of the context hook, bounded, taking its client and its budget as arguments.
+///
+/// 🔬 IT IS SPLIT OUT SO THE BOUND CAN BE DEMONSTRATED FIRING. A `tokio::time::timeout` is only
+/// a bound on a future that YIELDS — wrapped around anything that blocks the thread it never
+/// fires at all, and reads as a deadline in review while being decoration at runtime. The only
+/// way to know which one this is, is to make a server slow and watch it give up:
+/// `context_hook_budget_fires_against_a_slow_server` stands up a real HTTP server that delays
+/// past the budget, drives this function through the real `reqwest` client, and asserts both
+/// that it returned NOTHING and that it returned EARLY.
+async fn context_recall_lines(
+    client: &Client,
+    cancel: &CancellationToken,
+    repo: &Repo,
+    query: &str,
+    budget: Duration,
+) -> Vec<String> {
+    let body = context_search_body(query);
+    let request = client.post_scoped::<Value, Value>(Endpoint::Search, repo, &body, cancel);
+    let Ok(Ok(result)) = tokio::time::timeout(budget, request).await else {
+        // Expired or errored: return NOTHING, exit 0. Silence is the correct outcome — the model
+        // simply does not get the extra context this turn, and the human sees no error, because a
+        // failure to enrich is not a failure of their prompt.
+        return Vec::new();
+    };
+    let recall = result
+        .get("recall")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    // Silent to the human — a line on every prompt is how a feature gets muted. The model gets
+    // the context. The event name MUST be UserPromptSubmit: Claude Code ignores
+    // additionalContext whose hookEventName does not match the event that fired.
+    if recall.is_empty() {
+        Vec::new()
+    } else {
+        vec![hook_message(
+            None,
+            Some(recall.to_string()),
+            "UserPromptSubmit",
+        )]
+    }
+}
 
 async fn context_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>, String> {
     let gate_disabled = std::env::var_os("ESTELLE_GATE_DISABLED").is_some();
@@ -552,37 +657,17 @@ async fn context_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>,
     // four. That is a server defect and a resource-exhaustion vector, and it is filed for the serve
     // lane; it is NOT what this deadline fixes. This fixes only our half: an OPTIONAL enrichment must
     // never be able to hold a person's keystroke hostage, whatever the server does.
+    // ⚠️ THE HALF THIS DEADLINE DOES NOT COVER, NAMED RATHER THAN HIDDEN. `Api::resolve` is
+    // SYNCHRONOUS — it reads `~/.estelle/auth.json` (no keychain, no network) and builds the
+    // reqwest client. It is deliberately NOT inside the timeout below, because wrapping a
+    // blocking call in `tokio::time::timeout` produces a deadline that CANNOT FIRE, which is
+    // worse than no deadline: it reads as a bound in review. Measured cost of everything outside
+    // the bound is reported in the commit; if it ever stops being negligible the answer is
+    // `spawn_blocking`, not a decorative wrapper.
     let Ok(api) = Api::resolve() else {
         return Ok(Vec::new());
     };
-    let Ok(Ok(Ok(result))) = tokio::time::timeout(
-        CONTEXT_HOOK_BUDGET,
-        api.post_scoped(Endpoint::Search, repo, &json!({"query": query})),
-    )
-    .await
-    .map(Ok::<_, ()>) else {
-        // Expired or errored: return NOTHING, exit 0. Silence is the correct outcome — the model
-        // simply does not get the extra context this turn, and the human sees no error, because a
-        // failure to enrich is not a failure of their prompt.
-        return Ok(Vec::new());
-    };
-    let recall = result
-        .get("recall")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or_default();
-    // Silent to the human — a line on every prompt is how a feature gets muted. The model gets
-    // the context. The event name MUST be UserPromptSubmit: Claude Code ignores
-    // additionalContext whose hookEventName does not match the event that fired.
-    if recall.is_empty() {
-        Ok(Vec::new())
-    } else {
-        Ok(vec![hook_message(
-            None,
-            Some(recall.to_string()),
-            "UserPromptSubmit",
-        )])
-    }
+    Ok(context_recall_lines(&api.client, &api.cancel, repo, &query, CONTEXT_HOOK_BUDGET).await)
 }
 
 /// SessionStart: the returning-customer brief, from local evidence only (session_gap makes no
@@ -5495,6 +5580,198 @@ tests/test_serve.py:88: AssertionError\n\
             context_hook_offline(&payload, false)
                 .expect("silent before any network")
                 .is_empty()
+        );
+    }
+
+    /// A client whose OWN transport deadline is the 120 s floor `Client::new` enforces, so any
+    /// give-up faster than that in these tests can ONLY be [`CONTEXT_HOOK_BUDGET`]. This is the
+    /// negative control for the deadline test: without it, a fast return could be reqwest timing
+    /// out and the tokio bound could still be inert.
+    fn hook_client(base_uri: &str) -> (Client, CancellationToken) {
+        let key = estelle_client::ApiKey::new("test-key").expect("key");
+        let client = Client::new(
+            &format!("{base_uri}/"),
+            key,
+            estelle_client::MINIMUM_TIMEOUT,
+        )
+        .expect("client");
+        (client, CancellationToken::new())
+    }
+
+    /// 🔴 THE ONE-WORD FIX, ASSERTED ON THE BYTES THAT LEAVE THE PROCESS.
+    ///
+    /// Reading the source cannot distinguish "we send `code:false`" from "we omit `code` and the
+    /// server defaults it TRUE" — those are the same source until you look at the wire. So this
+    /// captures the real request the real client sent and asserts the KEY IS PRESENT AND FALSE.
+    /// An absent key fails here, which is the whole point: absence was the defect.
+    #[tokio::test]
+    async fn context_hook_asks_for_recall_without_the_code_branch_it_never_reads() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/search"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
+                json!({"recall": "the retry policy lives in serve/backend.py", "code": []}),
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let (client, cancel) = hook_client(&server.uri());
+        let repo = Repo::new("fatelabs/estelle").expect("repo");
+        let lines = context_recall_lines(
+            &client,
+            &cancel,
+            &repo,
+            "where is the retry policy set?",
+            CONTEXT_HOOK_BUDGET,
+        )
+        .await;
+
+        let requests = server
+            .received_requests()
+            .await
+            .expect("the mock server records requests");
+        assert_eq!(requests.len(), 1, "exactly one search per prompt");
+        let body: Value = serde_json::from_slice(&requests[0].body).expect("request body JSON");
+        assert_eq!(
+            body.get("code"),
+            Some(&json!(false)),
+            "the `code` key must be PRESENT and FALSE on the wire — the server reads \
+             body.get(\"code\", True), so omitting it asks for the 133 s branch: {body}"
+        );
+        assert_eq!(body["query"], json!("where is the retry policy set?"));
+
+        // And the response half is unchanged: it still reads `recall`, and ONLY `recall`.
+        assert_eq!(lines.len(), 1);
+        let envelope: Value = serde_json::from_str(&lines[0]).expect("envelope JSON");
+        assert_eq!(
+            envelope["hookSpecificOutput"]["additionalContext"],
+            json!("the retry policy lives in serve/backend.py")
+        );
+    }
+
+    /// A real HTTP server that answers `delay` late with a real recall payload. Shared by the
+    /// two deadline tests so they differ in EXACTLY ONE variable — the budget — and nothing else.
+    async fn slow_search_server(delay: Duration) -> wiremock::MockServer {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/search"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_delay(delay)
+                    .set_body_json(json!({"recall": "the retry policy lives in serve/backend.py"})),
+            )
+            .mount(&server)
+            .await;
+        server
+    }
+
+    /// 🔬 THE DEADLINE, DEMONSTRATED FIRING — a bound nobody has watched fire is decoration.
+    ///
+    /// `tokio::time::timeout` only bounds a future that YIELDS; around a thread-blocking call it
+    /// never fires at all and still reads as a deadline in review. Reasoning cannot tell those two
+    /// apart, so this drives the REAL `reqwest` client against a REAL HTTP server that answers
+    /// three seconds late, with a 300 ms budget, and asserts both halves of the contract:
+    ///   1. the hook returns NOTHING (silence, never an error on the user's hot path), and
+    ///   2. it returns EARLY — well under the server's delay, which is what "bounded" means.
+    ///
+    /// ⚠️ ITS OWN NEGATIVE CONTROL. The client's transport timeout is the 120 s `MINIMUM_TIMEOUT`
+    /// floor that `Client::new` enforces, so a give-up at ~300 ms cannot be reqwest's and cannot be
+    /// the server's. Only the tokio bound can produce this result.
+    #[tokio::test]
+    async fn context_hook_budget_fires_against_a_slow_server() {
+        const BUDGET: Duration = Duration::from_millis(300);
+        const SERVER_DELAY: Duration = Duration::from_secs(3);
+
+        let server = slow_search_server(SERVER_DELAY).await;
+        let (client, cancel) = hook_client(&server.uri());
+        let repo = Repo::new("fatelabs/estelle").expect("repo");
+
+        let started = Instant::now();
+        let lines =
+            context_recall_lines(&client, &cancel, &repo, "a prompt worth enriching", BUDGET).await;
+        let elapsed = started.elapsed();
+
+        assert!(
+            lines.is_empty(),
+            "an expired budget injects NOTHING, never a partial or an error: {lines:?}"
+        );
+        assert!(
+            elapsed < SERVER_DELAY,
+            "the budget must give up before the server answers — {elapsed:?} >= {SERVER_DELAY:?} \
+             means the deadline did not fire"
+        );
+    }
+
+    /// 🔬 AND THE DEADLINE DEMONSTRATED **NOT** FIRING — the other half, and the half that is
+    /// usually missing.
+    ///
+    /// A deadline only ever seen firing is indistinguishable from a client that is simply broken:
+    /// `context_recall_lines` returning `Vec::new()` unconditionally would satisfy the test above
+    /// forever. Same server, same client, same call — one variable changed, the budget widened
+    /// past the delay — and now the recall MUST arrive. Together the two pin the bound as a
+    /// decision rather than an outcome.
+    #[tokio::test]
+    async fn context_hook_budget_does_not_fire_against_a_fast_server() {
+        const BUDGET: Duration = Duration::from_secs(8);
+        const SERVER_DELAY: Duration = Duration::from_secs(3);
+
+        let server = slow_search_server(SERVER_DELAY).await;
+        let (client, cancel) = hook_client(&server.uri());
+        let repo = Repo::new("fatelabs/estelle").expect("repo");
+
+        let started = Instant::now();
+        let lines =
+            context_recall_lines(&client, &cancel, &repo, "a prompt worth enriching", BUDGET).await;
+        let elapsed = started.elapsed();
+
+        assert_eq!(
+            lines.len(),
+            1,
+            "a budget wider than the delay must deliver the recall, not silence"
+        );
+        let envelope: Value = serde_json::from_str(&lines[0]).expect("envelope JSON");
+        assert_eq!(
+            envelope["hookSpecificOutput"]["additionalContext"],
+            json!("the retry policy lives in serve/backend.py"),
+            "and it must be the SERVER's recall, not a placeholder"
+        );
+        assert!(
+            elapsed >= SERVER_DELAY,
+            "it really waited for the slow server ({elapsed:?}); if this is instant the mock is \
+             not delaying and neither test is measuring a deadline"
+        );
+    }
+
+    /// ⛔ THE TRAP, PINNED. The sibling `/search` caller — the `estelle recall` command — sends
+    /// the same endpoint and READS `reply["code"]` through `append_citations`. Copying
+    /// `code: false` there would silently delete every citation it prints, with no test going
+    /// red anywhere near it. So this asserts the two bodies are DIFFERENT SHAPES on purpose:
+    /// the hook suppresses code because it never reads it; `recall` must not.
+    #[test]
+    fn only_the_caller_that_ignores_code_is_allowed_to_suppress_it() {
+        let hook_body = context_search_body("where is the retry policy set?");
+        assert_eq!(hook_body.get("code"), Some(&json!(false)));
+
+        // `recall`'s body, quoted from its call site. If that call site ever grows `code: false`,
+        // this expectation is what says the citations went with it.
+        let recall_body = json!({"query": "where is the retry policy set?"});
+        assert_ne!(
+            recall_body.get("code"),
+            Some(&json!(false)),
+            "`estelle recall` renders reply[\"code\"] via append_citations — suppressing the code \
+             branch there deletes its citations silently"
+        );
+
+        // And the reader half is real: given a `code` array, `append_citations` emits lines.
+        let mut lines = Vec::new();
+        append_citations(
+            &mut lines,
+            Some(&json!([{"file": "serve/backend.py", "line": 585}])),
+        );
+        assert!(
+            !lines.is_empty(),
+            "append_citations must consume reply[\"code\"] — if this is empty the trap is gone \
+             and this test is decoration"
         );
     }
 

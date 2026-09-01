@@ -307,6 +307,12 @@ pub(crate) fn local_request(
 }
 
 /// The fuel: Estelle memory for this repo. Silent on ANY failure — no memory is not an error.
+///
+/// 🔴 `"code": false` IS LOAD-BEARING AND ITS ABSENCE IS NOT NEUTRAL. The server reads
+/// `body.get("code", True)`: an omitted key asks for the FULL code branch. Measured against
+/// production 2026-09-01, that branch costs 133.4 s against 8.4 s with `code: false` — **15.9×** —
+/// and this function reads ONLY `recall` below, so every byte of it was discarded unread. Ask for
+/// the fields you read; an unread field is latency you pay for and throw away.
 async fn gather_recall(
     http: &Client,
     repo: &Repo,
@@ -317,7 +323,7 @@ async fn gather_recall(
         .post_scoped(
             Endpoint::Search,
             repo,
-            &serde_json::json!({"query": question}),
+            &serde_json::json!({"query": question, "code": false}),
             cancel,
         )
         .await;
