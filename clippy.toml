@@ -6,6 +6,25 @@ await-holding-invalid-types = [
     "tokio::sync::RwLockWriteGuard",
 ]
 disallowed-methods = [
+    # 🔴 DO NOT ADD `ratatui::style::Color::Red` (or Yellow/Gray/DarkGray/…) TO THIS LIST. IT
+    # CANNOT WORK, AND ADDING IT SILENTLY BUYS NOTHING.
+    #
+    # `Color::Rgb` and `Color::Indexed` are TUPLE variants — constructor *functions* — which is the
+    # only reason `disallowed_methods` can see them. The named colours are UNIT variants. Measured
+    # 2026-08-31 on clippy 0.1.95 by putting `{ path = "ratatui::style::Color::Red", … }` here and
+    # running `cargo clippy -p estelle-tui --all-targets`:
+    #
+    #     warning: expected a function, found a variant
+    #      --> clippy.toml:9:5
+    #        = help: add `allow-invalid = true` to the entry to suppress this warning
+    #
+    # …and ZERO diagnostics at any of the ~180 call sites. `allow-invalid = true` silences the
+    # complaint about the entry; it does not make the lint fire, so taking that help would leave a
+    # dead rule that reads like a live one. There is no `disallowed_variants` lint, and
+    # `disallowed_types` would have to ban `Color` itself, which every style signature needs.
+    #
+    # ▶ The named colours are enforced instead by `brand_palette_guard` in `tui/src/style.rs`,
+    #   which is a test, can be run red, and carries the per-file budgets.
     { path = "ratatui::style::Color::Rgb", reason = "Use ANSI colors, which work better in various terminal themes." },
     { path = "ratatui::style::Color::Indexed", reason = "Use ANSI colors, which work better in various terminal themes." },
     { path = "ratatui::style::Stylize::white", reason = "Avoid hardcoding white; prefer default fg or dim/bold. Exception: Disable this rule if rendering over a hardcoded ANSI background." },

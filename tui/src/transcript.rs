@@ -50,6 +50,29 @@ pub(crate) enum TranscriptEntry {
     Failure([String; 3]),
 }
 
+/// 🔴 **THIS STRUCT IS THREE ROLES SHORT OF THE FRAME IT PAINTS, AND THE GAP IS WHERE THE BRAND
+/// LEAKED OUT.** Every colour the transcript needs that is NOT here fell back to a named ANSI
+/// variant — `Color::Yellow` for the degraded/not-grounded badge, `Color::Red` for the failure
+/// banner, `Color::DarkGray` for the citation label — which renders as whatever the *host
+/// terminal* thinks yellow is, not Estelle's `#c9a227`. The clippy ban that stopped `Color::Rgb`
+/// could not see those (`tui/src/style.rs`, `brand_palette_guard`), so nothing complained
+/// for months.
+///
+/// The four secondary-text sites were fixable in place because [`Self::ghost`] already exists and
+/// [`TranscriptEntry::System`] already used it for the same slot. The remaining three need roles
+/// this struct does not carry:
+///
+/// | site | today | wants | `theme::Palette` role |
+/// |---|---|---|---|
+/// | degraded / not-grounded badge | `Color::Yellow` | caution | `warn` |
+/// | `cited` label | `Color::DarkGray` | citation | `cite` |
+/// | failure banner | `Color::Red` | failure | `red` |
+///
+/// ⚠️ **The fix is three fields here and ONE line at the only construction site**, which is
+/// `live_renderer::render_transcript_with_citations` — it already holds a `Theme`, and
+/// `Theme::screen_palette()` already returns the 13-role [`crate::theme::Palette`]. That file was
+/// owned by another lane while this was written, so the change is named rather than made; making
+/// it here would have meant editing a file someone else had open.
 #[derive(Clone, Copy)]
 pub(crate) struct TranscriptPalette {
     pub(crate) primary: Color,
@@ -139,12 +162,12 @@ pub(crate) fn render(
                         .add_modifier(Modifier::BOLD),
                 )];
                 rendered.extend(lines.iter().map(|line| {
-                    semantic_line(&mask_secret(line), palette.semantic, Some(Color::Gray))
+                    semantic_line(&mask_secret(line), palette.semantic, Some(palette.ghost))
                 }));
                 items.push(HistoryTranscriptItem::Lines(rendered));
             }
             TranscriptEntry::User(message) => items.push(HistoryTranscriptItem::User {
-                heading: vec![Line::styled("you", Style::default().fg(Color::Gray))],
+                heading: vec![Line::styled("you", Style::default().fg(palette.ghost))],
                 message: mask_secret(message),
                 background: palette.user_background,
                 semantic_color: Some(palette.semantic),
@@ -162,7 +185,7 @@ pub(crate) fn render(
                 } else if *grounded == Some(false) {
                     ("not grounded", Color::Yellow)
                 } else {
-                    ("conversation", Color::Gray)
+                    ("conversation", palette.ghost)
                 };
                 let heading = vec![Line::from(vec![
                     Span::styled(
@@ -238,7 +261,7 @@ pub(crate) fn render(
                 lines: lines
                     .iter()
                     .map(|line| {
-                        semantic_line(&mask_secret(line), palette.semantic, Some(Color::Gray))
+                        semantic_line(&mask_secret(line), palette.semantic, Some(palette.ghost))
                     })
                     .collect(),
                 expanded: *expanded,
