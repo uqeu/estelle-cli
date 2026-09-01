@@ -649,6 +649,19 @@ enum PendingLogin {
     EstelleThenProvider(&'static str),
 }
 
+/// The lifted band under the user's own turn.
+///
+/// ⚠️ **THE BAND'S COLOUR IS A FACT ABOUT THE TERMINAL, NOT ABOUT THE THEME, AND THAT IS A REAL
+/// LIMIT.** On Cream Ink the background is a known constant, so the band always exists. On Dark it
+/// is blended against `default_bg()` — the background the terminal *reports* — which is `None`
+/// anywhere that is not an answering tty. A terminal that does not answer the OSC query therefore
+/// gets **no band at all**, and no test can see the Dark path for the same reason.
+///
+/// This was left as-is deliberately: the founder has the band on screen and approved how it looks,
+/// and `theme::Palette::tint` (the role the active plan step lifts its row with) would render a
+/// different colour than the one he signed off. Swapping the owner is a real improvement and it is
+/// his call, not this lane's. The property tests below therefore drive Cream Ink, where the
+/// existing implementation is deterministic.
 fn user_turn_background(theme: Theme) -> Option<Color> {
     let terminal_bg = match theme {
         Theme::CreamInk => Some((0xE9, 0xE6, 0xDC)),
@@ -6876,6 +6889,27 @@ mod tests {
         format!("{}", terminal.backend())
     }
 
+    /// The rendered buffer AND where the frame put the caret.
+    ///
+    /// ⚠️ The caret is the half a text dump cannot see, and it is the half the founder's
+    /// "glitch where you can't see where you're typing" lives in. Read back off the backend
+    /// rather than recomputed, so it is the position the terminal would actually receive.
+    fn rendered_buffer_and_cursor(
+        app: &App,
+        now: Instant,
+        width: u16,
+        height: u16,
+    ) -> (ratatui::buffer::Buffer, ratatui::layout::Position) {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| render_frame(frame, app, now))
+            .expect("render frame");
+        let cursor = ratatui::backend::Backend::get_cursor_position(terminal.backend_mut())
+            .expect("a caret position");
+        (terminal.backend().buffer().clone(), cursor)
+    }
+
     fn rendered_buffer_at_size(
         app: &App,
         now: Instant,
@@ -7369,6 +7403,13 @@ mod tests {
     /// This bar has drifted three times and the founder has called it out three times. Every
     /// assertion below failed against the previous commit — all eight of them — which is the only
     /// reason to trust the green: a bar test that has never been red is decoration.
+    ///
+    /// ⚠️ **UPDATED DELIBERATELY, TWICE OVER, AFTER THE FOUNDER RAN THE BINARY.** Three clauses
+    /// changed and each records a defect he SAW rather than a preference:
+    /// * the status row is no longer required to carry a mark — `● Ready` is gone (clause 1);
+    /// * the hint row is the FRAME'S LAST ROW, not the row under the prompt (clause 7);
+    /// * the prompt is U+276F, not U+3009, which Terminal.app rendered as `)` (clause 3).
+    /// The clauses themselves are all still enforced; only their expected values moved.
     #[test]
     fn the_input_bar_is_the_demo_frames_five_rows_and_nothing_else() {
         let mut app = test_app();
@@ -7384,13 +7425,13 @@ mod tests {
             .position(|row| row.starts_with("\u{2500}\u{2500} ask \u{b7} "))
             .expect("the ask rule");
 
-        // 1. A status row sits above the rule, carrying a mark and a run state.
+        // 1. The status row's PLACE is above the rule and it is EMPTY while idle. The founder
+        // asked for `● Ready` gone; what must not happen is the row vanishing from the layout
+        // and taking the rule with it, so the slot is asserted to exist and to be blank.
         let status = &rows[rule_at - 2];
-        assert!(
-            status.starts_with('\u{25cf}')
-                || status.starts_with('\u{25d0}')
-                || status.starts_with('\u{25cb}'),
-            "no status row above the ask rule: {status:?}"
+        assert_eq!(
+            status, "",
+            "the idle status row is not empty — `Ready` or a mark came back: {status:?}"
         );
         // 2. Exactly one blank row between the status row and the rule.
         assert_eq!(
@@ -7398,25 +7439,36 @@ mod tests {
             "",
             "the status row is clumped against the rule"
         );
-        // 3. The prompt glyph is the tall bracket, not the small angle quote.
+        // 3. The prompt glyph is the heavy angle ornament, not the small angle quote and not
+        // the CJK bracket that Terminal.app substituted a `)` for.
         let prompt = rows
             .iter()
-            .find(|row| row.contains('\u{3009}'))
+            .find(|row| row.contains(live_renderer::PROMPT_GLYPH))
             .expect("the bare prompt");
         assert!(
             !prompt.contains('\u{203a}'),
             "the small angle quote survived: {prompt:?}"
         );
+        assert!(
+            !rendered.contains('\u{3009}'),
+            "the CJK bracket survived — Terminal.app draws it as a closing parenthesis"
+        );
         // 4. No placeholder inside the input line.
         assert!(!rendered.contains("Ask Estelle"), "{rendered}");
         // 5 + 6. No pushed-down hint and no second competing hint line.
         assert!(!rendered.contains("? for shortcuts"), "{rendered}");
-        // 7. One hint line, the demo's wording, immediately under the prompt.
+        // 7. One hint line, the demo's wording, on the FRAME'S LAST ROW. It used to be asserted
+        // at `prompt_at + 1`, which is the row the caret needs; that adjacency is exactly what
+        // the founder photographed as a cursor sitting on the `e` of "enter send".
         let prompt_at = rows
             .iter()
-            .position(|row| row.contains('\u{3009}'))
+            .position(|row| row.contains(live_renderer::PROMPT_GLYPH))
             .expect("prompt row");
-        let hint = &rows[prompt_at + 1];
+        let hint = rows.last().expect("a last row");
+        assert!(
+            rows.len() - 1 > prompt_at + 1,
+            "the hint row is still adjacent to the prompt — there is no room to type"
+        );
         for (key, label) in ASK_HINTS {
             assert!(
                 hint.contains(&format!("{key} {label}")),
@@ -11027,6 +11079,297 @@ mod tests {
         assert!(
             estelle_row.iter().all(|cell| cell.bg != expected_bg),
             "the assistant turn borrowed the user's fill — turns must stay distinguishable"
+        );
+    }
+
+    /// 🔴 THE USER'S OWN MESSAGE SITS ON A BAND THAT REACHES THE RIGHT EDGE, AND WRAPS WITH IT.
+    ///
+    /// The band itself already shipped; what did not was any guard over the two properties a
+    /// SINGLE-LINE message cannot demonstrate — that the band follows a wrap onto every row it
+    /// produces, and that it reaches the right edge rather than stopping at the last word.
+    /// `user_turns_render_as_filled_blocks_ported_from_codex_history_cell` above is the PARTIAL
+    /// species: `filled >= text.len()` is satisfied by a highlighter on the WORDS, and it renders
+    /// one short line, so neither property was covered. Measured before this test was written:
+    /// the band stopped at **column 71 of 80**.
+    ///
+    /// Asserted on the BUFFER — a `.txt` frame cannot see a background — at every column, with the
+    /// rows above and below as negative controls. Same shape as
+    /// `work_plan::only_the_active_step_is_lifted_and_the_band_spans_the_full_row`.
+    ///
+    /// ⚠️ Drives CREAM INK on purpose. See [`user_turn_background`]: Dark blends against the
+    /// background the terminal reports, which is `None` in any test, so a Dark fixture would
+    /// assert nothing. That is a real coverage hole in the shipped implementation and it is named
+    /// there rather than papered over here.
+    #[test]
+    fn the_user_turn_band_spans_the_full_transcript_width_and_survives_wrapping() {
+        const WIDTH: u16 = 80;
+        // ⚠️ Sized so the frame does NOT split off the production rail — otherwise "full width"
+        // would mean the session column and this test would be measuring a different geometry
+        // than it claims. Asserted, not assumed.
+        assert!(
+            session_view::split(WIDTH).is_none(),
+            "this test's premise is a single-column frame"
+        );
+        let mut app = test_app();
+        app.theme = Theme::CreamInk;
+        let tint = user_turn_background(app.theme).expect("cream ink has a known band colour");
+        // Long enough to wrap to more than one row at 80 columns: the band must follow the text
+        // onto every row it wraps to, not band the first row and abandon the rest.
+        let question = "What changed while I was away, and which of those changes touched the \
+             checkout retry path that we bound last week in billing/charge.rs?"
+            .to_string();
+        app.transcript.push(TranscriptEntry::User(question));
+        app.transcript.push(TranscriptEntry::Answer {
+            text: "The retry gate moved.".to_string(),
+            grounded: Some(true),
+            degraded: false,
+            sources: Vec::new(),
+        });
+
+        let buffer = rendered_buffer_at_size(&app, Instant::now(), WIDTH, 32);
+        let banded = (0..buffer.area.height)
+            .filter(|y| buffer[(0, *y)].bg == tint)
+            .collect::<Vec<_>>();
+        assert!(
+            banded.len() >= 2,
+            "a wrapped user turn produced {} banded rows — the band did not follow the wrap",
+            banded.len()
+        );
+        assert!(
+            banded.windows(2).all(|pair| pair[1] == pair[0] + 1),
+            "the banded rows are not contiguous: {banded:?}"
+        );
+        for row in &banded {
+            for x in 0..buffer.area.width {
+                assert_eq!(
+                    buffer[(x, *row)].bg,
+                    tint,
+                    "the band stopped at column {x} of {} on row {row}",
+                    buffer.area.width
+                );
+            }
+        }
+        // The negative controls, in both directions: the row above the band and the row below it
+        // are NOT lifted, so the loop above is not simply reading a tint painted over the pane.
+        let first = *banded.first().expect("a banded row");
+        let last = *banded.last().expect("a banded row");
+        assert_ne!(buffer[(0, first - 1)].bg, tint, "the row above is lifted too");
+        assert_ne!(buffer[(0, last + 1)].bg, tint, "the row below is lifted too");
+    }
+
+    /// 🔴 THE CARET IS ALWAYS ON A ROW THE FRAME ACTUALLY DREW. This is the founder's "glitch
+    /// where you can't see where you're typing when you enter a bunch of stuff", stated as a
+    /// property: whatever the draft's length, the row carrying the caret is inside the typing
+    /// area — below the ask rule, above the hint row. Nothing guarded this before; the composer
+    /// was given a height clamped to a magic `14` and the caret was computed against a DIFFERENT
+    /// rectangle than the one the composer was rendered into.
+    ///
+    /// ⚠️ 200 lines is far past `COMPOSER_MAX_ROWS`, which is the point: past the cap the
+    /// composer must SCROLL, and a scrolled composer that leaves the caret off its own area is
+    /// the same defect wearing a bound.
+    #[test]
+    fn the_caret_stays_inside_the_typing_area_at_every_draft_length() {
+        const WIDTH: u16 = 100;
+        const HEIGHT: u16 = 34;
+        // ⚠️ 0 IS THE CASE THE FOUNDER PHOTOGRAPHED. He had typed nothing at all and the block
+        // cursor was sitting on the `e` of "enter send". An empty draft is not an edge case here,
+        // it is the state every session opens in.
+        for lines in [0usize, 1, 5, 20, 200] {
+            let mut app = test_app();
+            app.composer.set_text(
+                (0..lines)
+                    .map(|index| format!("line {index}"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
+
+            let (buffer, cursor) = rendered_buffer_and_cursor(&app, Instant::now(), WIDTH, HEIGHT);
+            let row_text = |y: u16| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            };
+            let find = |needle: &str| {
+                (0..buffer.area.height)
+                    .find(|y| row_text(*y).contains(needle))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "no row carrying {needle:?} at {lines} lines\n{}",
+                            (0..buffer.area.height).map(row_text).collect::<Vec<_>>().join("\n")
+                        )
+                    })
+            };
+            // Both landmarks are read off the BUFFER, so a layout change moves the expectation
+            // with the frame instead of leaving this test asserting yesterday's geometry.
+            let rule = find("── ask ·");
+            let hint = find(&ask_hints_line());
+
+            assert!(
+                cursor.y > rule,
+                "at {lines} lines the caret landed on or above the ask rule (caret row \
+                 {}, rule row {rule})",
+                cursor.y
+            );
+            assert!(
+                cursor.y < hint,
+                "at {lines} lines the caret landed on or below the hint row (caret row \
+                 {}, hint row {hint}) — this is the glitch: you cannot see where you are typing",
+                cursor.y
+            );
+            assert!(
+                cursor.y < buffer.area.height && cursor.x < buffer.area.width,
+                "at {lines} lines the caret left the frame entirely: {cursor:?}"
+            );
+            // 🔴 THE STRONG FORM, WHERE IT IS EXPRESSIBLE. A draft of at most one line puts the
+            // caret on the PROMPT'S OWN ROW, to the right of the glyph. "Inside the typing area"
+            // would still pass on a caret one row off; this is the assertion that pins the
+            // founder's photograph, where an empty draft put the caret on the hint row instead.
+            // Past one line the caret follows the text down, so the row is no longer fixed and
+            // the containment invariant above is the whole contract.
+            let prompt = (0..buffer.area.height)
+                .find_map(|y| {
+                    (0..buffer.area.width)
+                        .find(|x| buffer[(*x, y)].symbol() == live_renderer::PROMPT_GLYPH)
+                        .map(|x| (y, x))
+                })
+                .expect("a prompt glyph on screen");
+            if lines <= 1 {
+                assert_eq!(
+                    cursor.y, prompt.0,
+                    "at {lines} lines the caret is not on the prompt's own row (caret \
+                     {cursor:?}, prompt row {})",
+                    prompt.0
+                );
+                assert!(
+                    cursor.x > prompt.1,
+                    "at {lines} lines the caret is left of the prompt glyph: {cursor:?}"
+                );
+            }
+        }
+    }
+
+    /// 🔴 THE PROMPT IS ONE COLUMN, AND THE COMPOSER'S GUTTER IS TWO.
+    ///
+    /// The glyph this replaced was East Asian WIDE, and the argument for it was that its two cells
+    /// matched `LIVE_PREFIX_COLS`. That argument was about columns and said nothing about fonts;
+    /// Terminal.app rendered it as `)`. The replacement is narrow, which INVERTS the gutter
+    /// arithmetic — glyph in column 0, the space before the text in column 1 — so this asserts the
+    /// measured width rather than restating the old conclusion.
+    ///
+    /// ⚠️ **THIS CANNOT PROVE THE GLYPH RENDERS.** Font coverage is not observable from a test;
+    /// a buffer holds the codepoint the renderer wrote, never the shape a terminal draws for it.
+    /// What is asserted here is only that it occupies the cell budget the composer reserved.
+    #[test]
+    fn the_prompt_glyph_is_one_column_and_fits_the_composer_gutter() {
+        let width = unicode_width::UnicodeWidthStr::width(live_renderer::PROMPT_GLYPH);
+        assert_eq!(
+            width, 1,
+            "the prompt glyph is {width} columns; the narrow-glyph gutter arithmetic in \
+             collapse_composer_tail assumes exactly one"
+        );
+        // `LIVE_PREFIX_COLS` is 2 (`tui/src/ui_consts.rs`) — the columns the composer insets its
+        // text area by. One of them is the glyph; this asserts the other survives as the gap.
+        assert!(
+            width < 2,
+            "the glyph must leave at least one column of gap before the typed text"
+        );
+        // It reaches the rendered frame, in the prompt's own column.
+        let app = test_app();
+        let buffer = rendered_buffer_at_size(&app, Instant::now(), 100, 34);
+        assert!(
+            (0..buffer.area.height).any(|y| (0..buffer.area.width)
+                .any(|x| buffer[(x, y)].symbol() == live_renderer::PROMPT_GLYPH)),
+            "no cell in the frame carries the prompt glyph"
+        );
+    }
+
+    /// 🔴 IDLE SAYS NOTHING, AND SAYING NOTHING DOES NOT MOVE THE INPUT BAR.
+    ///
+    /// `● Ready` announced the default state of every CLI ever written; the founder asked for it
+    /// gone by name. The trap is the obvious fix: dropping the row from the layout shortens the
+    /// composer block, which moves the ask rule while idle and snaps it back the instant work
+    /// starts — a jumping input bar bought with a removed word. So the row keeps its place and
+    /// loses its content, and the rule's row index is asserted IDENTICAL across both states.
+    ///
+    /// The working half is the negative control: without it, "no Ready" would pass on a frame
+    /// that had lost its status row entirely.
+    #[test]
+    fn the_idle_frame_says_nothing_and_does_not_move_the_ask_rule() {
+        let rule_row = |app: &App| {
+            let rendered = rendered_frame_at_size(app, Instant::now(), 120, 32);
+            let row = rendered
+                .lines()
+                .position(|line| line.trim_matches('"').starts_with("\u{2500}\u{2500} ask \u{b7} "))
+                .expect("an ask rule");
+            (row, rendered)
+        };
+
+        let idle = test_app();
+        let (idle_rule, idle_frame) = rule_row(&idle);
+        assert!(
+            !idle_frame.contains("Ready"),
+            "the idle frame still announces Ready\n{idle_frame}"
+        );
+
+        let mut working = test_app();
+        working.active = Some(ActiveRequest {
+            id: 1,
+            label: "/work".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        let (working_rule, working_frame) = rule_row(&working);
+        assert!(
+            working_frame.contains("Working"),
+            "the working frame lost its status row — the assertion above would then pass \
+             for the wrong reason\n{working_frame}"
+        );
+
+        assert_eq!(
+            idle_rule, working_rule,
+            "the ask rule moved between idle and working: the input bar jumps when work starts"
+        );
+    }
+
+    /// The hint row is the LAST row of the frame, and the typing area sits above it.
+    ///
+    /// ⚠️ The negative control is the ask rule: if the hint row were merely *present* somewhere
+    /// low, an assertion that it exists would pass on the old layout too, where it sat directly
+    /// under the prompt with blank rows beneath it.
+    #[test]
+    fn the_hints_are_the_bottom_row_and_the_composer_reserves_room_above_them() {
+        let app = test_app();
+        let buffer = rendered_buffer_at_size(&app, Instant::now(), 100, 34);
+        let row_text = |y: u16| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        };
+
+        let bottom = buffer.area.height - 1;
+        assert!(
+            row_text(bottom).contains(&ask_hints_line()),
+            "the hints are not on the frame's last row\n{}",
+            row_text(bottom)
+        );
+        assert_eq!(
+            (0..buffer.area.height)
+                .filter(|y| row_text(*y).contains(&ask_hints_line()))
+                .count(),
+            1,
+            "the hint row is drawn more than once"
+        );
+
+        // ROOM TO TYPE: the demo's box should read as somewhere to type, so the rule and the
+        // hints are separated by at least the reserved rows plus the prompt's own row.
+        let rule = (0..buffer.area.height)
+            .find(|y| row_text(*y).contains("── ask ·"))
+            .expect("an ask rule");
+        assert!(
+            bottom - rule > COMPOSER_MIN_ROWS,
+            "only {} rows between the ask rule and the hints — the composer reserves \
+             {COMPOSER_MIN_ROWS}",
+            bottom - rule
         );
     }
 

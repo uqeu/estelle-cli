@@ -1,5 +1,6 @@
 ---
 source: tui/src/main.rs
+assertion_line: 7528
 expression: "rendered_frame(&app, Instant::now())"
 ---
 "ESTELLE  ·  uqeu/estelle                                                        "
@@ -13,16 +14,16 @@ expression: "rendered_frame(&app, Instant::now())"
 "?        Show shortcuts                                                         "
 "                                                                                "
 "                                                                                "
+"                                                                                "
 "                                                                    ⣀⣀⣀⣀⣀       "
 "                                    ∷ ∷   ·   ·       · ·     ·      ⠈⠉       ∷ "
-"● Ready                                                                         "
+"                                                                                "
 "                                                                                "
 "── ask · uqeu/estelle ──────────────────────────────────────────────────────────"
-"〉                                                                              " Hidden by multi-width symbols: [(1, " ")]
+"❯                                                                               "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
 "  enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop               "
-"                                                                                "
-"                                                                                "
-"                                                                                "
-"                                                                                "
-"                                                                                "
-"                                                                                "

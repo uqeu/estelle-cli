@@ -179,9 +179,16 @@ pub(super) fn observed_model(reply: &CommandReply) -> Option<&str> {
 /// ⚠️ **AN ABSENT CELL IS OMITTED, NEVER ZEROED.** `$0.000` and `gate · 0 refused` are claims
 /// that a measurement happened. Spend has no producer in this client at all (see
 /// `SPEND_HAS_NO_PRODUCER`), so its cell is simply not drawn.
+/// The status row, or an EMPTY line when there is nothing to report.
+///
+/// See [`run_state`]: idle says nothing. The line is still returned (rather than an `Option`)
+/// because the row keeps its place in the layout so the input bar cannot jump when work starts —
+/// what changes between idle and working is the row's CONTENT, never the frame's shape.
 pub(super) fn status_bar_line(app: &App, now: Instant, width: usize) -> Line<'static> {
     let palette = app.theme.screen_palette();
-    let (mark, left) = run_state(app, now);
+    let Some((mark, left)) = run_state(app, now) else {
+        return Line::default();
+    };
     let mut right = String::new();
     if let Some(spend) = app.session_spend_usd {
         right.push_str(&format!("${spend:.3}"));
@@ -216,12 +223,18 @@ pub(super) fn status_bar_line(app: &App, now: Instant, width: usize) -> Line<'st
     Line::from(spans)
 }
 
-/// `✓ Done · 7 of 7 landed · production green` / `◐ Working · 4 of 7 landed · <active step>`.
+/// `✓ Done · 7 of 7 landed · production green` / `◐ Working · 4 of 7 landed · <active step>`,
+/// or `None` when there is nothing to report.
 ///
 /// The counts come from the plan the server sent, and the trailing phrase is the ACTIVE STEP's
 /// own text — the demo's footer names the step, so the footer and the plan cannot disagree about
 /// what is happening.
-fn run_state(app: &App, now: Instant) -> (marks::Mark, String) {
+///
+/// ⚠️ `None` is IDLE, and it is the reason this returns an `Option` rather than a `(Mark, String)`
+/// with an empty string in it: "there is no run state" and "the run state is blank" are different
+/// facts, and a caller that has to test a string for emptiness to tell them apart will eventually
+/// get it wrong.
+fn run_state(app: &App, now: Instant) -> Option<(marks::Mark, String)> {
     if let Some(plan) = app
         .work_progress
         .as_ref()
@@ -238,7 +251,7 @@ fn run_state(app: &App, now: Instant) -> (marks::Mark, String) {
             .iter()
             .find(|step| marks::StepMark::from_status(&step.status) == marks::StepMark::Active)
             .map(|step| step.step.clone());
-        return match active {
+        return Some(match active {
             Some(step) => (
                 marks::Mark::InFlight,
                 format!("Working · {landed} of {total} landed · {step}"),
@@ -251,7 +264,7 @@ fn run_state(app: &App, now: Instant) -> (marks::Mark, String) {
                 marks::Mark::Queued,
                 format!("Idle · {landed} of {total} landed"),
             ),
-        };
+        });
     }
     if let Some(active) = &app.active {
         // The 30-second escalation survives the redesign. It is the line that tells a user the
@@ -274,12 +287,21 @@ fn run_state(app: &App, now: Instant) -> (marks::Mark, String) {
                 text.push_str(" · no response received yet");
             }
         }
-        return (marks::Mark::InFlight, text);
+        return Some((marks::Mark::InFlight, text));
     }
     if !app.queue.is_empty() {
-        return (marks::Mark::Queued, format!("{} queued", app.queue.len()));
+        return Some((marks::Mark::Queued, format!("{} queued", app.queue.len())));
     }
-    (marks::Mark::Landed, "Ready".to_string())
+    // 🔴 IDLE SAYS NOTHING. `● Ready` was the row announcing the default state of every CLI ever
+    // written — the founder asked for it gone by name. The demo's status row only appears when
+    // there is something to say.
+    //
+    // ⚠️ The ROW survives even though its CONTENT does not, and that is deliberate. Dropping the
+    // row from the layout would shorten the composer block by one, which moves the ask rule and
+    // the whole input bar DOWN while idle and snaps them UP the instant work starts — a jumping
+    // input bar traded for a removed word. `the_idle_frame_says_nothing_and_does_not_move_the_ask_rule`
+    // pins the rule's row index across both states.
+    None
 }
 
 pub(super) fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
@@ -2060,22 +2082,20 @@ pub(super) fn github_diff_lines(diff: &str, width: usize, app: &App) -> Vec<Line
     lines
 }
 
-/// Take back every row the composer drew BELOW its prompt, and put the demo's hint row there.
+/// Repaint the prompt glyph and clear the composer's OWN footer chrome.
 ///
 /// The composer owns its own chrome: one blank row of padding, then the prompt, then more blank
-/// rows, then `? for shortcuts`. The demo has the hint line IMMEDIATELY under the prompt and no
-/// second hint at all. Rather than fight the widget's height - which the slash palette and the
-/// command popup legitimately need - the frame finds the prompt row in the rendered buffer and
-/// overwrites what follows it.
+/// rows, then `? for shortcuts`. The demo has no second hint at all. Rather than fight the
+/// widget's height - which the slash palette and the command popup legitimately need - the frame
+/// finds the prompt row in the rendered buffer and clears the footer that follows it.
+///
+/// ⚠️ **THIS NO LONGER DRAWS THE HINT ROW.** The founder asked for the hints at the very bottom of
+/// the frame with the typing area above them, so they are `rows[3]` in `render_frame` now. The
+/// rows this function used to overwrite with a hint are the composer's TYPING ROOM.
 ///
 /// A popup is drawn ABOVE the prompt, so nothing here can clip one. When no prompt is on screen
 /// (a popup owns the whole area) this is a no-op rather than a guess.
-fn collapse_composer_tail(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    palette: &theme::Palette,
-    background: Color,
-) {
+fn collapse_composer_tail(frame: &mut Frame<'_>, area: Rect, background: Color) {
     let Some((prompt_row, prompt_col)) = (area.y..area.bottom()).find_map(|y| {
         (area.x..area.right())
             .find(|x| {
@@ -2086,18 +2106,23 @@ fn collapse_composer_tail(
     }) else {
         return;
     };
-    // The composer widget draws U+203A, a small angle quote. The demo's prompt is U+3009, the
-    // tall bracket - at terminal size they are not the same character. Repainted HERE rather than
-    // in the composer, because 80 lib snapshots carry that glyph and another lane is editing those
-    // same files; the prompt is one cell, and taking it is cheaper than taking their diff.
+    // The composer widget draws U+203A, a small angle quote. Repainted HERE rather than in the
+    // composer, because 80 lib snapshots carry that glyph and another lane is editing those same
+    // files; the prompt is one cell, and taking it is cheaper than taking their diff.
     //
-    // U+3009 is East Asian WIDE, so it needs two columns. `LIVE_PREFIX_COLS` is 2 and the second
-    // is the reserved space before the text, so it fits the gutter exactly and cannot clip what
-    // the user has typed. The blank keeps the buffer honest about the cell the glyph now covers.
+    // 🔴 **THE PREVIOUS GLYPH DID NOT RENDER, AND THE REASONING THAT PICKED IT INVERTED HERE.**
+    // U+3009 is East Asian WIDE, and the note that used to sit on this line argued that its two
+    // cells "fit the gutter exactly" because `LIVE_PREFIX_COLS` is 2. That was true about the
+    // COLUMNS and silent about the FONT: in Terminal.app's default font U+3009 falls back to a
+    // glyph that reads as a closing parenthesis, which the founder photographed. A width argument
+    // cannot establish coverage.
+    //
+    // `PROMPT_GLYPH` is now U+276F, which is ONE column (asserted in
+    // `the_prompt_glyph_is_one_column_and_fits_the_composer_gutter`). That inverts the gutter
+    // arithmetic: column 0 is the glyph and column 1 is the space before the text, so the second
+    // cell must be left ALONE rather than blanked as a wide char's trailing half. Blanking it was
+    // correct for a wide glyph and is wrong for a narrow one.
     frame.buffer_mut()[(prompt_col, prompt_row)].set_symbol(PROMPT_GLYPH);
-    if prompt_col.saturating_add(1) < area.right() {
-        frame.buffer_mut()[(prompt_col + 1, prompt_row)].set_symbol("");
-    }
     // Clear only what is the composer's OWN chrome: blank padding rows and its `? for shortcuts`
     // footer. A row with anything else on it belongs to the slash palette or the command popup,
     // which are drawn below the prompt and must survive - a hint row is not worth eating a menu.
@@ -2114,24 +2139,42 @@ fn collapse_composer_tail(
                 .set_style(Style::default().bg(background));
         }
     }
-    if prompt_row.saturating_add(1) < area.bottom() {
-        frame.render_widget(
-            Paragraph::new(Line::styled(
-                format!("  {}", crate::ask_hints_line()),
-                Style::default().fg(palette.dim),
-            )),
-            Rect {
-                y: prompt_row.saturating_add(1),
-                height: 1,
-                ..area
-            },
-        );
-    }
 }
 
-/// The demo's prompt: U+3009, the tall right angle bracket. NOT U+203A, the small angle quote the
-/// composer used to draw - at terminal size they read as different characters entirely.
-pub(super) const PROMPT_GLYPH: &str = "\u{3009}";
+/// The rows the composer reserves before a single character is typed.
+///
+/// The founder asked for "a good amount of window to type in" — a box that reads as somewhere to
+/// type rather than a one-line field. This is that floor: the prompt's own row plus the room
+/// under it. It is a named constant because Power-of-Ten rule 2 applies to a growth bound as much
+/// as to a loop bound, and this one used to be the literal `5` inside a `clamp`.
+pub(super) const COMPOSER_MIN_ROWS: u16 = 5;
+
+/// The hard ceiling on composer height. Past this the composer STOPS GROWING and the text area
+/// scrolls instead, which is what keeps the transcript on screen when someone pastes an essay.
+///
+/// 🔴 The bound is only half the contract: a bounded box that scrolls its content without
+/// following the caret is exactly the founder's "glitch where you can't see where you're typing".
+/// `TextArea::effective_scroll` already keeps the caret inside whatever area it is given, so the
+/// invariant holds ONLY while the caret is computed against the SAME rectangle the composer was
+/// rendered into — see `render_frame`, where those two were different rectangles and the caret
+/// was therefore off by the composer's own padding row.
+pub(super) const COMPOSER_MAX_ROWS: u16 = 14;
+
+/// The composer's own chrome above the text area: the status row, one blank, and the ask rule.
+const COMPOSER_CHROME_ROWS: u16 = 3;
+
+/// The demo's prompt: U+276F HEAVY RIGHT-POINTING ANGLE QUOTATION MARK ORNAMENT.
+///
+/// 🔴 **CHOSEN FOR FONT COVERAGE, NOT FOR COLUMN ARITHMETIC.** The previous glyph was U+3009, the
+/// CJK angle bracket, justified on the grounds that its two East-Asian-Wide cells matched
+/// `LIVE_PREFIX_COLS`. The columns were right and the character was wrong: Terminal.app's default
+/// font has no CJK bracket at that weight and substituted something that reads as `)` — the
+/// founder photographed it, and it is the most visible character on the screen.
+///
+/// U+276F is one column (guarded below), lives in Dingbats, and is the glyph modern shells use for
+/// exactly this job, so a default macOS font stack has it. ⚠️ **A width test cannot prove a font
+/// contains a glyph** — that claim rests on the founder's terminal, not on anything asserted here.
+pub(super) const PROMPT_GLYPH: &str = "\u{276f}";
 
 /// What the composer widget draws before the frame repaints it.
 const COMPOSER_PROMPT_GLYPH: &str = "\u{203a}";
@@ -2158,24 +2201,34 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
     // The composer keeps its own height, because the slash palette and the command popup are
     // drawn INSIDE it and shrinking the area silently truncates them. What the frame takes back
     // is the rows BELOW the prompt - see `collapse_composer_tail`.
-    let composer_height = app
+    //
+    // 🔴 THE HEIGHT IS BOUNDED IN BOTH DIRECTIONS, AND BOTH BOUNDS ARE NAMED. The floor is the
+    // founder's "good amount of window to type in"; the ceiling is what stops a pasted essay
+    // eating the transcript. Past the ceiling the composer does not grow — its text area SCROLLS,
+    // and `TextArea::effective_scroll` follows the caret, which is the half that makes a bound
+    // safe rather than merely tidy.
+    let composer_rows = app
         .composer
         .bottom_pane_desired_height(content_area.width)
-        .clamp(5, 14);
+        .clamp(COMPOSER_MIN_ROWS, COMPOSER_MAX_ROWS);
     let modal_owns_input =
         app.picker.is_some() || app.resume_picker.is_some() || app.gate_modal.is_some();
-    let composer_height = if modal_owns_input { 0 } else { composer_height };
+    let composer_rows = if modal_owns_input { 0 } else { composer_rows };
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(2),
             Constraint::Min(1),
-            // status row + blank + ask rule + the text area + the hint row.
-            Constraint::Length(if composer_height == 0 {
+            // status row + blank + ask rule + the text area. The hint row is NOT in here any
+            // more: the founder asked for it at the bottom of the frame, so it is `rows[3]`.
+            Constraint::Length(if composer_rows == 0 {
                 0
             } else {
-                composer_height.saturating_add(4)
+                composer_rows.saturating_add(COMPOSER_CHROME_ROWS)
             }),
+            // ⚠️ Always one row, even when a modal owns the input and nothing is drawn on it.
+            // A row that appears and disappears would move every modal surface by one row and
+            // rewrite frames this change has no business touching.
             Constraint::Length(1),
         ])
         .split(content_area);
@@ -2538,14 +2591,30 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             )),
             ask_rows[2],
         );
-        collapse_composer_tail(
-            frame,
-            composer_with_padding,
-            &palette,
-            app.theme.background(),
-        );
-        ask_rows[3]
+        collapse_composer_tail(frame, composer_with_padding, app.theme.background());
+        // 🔴 THE CARET IS COMPUTED AGAINST THE RECTANGLE THE COMPOSER WAS RENDERED INTO.
+        // It used to be `ask_rows[3]` — one row lower and one row shorter than
+        // `composer_with_padding` — so the composer's own padding row was counted twice and the
+        // caret landed one row below the prompt, which is to say ON THE HINT ROW. The founder
+        // photographed exactly that: a block cursor sitting on the `e` of "enter send", with an
+        // EMPTY draft. Two rectangles for one fact is the same defect as two owners for one
+        // number; there is one rectangle now.
+        composer_with_padding
     };
+    // 🔴 THE HINT ROW IS THE FRAME'S LAST ROW. The founder asked for "the thing where it says
+    // enter send / tab to be on the bottom, and then the ask box so it gives them a good amount of
+    // window to type in". It used to be drawn INSIDE the composer block, immediately under the
+    // prompt, which is what put the caret and the hints on the same row. Drawn here it can never
+    // collide with the typing area, because the typing area is a different `Layout` constraint.
+    if !modal_owns_input {
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                format!("  {}", crate::ask_hints_line()),
+                Style::default().fg(palette.dim),
+            )),
+            rows[3],
+        );
+    }
     if let Some(picker) = &app.resume_picker {
         render_resume_picker(frame, picker, rows[1], app);
     } else if let Some(picker) = &app.picker {

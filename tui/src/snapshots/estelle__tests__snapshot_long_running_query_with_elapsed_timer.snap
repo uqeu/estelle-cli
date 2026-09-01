@@ -1,5 +1,6 @@
 ---
 source: tui/src/main.rs
+assertion_line: 9197
 expression: "rendered_frame(&app, started + Duration::from_secs(93))"
 ---
 "ESTELLE  ·  uqeu/estelle                                                        "
@@ -15,14 +16,14 @@ expression: "rendered_frame(&app, started + Duration::from_secs(93))"
 "                                                                                "
 "                                                                                "
 "                                                                                "
+"                                                                                "
 "◐ Working · thinking · 1m 33s · still waiting for Estelle · no response received"
 "                                                                                "
 "── ask · uqeu/estelle ──────────────────────────────────────────────────────────"
-"〉                                                                              " Hidden by multi-width symbols: [(1, " ")]
+"❯                                                                               "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
+"                                                                                "
 "  enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop               "
-"                                                                                "
-"                                                                                "
-"                                                                                "
-"                                                                                "
-"                                                                                "
-"                                                                                "

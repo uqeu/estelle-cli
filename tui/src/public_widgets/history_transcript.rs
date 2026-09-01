@@ -110,7 +110,10 @@ pub fn render_interactive_history_transcript(
                     }
                 }
                 if let Some(background) = background {
-                    lines = lines.into_iter().map(|line| line.bg(background)).collect();
+                    lines = lines
+                        .into_iter()
+                        .map(|line| band(line, width).bg(background))
+                        .collect();
                 }
                 rendered.extend(lines);
                 rendered.push(Line::default());
@@ -191,6 +194,29 @@ pub fn render_interactive_history_transcript(
         text: Text::from(rendered),
         interactive_rows,
     }
+}
+
+/// Pad a line out to the full render width so a background applied to it reads as a BAND.
+///
+/// 🔴 **`Line::bg` COLOURS THE TEXT, NOT THE ROW.** A style on a `Line` reaches only the cells its
+/// spans actually write, so the user's turn was lifted for exactly as many columns as the sentence
+/// happened to be long and then fell back to the ground — measured at column 71 of 80. What makes
+/// a long conversation scannable is the row reaching the right edge, so the eye can find its own
+/// questions down the gutter; a ragged right edge is a highlighter on the words instead.
+///
+/// The padding is added BEFORE the background so the trailing run carries it too. `Line::width`
+/// is the display width (wide glyphs count two), not the char count, which is why a CJK question
+/// still lands flush instead of overshooting. A line already at or past `width` is returned
+/// untouched — never truncated, because clipping the user's own words to paint a band would be
+/// trading the content for the decoration.
+fn band(line: Line<'static>, width: u16) -> Line<'static> {
+    let padding = usize::from(width).saturating_sub(line.width());
+    if padding == 0 {
+        return line;
+    }
+    let mut spans = line.spans;
+    spans.push(ratatui::text::Span::raw(" ".repeat(padding)));
+    Line { spans, ..line }
 }
 
 /// Markdown's wrapping pass intentionally emits one span per word. Merge adjacent spans with the
