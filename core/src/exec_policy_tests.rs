@@ -2432,3 +2432,119 @@ async fn exec_policy_warnings_ignore_untrusted_project_rules_without_config_toml
 
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Ported from the rival-CLI teardown, take-list #1.
+//
+// goose refuses to start on a corrupt permission config
+// (`crates/goose/src/config/permission.rs:49-59`, Apache-2.0, idea only):
+//
+//     panic!("Corrupted permission config at {}. Fix or remove the file to continue.", ...)
+//
+// The defect it exists to prevent: a trust file that fails to parse silently
+// becomes a PERMISSIVE one, because the default value of a permission config
+// has an empty deny list.
+// ---------------------------------------------------------------------------
+
+/// A `*.rules` file is a trust file. When it fails to parse, the parser drops
+/// the WHOLE file -- including every `deny` the operator wrote. Under
+/// `AskForApproval::Never` the unmatched-command heuristic then resolves an
+/// ordinary command to `Decision::Allow`, so the parse failure ends up MORE
+/// permissive than the file it could not read.
+///
+/// The contract: a degraded policy may never grant. It may only ratchet down.
+#[tokio::test]
+async fn corrupt_rules_file_must_not_make_a_denied_command_allowed() -> anyhow::Result<()> {
+    let temp_dir = tempdir()?;
+    let policy_dir = temp_dir.path().join(RULES_DIR_NAME);
+    fs::create_dir_all(&policy_dir)?;
+    // The operator denied `curl`. The same file also has a syntax error on the
+    // next line, so the parse fails and the deny above it never loads.
+    fs::write(
+        policy_dir.join("user.rules"),
+        "prefix_rule(pattern=[\"curl\"], decision=\"forbidden\")\nprefix_rule(\n",
+    )?;
+    let config_stack = config_stack_for_dot_codex_folder(temp_dir.path());
+    let manager = ExecPolicyManager::load(&config_stack).await?;
+
+    let command = vec_str(&["curl", "https://example.com"]);
+    let requirement = manager
+        .create_exec_approval_requirement_for_command(ExecApprovalRequest {
+            command: &command,
+            approval_policy: AskForApproval::Never,
+            permission_profile: PermissionProfile::read_only(),
+            windows_sandbox_level: WindowsSandboxLevel::Disabled,
+            sandbox_permissions: SandboxPermissions::UseDefault,
+            prefix_rule: None,
+        })
+        .await;
+
+    assert!(
+        !matches!(requirement, ExecApprovalRequirement::Skip { .. }),
+        "a rules file that FAILED TO PARSE must not leave the runtime more \
+         permissive than the file it could not read; got {requirement:?}"
+    );
+    Ok(())
+}
+
+/// The exemption shape, stated as a test rather than as prose: the ratchet is
+/// scoped to a policy that actually failed to parse. A healthy tree with no
+/// rules file at all is NOT degraded, and must keep its normal
+/// `AskForApproval::Never` behaviour -- otherwise the fix above would silently
+/// turn every `Never` session into a prompting session.
+#[tokio::test]
+async fn healthy_policy_is_not_ratcheted() -> anyhow::Result<()> {
+    let temp_dir = tempdir()?;
+    let config_stack = config_stack_for_dot_codex_folder(temp_dir.path());
+    let manager = ExecPolicyManager::load(&config_stack).await?;
+
+    let command = vec_str(&["curl", "https://example.com"]);
+    let requirement = manager
+        .create_exec_approval_requirement_for_command(ExecApprovalRequest {
+            command: &command,
+            approval_policy: AskForApproval::Never,
+            permission_profile: PermissionProfile::read_only(),
+            windows_sandbox_level: WindowsSandboxLevel::Disabled,
+            sandbox_permissions: SandboxPermissions::UseDefault,
+            prefix_rule: None,
+        })
+        .await;
+
+    assert!(
+        matches!(requirement, ExecApprovalRequirement::Skip { .. }),
+        "an intact policy must not be ratcheted; got {requirement:?}"
+    );
+    Ok(())
+}
+
+/// The ratchet is monotone (goose's inspector rule,
+/// `crates/goose/src/tool_inspection.rs:252-256`): it may raise a decision to a
+/// stricter one and may never lower one. A degraded policy that still matches
+/// an admin-authored `forbidden` rule stays forbidden, and one that matches an
+/// admin-authored `prompt` rule is not "upgraded" to allow.
+#[test]
+fn degraded_ratchet_never_grants() {
+    for policy in [
+        AskForApproval::Never,
+        AskForApproval::OnRequest,
+        AskForApproval::UnlessTrusted,
+    ] {
+        for decision in [Decision::Allow, Decision::Prompt, Decision::Forbidden] {
+            let ratcheted = ratchet_decision_for_degraded_policy(decision, policy);
+            assert!(
+                ratcheted >= decision,
+                "ratchet lowered {decision:?} to {ratcheted:?} under {policy:?}"
+            );
+        }
+    }
+    // Under `Never` there is nobody to prompt, so the only non-permissive
+    // answer left is refusal.
+    assert_eq!(
+        Decision::Forbidden,
+        ratchet_decision_for_degraded_policy(Decision::Allow, AskForApproval::Never)
+    );
+    assert_eq!(
+        Decision::Prompt,
+        ratchet_decision_for_degraded_policy(Decision::Allow, AskForApproval::OnRequest)
+    );
+}

@@ -274,9 +274,44 @@ pub enum ExecPolicyUpdateError {
     },
 }
 
+/// Ratchet a heuristic decision to the strictest answer the current approval
+/// policy can still express, for use when the exec-policy rules file FAILED TO
+/// PARSE and the operator's own `deny(...)` rules are therefore not loaded.
+///
+/// Ported (idea only, ~5 lines) from goose's refusal to start on a corrupt
+/// permission config -- `crates/goose/src/config/permission.rs:49-59`,
+/// Apache-2.0 -- and shaped by goose's monotone inspector ratchet at
+/// `crates/goose/src/tool_inspection.rs:252-256`, whose load-bearing arm is the
+/// do-nothing one: an inspector may restrict and may never grant.
+///
+/// This function is monotone by construction: `Decision` is declared
+/// `Allow < Prompt < Forbidden` and derives `Ord`, so `max` is "the more
+/// restrictive of the two" and the result is always `>=` the input. That
+/// ordering is not incidental -- it is pinned by
+/// `execpolicy::decision::tests::decision_ordering_is_least_to_most_restrictive`.
+pub(crate) fn ratchet_decision_for_degraded_policy(
+    decision: Decision,
+    approval_policy: AskForApproval,
+) -> Decision {
+    let floor = match approval_policy {
+        // `Never` has nobody to prompt, so the only non-permissive answer left
+        // is refusal. This mirrors the existing dangerous-command arm in
+        // `render_decision_for_unmatched_command`.
+        AskForApproval::Never => Decision::Forbidden,
+        AskForApproval::OnRequest | AskForApproval::UnlessTrusted | AskForApproval::Granular(_) => {
+            Decision::Prompt
+        }
+    };
+    decision.max(floor)
+}
+
 pub(crate) struct ExecPolicyManager {
     policy: ArcSwap<Policy>,
     update_lock: Semaphore,
+    /// True when the rules file failed to parse and `policy` is therefore a
+    /// FALLBACK that is missing the operator's own rules. A degraded policy may
+    /// never grant; see `ratchet_decision_for_degraded_policy`.
+    degraded: bool,
 }
 
 pub(crate) struct ExecApprovalRequest<'a> {
@@ -293,16 +328,37 @@ impl ExecPolicyManager {
         Self {
             policy: ArcSwap::from(policy),
             update_lock: Semaphore::new(/*permits*/ 1),
+            degraded: false,
+        }
+    }
+
+    /// A manager over a policy that could not be fully loaded. Every heuristic
+    /// decision it makes is ratcheted down, because the rules it is missing may
+    /// have been denials.
+    fn new_degraded(policy: Arc<Policy>) -> Self {
+        Self {
+            degraded: true,
+            ..Self::new(policy)
         }
     }
 
     #[instrument(level = "info", skip_all)]
     pub(crate) async fn load(config_stack: &ConfigLayerStack) -> Result<Self, ExecPolicyError> {
         let (policy, warning) = load_exec_policy_with_warning(config_stack).await?;
-        if let Some(err) = warning.as_ref() {
-            tracing::warn!("failed to parse rules: {err}");
+        match warning.as_ref() {
+            Some(err) => {
+                // The operator's own rules -- INCLUDING any `deny` -- are not
+                // loaded. Continuing on the fallback policy alone would make
+                // this process more permissive than the file it could not
+                // read, so the manager runs ratcheted from here on.
+                tracing::warn!(
+                    "failed to parse rules: {err}; \
+                     running with a degraded exec policy: no command will be auto-approved"
+                );
+                Ok(Self::new_degraded(Arc::new(policy)))
+            }
+            None => Ok(Self::new(Arc::new(policy))),
         }
-        Ok(Self::new(Arc::new(policy)))
     }
 
     pub(crate) fn current(&self) -> Arc<Policy> {
@@ -331,8 +387,9 @@ impl ExecPolicyManager {
         // allow/prompt/forbidden rules still apply, but avoid auto-derived
         // amendments when only the heredoc fallback parser matched.
         let auto_amendment_allowed = !used_complex_parsing;
+        let degraded = self.degraded;
         let exec_policy_fallback = |cmd: &[String]| {
-            render_decision_for_unmatched_command(
+            let decision = render_decision_for_unmatched_command(
                 cmd,
                 UnmatchedCommandContext {
                     approval_policy,
@@ -342,7 +399,16 @@ impl ExecPolicyManager {
                     used_complex_parsing,
                     command_origin,
                 },
-            )
+            );
+            if degraded {
+                // The rules file did not parse, so "no rule matched" does NOT
+                // mean "the operator did not forbid this" -- it means we cannot
+                // tell. A capped/failed read means "cannot answer", never
+                // "that's all there is".
+                ratchet_decision_for_degraded_policy(decision, approval_policy)
+            } else {
+                decision
+            }
         };
         let match_options = MatchOptions {
             resolve_host_executables: true,
