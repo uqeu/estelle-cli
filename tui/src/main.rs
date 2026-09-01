@@ -7229,6 +7229,17 @@ mod tests {
                             "gate": 0.2
                         },
                         "elapsed_s": 1.2
+                    },
+                    "plan": {
+                        "revision": 4,
+                        "steps": [
+                            {"id": "1", "step": "read the failing test", "status": "complete", "evidence": "gate ok · 2 cites"},
+                            {"id": "2", "step": "locate every parse_header call", "status": "complete", "evidence": "12 refs · graph"},
+                            {"id": "3", "step": "rewrite for the folded shape", "status": "complete", "evidence": "headers.rs:288"},
+                            {"id": "4", "step": "update the 12 call sites", "status": "complete", "evidence": "blast radius 12"},
+                            {"id": "5", "step": "run the suite + the mutant", "status": "active", "evidence": ""},
+                            {"id": "6", "step": "deploy the checkout worker", "status": "protected", "evidence": "human-gated"}
+                        ]
                     }
                 }))
                 .expect("gallery work progress"),

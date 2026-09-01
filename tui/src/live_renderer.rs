@@ -2516,6 +2516,20 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         );
         // Row 2 is deliberately blank. The demo clumps the status row against the rule, and that
         // is the one place the founder is deliberately improving on the demo.
+        // ORDER MATTERS. The composer draws one blank padding row above its prompt, which put an
+        // empty row between the rule and `〉` that the demo does not have. So the composer is
+        // given the rule's row too and the rule is painted OVER that padding afterwards - the
+        // prompt then lands directly under the rule, and no row is spent on nothing.
+        let composer_with_padding = Rect {
+            y: ask_rows[2].y,
+            height: ask_rows[2].height + ask_rows[3].height,
+            ..ask_rows[3]
+        };
+        app.composer.render_ref_with_background(
+            composer_with_padding,
+            frame.buffer_mut(),
+            app.theme.background(),
+        );
         frame.render_widget(
             Paragraph::new(session_view::ask_rule(
                 app.repo.as_str(),
@@ -2524,12 +2538,12 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             )),
             ask_rows[2],
         );
-        app.composer.render_ref_with_background(
-            ask_rows[3],
-            frame.buffer_mut(),
+        collapse_composer_tail(
+            frame,
+            composer_with_padding,
+            &palette,
             app.theme.background(),
         );
-        collapse_composer_tail(frame, ask_rows[3], &palette, app.theme.background());
         ask_rows[3]
     };
     if let Some(picker) = &app.resume_picker {
