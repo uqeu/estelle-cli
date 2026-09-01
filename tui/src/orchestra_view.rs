@@ -25,8 +25,10 @@ use crate::theme::Palette;
 
 /// Said on the frame, once, whenever a worker table is drawn. The empty `cost` cells are a
 /// measurement that does not exist; this line is where the reader is told which one.
-pub(crate) const MISSING_PER_WORKER_SPEND: &str =
-    "per-worker model and cost · no server contract · FleetAgent carries neither";
+/// ⚠️ Short enough to survive the catalog's own 46-column left mockup uncut. A disclosure that
+/// truncates to `no server contrac…` is a disclosure the reader has to guess at; the detail it
+/// used to carry (that `FleetAgent` has neither field) lives in this module's docs instead.
+pub(crate) const MISSING_PER_WORKER_SPEND: &str = "per-worker model + cost · no server contract";
 
 /// The design's worker row: glyph, worker, state, age, cost. The two fixed-width number columns
 /// and the glyph are constants; the state column takes whatever is left, because the state text

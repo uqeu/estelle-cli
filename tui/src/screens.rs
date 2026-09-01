@@ -941,6 +941,50 @@ fn skill(p: &Palette) -> Vec<Line<'static>> {
     v
 }
 
+/// The catalog's four workers, drawn by the SHARED renderer and flattened to text so screen 9's
+/// two-column mockup can carry them in its left column.
+///
+/// ⚠️ The clock is fixed so the page is deterministic: the rows are observed 41, 28, 31 and 0
+/// seconds before `NOW`, which is where the design's own `41s` column came from.
+fn orchestra_fixture(palette: &Palette) -> Vec<String> {
+    const OBSERVED: f64 = 1_000.0;
+    const NOW: f64 = OBSERVED + 41.0;
+    let agent = |index: u64, status: &str, action: &str, ago: f64| estelle_client::FleetAgent {
+        index,
+        status: serde_json::from_value(serde_json::Value::String(status.to_string()))
+            .unwrap_or_default(),
+        state_observed_at: NOW - ago,
+        current_action: (!action.is_empty()).then(|| action.to_string()),
+        ..Default::default()
+    };
+    let fleet = estelle_client::FleetSnapshot {
+        batch: "gate cluster".to_string(),
+        models: vec!["opus-4-8".to_string(), "sonnet-5".to_string()],
+        state: "running".to_string(),
+        observed_at: NOW,
+        completed: Some(1),
+        total: Some(4),
+        agents: vec![
+            agent(1, "completed", "the rewrite", 41.0),
+            agent(2, "running", "12 call sites", 28.0),
+            agent(3, "running", "the regression suite", 31.0),
+            agent(4, "queued", "", 0.0),
+        ],
+        ..Default::default()
+    };
+    crate::orchestra_view::lines(&fleet, palette, 46, NOW)
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect()
+}
+
 // ── 9 ────────────────────────────────────────────────────────────────────
 fn everything(p: &Palette, tick: u64, on: bool) -> Vec<Line<'static>> {
     const T: &[Col] = &[Col::l(46), Col::l(1), Col::l(30)];
@@ -970,31 +1014,22 @@ fn everything(p: &Palette, tick: u64, on: bool) -> Vec<Line<'static>> {
         p.dim,
     );
     two("", p.dim, "◐ postgrest restarting", p.warn);
-    two(
-        "⏺ Task(gate cluster · 4 workers)",
-        p.green,
+    // 🔴 THE WORKER ROWS ARE NOT WRITTEN HERE ANY MORE. They were four fixture strings
+    // (`⎿ ✓ w1 opus-4-8 41s $0.212`) while the live session drew a five-across grid of plain
+    // text — two presentations of one fact, and only the one nobody ships was designed. Both
+    // callers now render `orchestra_view::lines`, so this screen cannot drift from the terminal.
+    // The right column keeps its own fixture text: this screen is a mockup of the WHOLE frame.
+    let right = [
         "errors 1h ▁▁▂█▃▁▁ 12",
-        p.dim,
-    );
-    two(
-        "  ⎿  ✓ w1 opus-4-8   41s  $0.212",
-        p.dim,
         "────────────────────────────",
-        p.dim,
-    );
-    two(
-        "      ◐ w2 sonnet-5   28s  $0.061",
-        p.dim,
         "orchestra · rev 12",
-        p.mid,
-    );
-    two(
-        "      ◐ w3 v4-pro     31s  $0.008",
-        p.dim,
         "◐ 3 running · 1 queued",
-        p.dim,
-    );
-    two("      · w4 queued", p.dim, "$0.281 this fleet", p.green);
+        "$0.281 this fleet",
+    ];
+    for (index, left) in orchestra_fixture(p).into_iter().enumerate() {
+        let right = right.get(index).copied().unwrap_or("");
+        two(&left, p.dim, right, p.dim);
+    }
     two("", p.dim, "────────────────────────────", p.dim);
     two(
         "⏺ Bash(pytest tests/ -x)",

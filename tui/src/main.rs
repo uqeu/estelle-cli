@@ -10873,7 +10873,7 @@ mod tests {
         assert!(rendered.contains("cost"), "{rendered}");
         // 🔴 The cost column is empty AND the frame says which contract is missing.
         assert!(
-            rendered.contains("per-worker model and cost · no server contract"),
+            rendered.contains("per-worker model + cost · no server contract"),
             "{rendered}"
         );
         assert!(!rendered.contains("Ask about"));
