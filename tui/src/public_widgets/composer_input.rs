@@ -287,8 +287,22 @@ mod tests {
         assert!(composer.is_empty());
     }
 
+    /// 🔴 **THIS TEST USED TO PIN THE DEFECT, AND IT IS INVERTED HERE ON PURPOSE.**
+    ///
+    /// It previously asserted that an unknown `/name` produces `ComposerAction::None` and leaves
+    /// the draft in the composer — which is precisely the silence the founder hit: he typed
+    /// `/skill:agent-injection-eval`, pressed enter, and nothing happened. No send, no refusal, the
+    /// text still sitting there.
+    ///
+    /// The old behaviour looked defensible in isolation ("don't send a command that does not
+    /// exist"), and that is why it survived: the composer refused, emitted an explanatory
+    /// `AppEvent`, and [`ComposerInput::drain_app_events`] threw that event away unread. A refusal
+    /// nobody renders is indistinguishable from a dropped keypress.
+    ///
+    /// The composer is not the dispatcher. It hands the draft on, and `App::submit` — which knows
+    /// the aliases, the typo matcher and the server-side skill namespace — decides and SAYS SO.
     #[test]
-    fn unknown_external_command_is_rejected_and_preserves_the_draft() {
+    fn an_unknown_command_is_handed_to_the_dispatcher_rather_than_silently_eaten() {
         let mut composer = ComposerInput::with_commands(
             "Ask",
             [ComposerCommand::new("doctor", "probe provider binding")],
@@ -297,7 +311,37 @@ mod tests {
 
         let action = composer.input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
-        assert!(matches!(action, ComposerAction::None));
-        assert_eq!(composer.text(), "/definitely-missing");
+        assert!(
+            matches!(&action, ComposerAction::Submitted(text) if text == "/definitely-missing"),
+            "the draft must reach the dispatcher, not die here"
+        );
+        assert!(
+            composer.is_empty(),
+            "a submitted draft must leave the composer, or the next keystroke appends to it"
+        );
+    }
+
+    /// A skill invocation is submitted even though no catalog entry names that skill.
+    ///
+    /// The namespace row `skill:` stands for names the composer cannot know — they live on the
+    /// server. Without it the composer adjudicated the whole namespace against a 63-name exact-match
+    /// catalog and refused all of it.
+    #[test]
+    fn a_namespaced_command_submits_without_the_member_being_in_the_catalog() {
+        let mut composer = ComposerInput::with_commands(
+            "Ask",
+            [
+                ComposerCommand::new("doctor", "probe provider binding"),
+                ComposerCommand::new("skill:", "run one Estelle skill playbook by name"),
+            ],
+        );
+        composer.set_text("/skill:agent-injection-eval");
+
+        let action = composer.input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert!(
+            matches!(&action, ComposerAction::Submitted(text) if text == "/skill:agent-injection-eval"),
+            "a namespaced command must submit"
+        );
     }
 }

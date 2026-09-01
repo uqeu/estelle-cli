@@ -171,20 +171,15 @@ const GRAFT_HELP: &[(&str, &str)] = &[
     ("grep", "search code with server-side structure"),
     ("permissions", "view the effective autonomy boundary"),
     ("keymap", "composer keymap status"),
-
     ("review", "run Estelle's grounded merge gate"),
-
     (
         "compact",
         "ask Guardian for a bounded replacement projection",
     ),
-
     ("diff", "show the local working-tree diff"),
-
     ("task", "view server orchestra work"),
     // Kimi interaction surfaces not already present above.
     ("version", "show this Estelle build"),
-
 ];
 
 #[cfg(test)]
@@ -238,11 +233,34 @@ pub(crate) fn help_lines() -> Vec<String> {
         .collect()
 }
 
+/// What each [`SKILL_PREFIXES`] entry says in the completion popup, in the same order.
+///
+/// 🔴 **WITHOUT THESE ROWS THE COMPOSER REFUSED THE WHOLE NAMESPACE AND SAID NOTHING.** The catalog
+/// held 63 names, none containing a colon, and the composer validates a submission by exact
+/// equality against it — so `/skill:agent-injection-eval` was `UnknownCommand`, the submission was
+/// dropped, and the composer's own refusal was discarded by the wrapper. Typing ANY skill
+/// invocation and pressing enter did nothing at all — the singular spelling included.
+///
+/// The trailing `:` on each name marks it a NAMESPACE: the composer stops adjudicating names
+/// beneath it and hands the draft to the dispatcher that can actually resolve a skill.
+///
+/// ⚠️ These rows do NOT enumerate skills. The skill names live on the server behind `GET /skills`
+/// and are not available when this catalog is built, so this buys the namespace a ROUTE, not a
+/// completion list. Per-skill completion is not wired.
+const SKILL_NAMESPACE_HELP: [&str; SKILL_PREFIXES.len()] = [
+    "run one Estelle skill playbook by name",
+    "alias of /skill: — both spellings run the same playbook",
+];
+
 pub(crate) fn composer_commands() -> Vec<(&'static str, &'static str)> {
     SESSION_HELP
         .iter()
         .chain(GRAFT_HELP.iter())
         .copied()
+        // Derived from SKILL_PREFIXES so the parser and the catalog cannot drift: a spelling the
+        // parser accepts but the catalog omits is silently unsubmittable, which is the exact bug
+        // this pair of constants exists to prevent.
+        .chain(SKILL_PREFIXES.into_iter().zip(SKILL_NAMESPACE_HELP))
         .collect()
 }
 
@@ -345,6 +363,76 @@ impl ParsedInput {
     }
 }
 
+/// The spellings of the skill namespace `/skill:NAME` answers to.
+///
+/// 🔴 **ONE NOUN, TWO SPELLINGS, AND ONLY ONE OF THEM WORKED.** The founder typed
+/// `/skills:agent-injection-eval`, pressed enter, and the singular `strip_prefix("skill:")` missed
+/// it by one character — `skills:` has an `s` where the singular has its colon — so the whole input
+/// fell through to `resolve_session_name`, matched nothing, and became an unknown command. The
+/// noun is genuinely ambiguous (the directory is `skills/`, the invocation is `skill:`), so the
+/// parser accepts both rather than asking the user to remember which one this surface chose.
+///
+/// ⚠️ The two are NOT ambiguous with each other: `strip_prefix("skill:")` cannot match `skills:x`,
+/// so the first hit is the only hit and order here carries no meaning.
+const SKILL_PREFIXES: [&str; 2] = ["skill:", "skills:"];
+
+/// The nearest command to something that resolved to nothing, or `None` when nothing is close.
+///
+/// 🔴 **A SUGGESTION MUST REACH FURTHER THAN THE EXACT ARM OR IT CAN NEVER FIRE.**
+/// `resolve_session_name` already *resolves* anything within one edit, so by the time input
+/// reaches here every one-edit neighbour has been taken. A "did you mean" built on `one_edit`
+/// would therefore be decoration — a branch that cannot execute. Two rules that CAN fire:
+///
+/// 1. **The skill namespace**, where the tail is a skill name this client cannot enumerate. Only
+///    the PREFIX is corrected; the tail is carried through verbatim rather than guessed at.
+/// 2. **A prefix relation** against the session commands, which is strictly weaker than one edit
+///    (`/sess` → `/sessions` is four edits) and so reaches inputs the exact arm refuses.
+pub(crate) fn nearest_command(typed_name: &str) -> Option<String> {
+    let name = typed_name.trim().to_ascii_lowercase();
+    if name.is_empty() {
+        return None;
+    }
+    if let Some((prefix, tail)) = name.split_once(':')
+        && !tail.is_empty()
+        && !SKILL_PREFIXES
+            .iter()
+            .any(|known| known.trim_end_matches(':') == prefix)
+        && one_edit(prefix, "skill")
+    {
+        return Some(format!("skill:{tail}"));
+    }
+    let mut candidates = SESSION_COMMANDS
+        .iter()
+        .copied()
+        .chain(GRAFT_HELP.iter().map(|(name, _)| *name))
+        .filter(|candidate| !DROPPED_COMMANDS.contains(candidate))
+        .filter(|candidate| candidate.starts_with(name.as_str()));
+    let candidate = candidates.next()?;
+    candidates.next().is_none().then(|| candidate.to_string())
+}
+
+/// The visible refusal for a `/`-prefixed input that named no command.
+///
+/// 🔴 **AN UNMATCHED SLASH COMMAND MUST NEVER BE SILENT.** Every enter has to produce exactly one
+/// of: a send, a queued item, or a refusal the user can read. Silence is the worst of the three
+/// because it is indistinguishable from a key that never registered, and the user's next move is
+/// to press enter again.
+///
+/// ⚠️ Limit: this is the REFUSAL half only — it proves the words exist once the dispatcher reaches
+/// this arm, not that the dispatcher was reached. Until 2026-08-31 it never was: the composer's own
+/// `validate_submission` refused every unmatched `/name` first and its refusal was discarded
+/// unread, so this arm was correct and unreachable at the same time. `main.rs`'s
+/// `pressing_enter_on_a_slash_draft_is_never_swallowed` is what asserts the other half, by pressing
+/// the key rather than calling the function.
+pub(crate) fn unknown_command_lines(typed_name: &str) -> Vec<String> {
+    let mut lines = vec![format!("no command  /{typed_name}")];
+    if let Some(nearest) = nearest_command(typed_name) {
+        lines.push(format!("did you mean  /{nearest}"));
+    }
+    lines.push("nothing ran and nothing was sent. Use /help for the full list.".to_string());
+    lines
+}
+
 pub(crate) fn parse_input(raw: &str) -> ParsedInput {
     let input = raw.trim();
     if let Some(shell) = input.strip_prefix('!') {
@@ -356,7 +444,10 @@ pub(crate) fn parse_input(raw: &str) -> ParsedInput {
     let mut words = command.split_whitespace();
     let typed_name = words.next().unwrap_or_default().to_ascii_lowercase();
     let trailing = words.collect::<Vec<_>>().join(" ");
-    if let Some(skill) = typed_name.strip_prefix("skill:") {
+    if let Some(skill) = SKILL_PREFIXES
+        .iter()
+        .find_map(|prefix| typed_name.strip_prefix(prefix))
+    {
         let argument = if trailing.is_empty() {
             skill.to_string()
         } else {
@@ -384,10 +475,7 @@ pub(crate) fn inherited_command_lines(name: &str) -> Option<Vec<String>> {
         ]
     };
     let repointed = |owner: &str, command: &str| {
-        vec![
-            format!("/{name} is owned by {owner}."),
-            command.to_string(),
-        ]
+        vec![format!("/{name} is owned by {owner}."), command.to_string()]
     };
     match name {
         "keymap" | "editor" => Some(repointed(
@@ -3281,6 +3369,120 @@ mod tests {
                 argument: "system-design map the auth boundary".to_string(),
             }
         );
+    }
+
+    /// 🔴 THE PLURAL WAS A DEAD END, AND IT DIED SILENTLY.
+    ///
+    /// The founder typed `/skills:agent-injection-eval`, pressed enter, and got nothing at all.
+    /// `strip_prefix("skill:")` cannot match `skills:` — the `s` sits where the colon belongs — so
+    /// a correctly-spelled skill invocation resolved to no command.
+    ///
+    /// Both spellings must reach the SAME route with the SAME argument. Asserting only that the
+    /// plural "works" would pass on a parse that routed it somewhere else entirely, so this pins
+    /// the plural against the singular field by field.
+    #[test]
+    fn both_spellings_of_the_skill_namespace_reach_one_route() {
+        let singular = parse_input("/skill:agent-injection-eval");
+        let plural = parse_input("/skills:agent-injection-eval");
+
+        assert_eq!(
+            plural,
+            ParsedInput::Command {
+                name: Some("skill:"),
+                typed_name: "skills:agent-injection-eval".to_string(),
+                argument: "agent-injection-eval".to_string(),
+            }
+        );
+        // The typed spelling is preserved (it is echoed back to the user), but the ROUTE and the
+        // ARGUMENT — the two fields that decide what runs — must be byte-identical.
+        match (&singular, &plural) {
+            (
+                ParsedInput::Command {
+                    name: singular_name,
+                    argument: singular_argument,
+                    ..
+                },
+                ParsedInput::Command {
+                    name: plural_name,
+                    argument: plural_argument,
+                    ..
+                },
+            ) => {
+                assert_eq!(singular_name, plural_name);
+                assert_eq!(singular_argument, plural_argument);
+            }
+            other => panic!("both spellings must parse as commands: {other:?}"),
+        }
+
+        // With a trailing task, too — the plural must not swallow or reorder the task.
+        assert_eq!(
+            parse_input("/skills:system-design map the auth boundary"),
+            ParsedInput::Command {
+                name: Some("skill:"),
+                typed_name: "skills:system-design".to_string(),
+                argument: "system-design map the auth boundary".to_string(),
+            }
+        );
+
+        // ⚠️ THE CONTROL. A bare namespace with no skill name still names no command, so accepting
+        // the plural must not have turned `/skills:` into a route to nowhere.
+        assert!(matches!(
+            parse_input("/skills:"),
+            ParsedInput::Command { name: None, .. }
+        ));
+    }
+
+    /// 🔴 EVERY UNMATCHED SLASH INPUT PRODUCES WORDS, AND NAMES ITSELF.
+    ///
+    /// The refusal must quote the input back. A generic "unknown command" leaves the user unable to
+    /// tell a typo from a command that does not exist, which is the difference between retrying and
+    /// giving up.
+    #[test]
+    fn an_unmatched_slash_command_refuses_visibly_and_names_the_input() {
+        let lines = unknown_command_lines("skills:agent-injection-eval");
+        assert!(
+            lines[0].contains("/skills:agent-injection-eval"),
+            "the refusal must quote the input: {lines:?}"
+        );
+        assert!(
+            lines.last().is_some_and(|line| line.contains("/help")),
+            "the refusal must name the repair: {lines:?}"
+        );
+        assert!(
+            lines.iter().all(|line| !line.is_empty()),
+            "a blank line is silence wearing a refusal's shape: {lines:?}"
+        );
+
+        // The near-miss arm fires on the skill namespace and carries the tail through VERBATIM
+        // rather than guessing at a skill name this client cannot enumerate.
+        assert_eq!(
+            nearest_command("skil:agent-injection-eval").as_deref(),
+            Some("skill:agent-injection-eval")
+        );
+        assert!(
+            unknown_command_lines("skil:agent-injection-eval")
+                .iter()
+                .any(|line| line.contains("did you mean  /skill:agent-injection-eval")),
+            "the suggestion must render"
+        );
+
+        // A prefix relation reaches further than one edit, which is the only way this arm can fire
+        // at all: `resolve_session_name` has already taken every one-edit neighbour.
+        assert_eq!(nearest_command("sessio").as_deref(), Some("sessions"));
+
+        // ⚠️ CONTROLS. Nothing close means NO suggestion — a confidently wrong "did you mean" is
+        // worse than none, and an ambiguous prefix must not pick a winner.
+        assert_eq!(nearest_command("zzzzzzzzzz"), None);
+        assert_eq!(nearest_command(""), None);
+        assert!(
+            unknown_command_lines("zzzzzzzzzz")
+                .iter()
+                .all(|line| !line.contains("did you mean")),
+            "a suggestion was invented for an input with no neighbour"
+        );
+        // A dropped command is never suggested: `/logout` was deleted, and proposing it would
+        // reach a command the exact arm deliberately refuses.
+        assert_eq!(nearest_command("logout"), None);
     }
 
     #[test]

@@ -9572,6 +9572,129 @@ mod tests {
         assert!(rendered.contains("never bills you for model tokens"));
         assert!(!rendered.contains("Claude subscription"));
         assert!(!rendered.contains("ChatGPT plan"));
+    /// 🔴 **EVERY SUBMIT PRODUCES A SEND, A QUEUED ITEM, OR WORDS. NEVER SILENCE.**
+    ///
+    /// The founder typed `/skills:agent-injection-eval`, pressed enter, and got **absolutely
+    /// nothing** — no send, no error, no hint. Silence is the worst possible outcome because it is
+    /// indistinguishable from a keypress the terminal dropped, so the user's next move is to press
+    /// enter again rather than to read a refusal and fix the input.
+    ///
+    /// This asserts the property CLASS-WIDE over a corpus of shapes rather than one input, because
+    /// a single-input test proves only that one string was handled. For every input, the transcript
+    /// must GROW beyond the echoed user line, or the request queue must grow.
+    ///
+    /// ⚠️ **LIMIT, AND IT IS THE IMPORTANT HALF.** This drives `submit` directly, so it proves the
+    /// DISPATCHER is never silent. It does **not** prove the dispatcher is REACHED, and the
+    /// founder's silence was entirely in that gap: `ChatComposer::validate_submission` refused the
+    /// draft before `submit` ran and returned no submission at all, and the refusal it emitted was
+    /// discarded by `ComposerInput::drain_app_events`. This arm already refused correctly before
+    /// any of this work; it was simply never called. `pressing_enter_on_a_slash_draft_is_never_swallowed`
+    /// is the test that could see that, and it is the one that was red.
+    #[test]
+    fn no_submitted_input_is_ever_answered_with_silence() {
+        let corpus = [
+            "/skills:agent-injection-eval",
+            "/skill:agent-injection-eval",
+            "/blorp",
+            "/skills:",
+            "/skill:",
+            "/",
+            "/logout",
+            "/pet",
+            "/zzzzzzzzzz extra words",
+            "!",
+            "ordinary question",
+        ];
+        for input in corpus {
+            let mut app = test_app();
+            let (tx, _rx) = mpsc::unbounded_channel();
+
+            app.submit(input.to_string(), &tx);
+
+            // The echoed user line is not an answer — it is the input played back. An answer is a
+            // queued request or at least one transcript entry BEYOND that echo.
+            let answered = !app.queue.is_empty() || app.transcript.len() > 1;
+            assert!(
+                answered,
+                "{input:?} produced neither a queued request nor a visible line: \
+                 queue={} transcript={:?}",
+                app.queue.len(),
+                render_transcript(&app.transcript)
+            );
+        }
+    }
+
+    /// 🔴 **THE KEYBOARD IS THE ONLY ORACLE THAT SAW THE FOUNDER'S BUG.**
+    ///
+    /// `no_submitted_input_is_ever_answered_with_silence` drives `submit` directly and passes — it
+    /// always passed, before any of this work. The founder's silence lives one layer ABOVE it, in
+    /// the path a real keypress takes: `handle_key` hands `enter` to the composer, and the composer
+    /// decides whether a submission happens at all. So this test presses the key.
+    ///
+    /// The property: for a `/`-prefixed draft, pressing enter must leave the user with SOMETHING —
+    /// a queued request, or a line to read. A draft that is silently swallowed, leaving the
+    /// composer holding text and the transcript empty, is the defect.
+    #[test]
+    fn pressing_enter_on_a_slash_draft_is_never_swallowed() {
+        for draft in [
+            "/skill:agent-injection-eval",
+            "/skills:agent-injection-eval",
+            "/blorp",
+            "/help",
+        ] {
+            let mut app = test_app();
+            let (tx, _rx) = mpsc::unbounded_channel();
+            app.composer.set_text(draft);
+
+            handle_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                &tx,
+            );
+
+            let answered = !app.queue.is_empty() || !app.transcript.is_empty();
+            assert!(
+                answered,
+                "enter on {draft:?} was swallowed: the composer still holds {:?}, \
+                 the queue is empty and the transcript is empty",
+                app.composer.text()
+            );
+        }
+    }
+
+    /// The plural spelling reaches the same route as the singular, end to end through `submit`.
+    ///
+    /// `commands::both_spellings_of_the_skill_namespace_reach_one_route` pins the PARSE; this pins
+    /// what the app does with it, because a parser that returns the right shape into a dispatcher
+    /// that drops it is still a dead end.
+    #[test]
+    fn the_plural_skill_spelling_queues_the_same_request_as_the_singular() {
+        let queued = |input: &str| {
+            let mut app = test_app();
+            let (tx, _rx) = mpsc::unbounded_channel();
+            app.submit(input.to_string(), &tx);
+            app.queue
+                .iter()
+                .filter_map(|request| match request {
+                    QueuedRequest::Command(command) => {
+                        Some((command.name, command.argument.clone()))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let singular = queued("/skill:agent-injection-eval");
+        let plural = queued("/skills:agent-injection-eval");
+
+        assert_eq!(
+            singular,
+            vec![("skill:", "agent-injection-eval".to_string())],
+            "the singular spelling must queue the skill route"
+        );
+        assert_eq!(plural, singular, "the plural must queue the identical route");
+    }
+
         assert!(!rendered.contains("ASK ESTELLE"));
         assert!(!rendered.contains("Run estelle login"));
     }
