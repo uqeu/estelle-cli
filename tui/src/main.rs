@@ -1686,6 +1686,11 @@ const ASK_HINTS: &[(&str, &str)] = &[
 ];
 
 /// The subset of [`ASK_HINTS`] the live keymap does NOT handle today.
+///
+/// Test-only because it is a LEDGER, not a switch: nothing reads it to change what renders, and
+/// wiring it into the renderer would be the first step towards quietly hiding the three hints
+/// instead of binding the three keys.
+#[cfg(test)]
 const ASK_HINTS_NOT_BOUND: &[&str] = &["tab", "ctrl+s", "ctrl+m"];
 
 fn estelle_composer() -> ComposerInput {
@@ -8286,13 +8291,18 @@ mod tests {
     /// The catalog's screen-9 footer advertises `tab repo · ctrl+s spend · ctrl+m models`, and
     /// **none of those three bindings exists in this binary**. A fixture screen may print an
     /// unbuilt binding; the live footer may not. This pins every advertised key to the effect
-    /// the footer claims for it, so the next person to edit `KEY_HINTS` has to prove the key.
+    /// the label claims for it.
+    ///
+    /// ⚠️ The footer this guarded is gone - the demo puts the hints under the prompt - but the
+    /// BINDINGS are still real and this still presses them. Read it beside
+    /// `the_advertised_keys_that_are_not_yet_bound_are_exactly_these`: together they say exactly
+    /// which keys work and which the demo's hint row promises before they do.
     ///
     /// Limit: it proves each key CHANGES the state the label names. It does not prove the
     /// label is the best word for that state.
     #[test]
     fn every_advertised_key_is_a_binding_the_live_tui_actually_handles() {
-        let hints = session_view::KEY_HINTS;
+        let hints = "tab focus · shift+tab autonomy · ctrl+t tasks · alt+m context · / commands";
         let (tx, _rx) = mpsc::unbounded_channel();
 
         assert!(hints.contains("tab focus"), "{hints}");

@@ -30,54 +30,9 @@ pub(crate) const RAIL_WIDTH: usize = 30;
 /// two columns is worse than one column.
 pub(crate) const MIN_SESSION_WIDTH: usize = 46;
 
-/// The footer hints, in the design's form: dim, `key label` pairs separated by `·`.
-///
-/// 🔴 **THE CATALOG'S OWN STRING IS NOT USED HERE, AND THAT IS DELIBERATE.** Screen 9 prints
-/// `tab repo · ctrl+s spend · ctrl+m models`, and **none of those three bindings exists in the
-/// live TUI**: `Tab` moves focus (`main.rs`), there is no `ctrl+s`, and there is no `ctrl+m`
-/// (`alt+m` toggles the context panel). A catalog screen stamped `DESIGN FIXTURE · NOT LIVE
-/// DATA` may advertise an unbuilt binding; **the live footer may not** — a hint the key does
-/// not honour is a hallucinated affordance, in the interface whose whole job is refusing those.
-///
-/// So the design contributes the FORM and the live keymap contributes the CONTENT. Every pair
-/// below is pinned to its handler by
-/// `every_advertised_key_is_a_binding_the_live_tui_actually_handles`.
-pub(crate) const KEY_HINTS_PAIRS: &[(&str, &str)] = &[
-    ("tab", "focus"),
-    ("shift+tab", "autonomy"),
-    ("ctrl+t", "tasks"),
-    ("alt+m", "context"),
-    ("/", "commands"),
-];
-
-/// Every pair, for the guard and for any frame wide enough to carry them all.
-pub(crate) const KEY_HINTS: &str =
-    "tab focus · shift+tab autonomy · ctrl+t tasks · alt+m context · / commands";
-
-/// As many hints as fit in `budget` columns, in order — a footer that overruns its row pushes
-/// the live status off the screen, which is a worse failure than a missing hint.
-pub(crate) fn key_hints(budget: usize) -> String {
-    if KEY_HINTS.chars().count() <= budget {
-        return KEY_HINTS.to_string();
-    }
-    let mut rendered = String::new();
-    for (key, label) in KEY_HINTS_PAIRS {
-        let pair = format!("{key} {label}");
-        let addition = if rendered.is_empty() {
-            pair.chars().count()
-        } else {
-            pair.chars().count() + 3
-        };
-        if rendered.chars().count() + addition > budget {
-            break;
-        }
-        if !rendered.is_empty() {
-            rendered.push_str(" · ");
-        }
-        rendered.push_str(&pair);
-    }
-    rendered
-}
+// The footer's key-hint machinery (KEY_HINTS, KEY_HINTS_PAIRS, key_hints) was deleted with the
+// footer. The demo puts the hints under the prompt instead, and `main::ASK_HINTS` owns them - two
+// hint vocabularies with no caller for one of them is how a stale one survives a redesign.
 
 /// The frame screen 9 is drawn at: `46 + 2 + 1 + 2 + 30`. The rail's share of the design is
 /// this ratio, not the absolute 30 — live production strings are longer than the fixture's, and
@@ -351,29 +306,6 @@ mod tests {
     /// `KEY_HINTS` is the full string and `KEY_HINTS_PAIRS` is what the narrow path joins.
     /// Editing one without the other would silently give the wide and narrow footers different
     /// wording, and the binding guard only reads `KEY_HINTS`.
-    #[test]
-    fn the_hint_string_and_the_hint_pairs_cannot_drift_apart() {
-        let joined = KEY_HINTS_PAIRS
-            .iter()
-            .map(|(key, label)| format!("{key} {label}"))
-            .collect::<Vec<_>>()
-            .join(" · ");
-        assert_eq!(joined, KEY_HINTS);
-    }
-
-    #[test]
-    fn the_footer_drops_hints_rather_than_pushing_the_status_off_the_row() {
-        assert_eq!(key_hints(KEY_HINTS.chars().count()), KEY_HINTS);
-        assert_eq!(key_hints(0), "");
-        assert_eq!(key_hints(9), "tab focus");
-        assert_eq!(key_hints(8), "");
-        for budget in 0..200usize {
-            assert!(
-                key_hints(budget).chars().count() <= budget,
-                "budget {budget} overran"
-            );
-        }
-    }
 
     #[test]
     fn the_rules_name_the_repo_in_the_designs_wording() {
