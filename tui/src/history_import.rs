@@ -50,6 +50,33 @@ pub(crate) struct ImportedHistory {
 }
 
 impl ImportedHistory {
+    /// A NEW history with every credential-shaped value in its transcript text replaced by the
+    /// shared redaction marker — the ingest half of the rule below. Provenance fields (`cwd`,
+    /// `source_path`, `source_sha256`) are carried through byte-identical: they are not
+    /// transcript text, and `load_latest_history` compares the sha before and after the read.
+    pub(crate) fn redacted(self) -> Self {
+        Self {
+            title: estelle_client::redact_secrets(&self.title),
+            turns: self.turns.into_iter().map(ImportedTurn::redacted).collect(),
+            ..self
+        }
+    }
+
+    /// The imported conversation as one block of model context.
+    ///
+    /// 🔴 THIS IS A NETWORK WRITE OF SOMEBODY ELSE'S TRANSCRIPT. The returned string is stored
+    /// as `imported_context` (`session_server.rs:797`), prepended to `session_context`
+    /// (`session_server.rs:846`) and posted to the API by `answer_question` on the next
+    /// question. Another harness's session is one of the likelier places for a pasted
+    /// credential to be sitting, so the same rule the checkpoint wire follows applies here:
+    /// the SHAPE is named so the loss is visible downstream, the VALUE never leaves.
+    ///
+    /// Redacted here as well as at ingest ON PURPOSE, and it is not belt-and-braces: the
+    /// session server receives `ImportedHistory` deserialized off the socket
+    /// (`ClientRequest::ImportHistory`), so it cannot assume any caller already scrubbed it.
+    /// A guard that only runs on the path you remembered to instrument is a guard on that path.
+    /// Redaction is idempotent, so the second pass cannot corrupt the first's markers — which
+    /// is asserted, not assumed.
     pub(crate) fn model_context(&self) -> String {
         let mut lines = vec![format!(
             "Imported {} session: {}",
@@ -60,7 +87,7 @@ impl ImportedHistory {
             lines.push(format!("User: {}", turn.question));
             lines.push(format!("Assistant: {}", turn.answer));
         }
-        lines.join("\n")
+        estelle_client::redact_secrets(&lines.join("\n"))
     }
 }
 
@@ -68,6 +95,15 @@ impl ImportedHistory {
 pub(crate) struct ImportedTurn {
     pub(crate) question: String,
     pub(crate) answer: String,
+}
+
+impl ImportedTurn {
+    fn redacted(self) -> Self {
+        Self {
+            question: estelle_client::redact_secrets(&self.question),
+            answer: estelle_client::redact_secrets(&self.answer),
+        }
+    }
 }
 
 pub(crate) fn turns_from_rollout_items(items: &[RolloutItem]) -> io::Result<Vec<ImportedTurn>> {
@@ -120,7 +156,7 @@ pub(crate) async fn load_latest_history(
     let home = dirs::home_dir()
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "home directory is unavailable"))?;
     let repository_root = fs::canonicalize(repository_root)?;
-    match source {
+    let history = match source {
         ExternalHistorySource::Codex => {
             load_latest_codex_history(&home.join(".codex"), &repository_root).await
         }
@@ -160,7 +196,11 @@ pub(crate) async fn load_latest_history(
                 ..history
             })
         }
-    }
+    }?;
+    // The ingest boundary, and the only entry point into this module — so all three sources are
+    // scrubbed by ONE line rather than three. From here on nothing downstream (the session
+    // server's in-memory turns, the local socket, the rendered transcript) holds the raw value.
+    Ok(history.redacted())
 }
 
 fn load_latest_migration(
@@ -301,6 +341,101 @@ mod tests {
     use codex_protocol::protocol::SessionSource;
     use codex_protocol::protocol::ThreadHistoryMode;
     use codex_protocol::protocol::UserMessageEvent;
+
+    /// A credential-shaped string that the shared redactor is PROVEN to catch.
+    ///
+    /// The assertion inside is the instrument check, not decoration: if the fixture were
+    /// allowlisted (gitleaks ships published examples like `AKIAIOSFODNN7EXAMPLE`) or the shape
+    /// were dropped from the rule set, every redaction test below would pass over a string
+    /// nothing was ever going to redact. That is the inert-guard failure, so it fails here first.
+    ///
+    /// Assembled from two literals so no scanner-shaped token appears verbatim in this source —
+    /// the same reason `estelle-client/src/secret_engine.rs` assembles its own fixtures. It is
+    /// invented, and is not and never was a real credential.
+    fn detectable_credential_fixture() -> String {
+        let fixture = format!("{}{}", "AKIA", "Q3XMPLDEADBEEF42");
+        assert_ne!(
+            estelle_client::redact_secrets(&fixture),
+            fixture,
+            "the fixture must be detectable by the shared redactor, or the tests using it \
+             cannot fail"
+        );
+        fixture
+    }
+
+    fn history_carrying(secret: &str) -> ImportedHistory {
+        ImportedHistory {
+            source: ExternalHistorySource::ClaudeCode,
+            title: format!("debugging {secret} against staging"),
+            cwd: PathBuf::from("/tmp/repository"),
+            source_path: PathBuf::from("/tmp/session.jsonl"),
+            source_sha256: "0".repeat(64),
+            turns: vec![ImportedTurn {
+                question: format!("why does {secret} return 403?"),
+                answer: format!("that key is revoked; rotate {secret} and retry"),
+            }],
+        }
+    }
+
+    /// THE NETWORK SINK. `model_context()` is the only value from an imported transcript that
+    /// leaves this process for `api.fatelabs.ca` (`session_server.rs:797` stores it, `:846`
+    /// prepends it to `session_context`, and `answer_question` posts it). The session server
+    /// receives `ImportedHistory` deserialized off the socket, so it cannot assume any caller
+    /// already redacted: this is the fail-closed pass.
+    #[test]
+    fn model_context_never_emits_a_credential_shaped_string() {
+        let secret = detectable_credential_fixture();
+        let context = history_carrying(&secret).model_context();
+
+        assert!(
+            !context.contains(&secret),
+            "model_context() forwarded the credential verbatim to the deep-search sink"
+        );
+        assert!(
+            context.to_lowercase().contains("redacted"),
+            "expected a redaction marker naming the loss, got: {context}"
+        );
+        // Redaction, not truncation: the surrounding conversation must still travel, or the
+        // import feature stops being worth having.
+        assert!(context.contains("return 403?"), "context: {context}");
+        assert!(
+            context.contains("Imported Claude Code session"),
+            "context: {context}"
+        );
+    }
+
+    /// THE INGEST BOUNDARY. Redacting only at the sink would leave the raw credential in the
+    /// session server's in-memory turns and on the local socket, so the value is scrubbed the
+    /// moment it is read off another harness's disk. `load_latest_history` is the module's only
+    /// entry point, so this is one owner for all three sources.
+    #[test]
+    fn redaction_at_ingest_scrubs_every_field_that_carries_transcript_text() {
+        let secret = detectable_credential_fixture();
+        let redacted = history_carrying(&secret).redacted();
+
+        assert!(!redacted.title.contains(&secret), "title leaked");
+        assert!(
+            !redacted.turns[0].question.contains(&secret),
+            "question leaked"
+        );
+        assert!(!redacted.turns[0].answer.contains(&secret), "answer leaked");
+        // Provenance is not transcript text and must survive byte-identical, or the read-only
+        // source check in `load_latest_history` starts comparing against a rewritten value.
+        assert_eq!(redacted.source_sha256, "0".repeat(64));
+        assert_eq!(redacted.source_path, PathBuf::from("/tmp/session.jsonl"));
+        assert_eq!(redacted.cwd, PathBuf::from("/tmp/repository"));
+    }
+
+    /// The two passes above both run on a real import. If redaction were not idempotent the
+    /// second would corrupt the first's markers, so the double pass is asserted, not assumed.
+    #[test]
+    fn redaction_is_idempotent_so_the_two_passes_cannot_corrupt_each_other() {
+        let secret = detectable_credential_fixture();
+        let once = history_carrying(&secret).redacted();
+        let twice = once.clone().redacted();
+        assert_eq!(once, twice);
+        assert_eq!(once.model_context(), twice.model_context());
+    }
 
     #[test]
     fn converts_complete_turns_and_ignores_the_import_marker() {
