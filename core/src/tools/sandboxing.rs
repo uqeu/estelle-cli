@@ -35,6 +35,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Default, Debug)]
@@ -62,12 +63,105 @@ impl ApprovalStore {
     }
 }
 
-/// Takes a vector of approval keys and returns a ReviewDecision.
-/// There will be one key in most cases, but apply_patch can modify multiple files at once.
+/// Who actually answered an approval request.
+///
+/// Ported from jcode's `Decision.decided_via` -- a NON-optional field on every
+/// recorded decision (`crates/jcode-base/src/safety.rs:76-84`, MIT,
+/// Copyright (c) 2025 Jeremy Huang) -- and kimi-cli's
+/// `ApprovalRequestRecord.approved_via_session_cache`
+/// (`src/kimi_cli/approval_runtime/models.py:37`, Apache-2.0).
+///
+/// An audit that cannot distinguish "a human was asked" from "a prior 'always'
+/// answered" is not an audit: it cannot see rubber-stamping and it cannot
+/// answer "why was this allowed?".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ApprovalDecidedVia {
+    /// The request reached a decider (a human, or the guardian reviewer).
+    Prompt,
+    /// Answered by a stored session-scoped "always" without asking anyone.
+    SessionCache,
+}
+
+impl ApprovalDecidedVia {
+    /// The value that reaches telemetry. Pinned by
+    /// `sandboxing_tests::decided_via_wire_values_are_stable`.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Prompt => "prompt",
+            Self::SessionCache => "session_cache",
+        }
+    }
+}
+
+/// A decision plus its provenance. The two travel together so no caller can
+/// record one without the other.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ApprovalOutcome {
+    pub(crate) decision: ReviewDecision,
+    pub(crate) decided_via: ApprovalDecidedVia,
+}
+
+/// Resolve an approval against the session cache, reporting WHICH path answered.
+///
+/// Split out of `with_cached_approval` so the provenance is a value the tests
+/// can assert on rather than a side effect only a metrics backend can see.
+/// Takes the store directly, not `SessionServices`, so it is unit-testable.
 ///
 /// - If all keys are already approved for session, we skip prompting.
 /// - If the user approves for session, we store the decision for each key individually
 ///   so future requests touching any subset can also skip prompting.
+pub(crate) async fn resolve_cached_approval<K, F, Fut>(
+    tool_approvals: &Mutex<ApprovalStore>,
+    keys: Vec<K>,
+    fetch: F,
+) -> ApprovalOutcome
+where
+    K: Serialize,
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = ReviewDecision>,
+{
+    // To be defensive here, don't bother with checking the cache if keys are empty.
+    if keys.is_empty() {
+        return ApprovalOutcome {
+            decision: fetch().await,
+            decided_via: ApprovalDecidedVia::Prompt,
+        };
+    }
+
+    let already_approved = {
+        let store = tool_approvals.lock().await;
+        keys.iter()
+            .all(|key| matches!(store.get(key), Some(ReviewDecision::ApprovedForSession)))
+    };
+
+    if already_approved {
+        return ApprovalOutcome {
+            decision: ReviewDecision::ApprovedForSession,
+            decided_via: ApprovalDecidedVia::SessionCache,
+        };
+    }
+
+    let decision = fetch().await;
+
+    if matches!(decision, ReviewDecision::ApprovedForSession) {
+        let mut store = tool_approvals.lock().await;
+        for key in keys {
+            store.put(key, ReviewDecision::ApprovedForSession);
+        }
+    }
+
+    ApprovalOutcome {
+        decision,
+        decided_via: ApprovalDecidedVia::Prompt,
+    }
+}
+
+/// Takes a vector of approval keys and returns a ReviewDecision.
+/// There will be one key in most cases, but apply_patch can modify multiple files at once.
+///
+/// Every decision is counted exactly once, from ONE exit point, carrying
+/// `decided_via`. Before this had a single owner, the counter was emitted only
+/// on the branch that prompted, so a cache hit was invisible to the audit.
 pub(crate) async fn with_cached_approval<K, F, Fut>(
     services: &SessionServices,
     // Name of the tool, used for metrics collection.
@@ -80,40 +174,19 @@ where
     F: FnOnce() -> Fut,
     Fut: Future<Output = ReviewDecision>,
 {
-    // To be defensive here, don't bother with checking the cache if keys are empty.
-    if keys.is_empty() {
-        return fetch().await;
-    }
-
-    let already_approved = {
-        let store = services.tool_approvals.lock().await;
-        keys.iter()
-            .all(|key| matches!(store.get(key), Some(ReviewDecision::ApprovedForSession)))
-    };
-
-    if already_approved {
-        return ReviewDecision::ApprovedForSession;
-    }
-
-    let decision = fetch().await;
+    let outcome = resolve_cached_approval(&services.tool_approvals, keys, fetch).await;
 
     services.session_telemetry.counter(
         "codex.approval.requested",
         /*inc*/ 1,
         &[
             ("tool", tool_name),
-            ("approved", decision.to_opaque_string()),
+            ("approved", outcome.decision.to_opaque_string()),
+            ("decided_via", outcome.decided_via.as_str()),
         ],
     );
 
-    if matches!(decision, ReviewDecision::ApprovedForSession) {
-        let mut store = services.tool_approvals.lock().await;
-        for key in keys {
-            store.put(key, ReviewDecision::ApprovedForSession);
-        }
-    }
-
-    decision
+    outcome.decision
 }
 
 #[derive(Clone)]

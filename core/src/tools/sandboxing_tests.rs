@@ -287,3 +287,103 @@ fn exec_server_env_keeps_command_native_and_carries_sandbox_context() {
     assert!(!request.exec_server_enforce_managed_network);
     assert_eq!(request.exec_server_managed_network, Some(managed_network));
 }
+
+// ---------------------------------------------------------------------------
+// Ported from the rival-CLI teardown, take-list #3 and #10.
+//
+// jcode's `Decision` carries a NON-OPTIONAL `decided_via: String`
+// (`crates/jcode-base/src/safety.rs:76-84`, MIT, Copyright (c) 2025 Jeremy
+// Huang), and kimi-cli records `approved_via_session_cache: bool` on every
+// approval record (`src/kimi_cli/approval_runtime/models.py:37`, Apache-2.0).
+//
+// Both exist for the same reason: an audit that cannot tell "a human was
+// asked" from "a prior always answered" is not an audit. Before this change
+// `with_cached_approval` emitted `codex.approval.requested` ONLY on the branch
+// that actually prompted, so a cache hit was invisible: the counter
+// under-reported approvals and no field distinguished the two.
+// ---------------------------------------------------------------------------
+
+/// A cache hit and a prompt are different events and must not be reported as
+/// the same one.
+#[tokio::test]
+async fn cache_hit_and_prompt_are_distinguishable_in_the_audit() {
+    let store = Mutex::new(ApprovalStore::default());
+    let keys = vec!["cmd::rm -rf build".to_string()];
+
+    // First call: nobody has answered yet, so the human is asked.
+    let first = resolve_cached_approval(&store, keys.clone(), || async {
+        ReviewDecision::ApprovedForSession
+    })
+    .await;
+    assert_eq!(ApprovalDecidedVia::Prompt, first.decided_via);
+    assert_eq!(ReviewDecision::ApprovedForSession, first.decision);
+
+    // Second call: answered by the stored "always". Same decision, DIFFERENT
+    // provenance -- and the fetch closure must not run at all.
+    let second = resolve_cached_approval(&store, keys, || async {
+        panic!("a cached approval must not re-prompt the human");
+    })
+    .await;
+    assert_eq!(ApprovalDecidedVia::SessionCache, second.decided_via);
+    assert_eq!(ReviewDecision::ApprovedForSession, second.decision);
+
+    assert_ne!(
+        first.decided_via, second.decided_via,
+        "an approval answered by a prior 'always' must not be recorded \
+         identically to one a human was actually asked"
+    );
+}
+
+/// The exemption shape: only `ApprovedForSession` is cached. A one-off
+/// approval, a denial and a timeout must each re-prompt, and must each be
+/// recorded as `Prompt` -- never silently promoted into a stored always.
+#[tokio::test]
+async fn non_session_decisions_are_never_served_from_the_cache() {
+    for decision in [
+        ReviewDecision::Approved,
+        ReviewDecision::denied("no"),
+        ReviewDecision::TimedOut,
+        ReviewDecision::Abort,
+    ] {
+        let store = Mutex::new(ApprovalStore::default());
+        let keys = vec!["cmd::curl".to_string()];
+
+        let first = resolve_cached_approval(&store, keys.clone(), {
+            let decision = decision.clone();
+            || async move { decision }
+        })
+        .await;
+        assert_eq!(ApprovalDecidedVia::Prompt, first.decided_via);
+
+        let second = resolve_cached_approval(&store, keys, {
+            let decision = decision.clone();
+            || async move { decision }
+        })
+        .await;
+        assert_eq!(
+            ApprovalDecidedVia::Prompt,
+            second.decided_via,
+            "{decision:?} must not have been cached"
+        );
+    }
+}
+
+/// Empty keys are the defensive path: nothing to look up, so the decision is
+/// always a fresh prompt and is never attributed to a cache.
+#[tokio::test]
+async fn empty_keys_are_reported_as_a_prompt_not_a_cache_hit() {
+    let store = Mutex::new(ApprovalStore::default());
+    let outcome = resolve_cached_approval(&store, Vec::<String>::new(), || async {
+        ReviewDecision::Approved
+    })
+    .await;
+    assert_eq!(ApprovalDecidedVia::Prompt, outcome.decided_via);
+}
+
+/// `decided_via` is the string that reaches telemetry; pin the wire values so a
+/// rename cannot silently split a dashboard in two.
+#[test]
+fn decided_via_wire_values_are_stable() {
+    assert_eq!("prompt", ApprovalDecidedVia::Prompt.as_str());
+    assert_eq!("session_cache", ApprovalDecidedVia::SessionCache.as_str());
+}
