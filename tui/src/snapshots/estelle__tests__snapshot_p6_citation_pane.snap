@@ -1,6 +1,6 @@
 ---
 source: tui/src/main.rs
-assertion_line: 10735
+assertion_line: 11788
 expression: "rendered_frame_at_size(&app, Instant::now(), 120, 30)"
 ---
 "ESTELLE  ·  uqeu/estelle                                                                                                "
@@ -32,4 +32,4 @@ expression: "rendered_frame_at_size(&app, Instant::now(), 120, 30)"
 "                                                                                                                        "
 "                                                                                                                        "
 "                                                                                                                        "
-"  enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop                                                       "
+"  enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection                                    "

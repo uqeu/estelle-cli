@@ -332,6 +332,41 @@ fn run_state(app: &App, now: Instant) -> Option<(marks::Mark, String)> {
     None
 }
 
+/// The `○` and the space after it, which the label must not be allowed to overrun.
+const QUEUE_MARK_COLS: usize = 2;
+
+/// The waiting messages, marked `○` and dimmed, with the keys that act on them.
+///
+/// ⚠️ **`○` IS NOT INVENTED FOR THIS BAND.** It is `marks::Mark::Queued` — "queued · idle" in the
+/// five-mark vocabulary the founder picked, and the same glyph the status row uses for the same
+/// state. A sixth glyph for "waiting to send" would have been a second name for one meaning.
+///
+/// The text is dim because a waiting message has not happened yet; the transcript's own echo of it
+/// is at full strength because that one is a record of what was asked.
+fn queue_band_lines(app: &App, palette: &theme::Palette, width: usize) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::styled(
+        format!("{} waiting", app.queue.len()),
+        Style::default().fg(palette.dim),
+    )];
+    lines.extend(app.queue.iter().map(|pending| {
+        Line::from(vec![
+            Span::styled(
+                format!("{} ", marks::Mark::Queued.glyph()),
+                Style::default().fg(marks::Mark::Queued.colour(palette)),
+            ),
+            Span::styled(
+                truncate_display(&pending.label(), width.saturating_sub(QUEUE_MARK_COLS)),
+                Style::default().fg(palette.dim),
+            ),
+        ])
+    }));
+    lines.push(Line::styled(
+        "\u{2191} edit all \u{b7} ctrl+x drop the last \u{b7} esc drop all",
+        Style::default().fg(palette.dim),
+    ));
+    lines
+}
+
 pub(super) fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     Rect {
         x: area.x + area.width.saturating_sub(width) / 2,
@@ -2506,6 +2541,27 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             sweep_rows[2]
         } else {
             transcript_band
+        };
+        // 🔴 THE WAITING BAND. The founder sent five messages, watched five identical `you › …`
+        // rows appear, and said "queue doesn't work lol" — nothing on screen told him which had
+        // been sent and which were waiting, so a working queue read as a broken one. The band is
+        // drawn from `app.queue` itself and sits directly above the composer, where the next
+        // thing to happen is the thing to look at.
+        let transcript_root = if app.queue.is_empty() {
+            transcript_root
+        } else {
+            let lines = queue_band_lines(app, &palette, usize::from(transcript_root.width));
+            let wanted = u16::try_from(lines.len()).unwrap_or(u16::MAX);
+            // Bounded like every other band: the queue is capped at MAX_QUEUED_REQUESTS, but the
+            // TERMINAL is not, and a band that can eat the transcript is a band that hides the
+            // answer you are waiting for.
+            let height = wanted.min(transcript_root.height.saturating_sub(1));
+            let bands = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(1), Constraint::Length(height)])
+                .split(transcript_root);
+            frame.render_widget(Paragraph::new(lines), bands[1]);
+            bands[0]
         };
         let transcript = render_transcript_with_citations(
             &app.transcript,

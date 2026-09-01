@@ -1,6 +1,6 @@
 ---
 source: tui/src/main.rs
-assertion_line: 9197
+assertion_line: 9695
 expression: "rendered_frame(&app, started + Duration::from_secs(93))"
 ---
 "ESTELLE  ·  uqeu/estelle                                                        "
@@ -26,4 +26,4 @@ expression: "rendered_frame(&app, started + Duration::from_secs(93))"
 "                                                                                "
 "                                                                                "
 "                                                                                "
-"  enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop               "
+"  enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selec"

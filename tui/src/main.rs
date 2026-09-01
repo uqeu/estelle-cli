@@ -495,8 +495,8 @@ impl EventSourceLease<EventStream> {
 /// 🔴 **`EnableMouseCapture` TAKES EVERY DRAG AWAY FROM THE TERMINAL.** It was executed
 /// unconditionally on entry with no toggle anywhere in the crate, so for a whole session the user
 /// could not highlight a single line of output, let alone copy it. Scroll and click-to-focus are
-/// real and depend on capture, so `alt+s` SUSPENDS it and hands the mouse back — this is not a
-/// deletion.
+/// real and depend on capture, so `ctrl+o` (or `/select`) SUSPENDS it and hands the mouse back —
+/// this is not a deletion.
 ///
 /// Process-global on purpose, and this is the case that earns it: there is exactly ONE terminal
 /// per process and capture is a property of that terminal, not of an `App`. It has exactly one
@@ -639,6 +639,28 @@ enum QueuedRequest {
         diff: String,
         reverse: bool,
     },
+}
+
+impl QueuedRequest {
+    /// What the user typed, as the waiting band should show it back to them.
+    ///
+    /// 🔴 **THE BAND READS `app.queue` DIRECTLY, WHICH IS WHY IT CANNOT LIE.** The alternative
+    /// considered was decorating the transcript's trailing `User` rows — and it is UNSOUND: a
+    /// local command like `/help` echoes a `User` row WITHOUT enqueuing anything, so "the last
+    /// `queue.len()` user rows" points at the wrong rows the moment one is submitted. Deriving
+    /// the band from the queue itself has one owner and no correlation to get wrong.
+    fn label(&self) -> String {
+        match self {
+            Self::Question { question, .. } => question.clone(),
+            Self::Shell { command, .. } => format!("!{command}"),
+            Self::Command(command) => format!("/{} {}", command.name, command.argument)
+                .trim_end()
+                .to_string(),
+            Self::Sweep => "/sweep".to_string(),
+            Self::Compact { .. } => "/compact".to_string(),
+            Self::Apply { reverse, .. } => if *reverse { "/undo" } else { "/apply" }.to_string(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1048,6 +1070,31 @@ struct PickerSurface {
     title: String,
     rows: Vec<PickerRow>,
     selected: usize,
+}
+
+/// The most playbook rows the skills picker will ever hand to the renderer.
+///
+/// A NAMED bound, not a literal buried in a `.take()`: `render_picker` paints rows with no scroll
+/// offset, so any row past this is unreachable by keypress and printing more is not "a longer list"
+/// but an invisible one. Nine because the picker's own footer offers `1-9` direct selection — the
+/// window and the advertised affordance are the same size on purpose.
+const MAX_SKILL_PICKER_ROWS: usize = 9;
+
+/// Collapse prose to a single bounded line.
+///
+/// Server summaries arrive as paragraphs with embedded newlines. A picker row is one line, so a
+/// three-line summary silently became three rows and pushed the rest off the modal.
+fn one_line(value: &str) -> String {
+    let collapsed = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    const MAX: usize = 72;
+    if collapsed.chars().count() <= MAX {
+        return collapsed;
+    }
+    collapsed
+        .chars()
+        .take(MAX.saturating_sub(1))
+        .chain(std::iter::once('\u{2026}'))
+        .collect()
 }
 
 impl PickerSurface {
@@ -1468,8 +1515,13 @@ impl PickerSurface {
         }
     }
 
-    fn skills(reply: &CommandReply) -> Self {
-        let mut rows = reply
+    /// Every playbook the server returned, validated, in server order and UNBOUNDED.
+    ///
+    /// This is the CATALOG, not a surface. Nothing renders it directly — [`Self::skills_filtered`]
+    /// takes a bounded slice of it. Separating the two is what stopped 247 rows from being handed
+    /// to a renderer that clips without scrolling, where every row past the fold was unreachable.
+    fn skill_catalog(reply: &CommandReply) -> Vec<PickerRow> {
+        reply
             .extra
             .get("skills")
             .and_then(Value::as_array)
@@ -1489,20 +1541,69 @@ impl PickerSurface {
                         .get("summary")
                         .and_then(Value::as_str)
                         .map(mask_secret)
+                        .map(|summary| one_line(&summary))
                         .unwrap_or_else(|| "server playbook".to_string()),
                     action: PickerAction::InvokeSkill(name.to_string()),
                 })
             })
+            .collect()
+    }
+
+    /// A SCREENFUL of the catalog, narrowed by `filter`.
+    ///
+    /// 🔴 **BOUND THE RESOURCE BEFORE YOU TAKE IT.** `render_picker` sizes its modal from
+    /// `rows.len()`, clamps that to the available height, and then paints the rows with **no scroll
+    /// offset** — so handing it 247 rows does not produce a long list, it produces a list whose
+    /// tail cannot be reached by any keypress. The bound belongs here, at the point the surface is
+    /// built, not in the renderer that would have to clip it.
+    ///
+    /// ⚠️ The title carries the counts because the footer cannot: the hint row inside
+    /// `render_picker` is a fixed string owned by another lane, so "type to filter" cannot be
+    /// advertised there. Users therefore have to discover filtering, which is a real
+    /// discoverability gap and is reported rather than papered over.
+    fn skills_filtered(catalog: &[PickerRow], filter: &str) -> Self {
+        let needle = filter.trim().to_ascii_lowercase();
+        let matched = catalog
+            .iter()
+            .filter(|row| needle.is_empty() || row.label.to_ascii_lowercase().contains(&needle))
             .collect::<Vec<_>>();
+        let mut rows = matched
+            .iter()
+            .take(MAX_SKILL_PICKER_ROWS)
+            .map(|row| (*row).clone())
+            .collect::<Vec<_>>();
+        let title = if catalog.is_empty() {
+            "Skills".to_string()
+        } else if needle.is_empty() {
+            format!(
+                "Skills · {} of {} · type to filter",
+                rows.len(),
+                catalog.len()
+            )
+        } else {
+            format!(
+                "Skills · {} of {} match \"{needle}\" · backspace clears",
+                rows.len(),
+                matched.len()
+            )
+        };
         if rows.is_empty() {
             rows.push(PickerRow {
-                label: "No playbooks returned".to_string(),
-                detail: "the server registry is empty".to_string(),
+                label: if catalog.is_empty() {
+                    "No playbooks returned".to_string()
+                } else {
+                    "No playbook matches".to_string()
+                },
+                detail: if catalog.is_empty() {
+                    "the server registry is empty".to_string()
+                } else {
+                    "backspace to widen the filter".to_string()
+                },
                 action: PickerAction::None,
             });
         }
         Self {
-            title: "Skills".to_string(),
+            title,
             rows,
             selected: 0,
         }
@@ -1726,6 +1827,12 @@ struct App {
     tool_click_targets: RefCell<Vec<ToolClickTarget>>,
     dither_wake: VecDeque<usize>,
     picker: Option<PickerSurface>,
+    /// Every playbook `/skills` returned, unfiltered. Non-empty ONLY while the skills picker is
+    /// open, which is what makes "is this picker filterable" a fact about state rather than a
+    /// string comparison on the picker's title.
+    skill_catalog: Vec<PickerRow>,
+    /// What the user has typed to narrow [`Self::skill_catalog`].
+    skill_filter: String,
     resume_picker: Option<ExternalResumePicker>,
     settings: Option<CommandReply>,
     pending_setting_input: Option<PendingSettingInput>,
@@ -1788,11 +1895,17 @@ fn ask_hints_line() -> String {
     ask_hints_line_with(!mouse_is_captured())
 }
 
-/// ⚠️ **THE FIVE PAIRS STAY THE DEMO'S ROW, VERBATIM.** `selection on` is appended only while the
-/// mouse is suspended, so the row in every screenshot and every snapshot is still the one the
-/// founder picked off the demo — a sixth permanent hint would quietly rewrite it. The cost is that
-/// `alt+s` is not advertised until you have already pressed it; that is a real discoverability gap
-/// and it is the founder's call, not this lane's, whether the demo row grows a sixth pair.
+/// 🔴 **THE SIXTH PAIR IS PERMANENT, AND THAT IS A DELIBERATE DEPARTURE FROM THE DEMO ROW.**
+///
+/// The first version of this appended `selection on` only while the mouse was already suspended,
+/// to keep the founder's five demo pairs untouched. That made the feature **undiscoverable**: a
+/// user cannot press a key they have never been told exists, and in fact he learned it existed
+/// from a message rather than from the product. Discoverability wins over the verbatim row, and
+/// the five keep their wording and their order — the row gains a pair, it does not lose one.
+///
+/// Worth saying plainly: this sixth pair is the only one of the six that is BOUND AND WORKS on
+/// macOS today. Three of the demo's five (`tab`, `ctrl+s`, `ctrl+m`) are still unbound, which is
+/// recorded in `ASK_HINTS_NOT_BOUND`.
 ///
 /// Split from [`ask_hints_line`] so both states are testable without writing the process-global.
 fn ask_hints_line_with(selection_on: bool) -> String {
@@ -1801,9 +1914,11 @@ fn ask_hints_line_with(selection_on: bool) -> String {
         .map(|(key, label)| format!("{key} {label}"))
         .collect::<Vec<_>>()
         .join(" \u{b7} ");
-    if selection_on {
-        row.push_str(" \u{b7} selection on");
-    }
+    row.push_str(if selection_on {
+        " \u{b7} ctrl+o selection on"
+    } else {
+        " \u{b7} ctrl+o selection"
+    });
     row
 }
 
@@ -2030,6 +2145,8 @@ impl App {
             tool_click_targets: RefCell::new(Vec::new()),
             dither_wake: VecDeque::from([0]),
             picker: None,
+            skill_catalog: Vec::new(),
+            skill_filter: String::new(),
             resume_picker: None,
             settings: None,
             pending_setting_input: None,
@@ -2095,6 +2212,17 @@ impl App {
             self.transcript.push(TranscriptEntry::System(
                 "Credential-shaped input was masked and was not sent.".to_string(),
             ));
+            self.composer = estelle_composer();
+            return;
+        }
+        // `/select` and `/mouse` never leave the client, so they are handled ahead of the
+        // parser. ⚠️ LIMIT, stated: because this does not go through `commands.rs`, the name does
+        // NOT appear in the `/` autocomplete menu or in `/help` — the hint row is what makes it
+        // discoverable. `commands.rs` is another lane's file and is uncommitted in this tree; a
+        // catalog entry there is the follow-up, not a thing to sweep into this commit.
+        if matches!(text.as_str(), "/select" | "/mouse") {
+            self.transcript.push(TranscriptEntry::User(text));
+            self.toggle_terminal_selection();
             self.composer = estelle_composer();
             return;
         }
@@ -2671,6 +2799,23 @@ impl App {
         )));
     }
 
+    /// Forget the playbook catalog, so the picker stops consuming letters once it is closed.
+    ///
+    /// ⚠️ Leaving the catalog loaded would make every subsequent picker swallow typed characters —
+    /// the filter's own affordance leaking into surfaces that never advertised it.
+    fn clear_skill_filter(&mut self) {
+        self.skill_catalog.clear();
+        self.skill_filter.clear();
+    }
+
+    /// Rebuild the visible skills picker from the catalog and the current filter.
+    fn refilter_skills(&mut self) {
+        self.picker = Some(PickerSurface::skills_filtered(
+            &self.skill_catalog,
+            &self.skill_filter,
+        ));
+    }
+
     fn activate_picker(&mut self, tx: &mpsc::UnboundedSender<UiEvent>) {
         let action = self
             .picker
@@ -2757,9 +2902,18 @@ impl App {
                 self.picker = None;
                 self.submit("/skills".to_string(), tx);
             }
+            // 🔴 **SELECTING A PLAYBOOK LOADS THE COMPOSER; IT DOES NOT FIRE THE REQUEST.**
+            //
+            // Firing immediately sent `/skill:<name>` with an EMPTY task, which is how a skill run
+            // comes back having done nothing. Almost every playbook needs a task, and the picker is
+            // where the user has just decided WHICH playbook — not yet what to point it at.
+            // Loading the composer with a trailing space puts the caret exactly where the task
+            // goes, and enter is still one keypress away.
             PickerAction::InvokeSkill(name) => {
                 self.picker = None;
-                self.submit(format!("/skill:{name}"), tx);
+                self.clear_skill_filter();
+                self.composer.set_text(format!("/skill:{name} "));
+                let _ = tx;
             }
             PickerAction::OpenSuite(suite) => {
                 self.picker = Some(PickerSurface::suite(self, &suite));
@@ -3279,17 +3433,62 @@ impl App {
             }
             active.cancel.cancel();
             let waiting = self.queue.len();
-            self.transcript
-                .push(TranscriptEntry::System(match waiting {
-                    0 => "Request cancelled.".to_string(),
-                    1 => "Request cancelled. 1 queued message is still waiting; esc again drops it."
-                        .to_string(),
-                    many => format!(
-                        "Request cancelled. {many} queued messages are still waiting; esc again \
+            self.transcript.push(TranscriptEntry::System(match waiting {
+                0 => "Request cancelled.".to_string(),
+                1 => "Request cancelled. 1 queued message is still waiting; esc again drops it."
+                    .to_string(),
+                many => format!(
+                    "Request cancelled. {many} queued messages are still waiting; esc again \
                          drops them."
-                    ),
-                }));
+                ),
+            }));
         }
+    }
+
+    /// Pull every waiting message back into the composer as ONE editable draft.
+    ///
+    /// The founder asked for exactly this: *"press the up arrow to combine all of them and then
+    /// you can edit all of them"*. Combine, not walk — one draft carrying every waiting message
+    /// in order, which he can then edit as a block and resend.
+    ///
+    /// ⚠️ **THE ECHOES STAY, AND THE TRANSCRIPT SAYS WHY.** Each recalled message was already
+    /// echoed when it was submitted. Removing those rows would need a transcript-row-to-queue
+    /// correlation this client does not have and cannot soundly derive (see
+    /// [`QueuedRequest::label`]). Leaving them silently would show the user his own words with no
+    /// account of what became of them — the exact defect this whole item exists to remove. So the
+    /// rows stay as the historical record and a line states plainly that they were NOT sent.
+    fn recall_queue_into_composer(&mut self) {
+        if self.queue.is_empty() {
+            return;
+        }
+        let recalled = self
+            .queue
+            .iter()
+            .map(QueuedRequest::label)
+            .collect::<Vec<_>>();
+        self.queue.clear();
+        let count = recalled.len();
+        self.composer.set_text(recalled.join("\n"));
+        self.transcript.push(TranscriptEntry::System(format!(
+            "Recalled {count} queued message{} into the composer. \
+             {} not sent; edit and press enter to send {}.",
+            if count == 1 { "" } else { "s" },
+            if count == 1 { "It was" } else { "They were" },
+            if count == 1 { "it" } else { "them" }
+        )));
+    }
+
+    /// Drop the message at the BACK of the queue — the most recently added, and the one a user
+    /// reaching for "undo that" means. The rest keep their order.
+    fn drop_last_queued(&mut self) {
+        let Some(dropped) = self.queue.pop_back() else {
+            return;
+        };
+        self.transcript.push(TranscriptEntry::System(format!(
+            "Dropped {:?} from the queue. {} still waiting.",
+            dropped.label(),
+            self.queue.len()
+        )));
     }
 
     /// Drop everything still waiting, and name how much was dropped.
@@ -3317,11 +3516,11 @@ impl App {
     fn toggle_terminal_selection(&mut self) {
         let note = match toggle_mouse_capture(&mut io::stdout()) {
             Ok(false) => "selection on \u{b7} the terminal owns the mouse now, so drag to select \
-                 and copy the way you would anywhere else. alt+s hands it back to Estelle, which \
-                 is what scroll and click-to-focus need."
+                 and copy the way you would anywhere else. ctrl+o (or /select) hands it back to \
+                 Estelle, which is what scroll and click-to-focus need."
                 .to_string(),
             Ok(true) => "selection off \u{b7} Estelle owns the mouse again: scroll and \
-                 click-to-focus work, and the terminal can no longer see a drag. alt+s to select."
+                 click-to-focus work, and the terminal can no longer see a drag. ctrl+o to select."
                 .to_string(),
             // A terminal that refuses the mode change must not take the session down, and must not
             // be reported as if it had complied.
@@ -3530,7 +3729,9 @@ impl App {
         if name == "model" {
             self.picker = Some(PickerSurface::model(&reply));
         } else if name == "skills" {
-            self.picker = Some(PickerSurface::skills(&reply));
+            self.skill_catalog = PickerSurface::skill_catalog(&reply);
+            self.skill_filter.clear();
+            self.picker = Some(PickerSurface::skills_filtered(&self.skill_catalog, ""));
         }
         if matches!(name, "model" | "routing")
             && let Some(model) = observed_model(&reply)
@@ -5700,13 +5901,39 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
     }
     if let Some(picker) = app.picker.as_mut() {
         match key.code {
-            KeyCode::Esc if !app.login_required => app.picker = None,
+            KeyCode::Esc if !app.login_required => {
+                app.picker = None;
+                app.clear_skill_filter();
+            }
             KeyCode::Esc => {}
             KeyCode::Down => {
                 picker.selected = (picker.selected + 1).min(picker.rows.len().saturating_sub(1));
             }
             KeyCode::Up => picker.selected = picker.selected.saturating_sub(1),
             KeyCode::Enter => app.activate_picker(tx),
+            // 🔴 **TYPE TO FILTER — 247 PLAYBOOKS ARE NOT NAVIGABLE BY ARROW KEY.**
+            //
+            // Only a filterable picker consumes letters, which is a fact about `skill_catalog`
+            // being loaded rather than a string comparison on the picker's title.
+            //
+            // ⚠️ DIGITS ARE DELIBERATELY NOT TAKEN. The picker's footer advertises `1-9 select`,
+            // and that footer is a fixed string this lane does not own — so stealing digits for
+            // the filter would turn an advertised affordance into a lie. The cost is that a
+            // playbook can only be narrowed by its letters and dashes; the digits in a name are
+            // still reachable, just not typeable into the filter.
+            KeyCode::Backspace if !app.skill_catalog.is_empty() => {
+                app.skill_filter.pop();
+                app.refilter_skills();
+            }
+            KeyCode::Char(c)
+                if !app.skill_catalog.is_empty()
+                    && (c.is_ascii_alphabetic() || c == '-')
+                    && !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                app.skill_filter.push(c.to_ascii_lowercase());
+                app.refilter_skills();
+            }
             // Number-key direct select, ported from Codex's ListSelectionView
             // (bottom_pane/list_selection_view.rs:1054): a digit picks that row and activates
             // it in one keypress — no arrow walk, no Enter.
@@ -5768,10 +5995,22 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
         app.toggle_context_panel();
         return false;
     }
-    // `alt+s` — free in BOTH keymaps: this binary binds alt+m, ctrl+t, ctrl+w, ctrl+tab, alt+
-    // arrows and `?`, and the library keymap the composer runs on binds alt+r/b/f/d/,/. and
-    // ctrl+s (history search), but nothing anywhere binds alt+s.
-    if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::ALT) {
+    // 🔴 **NEVER BIND `alt+<letter>` IN THIS BINARY. macOS EATS IT BEFORE WE SEE IT.**
+    //
+    // This was `alt+s` for one commit and it was a real defect: on macOS, Option is a COMPOSE
+    // modifier, not a meta key. Terminal.app ships with "Use Option as Meta key" OFF, so Option+S
+    // produces the character `ß` and no modified key event is ever sent — the founder pressed it
+    // and the composer filled with `ßßßßßßß`. The binding was not wrong, the keystroke never
+    // arrived. Every letter is affected (alt+m → µ, alt+r → ®, alt+n → ˜, alt+e → ´), so checking
+    // "which chords do our two keymaps bind" is NOT a sufficient survey — the question is which
+    // chords reach the process at all.
+    //
+    // `ctrl+o` instead: Ctrl chords arrive as control characters and are never composed. Free
+    // three ways — `handle_key` binds only ctrl+c/t/w/x, `ChatComposer` never reads it (it
+    // consumes `EditorKeymap`/`ComposerKeymap`, while `copy: ctrl+o` lives in `AppKeymap`, which
+    // only the chatwidget consumes), and `the_selection_toggle_is_a_control_chord_and_reaches_it`
+    // goes red the day either of those stops being true.
+    if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
         app.toggle_terminal_selection();
         return false;
     }
@@ -5826,6 +6065,31 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
     }
     if key.code == KeyCode::Tab && !app.composer.text().trim_start().starts_with('/') {
         app.move_focus(true);
+        return false;
+    }
+    // 🔴 UP RECALLS THE WAITING MESSAGES, BUT ONLY WHEN UP HAS NOTHING ELSE TO MEAN.
+    //
+    // The composer already owns `up` for draft history, and the transcript owns it for scrolling.
+    // Stealing the key outright would break both. It is claimed ONLY when the composer is empty
+    // (so there is no draft history walk in progress), the focus is the composer, and something
+    // is actually waiting — a conjunction in which `up` previously did nothing useful.
+    if key.code == KeyCode::Up
+        && key.modifiers.is_empty()
+        && app.focus == FocusSurface::Composer
+        && app.composer.is_empty()
+        && !app.queue.is_empty()
+    {
+        app.recall_queue_into_composer();
+        return false;
+    }
+    // ctrl+x drops the most recently queued message. `esc` already drops the WHOLE queue, so this
+    // is the granular half the founder asked for: "you can just delete that message from the
+    // queue". Verified unbound elsewhere in this handler before taking it.
+    if key.code == KeyCode::Char('x')
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+        && !app.queue.is_empty()
+    {
+        app.drop_last_queued();
         return false;
     }
     if app.focus == FocusSurface::Transcript {
@@ -7491,8 +7755,9 @@ mod tests {
         .expect("gallery skills");
         let mut skills = test_app();
         skills.prod_panel_visible = false;
-        skills.picker = Some(PickerSurface::skills(&skills_reply));
-        capture("12-skills", &skills, 130, 34, "── skills ─");
+        skills.skill_catalog = PickerSurface::skill_catalog(&skills_reply);
+        skills.refilter_skills();
+        capture("12-skills", &skills, 130, 34, "── skills · 3 of 3");
 
         let todo: estelle_client::TodoSnapshot = serde_json::from_value(json!({
             "observed_at": 4102444800.0,
@@ -8279,7 +8544,10 @@ mod tests {
         );
 
         let skills = rendered_frame_at_size(&app, Instant::now(), 120, 32);
-        assert!(skills.contains("── skills ─"), "{skills}");
+        // ⚠️ The title now carries the counts and the filter affordance, because the picker's
+        // footer is a fixed string this lane does not own. Asserting the bare old rule would pin a
+        // title that can no longer tell the user 247 playbooks exist.
+        assert!(skills.contains("── skills · 2 of 2"), "{skills}");
         assert!(skills.contains("> 1 review"));
         assert!(skills.contains("trace"));
         handle_key(
@@ -8287,10 +8555,15 @@ mod tests {
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
             &tx,
         );
+        // 🔴 CHANGED DELIBERATELY: this used to assert that enter SUBMITTED `/skill:review`, which
+        // fired a run with an empty task — the shape that comes back having done nothing. Choosing
+        // a playbook now loads the composer so the task can be typed.
+        assert_eq!(app.composer.text(), "/skill:review ");
         assert!(
-            app.transcript.iter().any(
+            !app.transcript.iter().any(
                 |entry| matches!(entry, TranscriptEntry::User(text) if text == "/skill:review")
-            )
+            ),
+            "a playbook must not run before it has a task"
         );
     }
 
@@ -9624,6 +9897,157 @@ mod tests {
         }
     }
 
+    /// 🔴 **247 PLAYBOOKS FILLED THE SCREEN AND THE PICKER COULD NOT REACH MOST OF THEM.**
+    ///
+    /// The founder typed `/skills` and got every playbook, each with its full multi-line
+    /// description, scrolling for pages. `render_picker` sizes its modal from `rows.len()`, clamps
+    /// that to the screen, and paints with **no scroll offset** — so handing it 247 rows does not
+    /// make a long list, it makes one whose tail no keypress can reach.
+    ///
+    /// The bound therefore belongs where the surface is BUILT. This drives a catalog larger than
+    /// any terminal and asserts the renderer is never handed more than it can paint.
+    #[test]
+    fn the_skills_picker_is_bounded_and_filterable_however_large_the_registry_is() {
+        let names = (0..247)
+            .map(|index| {
+                json!({
+                    "name": format!("playbook-{index:03}"),
+                    // Multi-line prose, exactly as the server sends it. One row must stay one row.
+                    "summary": format!("Line one for {index}.\nLine two.\nLine three, and it keeps going well past any sensible width for a single picker row."),
+                })
+            })
+            .collect::<Vec<_>>();
+        let reply: CommandReply =
+            serde_json::from_value(json!({ "skills": names })).expect("skills reply");
+        let catalog = PickerSurface::skill_catalog(&reply);
+        assert_eq!(catalog.len(), 247, "the catalog itself is not truncated");
+
+        let unfiltered = PickerSurface::skills_filtered(&catalog, "");
+        assert!(
+            unfiltered.rows.len() <= MAX_SKILL_PICKER_ROWS,
+            "the renderer was handed {} rows it cannot paint",
+            unfiltered.rows.len()
+        );
+        assert!(
+            unfiltered.title.contains("247"),
+            "the title must still name the true total, or the bound reads as the whole registry: {}",
+            unfiltered.title
+        );
+        // A multi-line summary must have become ONE line, or one row silently becomes three.
+        assert!(
+            unfiltered
+                .rows
+                .iter()
+                .all(|row| !row.detail.contains('\n') && !row.label.contains('\n')),
+            "a newline survived into a picker row"
+        );
+
+        // Filtering narrows to something a person can actually choose from.
+        let narrowed = PickerSurface::skills_filtered(&catalog, "playbook-1");
+        assert!(
+            narrowed.rows.len() <= MAX_SKILL_PICKER_ROWS,
+            "the filtered view is bounded too"
+        );
+        assert!(
+            narrowed
+                .rows
+                .iter()
+                .all(|row| row.label.starts_with("playbook-1")),
+            "the filter admitted a non-match"
+        );
+
+        // ⚠️ CONTROL. A filter that matches nothing must SAY so, not render an empty modal that
+        // looks identical to a hung request.
+        let empty = PickerSurface::skills_filtered(&catalog, "zzzzz-no-such-playbook");
+        assert_eq!(empty.rows.len(), 1);
+        assert!(
+            empty.rows[0].label.contains("No playbook matches"),
+            "an empty result must name itself: {:?}",
+            empty.rows[0].label
+        );
+        assert!(matches!(empty.rows[0].action, PickerAction::None));
+    }
+
+    /// Typing narrows the open picker, and closing it stops the picker eating letters.
+    #[test]
+    fn typing_filters_the_open_skills_picker_and_closing_it_releases_the_keys() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        let reply: CommandReply = serde_json::from_value(json!({
+            "skills": [
+                {"name": "api-call-ground", "summary": "ground an API call"},
+                {"name": "adr-forge", "summary": "capture a decision"},
+                {"name": "zebra-audit", "summary": "unrelated"},
+            ]
+        }))
+        .expect("skills reply");
+        app.skill_catalog = PickerSurface::skill_catalog(&reply);
+        app.refilter_skills();
+        assert_eq!(app.picker.as_ref().expect("picker").rows.len(), 3);
+
+        for c in "zeb".chars() {
+            handle_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+                &tx,
+            );
+        }
+        let rows = &app.picker.as_ref().expect("picker").rows;
+        assert_eq!(rows.len(), 1, "typing did not narrow the list");
+        assert_eq!(rows[0].label, "zebra-audit");
+
+        // Backspace widens again.
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+            &tx,
+        );
+        assert_eq!(app.skill_filter, "ze");
+
+        // Esc closes AND releases the catalog, so the next picker does not swallow letters.
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &tx,
+        );
+        assert!(app.picker.is_none());
+        assert!(
+            app.skill_catalog.is_empty() && app.skill_filter.is_empty(),
+            "the filter outlived its picker and will eat the next surface's keys"
+        );
+    }
+
+    /// Choosing a playbook loads the composer instead of firing an empty-task run.
+    #[test]
+    fn choosing_a_playbook_loads_the_composer_rather_than_running_it_with_no_task() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.skill_catalog = vec![PickerRow {
+            label: "api-call-ground".to_string(),
+            detail: "ground an API call".to_string(),
+            action: PickerAction::InvokeSkill("api-call-ground".to_string()),
+        }];
+        app.refilter_skills();
+
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &tx,
+        );
+
+        assert_eq!(
+            app.composer.text(),
+            "/skill:api-call-ground ",
+            "the composer must be loaded with a trailing space, ready for the task"
+        );
+        assert!(
+            app.queue.is_empty(),
+            "selecting a playbook must not fire a run with an empty task"
+        );
+        assert!(app.picker.is_none());
+        assert!(app.skill_catalog.is_empty());
+    }
+
     /// 🔴 **THE KEYBOARD IS THE ONLY ORACLE THAT SAW THE FOUNDER'S BUG.**
     ///
     /// `no_submitted_input_is_ever_answered_with_silence` drives `submit` directly and passes — it
@@ -9692,7 +10116,10 @@ mod tests {
             vec![("skill:", "agent-injection-eval".to_string())],
             "the singular spelling must queue the skill route"
         );
-        assert_eq!(plural, singular, "the plural must queue the identical route");
+        assert_eq!(
+            plural, singular,
+            "the plural must queue the identical route"
+        );
     }
 
     #[test]
@@ -11208,12 +11635,20 @@ mod tests {
 
     /// The hint row says which mode is in force, and the demo's five pairs survive both.
     #[test]
-    fn the_hint_row_announces_selection_only_while_the_mouse_is_suspended() {
+    fn the_hint_row_says_which_mouse_mode_is_in_force() {
         let captured = ask_hints_line_with(/*selection_on*/ false);
         let suspended = ask_hints_line_with(/*selection_on*/ true);
 
-        assert!(!captured.contains("selection"), "{captured}");
-        assert!(suspended.ends_with("selection on"), "{suspended}");
+        // Advertised in BOTH states — that is what makes it findable — but only one of them
+        // claims the mode is on. Asserting the "on" wording alone would pass on a row that says
+        // "selection on" permanently, which would be a lie half the time.
+        assert!(captured.ends_with("ctrl+o selection"), "{captured}");
+        assert!(suspended.ends_with("ctrl+o selection on"), "{suspended}");
+        // ⚠️ `ends_with("on")` would be TRUE for "selection" itself — the space is load-bearing.
+        assert!(
+            !captured.ends_with(" on"),
+            "the idle row claims selection is on: {captured}"
+        );
         assert_eq!(
             suspended.to_lowercase(),
             suspended,
@@ -11229,45 +11664,109 @@ mod tests {
         }
     }
 
-    /// `alt+s` reaches the toggle, and a full round trip leaves the process exactly as it was.
+    /// 🔴 **THE TOGGLE IS A CONTROL CHORD, AND THAT IS THE WHOLE POINT OF THIS TEST.**
     ///
-    /// ⚠️ This is the ONE test that writes `MOUSE_CAPTURED`, and it presses twice on purpose:
-    /// leaving a process-global flipped would make [`ask_hints_line`] answer differently for
-    /// whatever test ran next. Everything else about this feature is asserted against the pure
-    /// functions instead, which is why there is only one.
+    /// `alt+s` shipped for one commit and never fired on macOS: Option is a COMPOSE modifier
+    /// there, so Option+S produces `ß` and no modified key event is sent at all. This asserts the
+    /// binding is CONTROL rather than ALT — a regression to any `alt+<letter>` fails here — and
+    /// that it actually reaches the toggle through the real `handle_key`. It also proves the
+    /// composer does not swallow `ctrl+o` first, which is the collision that would appear if
+    /// `AppKeymap::copy` were ever wired into this binary.
+    ///
+    /// ⚠️ What it CANNOT assert: whether a given terminal delivers `ctrl+o` at all. That is a
+    /// property of the emulator, and it is exactly the gap that let the `alt+s` bug ship.
     #[test]
-    fn alt_s_toggles_selection_and_returns_the_process_to_its_starting_state() {
+    fn the_selection_toggle_is_a_control_chord_and_reaches_it() {
         let before = mouse_is_captured();
         let mut app = test_app();
         let (tx, _rx) = mpsc::unbounded_channel();
         let transcript_before = app.transcript.len();
 
-        assert!(!handle_key(
-            &mut app,
-            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT),
-            &tx
-        ));
+        let chord = KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL);
+        assert!(
+            chord.modifiers.contains(KeyModifiers::CONTROL)
+                && !chord.modifiers.contains(KeyModifiers::ALT),
+            "macOS composes alt+<letter> into a character and sends no key event: never bind ALT"
+        );
+
+        assert!(!handle_key(&mut app, chord, &tx));
         assert_eq!(
             mouse_is_captured(),
             !before,
-            "alt+s did not reach the toggle"
+            "ctrl+o did not reach the toggle"
         );
         assert_eq!(
             app.transcript.len(),
             transcript_before + 1,
             "the toggle said nothing to the user"
         );
+        assert!(
+            app.composer.is_empty(),
+            "the composer swallowed ctrl+o and typed it: {:?}",
+            app.composer.text()
+        );
 
-        assert!(!handle_key(
-            &mut app,
-            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT),
-            &tx
-        ));
+        // Back, so this process-global does not outlive the test and change what
+        // `ask_hints_line` answers for whatever runs next.
+        assert!(!handle_key(&mut app, chord, &tx));
         assert_eq!(
             mouse_is_captured(),
             before,
-            "the round trip did not restore the terminal, and this global outlives the test"
+            "the round trip did not restore the terminal"
         );
+    }
+
+    /// `/select` is the door that still works if a terminal eats the chord too.
+    #[test]
+    fn slash_select_toggles_the_mouse_without_a_chord_at_all() {
+        let before = mouse_is_captured();
+        let mut app = test_app();
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        app.submit("/select".to_string(), &tx);
+        assert_eq!(
+            mouse_is_captured(),
+            !before,
+            "/select did not reach the toggle"
+        );
+        app.submit("/mouse".to_string(), &tx);
+        assert_eq!(
+            mouse_is_captured(),
+            before,
+            "/mouse did not reach the toggle"
+        );
+
+        // It is a local command: it must not have been sent anywhere.
+        assert!(
+            app.active.is_none() && app.queue.is_empty(),
+            "/select was dispatched to the server instead of being handled in the client"
+        );
+    }
+
+    /// 🔴 **A KEY YOU ONLY LEARN BY PRESSING IT IS NOT DISCOVERABLE.**
+    ///
+    /// The founder learned this feature existed from a message, not from the product, because the
+    /// first version advertised it only once it was already on. The chord must be on the frame
+    /// BEFORE it is used.
+    #[test]
+    fn the_hint_row_advertises_the_selection_chord_before_it_is_pressed() {
+        let idle = ask_hints_line_with(/*selection_on*/ false);
+        assert!(
+            idle.contains("ctrl+o selection"),
+            "the toggle is not advertised until it is used: {idle}"
+        );
+        assert!(
+            !idle.contains("alt+"),
+            "the hint row advertises an alt chord macOS will eat: {idle}"
+        );
+
+        let mut app = test_app();
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
+        assert!(
+            rendered.contains("ctrl+o selection"),
+            "the frame never shows the chord\n{rendered}"
+        );
+        let _ = &mut app;
     }
 
     /// A multi-line paste arrives as ONE bracketed-paste event and stays one draft.
@@ -11718,8 +12217,16 @@ mod tests {
         // are NOT lifted, so the loop above is not simply reading a tint painted over the pane.
         let first = *banded.first().expect("a banded row");
         let last = *banded.last().expect("a banded row");
-        assert_ne!(buffer[(0, first - 1)].bg, tint, "the row above is lifted too");
-        assert_ne!(buffer[(0, last + 1)].bg, tint, "the row below is lifted too");
+        assert_ne!(
+            buffer[(0, first - 1)].bg,
+            tint,
+            "the row above is lifted too"
+        );
+        assert_ne!(
+            buffer[(0, last + 1)].bg,
+            tint,
+            "the row below is lifted too"
+        );
     }
 
     /// 🔴 THE CARET IS ALWAYS ON A ROW THE FRAME ACTUALLY DREW. This is the founder's "glitch
@@ -11760,7 +12267,10 @@ mod tests {
                     .unwrap_or_else(|| {
                         panic!(
                             "no row carrying {needle:?} at {lines} lines\n{}",
-                            (0..buffer.area.height).map(row_text).collect::<Vec<_>>().join("\n")
+                            (0..buffer.area.height)
+                                .map(row_text)
+                                .collect::<Vec<_>>()
+                                .join("\n")
                         )
                     })
             };
@@ -12084,10 +12594,8 @@ mod tests {
     /// alone would not have said which of them fabricated the name.
     #[test]
     fn a_directory_that_is_not_a_repository_resolves_to_nothing() {
-        let temporary = std::env::temp_dir().join(format!(
-            "estelle-no-repo-{}",
-            std::process::id()
-        ));
+        let temporary =
+            std::env::temp_dir().join(format!("estelle-no-repo-{}", std::process::id()));
         std::fs::create_dir_all(&temporary).expect("a scratch directory");
         assert!(
             !estelle_client::is_repository(&temporary),
@@ -12102,13 +12610,166 @@ mod tests {
             estelle_client::RepoResolver::new(None, &temporary)
                 .resolve()
                 .map(|repo| repo.as_str().to_string()),
-            temporary
-                .canonicalize()
-                .ok()
-                .and_then(|path| path.file_name().map(|name| name.to_string_lossy().to_string())),
+            temporary.canonicalize().ok().and_then(|path| path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())),
             "the name-computing function stopped computing a name"
         );
         let _ = std::fs::remove_dir_all(&temporary);
+    }
+
+    /// 🔴 A QUEUED MESSAGE MUST LOOK DIFFERENT FROM A SENT ONE.
+    ///
+    /// The founder sent five messages, watched all five echo as identical `you › …` rows, and
+    /// said "queue doesn't work lol". It did work — nothing was lost, which is the hard half —
+    /// but **nothing on screen distinguished a sent message from a waiting one**, so from his
+    /// seat it was indistinguishable from the old behaviour where messages vanished. A queue the
+    /// user cannot see is a queue the user does not have.
+    ///
+    /// The waiting messages get their own band, drawn from `app.queue` itself, marked with `○`
+    /// — "queued · idle" in the mark vocabulary the founder picked.
+    #[test]
+    fn waiting_messages_are_drawn_in_their_own_band_with_the_queued_mark() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.active = Some(ActiveRequest {
+            id: 3,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        app.submit("hellow".to_string(), &tx);
+        app.submit("how are ou".to_string(), &tx);
+        assert_eq!(app.queue.len(), 2, "the premise is two waiting messages");
+
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 34);
+        assert!(
+            rendered.contains("\u{25cb} hellow"),
+            "the first waiting message is not marked queued\n{rendered}"
+        );
+        assert!(
+            rendered.contains("\u{25cb} how are ou"),
+            "the second waiting message is not marked queued\n{rendered}"
+        );
+
+        // The negative control: with nothing waiting, the band is absent entirely rather than
+        // drawn empty — otherwise the assertions above would pass on a permanent decoration.
+        let mut quiet = test_app();
+        quiet.auth_resolved = true;
+        let rendered = rendered_frame_at_size(&quiet, Instant::now(), 120, 34);
+        assert!(
+            !rendered.contains("waiting"),
+            "the queue band is drawn when nothing is queued\n{rendered}"
+        );
+    }
+
+    /// 🔴 UP RECALLS EVERY WAITING MESSAGE INTO ONE EDITABLE DRAFT.
+    ///
+    /// The founder's own words: *"you can press the up arrow to combine all of them and then you
+    /// can edit all of them, or you can just delete that message from the queue"*. Recall
+    /// COMBINES — one draft carrying every waiting message, not a walk backwards through them.
+    ///
+    /// ⚠️ Up must not fight the composer's existing draft history. The recall only fires when the
+    /// composer is EMPTY and something is actually waiting; with a draft in progress, up keeps
+    /// its history meaning.
+    #[test]
+    fn up_recalls_every_waiting_message_into_one_draft_and_leaves_history_alone() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.active = Some(ActiveRequest {
+            id: 5,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        for message in ["hi", "hellow", "how are ou"] {
+            app.submit(message.to_string(), &tx);
+        }
+        assert_eq!(app.queue.len(), 3);
+
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+            &tx,
+        );
+
+        assert_eq!(
+            app.composer.text(),
+            "hi\nhellow\nhow are ou",
+            "up did not combine the waiting messages into one draft"
+        );
+        assert!(
+            app.queue.is_empty(),
+            "recalled messages are still queued — they would send twice"
+        );
+        // The transcript must SAY they were recalled. Their echoes are already on screen, and
+        // leaving them with no explanation is the same silence this whole item is about.
+        let rendered = format!("{:?}", render_transcript(&app.transcript));
+        assert!(
+            rendered.contains("Recalled 3"),
+            "the recall was silent\n{rendered}"
+        );
+
+        // With a draft in progress, up belongs to the composer's history, not to the queue.
+        let mut typing = test_app();
+        typing.auth_resolved = true;
+        typing.active = Some(ActiveRequest {
+            id: 6,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        typing.submit("waiting".to_string(), &tx);
+        typing.composer.set_text("half typed");
+        handle_key(
+            &mut typing,
+            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+            &tx,
+        );
+        assert_eq!(
+            typing.queue.len(),
+            1,
+            "up stole the queue while a draft was in progress"
+        );
+    }
+
+    /// One waiting message can be dropped without disturbing the rest, and the order survives.
+    #[test]
+    fn dropping_one_waiting_message_leaves_the_others_in_order() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.active = Some(ActiveRequest {
+            id: 9,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        for message in ["first", "second", "third"] {
+            app.submit(message.to_string(), &tx);
+        }
+
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+            &tx,
+        );
+
+        assert_eq!(
+            app.queue
+                .iter()
+                .map(QueuedRequest::label)
+                .collect::<Vec<_>>(),
+            vec!["first".to_string(), "second".to_string()],
+            "dropping the last waiting message disturbed the others"
+        );
+        let rendered = format!("{:?}", render_transcript(&app.transcript));
+        assert!(
+            rendered.contains("third"),
+            "the dropped message was not named\n{rendered}"
+        );
     }
 
     /// 🔴 IDLE SAYS NOTHING, AND SAYING NOTHING DOES NOT MOVE THE INPUT BAR.
@@ -12127,7 +12788,10 @@ mod tests {
             let rendered = rendered_frame_at_size(app, Instant::now(), 120, 32);
             let row = rendered
                 .lines()
-                .position(|line| line.trim_matches('"').starts_with("\u{2500}\u{2500} ask \u{b7} "))
+                .position(|line| {
+                    line.trim_matches('"')
+                        .starts_with("\u{2500}\u{2500} ask \u{b7} ")
+                })
                 .expect("an ask rule");
             (row, rendered)
         };

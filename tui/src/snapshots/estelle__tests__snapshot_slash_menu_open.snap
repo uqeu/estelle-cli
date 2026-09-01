@@ -1,6 +1,6 @@
 ---
 source: tui/src/main.rs
-assertion_line: 9111
+assertion_line: 9609
 expression: "rendered_frame(&app, Instant::now())"
 ---
 "ESTELLE  ·  uqeu/estelle                                                        "
@@ -26,4 +26,4 @@ expression: "rendered_frame(&app, Instant::now())"
 "                                                                                "
 "  /mode   read or lower the server autonomy ceiling                             "
 "  /model  browse your BYOK model pool                                           "
-"  enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop               "
+"  enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selec"
