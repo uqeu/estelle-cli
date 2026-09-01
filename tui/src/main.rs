@@ -49,6 +49,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -487,13 +488,57 @@ impl EventSourceLease<EventStream> {
     }
 }
 
-fn enter_terminal_screen(writer: &mut impl io::Write) -> io::Result<()> {
-    execute!(
-        writer,
-        EnterAlternateScreen,
-        EnableBracketedPaste,
-        EnableMouseCapture
-    )
+/// Whether Estelle is holding the mouse, and therefore whether the terminal emulator can see a
+/// drag at all.
+///
+/// 🔴 **`EnableMouseCapture` TAKES EVERY DRAG AWAY FROM THE TERMINAL.** It was executed
+/// unconditionally on entry with no toggle anywhere in the crate, so for a whole session the user
+/// could not highlight a single line of output, let alone copy it. Scroll and click-to-focus are
+/// real and depend on capture, so `alt+s` SUSPENDS it and hands the mouse back — this is not a
+/// deletion.
+///
+/// Process-global on purpose, and this is the case that earns it: there is exactly ONE terminal
+/// per process and capture is a property of that terminal, not of an `App`. It has exactly one
+/// writer, [`toggle_mouse_capture`], which moves the terminal and this flag together and rolls the
+/// flag back if the terminal refuses — so the flag can never claim a state the terminal declined.
+/// Rule 9: one owner for a derived fact.
+static MOUSE_CAPTURED: AtomicBool = AtomicBool::new(true);
+
+fn mouse_is_captured() -> bool {
+    MOUSE_CAPTURED.load(Ordering::SeqCst)
+}
+
+/// Ask the terminal for, or release, mouse reporting. Pure in `captured`, so both directions are
+/// testable without touching the global.
+fn write_mouse_capture(writer: &mut impl io::Write, captured: bool) -> io::Result<()> {
+    if captured {
+        execute!(writer, EnableMouseCapture)
+    } else {
+        execute!(writer, DisableMouseCapture)
+    }
+}
+
+/// Hand the mouse to the terminal emulator so the user can drag-select and copy, or take it back.
+/// Returns the state now in force.
+fn toggle_mouse_capture(writer: &mut impl io::Write) -> io::Result<bool> {
+    let next = !mouse_is_captured();
+    MOUSE_CAPTURED.store(next, Ordering::SeqCst);
+    if let Err(error) = write_mouse_capture(writer, next) {
+        // Never leave the flag advertising a mode the terminal declined.
+        MOUSE_CAPTURED.store(!next, Ordering::SeqCst);
+        return Err(error);
+    }
+    Ok(next)
+}
+
+/// ⚠️ `capture_mouse` is a PARAMETER rather than a constant so that re-entering the screen cannot
+/// silently take the mouse back from a user who had handed it to the terminal. `resume` re-enters
+/// after every inline login, and a hardcoded `EnableMouseCapture` here would undo the toggle
+/// behind the user's back with nothing to notice. The compiler now makes every caller say which
+/// state it wants.
+fn enter_terminal_screen(writer: &mut impl io::Write, capture_mouse: bool) -> io::Result<()> {
+    execute!(writer, EnterAlternateScreen, EnableBracketedPaste)?;
+    write_mouse_capture(writer, capture_mouse)
 }
 
 fn leave_terminal_screen(writer: &mut impl io::Write) -> io::Result<()> {
@@ -509,7 +554,7 @@ impl TerminalSession {
     fn enter() -> io::Result<Self> {
         enable_raw_mode()?;
         let session = Self;
-        enter_terminal_screen(&mut io::stdout())?;
+        enter_terminal_screen(&mut io::stdout(), mouse_is_captured())?;
         Ok(session)
     }
 
@@ -520,7 +565,9 @@ impl TerminalSession {
 
     fn resume(&mut self) -> io::Result<()> {
         enable_raw_mode()?;
-        enter_terminal_screen(&mut io::stdout())
+        // Restores the CURRENT decision, not the startup one: a login handoff must not
+        // repossess a mouse the user handed to the terminal before signing in.
+        enter_terminal_screen(&mut io::stdout(), mouse_is_captured())
     }
 }
 
@@ -1709,13 +1756,28 @@ fn estelle_composer() -> ComposerInput {
     composer
 }
 
-/// The demo's hint row, joined.
+/// The demo's hint row, joined, plus the selection state WHEN IT IS ON.
 fn ask_hints_line() -> String {
-    ASK_HINTS
+    ask_hints_line_with(!mouse_is_captured())
+}
+
+/// ⚠️ **THE FIVE PAIRS STAY THE DEMO'S ROW, VERBATIM.** `selection on` is appended only while the
+/// mouse is suspended, so the row in every screenshot and every snapshot is still the one the
+/// founder picked off the demo — a sixth permanent hint would quietly rewrite it. The cost is that
+/// `alt+s` is not advertised until you have already pressed it; that is a real discoverability gap
+/// and it is the founder's call, not this lane's, whether the demo row grows a sixth pair.
+///
+/// Split from [`ask_hints_line`] so both states are testable without writing the process-global.
+fn ask_hints_line_with(selection_on: bool) -> String {
+    let mut row = ASK_HINTS
         .iter()
         .map(|(key, label)| format!("{key} {label}"))
         .collect::<Vec<_>>()
-        .join(" \u{b7} ")
+        .join(" \u{b7} ");
+    if selection_on {
+        row.push_str(" \u{b7} selection on");
+    }
+    row
 }
 
 /// The checked-out branch, or `None`.
@@ -3136,6 +3198,31 @@ impl App {
             self.transcript
                 .push(TranscriptEntry::System("Request cancelled.".to_string()));
         }
+    }
+
+    /// Hand the mouse to the terminal emulator, or take it back, and say which happened.
+    ///
+    /// The transcript line is the only immediate feedback: the hint row picks the state up on the
+    /// next frame, but a user who just pressed a key deserves to be told what it did in the place
+    /// they are already reading.
+    fn toggle_terminal_selection(&mut self) {
+        let note = match toggle_mouse_capture(&mut io::stdout()) {
+            Ok(false) => "selection on \u{b7} the terminal owns the mouse now, so drag to select \
+                 and copy the way you would anywhere else. alt+s hands it back to Estelle, which \
+                 is what scroll and click-to-focus need."
+                .to_string(),
+            Ok(true) => "selection off \u{b7} Estelle owns the mouse again: scroll and \
+                 click-to-focus work, and the terminal can no longer see a drag. alt+s to select."
+                .to_string(),
+            // A terminal that refuses the mode change must not take the session down, and must not
+            // be reported as if it had complied.
+            Err(error) => {
+                format!(
+                    "This terminal refused the mouse-mode change, so selection is unchanged: {error}"
+                )
+            }
+        };
+        self.transcript.push(TranscriptEntry::System(note));
     }
 
     fn handle_paste(&mut self, pasted: String) {
@@ -5472,6 +5559,13 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
     }
     if key.code == KeyCode::Char('m') && key.modifiers.contains(KeyModifiers::ALT) {
         app.toggle_context_panel();
+        return false;
+    }
+    // `alt+s` — free in BOTH keymaps: this binary binds alt+m, ctrl+t, ctrl+w, ctrl+tab, alt+
+    // arrows and `?`, and the library keymap the composer runs on binds alt+r/b/f/d/,/. and
+    // ctrl+s (history search), but nothing anywhere binds alt+s.
+    if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::ALT) {
+        app.toggle_terminal_selection();
         return false;
     }
     if key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -8412,7 +8506,7 @@ mod tests {
         );
         // The footer key-hint row was replaced by the demo's hint line under the prompt.
         assert!(
-            rendered.contains(&ask_hints_line()),
+            rendered.contains(&ask_hints_line_with(/*selection_on*/ false)),
             "the ask bar must carry the demo's hint row\n{rendered}"
         );
         assert!(
@@ -10424,7 +10518,7 @@ mod tests {
     #[test]
     fn terminal_session_requests_mouse_events_instead_of_wheel_to_arrow_translation() {
         let mut enter = Vec::new();
-        enter_terminal_screen(&mut enter).expect("enter commands");
+        enter_terminal_screen(&mut enter, /*capture_mouse*/ true).expect("enter commands");
         let enter = String::from_utf8(enter).expect("ANSI enter sequence");
         assert!(
             enter.contains("\u{1b}[?1000h"),
@@ -10445,6 +10539,137 @@ mod tests {
         assert!(
             leave.contains("\u{1b}[?1006l"),
             "SGR mouse mode was not disabled"
+        );
+    }
+    /// 🔴 **THE CONTROL FOR THE TOGGLE: BOTH DIRECTIONS, ON THE REAL WRITER.**
+    ///
+    /// A one-way assertion here would pass on a "toggle" that only ever enables.
+    #[test]
+    fn mouse_capture_can_be_released_to_the_terminal_and_taken_back() {
+        let mut released = Vec::new();
+        write_mouse_capture(&mut released, /*captured*/ false).expect("release the mouse");
+        let released = String::from_utf8(released).expect("ANSI release sequence");
+        assert!(
+            released.contains("\u{1b}[?1000l") && released.contains("\u{1b}[?1006l"),
+            "the mouse was not handed back to the terminal: {released:?}"
+        );
+
+        let mut taken = Vec::new();
+        write_mouse_capture(&mut taken, /*captured*/ true).expect("take the mouse");
+        let taken = String::from_utf8(taken).expect("ANSI capture sequence");
+        assert!(
+            taken.contains("\u{1b}[?1000h") && taken.contains("\u{1b}[?1006h"),
+            "the mouse was not taken back: {taken:?}"
+        );
+    }
+
+    /// 🔴 **THE REGRESSION THIS FIXES, ASSERTED DIRECTLY.**
+    ///
+    /// `enter_terminal_screen` used to execute `EnableMouseCapture` unconditionally, so every
+    /// re-entry — and `resume` re-enters after every inline login — repossessed the mouse behind
+    /// the user's back. This test could not have passed before that became a parameter, and it is
+    /// the half that a "does entering enable the mouse?" test can never cover.
+    #[test]
+    fn re_entering_the_screen_does_not_repossess_a_mouse_the_user_handed_back() {
+        let mut entered = Vec::new();
+        enter_terminal_screen(&mut entered, /*capture_mouse*/ false).expect("enter commands");
+        let entered = String::from_utf8(entered).expect("ANSI enter sequence");
+        assert!(
+            !entered.contains("\u{1b}[?1000h"),
+            "re-entry took the mouse back from the terminal: {entered:?}"
+        );
+        assert!(
+            entered.contains("\u{1b}[?1000l"),
+            "re-entry must positively release the mouse, not merely omit the request: {entered:?}"
+        );
+        // Bracketed paste is NOT part of the trade: it is re-armed either way.
+        assert!(
+            entered.contains("\u{1b}[?2004h"),
+            "bracketed paste was dropped along with the mouse: {entered:?}"
+        );
+    }
+
+    /// The hint row says which mode is in force, and the demo's five pairs survive both.
+    #[test]
+    fn the_hint_row_announces_selection_only_while_the_mouse_is_suspended() {
+        let captured = ask_hints_line_with(/*selection_on*/ false);
+        let suspended = ask_hints_line_with(/*selection_on*/ true);
+
+        assert!(!captured.contains("selection"), "{captured}");
+        assert!(suspended.ends_with("selection on"), "{suspended}");
+        assert_eq!(
+            suspended.to_lowercase(),
+            suspended,
+            "the surface is lowercase: {suspended}"
+        );
+        for (key, label) in ASK_HINTS {
+            let pair = format!("{key} {label}");
+            assert!(captured.contains(&pair), "{captured}");
+            assert!(
+                suspended.contains(&pair),
+                "the suspended row dropped a demo hint: {suspended}"
+            );
+        }
+    }
+
+    /// `alt+s` reaches the toggle, and a full round trip leaves the process exactly as it was.
+    ///
+    /// ⚠️ This is the ONE test that writes `MOUSE_CAPTURED`, and it presses twice on purpose:
+    /// leaving a process-global flipped would make [`ask_hints_line`] answer differently for
+    /// whatever test ran next. Everything else about this feature is asserted against the pure
+    /// functions instead, which is why there is only one.
+    #[test]
+    fn alt_s_toggles_selection_and_returns_the_process_to_its_starting_state() {
+        let before = mouse_is_captured();
+        let mut app = test_app();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let transcript_before = app.transcript.len();
+
+        assert!(!handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT),
+            &tx
+        ));
+        assert_eq!(
+            mouse_is_captured(),
+            !before,
+            "alt+s did not reach the toggle"
+        );
+        assert_eq!(
+            app.transcript.len(),
+            transcript_before + 1,
+            "the toggle said nothing to the user"
+        );
+
+        assert!(!handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT),
+            &tx
+        ));
+        assert_eq!(
+            mouse_is_captured(),
+            before,
+            "the round trip did not restore the terminal, and this global outlives the test"
+        );
+    }
+
+    /// A multi-line paste arrives as ONE bracketed-paste event and stays one draft.
+    ///
+    /// ⚠️ Limit, stated: this proves the in-process half — the loop routes `Event::Paste(String)`
+    /// to `App::handle_paste`, and newlines survive into the composer instead of submitting the
+    /// turn. It does NOT prove the terminal emulator actually sends `ESC[200~`; only a real
+    /// terminal does that, and this cannot assert it.
+    #[test]
+    fn a_multi_line_paste_stays_one_draft_instead_of_submitting_each_line() {
+        let mut app = test_app();
+        app.handle_paste("first line\nsecond line\nthird line".to_string());
+
+        let text = app.composer.text();
+        assert!(text.contains("first line"), "{text:?}");
+        assert!(text.contains("third line"), "{text:?}");
+        assert!(
+            app.active.is_none() && app.queue.is_empty(),
+            "a pasted newline submitted the turn instead of staying in the draft"
         );
     }
 
