@@ -2076,12 +2076,28 @@ fn collapse_composer_tail(
     palette: &theme::Palette,
     background: Color,
 ) {
-    let prompt_row = (area.y..area.bottom()).find(|y| {
-        (area.x..area.right()).any(|x| frame.buffer_mut()[(x, *y)].symbol() == PROMPT_GLYPH)
-    });
-    let Some(prompt_row) = prompt_row else {
+    let Some((prompt_row, prompt_col)) = (area.y..area.bottom()).find_map(|y| {
+        (area.x..area.right())
+            .find(|x| {
+                let symbol = frame.buffer_mut()[(*x, y)].symbol();
+                symbol == COMPOSER_PROMPT_GLYPH || symbol == PROMPT_GLYPH
+            })
+            .map(|x| (y, x))
+    }) else {
         return;
     };
+    // The composer widget draws U+203A, a small angle quote. The demo's prompt is U+3009, the
+    // tall bracket - at terminal size they are not the same character. Repainted HERE rather than
+    // in the composer, because 80 lib snapshots carry that glyph and another lane is editing those
+    // same files; the prompt is one cell, and taking it is cheaper than taking their diff.
+    //
+    // U+3009 is East Asian WIDE, so it needs two columns. `LIVE_PREFIX_COLS` is 2 and the second
+    // is the reserved space before the text, so it fits the gutter exactly and cannot clip what
+    // the user has typed. The blank keeps the buffer honest about the cell the glyph now covers.
+    frame.buffer_mut()[(prompt_col, prompt_row)].set_symbol(PROMPT_GLYPH);
+    if prompt_col.saturating_add(1) < area.right() {
+        frame.buffer_mut()[(prompt_col + 1, prompt_row)].set_symbol("");
+    }
     // Clear only what is the composer's OWN chrome: blank padding rows and its `? for shortcuts`
     // footer. A row with anything else on it belongs to the slash palette or the command popup,
     // which are drawn below the prompt and must survive - a hint row is not worth eating a menu.
@@ -2116,6 +2132,9 @@ fn collapse_composer_tail(
 /// The demo's prompt: U+3009, the tall right angle bracket. NOT U+203A, the small angle quote the
 /// composer used to draw - at terminal size they read as different characters entirely.
 pub(super) const PROMPT_GLYPH: &str = "\u{3009}";
+
+/// What the composer widget draws before the frame repaints it.
+const COMPOSER_PROMPT_GLYPH: &str = "\u{203a}";
 
 pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
     app.tool_click_targets.borrow_mut().clear();
