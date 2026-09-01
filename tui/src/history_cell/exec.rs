@@ -56,7 +56,7 @@ impl HistoryCell for UnifiedExecInteractionCell {
         let input_wrapped = adaptive_wrap_lines(
             input_lines,
             RtOptions::new(wrap_width)
-                .initial_indent(Line::from("  └ ".dim()))
+                .initial_indent(Line::from("  │ ".dim()))
                 .subsequent_indent(Line::from("    ".dim())),
         );
         out.extend(input_wrapped);

@@ -33,7 +33,7 @@ expression: normalize_snapshot_paths(term.backend().vt100().screen().contents())
   that view.
 
 • Explored
-  └ Search Change Approved
+  │ Search Change Approved
     Read diff_render.rs
 
 • Investigating rendering code (0s • esc to interrupt)

@@ -100,6 +100,7 @@ mod approval_events;
 mod ascii_animation;
 pub mod boot_scene;
 mod bottom_pane;
+mod box_glyphs;
 mod branch_summary;
 mod chatwidget;
 mod cli;

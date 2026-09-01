@@ -452,7 +452,7 @@ fn render_changes_block(rows: Vec<Row<'_>>, wrap_cols: usize, cwd: &Path) -> Vec
         let skip_file_header = file_count == 1;
         if !skip_file_header {
             let mut header: Vec<RtSpan<'static>> = Vec::new();
-            header.push("  └ ".dim());
+            header.push("  │ ".dim());
             header.extend(render_path(&r));
             header.push(" ".into());
             header.extend(render_line_count_summary(r.added, r.removed));

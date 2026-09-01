@@ -158,11 +158,11 @@ impl HistoryCell for McpToolCallCell {
                 .subsequent_indent("    ".into());
             let wrapped = adaptive_wrap_line(&invocation_line, opts);
             let body_lines: Vec<Line<'static>> = wrapped.iter().map(line_to_static).collect();
-            lines.extend(prefix_lines(body_lines, "  └ ".dim(), "    ".into()));
+            lines.extend(prefix_lines(body_lines, "  │ ".dim(), "    ".into()));
         }
 
         let mut detail_lines: Vec<Line<'static>> = Vec::new();
-        // Reserve four columns for the tree prefix ("  └ "/"    ") and ensure the wrapper still has at least one cell to work with.
+        // Reserve four columns for the tree prefix ("  │ "/"    ") and ensure the wrapper still has at least one cell to work with.
         let detail_wrap_width = (width as usize).saturating_sub(4).max(1);
 
         if let Some(result) = &self.result {
@@ -204,7 +204,7 @@ impl HistoryCell for McpToolCallCell {
 
         if !detail_lines.is_empty() {
             let initial_prefix: Span<'static> = if inline_invocation {
-                "  └ ".dim()
+                "  │ ".dim()
             } else {
                 "    ".into()
             };

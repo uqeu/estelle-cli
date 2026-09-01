@@ -6,7 +6,7 @@ expression: rendered
   │ this_is_a_very_long_si
   │ ngle_token_that_will_w
   │ … +2 lines
-  └ error: first line on
+  │ error: first line on
     stderr
     error: second line on
     stderr

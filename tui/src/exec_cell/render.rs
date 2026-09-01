@@ -135,7 +135,7 @@ pub(crate) fn output_lines(
         let prefix = if !include_prefix {
             ""
         } else if i == 0 && include_angle_pipe {
-            "  └ "
+            "  │ "
         } else {
             "    "
         };
@@ -345,7 +345,7 @@ impl ExecCell {
             }
         }
 
-        out.extend(prefix_lines(out_indented, "  └ ".dim(), "    ".into()));
+        out.extend(prefix_lines(out_indented, "  │ ".dim(), "    ".into()));
         out
     }
 
@@ -695,7 +695,7 @@ impl ExecDisplayLayout {
 const EXEC_DISPLAY_LAYOUT: ExecDisplayLayout = ExecDisplayLayout::new(
     PrefixedBlock::new("  │ ", "  │ "),
     /*command_continuation_max_lines*/ 2,
-    PrefixedBlock::new("  └ ", "    "),
+    PrefixedBlock::new("  │ ", "    "),
     /*output_max_lines*/ 5,
 );
 

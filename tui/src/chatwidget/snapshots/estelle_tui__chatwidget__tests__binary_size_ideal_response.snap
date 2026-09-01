@@ -15,7 +15,7 @@ expression: "lines[start_idx..].join(\"\\n\")"
   dependencies that impact binary size. Then I’ll summarize the main causes.
 
 • Explored
-  └ List ls -la
+  │ List ls -la
     Read Cargo.toml
 
 • I'm reviewing the workspace's release profile, which has settings like
@@ -30,14 +30,14 @@ expression: "lines[start_idx..].join(\"\\n\")"
   │ file-search linux-sandbox login mcp-client mcp-server ollama
   │ tui; do echo "--- $d/Cargo.toml"; sed -n '1,200p' $d/Cargo.toml; echo;
   │ … +1 lines
-  └ --- ansi-escape/Cargo.toml
+  │ --- ansi-escape/Cargo.toml
     [package]
     … +243 lines
     ] }
     tracing = { version
 
 • Explored
-  └ Read Cargo.toml
+  │ Read Cargo.toml
 
 • I’m evaluating how binary size is influenced by various factors. There are
   many binaries, such as codex and codex-exec, which include dependencies by

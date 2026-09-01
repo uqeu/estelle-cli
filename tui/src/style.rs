@@ -136,7 +136,7 @@ pub fn proposed_plan_bg(terminal_bg: (u8, u8, u8)) -> Color {
 /// a per-file MAX cannot see a swap — one removed from file A and one added to file B nets zero.
 /// It catches growth and new doors, which is what it claims and all that it claims.
 #[cfg(test)]
-mod brand_palette_guard {
+pub(crate) mod brand_palette_guard {
     use std::collections::BTreeMap;
     use std::path::Path;
     use std::path::PathBuf;
@@ -227,7 +227,13 @@ mod brand_palette_guard {
     /// that is already clean as dirty. The `//` inside `"https://…"` is the case that makes a
     /// naive stripper wrong, so the scanner tracks string state; [`comment_stripper_is_not_fooled`]
     /// is the control for that.
-    fn strip_comments(source: &str) -> String {
+    ///
+    /// `pub(crate)` because [`crate::box_glyphs`]'s box-corner guard needs exactly this and a
+    /// second, untested copy of it would be the weaker of the two. ⚠️ Its one known limit:
+    /// a RAW string (`r"…"`) is tracked as an ordinary one, so a `//` inside a raw string
+    /// that also contains a backslash could be misread. No such literal exists in this crate
+    /// today; a scanner built on this inherits the limit.
+    pub(crate) fn strip_comments(source: &str) -> String {
         let mut out = String::with_capacity(source.len());
         let mut in_block = false;
         for line in source.lines() {

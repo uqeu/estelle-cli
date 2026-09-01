@@ -220,7 +220,7 @@ impl HistoryCell for PlanUpdateCell {
                 indented_lines.extend(render_step(status, step));
             }
         }
-        lines.extend(prefix_lines(indented_lines, "  └ ".dim(), "    ".into()));
+        lines.extend(prefix_lines(indented_lines, "  │ ".dim(), "    ".into()));
 
         lines
     }

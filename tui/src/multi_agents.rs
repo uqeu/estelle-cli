@@ -461,7 +461,7 @@ fn resume_end(
 fn collab_event(title: Line<'static>, details: Vec<Line<'static>>) -> PlainHistoryCell {
     let mut lines: Vec<Line<'static>> = vec![title];
     if !details.is_empty() {
-        lines.extend(prefix_lines(details, "  └ ".dim(), "    ".into()));
+        lines.extend(prefix_lines(details, "  │ ".dim(), "    ".into()));
     }
     PlainHistoryCell::new(lines)
 }
