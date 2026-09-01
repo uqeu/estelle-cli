@@ -1,6 +1,6 @@
 ---
 source: tui/src/main.rs
-assertion_line: 11788
+assertion_line: 12102
 expression: "rendered_frame_at_size(&app, Instant::now(), 120, 30)"
 ---
 "ESTELLE  ·  uqeu/estelle                                                                                                "
@@ -13,9 +13,9 @@ expression: "rendered_frame_at_size(&app, Instant::now(), 120, 30)"
 "› Why is this charge retried?                                            │                                              "
 "                                                                         │                                              "
 "                                                                         │                                              "
-"estelle  grounded                                                        │                                              "
+"● The retry is bounded by the idempotency guard.                         │                                              "
 "                                                                         │                                              "
-"• The retry is bounded by the idempotency guard.                         │                                              "
+"                                                                         │                                              "
 "                                                                         │                                              "
 "                                                                         │                                              "
 "                                                                         │                                              "

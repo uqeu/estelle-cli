@@ -36,6 +36,14 @@ pub enum HistoryTranscriptItem {
         trailing: Vec<Line<'static>>,
         /// Theme-owned colour for code, file paths, symbols and links.
         semantic_color: Option<Color>,
+        /// The glyph and colour that OPEN this message, replacing the generic `• ` bullet
+        /// `AgentMarkdownCell` prefixes every assistant message with.
+        ///
+        /// 🔴 **THIS REPLACES A PREFIX RATHER THAN ADDING ONE.** The markdown cell already emits
+        /// `"• "` on the first line and `"  "` on every continuation, so the indent is already
+        /// correct and a mark prepended on top of it would read `● • text`. Swapping the glyph in
+        /// place keeps one marker per message and costs no layout.
+        mark: Option<(String, Color)>,
     },
     /// Already structured application lines that still participate as one history cell.
     Lines(Vec<Line<'static>>),
@@ -80,6 +88,10 @@ pub fn render_interactive_history_transcript(
     let mut rendered = Vec::new();
     let mut interactive_rows = Vec::new();
     for item in items {
+        let mark = match &item {
+            HistoryTranscriptItem::Markdown { mark, .. } => mark.clone(),
+            _ => None,
+        };
         let semantic_color = match &item {
             HistoryTranscriptItem::Markdown { semantic_color, .. } => *semantic_color,
             HistoryTranscriptItem::User {
@@ -178,6 +190,9 @@ pub fn render_interactive_history_transcript(
             }
         };
         let mut lines = cell.display_lines(width);
+        if let Some((glyph, colour)) = mark {
+            open_with_mark(&mut lines, &glyph, colour);
+        }
         if let Some(semantic_color) = semantic_color {
             for line in &mut lines {
                 for span in &mut line.spans {
@@ -193,6 +208,27 @@ pub fn render_interactive_history_transcript(
     RenderedHistoryTranscript {
         text: Text::from(rendered),
         interactive_rows,
+    }
+}
+
+/// Swap the markdown cell's generic `• ` bullet on the FIRST line for a meaningful mark.
+///
+/// The founder's words: *"Claude does not say Claude, Claude just writes a dot."* The dot was
+/// already there — dim, generic, and sitting under a line that said `estelle  conversation`. What
+/// changed is that the dot now MEANS something (`●` grounded, `○` from the model, `▲` degraded)
+/// and the line above it is gone.
+///
+/// ⚠️ Falls back to INSERTING when the first span is not the bullet it expects. A future markdown
+/// change that drops the prefix would otherwise silently lose the mark, and a missing grounding
+/// signal is the one failure this whole surface exists to prevent.
+fn open_with_mark(lines: &mut [Line<'static>], glyph: &str, colour: Color) {
+    let Some(first) = lines.first_mut() else {
+        return;
+    };
+    let marker = ratatui::text::Span::styled(format!("{glyph} "), ratatui::style::Style::default().fg(colour));
+    match first.spans.first() {
+        Some(span) if span.content.trim() == "\u{2022}" => first.spans[0] = marker,
+        _ => first.spans.insert(0, marker),
     }
 }
 
@@ -266,10 +302,11 @@ mod tests {
                     semantic_color: Some(Color::Blue),
                 },
                 HistoryTranscriptItem::Markdown {
-                    heading: vec![Line::from("estelle  grounded")],
+                    heading: Vec::new(),
                     source: "**answer**\n\n- cited fact".to_string(),
                     trailing: vec![Line::from("cited  src/lib.rs:4")],
                     semantic_color: Some(Color::Blue),
+                    mark: None,
                 },
             ],
             18,

@@ -19,11 +19,21 @@ pub(super) fn render_transcript_with_citations(
     transcript::render(
         entries,
         include_citations,
-        TranscriptPalette {
-            primary: theme.primary(),
-            ghost: theme.ghost(),
-            semantic: theme.semantic(),
-            user_background: user_turn_background(theme),
+        {
+            // ONE construction site, which is why the three roles the struct's own docstring
+            // listed as "needs a role this struct does not carry" could finally be wired.
+            let screen = theme.screen_palette();
+            TranscriptPalette {
+                primary: theme.primary(),
+                ghost: theme.ghost(),
+                semantic: theme.semantic(),
+                user_background: user_turn_background(theme),
+                warn: screen.warn,
+                cite: screen.cite,
+                failure: screen.red,
+                grounded: screen.green,
+                ungrounded: screen.dim,
+            }
         },
         width,
         Path::new("."),
@@ -2216,7 +2226,11 @@ pub(super) fn github_diff_lines(diff: &str, width: usize, app: &App) -> Vec<Line
 ///
 /// A popup is drawn ABOVE the prompt, so nothing here can clip one. When no prompt is on screen
 /// (a popup owns the whole area) this is a no-op rather than a guess.
-fn collapse_composer_tail(frame: &mut Frame<'_>, area: Rect, background: Color) -> Option<(u16, u16)> {
+fn collapse_composer_tail(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    background: Color,
+) -> Option<(u16, u16)> {
     let Some((prompt_row, prompt_col)) = (area.y..area.bottom()).find_map(|y| {
         (area.x..area.right())
             .find(|x| {

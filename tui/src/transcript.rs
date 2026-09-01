@@ -22,6 +22,7 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 use ratatui::style::Modifier;
 use ratatui::style::Style;
+use crate::marks;
 use ratatui::text::Line;
 use ratatui::text::Span;
 use serde_json::Value;
@@ -79,6 +80,15 @@ pub(crate) struct TranscriptPalette {
     pub(crate) ghost: Color,
     pub(crate) semantic: Color,
     pub(crate) user_background: Option<Color>,
+    /// ✅ THE THREE ROLES THE DOCSTRING ABOVE NAMED AS MISSING, PLUS THE TWO THE REPLY MARK NEEDS.
+    /// Every one of these previously fell back to a named ANSI variant, which renders as whatever
+    /// the HOST TERMINAL thinks that colour is rather than Estelle's. They come from
+    /// `theme::Palette` by MEANING now, wired at the single construction site.
+    pub(crate) warn: Color,
+    pub(crate) cite: Color,
+    pub(crate) failure: Color,
+    pub(crate) grounded: Color,
+    pub(crate) ungrounded: Color,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -178,31 +188,46 @@ pub(crate) fn render(
                 degraded,
                 sources,
             } => {
-                let (label, color) = if *degraded {
-                    ("degraded", Color::Yellow)
-                } else if *grounded == Some(true) {
-                    ("grounded", palette.semantic)
+                // 🔴 THE REPLY OPENS WITH A MARK. The old heading was `estelle  <label>` on its
+                // own line: `estelle` named the program the user had just launched, and the
+                // label was an internal routing word. Both are gone.
+                //
+                // ⚠️ **`conversation` WAS LOAD-BEARING AND ITS MEANING IS PRESERVED, NOT
+                // DELETED.** It rendered only when `grounded is None`, and the sole producer of
+                // that is `conversational_reply` — so it was the one thing distinguishing
+                // *answered from the model* from *answered from your code, with citations*, which
+                // is the entire claim this product makes. The MARK carries it now, in two
+                // channels so a colour-flattening terminal keeps the distinction:
+                //
+                //   `●` green  answered from your code
+                //   `○` dim    answered from the model
+                //   `▲` warn   degraded, or explicitly not grounded
+                //
+                // A word survives ONLY on the two states a warn mark cannot disambiguate between.
+                // A healthy reply says nothing, which is the point.
+                let (mark, qualifier) = if *degraded {
+                    (marks::Mark::Blocked, Some("degraded"))
                 } else if *grounded == Some(false) {
-                    ("not grounded", Color::Yellow)
+                    (marks::Mark::Blocked, Some("not grounded"))
+                } else if *grounded == Some(true) {
+                    (marks::Mark::Landed, None)
                 } else {
-                    ("conversation", palette.ghost)
+                    (marks::Mark::Queued, None)
                 };
-                let heading = vec![Line::from(vec![
-                    Span::styled(
-                        "estelle",
-                        Style::default()
-                            .fg(palette.primary)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw("  "),
-                    Span::styled(label, Style::default().fg(color)),
-                ])];
+                let heading = qualifier
+                    .map(|word| {
+                        vec![Line::from(vec![Span::styled(
+                            word.to_string(),
+                            Style::default().fg(palette.warn),
+                        )])]
+                    })
+                    .unwrap_or_default();
                 let trailing = if include_citations {
                     sources
                         .iter()
                         .map(|source| {
                             Line::from(vec![
-                                Span::styled("cited  ", Style::default().fg(Color::DarkGray)),
+                                Span::styled("cited  ", Style::default().fg(palette.cite)),
                                 Span::styled(
                                     source_label(source),
                                     Style::default().fg(palette.semantic),
@@ -218,6 +243,18 @@ pub(crate) fn render(
                     source: mask_secret(text),
                     trailing,
                     semantic_color: Some(palette.semantic),
+                    // ⚠️ The GLYPH comes from `marks::Mark` so the five-mark vocabulary keeps one
+                    // owner; the COLOUR comes from this palette, because `Mark::colour` needs a
+                    // `theme::Palette` and reaching for a hardcoded `ScreenTheme::Dark` here would
+                    // paint Cream Ink with the dark theme's ink.
+                    mark: Some((
+                        mark.glyph().to_string(),
+                        match mark {
+                            marks::Mark::Landed => palette.grounded,
+                            marks::Mark::Blocked => palette.warn,
+                            _ => palette.ungrounded,
+                        },
+                    )),
                 });
             }
             TranscriptEntry::System(message) => {
@@ -228,14 +265,13 @@ pub(crate) fn render(
                 )]))
             }
             TranscriptEntry::Command { name, lines } => {
+                // `● /model` rather than `estelle  /model`. The command's OWN name is the
+                // informative half and it stays; the program's name was the noise.
                 let mut rendered = vec![Line::from(vec![
                     Span::styled(
-                        "estelle",
-                        Style::default()
-                            .fg(palette.primary)
-                            .add_modifier(Modifier::BOLD),
+                        format!("{} ", marks::Mark::Landed.glyph()),
+                        Style::default().fg(palette.grounded),
                     ),
-                    Span::raw("  "),
                     Span::styled(
                         format!("/{}", mask_secret(name)),
                         Style::default().fg(palette.semantic),
@@ -268,10 +304,19 @@ pub(crate) fn render(
                 semantic_color: palette.semantic,
             }),
             TranscriptEntry::Failure(lines) => {
-                let mut rendered = vec![Line::styled(
-                    "estelle  failed",
-                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                )];
+                // The refusal mark, `■`, in place of the words `estelle  failed`.
+                let mut rendered = vec![Line::from(vec![
+                    Span::styled(
+                        format!("{} ", marks::Mark::Refused.glyph()),
+                        Style::default().fg(palette.failure),
+                    ),
+                    Span::styled(
+                        "failed",
+                        Style::default()
+                            .fg(palette.failure)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ])];
                 rendered.extend(
                     lines
                         .iter()

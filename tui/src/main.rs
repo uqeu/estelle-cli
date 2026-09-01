@@ -13254,7 +13254,8 @@ mod tests {
             .expect("a prompt glyph");
 
         assert_eq!(
-            cursor.y, prompt.0,
+            cursor.y,
+            prompt.0,
             "the caret is not on the prompt row. prompt row {}: {:?}   caret row {}: {:?}",
             prompt.0,
             row_text(prompt.0),
@@ -13317,6 +13318,131 @@ mod tests {
         assert!(
             live_renderer::flourish_area(ratatui::layout::Rect::new(0, 0, 20, 24)).is_none(),
             "a narrow pane still drew the flourish"
+        );
+    }
+
+    /// 🔴 A REPLY OPENS WITH A MARK, NOT WITH THE WORD "ESTELLE".
+    ///
+    /// The founder: *"Claude does not say Claude, Claude just writes a dot. Why is Estelle
+    /// writing 'estelle'? No one cares, we already know we're in Estelle."* Both halves of the old
+    /// prefix were noise — `estelle` named the program you launched, and `conversation` was an
+    /// internal routing label.
+    ///
+    /// ⚠️ **THE `conversation` LABEL WAS LOAD-BEARING AND ITS MEANING MUST SURVIVE.** It rendered
+    /// only when `grounded is None`, and the sole producer of that is `conversational_reply` — so
+    /// it was the one thing separating *answered from the model* from *answered from your code,
+    /// with citations*. That distinction is the product. It is carried by the MARK now: `●` green
+    /// for grounded, `○` dim for ungrounded.
+    ///
+    /// Asserted on the BUFFER in TWO channels — glyph and colour — so a terminal that flattens
+    /// colour still tells them apart, the same standard
+    /// `orchestra_view::terminal_outcomes_have_distinct_glyphs_as_well_as_colours` holds.
+    #[test]
+    fn a_reply_opens_with_a_mark_and_grounding_survives_as_the_glyph_and_the_colour() {
+        let mut app = test_app();
+        app.prod_panel_visible = false;
+        app.transcript.push(TranscriptEntry::Answer {
+            text: "The retry gate moved to charge.rs.".to_string(),
+            grounded: Some(true),
+            degraded: false,
+            sources: Vec::new(),
+        });
+        app.transcript.push(TranscriptEntry::Answer {
+            text: "I am doing well, thanks! How are you?".to_string(),
+            grounded: None,
+            degraded: false,
+            sources: Vec::new(),
+        });
+
+        let buffer = rendered_buffer_at_size(&app, Instant::now(), 120, 34);
+        let palette = app.theme.screen_palette();
+        // The first painted cell of the row carrying `needle`, whatever column it starts in.
+        let opener = |needle: &str| {
+            (0..buffer.area.height)
+                .find_map(|y| {
+                    let text = (0..buffer.area.width)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>();
+                    text.contains(needle).then(|| {
+                        (0..buffer.area.width)
+                            .find(|x| buffer[(*x, y)].symbol().trim() != "")
+                            .map(|x| buffer[(x, y)].clone())
+                            .expect("a painted cell on the row")
+                    })
+                })
+                .unwrap_or_else(|| panic!("no rendered row for {needle:?}"))
+        };
+
+        let grounded = opener("retry gate moved");
+        let ungrounded = opener("I am doing well");
+
+        // CHANNEL 1 — the glyph.
+        assert_eq!(grounded.symbol(), "\u{25cf}", "a grounded reply must open with ●");
+        assert_eq!(
+            ungrounded.symbol(),
+            "\u{25cb}",
+            "an ungrounded reply must open with ○"
+        );
+        // CHANNEL 2 — the colour.
+        assert_eq!(grounded.fg, palette.green);
+        assert_eq!(ungrounded.fg, palette.dim);
+        assert_ne!(
+            grounded.symbol(),
+            ungrounded.symbol(),
+            "grounded and ungrounded replies are indistinguishable by glyph"
+        );
+        assert_ne!(
+            grounded.fg, ungrounded.fg,
+            "grounded and ungrounded replies are indistinguishable by colour"
+        );
+
+        // And the words are gone. ⚠️ Asserted at the START OF A LINE, not anywhere on the frame:
+        // the repo is `uqeu/estelle` and the header reads `ESTELLE · uqeu/estelle`, so a bare
+        // `contains("estelle")` fires on the product's own name and proves nothing about the
+        // prefix. What the founder objected to is the word OPENING a reply.
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 34);
+        let opens_with = |word: &str| {
+            rendered
+                .lines()
+                .any(|line| line.trim_matches('"').trim_start().starts_with(word))
+        };
+        assert!(
+            !opens_with("estelle"),
+            "a line still opens with the program's own name\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("conversation"),
+            "the internal routing label still reaches the frame\n{rendered}"
+        );
+    }
+
+    /// The two states that are NOT ordinary keep a word, because a bare warn mark cannot say
+    /// which of them it is. "No news is good news": a healthy reply carries no text at all.
+    #[test]
+    fn a_degraded_or_ungrounded_answer_still_names_what_is_wrong() {
+        let mut app = test_app();
+        app.prod_panel_visible = false;
+        app.transcript.push(TranscriptEntry::Answer {
+            text: "Partial sweep only.".to_string(),
+            grounded: Some(true),
+            degraded: true,
+            sources: Vec::new(),
+        });
+        app.transcript.push(TranscriptEntry::Answer {
+            text: "I could not check that.".to_string(),
+            grounded: Some(false),
+            degraded: false,
+            sources: Vec::new(),
+        });
+
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 34);
+        assert!(rendered.contains("degraded"), "{rendered}");
+        assert!(rendered.contains("not grounded"), "{rendered}");
+        assert!(
+            !rendered
+                .lines()
+                .any(|line| line.trim_matches('"').trim_start().starts_with("estelle")),
+            "{rendered}"
         );
     }
 
@@ -13517,14 +13643,23 @@ mod tests {
             1,
             "exactly one user-labelled turn\n{rendered}"
         );
+        // ⚠️ **UPDATED DELIBERATELY.** The assistant turn used to be labelled `estelle  grounded`
+        // on its own line. The founder: *"Claude does not say Claude, Claude just writes a dot.
+        // No one cares, we already know we're in Estelle."* The turn now opens with the grounded
+        // MARK. The property under test is unchanged — exactly one assistant turn, and the two
+        // speakers are distinguishable at a glance — only its spelling moved.
+        let _ = row_count;
         assert_eq!(
-            row_count("estelle  grounded"),
+            rendered
+                .lines()
+                .filter(|line| line.trim_matches('"').trim_start().starts_with('\u{25cf}'))
+                .count(),
             1,
-            "exactly one assistant-labelled turn\n{rendered}"
+            "exactly one assistant-marked turn\n{rendered}"
         );
 
         // The labels must be distinguishable in the rendered buffer, not merely present in
-        // the model: different ink, and only the assistant label is bold.
+        // the model: different ink.
         let buffer = rendered_buffer_at_size(&app, Instant::now(), 120, 32);
         let label_cell = |needle: &str| {
             buffer
@@ -13547,13 +13682,17 @@ mod tests {
                 .unwrap_or_else(|| panic!("no rendered row for {needle:?}"))
         };
         let user_label = label_cell("you");
-        let estelle_label = label_cell("estelle  grounded");
+        let estelle_label = label_cell("at the retry loop");
         assert_ne!(
             user_label.fg, estelle_label.fg,
             "speaker labels share ink and are not glanceable"
         );
+        assert_eq!(
+            estelle_label.symbol(),
+            "\u{25cf}",
+            "the assistant turn does not open with the grounded mark"
+        );
         assert!(!user_label.modifier.contains(Modifier::BOLD));
-        assert!(estelle_label.modifier.contains(Modifier::BOLD));
     }
 
     #[test]
