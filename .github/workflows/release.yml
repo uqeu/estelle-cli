@@ -74,6 +74,8 @@ jobs:
         run: python3 scripts/test-plain-english-routing-receipt.py
       - name: Prove the public INSTALL receipt harness
         run: python3 scripts/test-public-install-receipts.py
+      - name: Prove the secret rule set is detector data, not configuration
+        run: python3 scripts/test-secret-rules-are-detector-data.py
       - name: Verify fork provenance and egress census
         shell: bash
         run: |
@@ -204,6 +206,17 @@ jobs:
           The installer verifies SHA256SUMS before installing. Verify GitHub's signed provenance separately:
 
               gh attestation verify estelle-<target>.tar.gz --repo ${GITHUB_REPOSITORY}
+
+          macOS — if you downloaded an asset below IN A BROWSER, macOS will refuse to run it:
+          the binaries are ad-hoc signed and NOT notarized (\`codesign\` reports
+          \`flags=0x20002(adhoc,linker-signed)\`, \`spctl -a\` reports \`rejected\`), and a browser
+          attaches \`com.apple.quarantine\`. The dialog offers only "Move to Trash" and "Done".
+          Clear the attribute, or use the installer / npm above, which never set it:
+
+              xattr -d com.apple.quarantine ./estelle
+
+          Notarization is tracked in ${GITHUB_REPOSITORY}#6. \`curl\`, \`gh release download\` and
+          \`npm install -g @fatelabs/estelle\` are unaffected.
 
           Public-binary surface receipts (published after a fresh-runner install and production probe):
 
