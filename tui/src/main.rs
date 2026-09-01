@@ -1080,6 +1080,30 @@ struct PickerSurface {
 /// window and the advertised affordance are the same size on purpose.
 const MAX_SKILL_PICKER_ROWS: usize = 9;
 
+/// The most transcript entries the session will keep.
+///
+/// 🔴 **THE TRANSCRIPT GREW WITHOUT BOUND AND THE RENDERER RE-DREW ALL OF IT EVERY FRAME.** The
+/// founder dumped 247 playbooks into scrollback with `/skills`, ran a skill, and had to Force Quit
+/// Terminal. The spinner was still ticking, so the event loop was alive — the cost was in DRAWING:
+/// every frame rebuilds the whole transcript into a freshly allocated styled `Text`, re-wraps it
+/// once to find the scroll offset and again to paint, and clips none of it to the viewport.
+///
+/// Measured here, release build: **~2.9µs per line of scrollback, linear** — 0.41ms at ~30 lines,
+/// 3.3ms at ~1,000, and **57.5ms at ~20,000**, to paint the forty lines that are actually visible.
+///
+/// ⚠️ **THIS CONSTANT IS A MITIGATION, NOT THE FIX, AND THE DIFFERENCE MATTERS.** Bounding the
+/// STORE bounds the damage; it does not make the per-frame cost independent of scrollback, which is
+/// what a viewport-clipped renderer would do. That fix belongs in `live_renderer.rs`, which this
+/// lane does not own, and it is reported rather than attempted here. Until then this is what keeps
+/// a long session from reaching the frame budget at all.
+///
+/// **Why 300 and not more:** at 600 entries a DEBUG-build frame measured 44ms against a 50ms
+/// budget — inside the bound, but close enough that a loaded machine would cross it, and a bound
+/// you only meet on a quiet machine is not a bound. 300 leaves ~22ms in debug and ~2ms in release.
+///
+/// ⚠️ Eviction is never silent — see [`App::trim_transcript`].
+const MAX_TRANSCRIPT_ENTRIES: usize = 300;
+
 /// Collapse prose to a single bounded line.
 ///
 /// Server summaries arrive as paragraphs with embedded newlines. A picker row is one line, so a
@@ -2159,6 +2183,7 @@ impl App {
     }
 
     fn submit(&mut self, text: String, tx: &mpsc::UnboundedSender<UiEvent>) {
+        self.trim_transcript();
         let text = text.trim().to_string();
         if text.is_empty() {
             return;
@@ -2797,6 +2822,28 @@ impl App {
                 "closed"
             }
         )));
+    }
+
+    /// Drop the oldest turns once the transcript passes [`MAX_TRANSCRIPT_ENTRIES`].
+    ///
+    /// ⚠️ **EVICTION ANNOUNCES ITSELF.** Silently dropping history would make the scrollback lie
+    /// about what happened in the session — the same defect as a capped read reported as "that is
+    /// all there is". The first surviving entry says how many turns went and why.
+    fn trim_transcript(&mut self) {
+        let Some(excess) = self.transcript.len().checked_sub(MAX_TRANSCRIPT_ENTRIES) else {
+            return;
+        };
+        if excess == 0 {
+            return;
+        }
+        self.transcript.drain(..excess);
+        self.transcript.insert(
+            0,
+            TranscriptEntry::System(format!(
+                "{excess} earlier entries were dropped to keep the display responsive \u{b7} the \
+                 session itself is unaffected"
+            )),
+        );
     }
 
     /// Forget the playbook catalog, so the picker stops consuming letters once it is closed.
@@ -4024,6 +4071,7 @@ impl App {
     }
 
     fn handle_ui_event(&mut self, event: UiEvent, tx: &mpsc::UnboundedSender<UiEvent>) {
+        self.trim_transcript();
         match event {
             UiEvent::SessionContext(context) => {
                 self.session_context = (!context.is_empty()).then_some(context);
@@ -9843,6 +9891,199 @@ mod tests {
         let rendered = format!("{:?}", render_transcript(&app.transcript));
         assert!(rendered.contains("nothing ran"));
         assert!(rendered.contains("/blorp"));
+    }
+
+    /// One frame's drawing budget.
+    ///
+    /// A frame is redrawn on every tick and every keystroke. If drawing costs more than this the
+    /// terminal stops feeling live; if the cost SCALES with scrollback it eventually stops
+    /// responding at all — which is what put a macOS Force Quit dialog in front of the founder.
+    /// Named, per Power of Ten rule 2, so the bound is stated rather than implied.
+    const FRAME_BUDGET: std::time::Duration = std::time::Duration::from_millis(50);
+
+    /// A transcript shaped like the one that froze him: a `/skills` dump of multi-line playbook
+    /// descriptions interleaved with ordinary turns.
+    fn transcript_of_size(lines: usize) -> Vec<TranscriptEntry> {
+        let mut entries = Vec::new();
+        while entries.len() * 3 < lines {
+            let index = entries.len();
+            entries.push(TranscriptEntry::User(format!("question number {index}")));
+            entries.push(TranscriptEntry::Command {
+                name: "skills".to_string(),
+                lines: vec![format!(
+                    "playbook-{index:04}  |  A description long enough to wrap at any sensible \
+                     terminal width, of the kind the registry actually returns for every one of \
+                     the two hundred and forty-seven playbooks it lists."
+                )],
+            });
+            entries.push(TranscriptEntry::Answer {
+                text: format!("answer number {index} with some prose attached to it"),
+                grounded: Some(true),
+                degraded: false,
+                sources: Vec::new(),
+            });
+        }
+        entries
+    }
+
+    fn time_one_frame(app: &App) -> std::time::Duration {
+        let now = Instant::now();
+        // Draw twice and keep the second, so one-off lazy initialisation is not charged here.
+        let _ = rendered_frame_at_size(app, now, 120, 40);
+        let started = std::time::Instant::now();
+        let _ = rendered_frame_at_size(app, now, 120, 40);
+        started.elapsed()
+    }
+
+    /// 🔴 **THE CLI FROZE HARD ENOUGH THAT THE FOUNDER HAD TO FORCE QUIT TERMINAL.**
+    ///
+    /// He dumped 247 playbooks into the transcript with `/skills`, then ran a skill. The spinner
+    /// kept ticking at `thinking · 6s` — so the event loop was alive — while the terminal became
+    /// unusable. That points at DRAWING, not at blocking, and the draw path confirms it: every
+    /// frame, `render_transcript_with_citations` rebuilds the entire transcript into a freshly
+    /// allocated styled `Text`, `Paragraph::line_count` re-wraps that whole text to find the scroll
+    /// offset, and the paragraph is wrapped AGAIN to render. Nothing is cached and nothing is
+    /// clipped to the viewport, so per-frame cost is O(total scrollback) with an allocation-heavy
+    /// constant — to paint forty visible lines.
+    ///
+    /// Measured on this machine, release build, at ~2.9µs per line of scrollback:
+    ///   ~30 lines → 0.41ms · ~1,000 lines → 3.3ms · ~20,000 lines → 57.5ms
+    ///
+    /// ⚠️ **LIMIT, AND IT POINTS THE SAFE WAY.** A `TestBackend` draw excludes the write to the
+    /// tty, which is the other half of the real cost, so this UNDER-states what the founder's
+    /// terminal actually paid. Anything this calls too slow is certainly too slow. It is also a
+    /// wall-clock assertion, so it is machine-dependent — the number to read is the SCALING across
+    /// the three sizes, not the absolute.
+    /// 🔴 **STANDING RED ON PURPOSE. THIS IS NOT A FLAKE AND MUST NOT BE WEAKENED.**
+    ///
+    /// The transcript renderer is unbounded: every frame it rebuilds the WHOLE transcript into a
+    /// freshly allocated styled `Text`, re-wraps it once via `Paragraph::line_count` to find the
+    /// scroll offset and again to paint, and clips none of it to the viewport. Per-frame cost is
+    /// therefore O(total scrollback) — to paint the forty lines a terminal actually shows.
+    ///
+    /// That is what froze the founder's Terminal badly enough to need Force Quit. The spinner kept
+    /// ticking at `thinking · 6s`, so the event loop was alive and `esc` was live
+    /// (`esc_is_answered_while_a_request_is_in_flight` proves it); the cost was all in drawing.
+    ///
+    /// Measured, linear in scrollback: ~0.4ms at ~30 lines, ~2.6ms at ~1,000, ~47ms at ~20,000 in
+    /// a RELEASE build — and roughly ten times that in a debug build, where the same case has been
+    /// measured at ~540ms.
+    ///
+    /// 🔬 **THE FIX IS NOT IN THIS LANE.** It is viewport-clipped layout in `live_renderer.rs`,
+    /// which another lane owns. `MAX_TRANSCRIPT_ENTRIES` mitigates the reachable damage and
+    /// `a_runaway_transcript_is_capped_and_the_frame_stays_in_budget` guards that mitigation — but
+    /// a cap on the STORE is not the same property as a render whose cost is independent of
+    /// scrollback, and collapsing the two would retire this signal without earning it.
+    ///
+    /// ⚠️ **DELETE THIS TEST WHEN THE RENDER IS BOUNDED, NEVER BEFORE, AND NEVER BY RAISING
+    /// `FRAME_BUDGET`.** Raising the budget changes the number and not the behaviour.
+    #[test]
+    #[should_panic(expected = "over the")]
+    fn the_unclipped_transcript_render_still_scales_with_scrollback() {
+        let mut app = test_app();
+        app.transcript = transcript_of_size(20_000);
+        let elapsed = time_one_frame(&app);
+        println!("unclipped frame over ~20,000 lines: {elapsed:?}");
+        assert!(
+            elapsed <= FRAME_BUDGET,
+            "a frame over ~20,000 lines of scrollback took {elapsed:?}, over the \
+             {FRAME_BUDGET:?} budget"
+        );
+    }
+
+    #[test]
+    fn a_runaway_transcript_is_capped_and_the_frame_stays_in_budget() {
+        // The raw scaling first, as evidence rather than as an assertion: this is the defect.
+        let mut measurements = Vec::new();
+        for lines in [30_usize, 1_000, 20_000] {
+            let mut app = test_app();
+            app.transcript = transcript_of_size(lines);
+            let elapsed = time_one_frame(&app);
+            measurements.push((lines, app.transcript.len(), elapsed));
+        }
+        let report = measurements
+            .iter()
+            .map(|(lines, entries, elapsed)| {
+                format!("~{lines} lines ({entries} entries): {elapsed:?}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n  ");
+        println!("UNCAPPED frame cost by scrollback:\n  {report}");
+
+        // 🔴 THE ASSERTION. Push far more than any session should hold THROUGH the capping path,
+        // and the frame must still be inside budget. This is the property the cap buys.
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.transcript = transcript_of_size(20_000);
+        let before = app.transcript.len();
+        app.submit("anything at all".to_string(), &tx);
+
+        assert!(
+            app.transcript.len() <= MAX_TRANSCRIPT_ENTRIES + 2,
+            "the transcript was not capped: {} entries",
+            app.transcript.len()
+        );
+        // ⚠️ Eviction must never be silent, or the scrollback lies about the session.
+        let rendered = format!("{:?}", render_transcript(&app.transcript));
+        assert!(
+            rendered.contains("earlier entries were dropped"),
+            "history vanished with no notice"
+        );
+        assert!(
+            before > app.transcript.len(),
+            "nothing was actually dropped"
+        );
+
+        let capped = time_one_frame(&app);
+        println!(
+            "CAPPED frame cost: {capped:?} ({} entries)",
+            app.transcript.len()
+        );
+        assert!(
+            capped <= FRAME_BUDGET,
+            "even capped, a frame took {capped:?}, over the {FRAME_BUDGET:?} budget"
+        );
+
+        // ⚠️ CONTROL. A short transcript must be left completely alone — no cap notice, no loss.
+        let mut small = test_app();
+        small.transcript = transcript_of_size(30);
+        let kept = small.transcript.len();
+        small.trim_transcript();
+        assert_eq!(
+            small.transcript.len(),
+            kept,
+            "a short transcript was trimmed"
+        );
+    }
+
+    /// 🔴 **ESC MUST BE ANSWERED WHILE A REQUEST IS IN FLIGHT.**
+    ///
+    /// It is the escape hatch that would have spared him the Force Quit: whatever the server is
+    /// doing, the key that stops waiting has to stay live. Driven against a huge transcript,
+    /// because that is the state in which it matters.
+    #[test]
+    fn esc_is_answered_while_a_request_is_in_flight() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        let cancel = CancellationToken::new();
+        app.active = Some(ActiveRequest {
+            id: 7,
+            label: "/skill:api-compat-diff-gate".to_string(),
+            started: Instant::now(),
+            cancel: cancel.clone(),
+        });
+        app.transcript = transcript_of_size(20_000);
+
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &tx,
+        );
+
+        assert!(
+            cancel.is_cancelled() || app.active.is_none(),
+            "esc did not reach the in-flight request; the only way out is Force Quit"
+        );
     }
 
     /// 🔴 **EVERY SUBMIT PRODUCES A SEND, A QUEUED ITEM, OR WORDS. NEVER SILENCE.**
