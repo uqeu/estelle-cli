@@ -74,6 +74,8 @@ jobs:
         run: python3 scripts/test-plain-english-routing-receipt.py
       - name: Prove the public INSTALL receipt harness
         run: python3 scripts/test-public-install-receipts.py
+      - name: Prove the secret rule set is detector data, not configuration
+        run: python3 scripts/test-secret-rules-are-detector-data.py
       - name: Verify fork provenance and egress census
         shell: bash
         run: |
