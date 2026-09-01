@@ -17,11 +17,21 @@ use super::slash_commands::commands_for_input;
 use crate::render::Insets;
 use crate::render::RectExt;
 use crate::slash_command::SlashCommand;
+use codex_utils_fuzzy_match::fuzzy_match;
 
 // Hide alias commands in the default popup list so each unique action appears once.
 // `quit` is an alias of `exit`, and `btw` is an alias of `side`, so we skip
 // those aliases here.
 const ALIAS_COMMANDS: &[SlashCommand] = &[SlashCommand::Quit, SlashCommand::Btw];
+
+/// Most subsequence matches the popup will offer beyond its exact and prefix hits.
+///
+/// A NAMED bound, not a literal: subsequence matching over a catalog of ~250 skills is a very wide
+/// net — a single common letter matches most of it — and an unbounded fuzzy tier would push every
+/// exact match off a popup that renders [`MAX_POPUP_ROWS`] at a time. Sized to fill the visible
+/// rows and leave room to scroll, without turning the popup into the wall of text this whole
+/// change exists to remove.
+const MAX_FUZZY_MATCHES: usize = 24;
 const COMMAND_COLUMN_WIDTH: ColumnWidthConfig = ColumnWidthConfig::new(
     ColumnWidthMode::AutoAllRows,
     /*name_column_width*/ None,
@@ -39,6 +49,8 @@ pub(crate) struct CommandPopup {
     command_filter: String,
     commands: Vec<CommandItem>,
     state: ScrollState,
+    /// Whether the subsequence tier runs. See [`CommandPopup::external_only`].
+    fuzzy_enabled: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -99,9 +111,18 @@ impl CommandPopup {
             command_filter: String::new(),
             commands,
             state: ScrollState::new(),
+            // ⚠️ OFF for the built-in catalog. Codex's command set is small and its users know the
+            // names; widening the match there changes long-settled behaviour (and its tests pin it)
+            // to solve a problem that only exists at ~250 skills.
+            fuzzy_enabled: false,
         }
     }
 
+    /// The popup for a host that owns its own command surface — Estelle's composer.
+    ///
+    /// This is the ONLY constructor that enables the subsequence tier, because it is the only one
+    /// whose catalog carries ~250 server-side skill names. Scoping it here keeps the built-in
+    /// popup's long-settled prefix behaviour exactly as it was.
     pub(crate) fn external_only(external_commands: Vec<ExternalCommand>) -> Self {
         Self {
             command_filter: String::new(),
@@ -110,6 +131,7 @@ impl CommandPopup {
                 .map(CommandItem::External)
                 .collect(),
             state: ScrollState::new(),
+            fuzzy_enabled: true,
         }
     }
 
@@ -213,6 +235,50 @@ impl CommandPopup {
 
         out.extend(exact);
         out.extend(prefix);
+
+        // 🔴 **PREFIX-ONLY MATCHING MADE 247 SKILLS UNDISCOVERABLE.**
+        //
+        // The founder's ask, verbatim: *"typing `/` then the actual letters of the skill should
+        // make it come up. You should not have to type `/skill` to see it."* A prefix filter cannot
+        // do that — `hi` has to match `improve-codebase-arc**hi**tecture` and `cac**hi**ng`, which
+        // are matches in the MIDDLE of the name. With prefix matching the only way to reach a skill
+        // is to already know how its name starts, which is the one thing a user browsing 247 of
+        // them does not know.
+        //
+        // Subsequence matching is a strictly WIDER net than prefix, so it runs last and only on
+        // what the earlier tiers did not already claim: exact beats prefix beats fuzzy, and the
+        // presentation order inside each tier is preserved. `fuzzy_match` returns the matched
+        // character positions, which become the highlight the user reads to understand WHY a
+        // candidate is in the list.
+        //
+        // ⚠️ Bounded. A subsequence filter over a large catalog matches a lot — `e` alone matches
+        // most of the alphabet's worth of names — so the fuzzy tier is capped by a named constant.
+        // The cap is on the FUZZY tier only: exact and prefix matches are few and always earn their
+        // place.
+        if !self.fuzzy_enabled {
+            return out;
+        }
+        let already: std::collections::HashSet<String> = out
+            .iter()
+            .map(|(item, _)| item.command().to_string())
+            .collect();
+        let mut fuzzy = self
+            .commands
+            .iter()
+            .filter(|command| !already.contains(command.command()))
+            .filter_map(|command| {
+                fuzzy_match(command.command(), filter)
+                    .map(|(indices, score)| (score, command.clone(), indices))
+            })
+            .collect::<Vec<_>>();
+        // Sort by score only; `sort_by_key` is stable, so equal scores keep presentation order.
+        fuzzy.sort_by_key(|(score, _, _)| *score);
+        out.extend(
+            fuzzy
+                .into_iter()
+                .take(MAX_FUZZY_MATCHES)
+                .map(|(_, item, indices)| (item, Some(indices))),
+        );
         out
     }
 
@@ -396,6 +462,76 @@ mod tests {
             rows.first().and_then(|row| row.description.as_deref()),
             Some("Fastest inference with increased plan usage")
         );
+    }
+
+    /// 🔴 **`/hi` MUST FIND `improve-codebase-arcHItecture`. PREFIX MATCHING CANNOT.**
+    ///
+    /// The founder, verbatim: *"typing `/` then the actual letters of the skill should make it come
+    /// up. You should not have to type `/skill` to see it."* With ~250 skills, prefix matching means
+    /// the only way to reach one is to already know how its name starts — the one thing a person
+    /// browsing them does not know. He typed `/hi` and expected the two names with `hi` in the
+    /// MIDDLE, which is a subsequence match.
+    #[test]
+    fn typing_letters_finds_a_skill_by_subsequence_not_only_by_prefix() {
+        let popup = |filter: &str| {
+            let mut popup = CommandPopup::external_only(vec![
+                ExternalCommand {
+                    name: "skill:improve-codebase-architecture".to_string(),
+                    description: "find deepening opportunities".to_string(),
+                },
+                ExternalCommand {
+                    name: "skill:claude-api".to_string(),
+                    description: "reference for caching, tool use".to_string(),
+                },
+                ExternalCommand {
+                    name: "skill:zebra".to_string(),
+                    description: "unrelated".to_string(),
+                },
+            ]);
+            popup.on_composer_text_change(format!("/{filter}"));
+            popup
+                .filtered()
+                .into_iter()
+                .map(|(item, indices)| (item.command().to_string(), indices))
+                .collect::<Vec<_>>()
+        };
+
+        let hits = popup("hi");
+        let names = hits
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            names.contains(&"skill:improve-codebase-architecture"),
+            "`hi` did not reach a mid-word match: {names:?}"
+        );
+        // ⚠️ CONTROL. A subsequence filter must still EXCLUDE. If everything matched, the feature
+        // would look like it worked while ranking nothing.
+        assert!(
+            !names.contains(&"skill:zebra"),
+            "the filter admitted a non-match: {names:?}"
+        );
+        // The matched positions come back, which is what the renderer highlights — without them a
+        // user cannot see WHY a candidate is in the list.
+        let (_, indices) = hits
+            .iter()
+            .find(|(name, _)| name == "skill:improve-codebase-architecture")
+            .expect("the match");
+        assert!(
+            indices.as_ref().is_some_and(|indices| indices.len() == 2),
+            "no highlight positions for the matched characters: {indices:?}"
+        );
+
+        // An exact/prefix hit still wins its place ahead of fuzzy ones.
+        let prefixed = popup("skill:z");
+        assert_eq!(
+            prefixed.first().map(|(name, _)| name.as_str()),
+            Some("skill:zebra"),
+            "a prefix match lost its precedence to fuzzy results"
+        );
+
+        // ⚠️ BOUND. The fuzzy tier is capped by a named constant, not left to match everything.
+        assert!(MAX_FUZZY_MATCHES > 0 && MAX_FUZZY_MATCHES <= 64);
     }
 
     #[test]

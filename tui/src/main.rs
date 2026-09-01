@@ -1857,6 +1857,9 @@ struct App {
     skill_catalog: Vec<PickerRow>,
     /// What the user has typed to narrow [`Self::skill_catalog`].
     skill_filter: String,
+    /// Every skill name this session has learned, kept so composer completion survives the
+    /// composer being rebuilt between turns.
+    skill_names: Vec<String>,
     resume_picker: Option<ExternalResumePicker>,
     settings: Option<CommandReply>,
     pending_setting_input: Option<PendingSettingInput>,
@@ -2171,6 +2174,7 @@ impl App {
             picker: None,
             skill_catalog: Vec::new(),
             skill_filter: String::new(),
+            skill_names: Vec::new(),
             resume_picker: None,
             settings: None,
             pending_setting_input: None,
@@ -2211,7 +2215,7 @@ impl App {
                     ]));
                 }
             }
-            self.composer = estelle_composer();
+            self.composer = self.fresh_composer();
             return;
         }
         // 🔴 THE CAP IS CHECKED BEFORE THE ECHO, NOT AFTER IT. A message refused after being
@@ -2237,7 +2241,7 @@ impl App {
             self.transcript.push(TranscriptEntry::System(
                 "Credential-shaped input was masked and was not sent.".to_string(),
             ));
-            self.composer = estelle_composer();
+            self.composer = self.fresh_composer();
             return;
         }
         // `/select` and `/mouse` never leave the client, so they are handled ahead of the
@@ -2248,7 +2252,7 @@ impl App {
         if matches!(text.as_str(), "/select" | "/mouse") {
             self.transcript.push(TranscriptEntry::User(text));
             self.toggle_terminal_selection();
-            self.composer = estelle_composer();
+            self.composer = self.fresh_composer();
             return;
         }
         let parsed = commands::parse_input(&text);
@@ -2844,6 +2848,37 @@ impl App {
                  session itself is unaffected"
             )),
         );
+    }
+
+    /// A cleared composer that still knows every skill name this session has learned.
+    ///
+    /// 🔴 **THE COMPOSER IS REBUILT AFTER EVERY SUBMIT, AND THAT WIPED THE SKILL CATALOG.**
+    /// `estelle_composer()` returns a composer holding only the hardcoded command names, so
+    /// resetting it after each turn discarded the server's skill names — completion would have
+    /// worked for exactly one message and then silently stopped. Re-applied here, at the one place
+    /// that rebuilds it.
+    fn fresh_composer(&self) -> ComposerInput {
+        let mut composer = estelle_composer();
+        if !self.skill_names.is_empty() {
+            composer.set_commands(self.completion_catalog());
+        }
+        composer
+    }
+
+    /// The built-in command names plus every skill name this session has learned.
+    ///
+    /// Skill entries are named `skill:<name>` so that selecting one inserts a directly runnable
+    /// command, and so the namespace rule in `slash_commands.rs` already accepts them.
+    fn completion_catalog(&self) -> Vec<ComposerCommand> {
+        commands::composer_commands()
+            .into_iter()
+            .map(|(name, description)| ComposerCommand::new(name, description))
+            .chain(
+                self.skill_names
+                    .iter()
+                    .map(|name| ComposerCommand::new(format!("skill:{name}"), "skill playbook")),
+            )
+            .collect()
     }
 
     /// Forget the playbook catalog, so the picker stops consuming letters once it is closed.
@@ -3614,7 +3649,7 @@ impl App {
             self.transcript.push(TranscriptEntry::System(
                 "Credential-shaped input was masked and was not sent.".to_string(),
             ));
-            self.composer = estelle_composer();
+            self.composer = self.fresh_composer();
             return;
         }
         self.submit(text, tx);
@@ -3777,6 +3812,15 @@ impl App {
             self.picker = Some(PickerSurface::model(&reply));
         } else if name == "skills" {
             self.skill_catalog = PickerSurface::skill_catalog(&reply);
+            self.skill_names = self
+                .skill_catalog
+                .iter()
+                .map(|row| row.label.clone())
+                .collect();
+            // In place, NOT a rebuild: replacing the composer here would discard whatever the user
+            // was mid-way through typing when the registry happened to arrive.
+            let catalog = self.completion_catalog();
+            self.composer.set_commands(catalog);
             self.skill_filter.clear();
             self.picker = Some(PickerSurface::skills_filtered(&self.skill_catalog, ""));
         }

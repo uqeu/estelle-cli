@@ -101,6 +101,24 @@ impl ComposerInput {
         composer
     }
 
+    /// Replace the command catalog after construction.
+    ///
+    /// 🔴 **THE CATALOG WAS FROZEN AT CONSTRUCTION AND THAT IS WHY SKILLS WERE UNCOMPLETABLE.**
+    /// `with_commands` was the only writer, so the ~250 skill names — which arrive from the server
+    /// long after the composer exists — could never enter the completion set. The composer offered
+    /// 63 hardcoded names and nothing else, forever.
+    pub fn set_commands(&mut self, commands: impl IntoIterator<Item = ComposerCommand>) {
+        self.inner.set_external_commands(
+            commands
+                .into_iter()
+                .map(|command| ExternalCommand {
+                    name: command.name,
+                    description: command.description,
+                })
+                .collect(),
+        );
+    }
+
     fn with_config(config: crate::bottom_pane::ChatComposerConfig) -> Self {
         Self::with_placeholder(config, "Compose new task".to_string())
     }
