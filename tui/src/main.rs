@@ -7,6 +7,7 @@ mod cols;
 mod commands;
 mod copilot_login;
 mod doctor;
+mod gate_refusal;
 mod history_import;
 mod hook_distil;
 mod hook_guard;
@@ -14,6 +15,7 @@ mod leaked;
 mod live_renderer;
 mod local_provider;
 mod login;
+mod orchestra_view;
 mod production_hud;
 mod provider_catalog;
 mod provider_keys;
@@ -107,7 +109,6 @@ use live_renderer::*;
 use ratatui::Frame;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::Alignment;
 use ratatui::layout::Constraint;
 use ratatui::layout::Direction;
 use ratatui::layout::Layout;
@@ -115,18 +116,12 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 use ratatui::style::Modifier;
 use ratatui::style::Style;
-use ratatui::symbols::Marker;
 use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::text::Text;
-use ratatui::widgets::Axis;
 use ratatui::widgets::Block;
-use ratatui::widgets::Borders;
-use ratatui::widgets::Chart;
 use ratatui::widgets::Clear;
-use ratatui::widgets::Dataset;
 use ratatui::widgets::Gauge;
-use ratatui::widgets::GraphType;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
 use serde_json::Value;
@@ -6292,7 +6287,7 @@ mod tests {
             .expect("render frame");
         let frame = format!("{}", terminal.backend());
 
-        assert!(frame.contains("THE PLAN"));
+        assert!(frame.contains("╌╌ plan · revision "), "{frame}");
         assert!(frame.contains("Prove parser behavior"));
         assert!(frame.contains("— unevidenced"));
         assert!(frame.contains("▲") && frame.contains("scripts/deploy.sh"));
@@ -6488,7 +6483,7 @@ mod tests {
         assert!(rendered.contains("The retry loop has no ceiling."));
         assert!(rendered.contains("api/charge.ts:52"));
         assert!(rendered.contains("verify the retry fix"));
-        assert!(rendered.contains("SESSIONS"));
+        assert!(rendered.contains("sessions"), "{rendered}");
         assert!(rendered.contains("main"));
         assert!(rendered.contains("retries"));
         assert!(rendered.contains("Alt+Left/Right switch"));
@@ -6681,6 +6676,16 @@ mod tests {
         assert!(provider_catalog::login_route("made-up-provider", None).is_err());
     }
 
+    /// Every corner and tee that makes a box. **NO EXEMPTIONS** — not even the `└─ core` tree
+    /// connector inside `production_hud`, which had one until the founder's rule was quoted back
+    /// verbatim: *there are no boxes in Estelle*. An assertion with a carve-out is an assertion
+    /// nobody can trust later, because the carve-out is where the next one hides.
+    ///
+    /// `│` (U+2502) is deliberately NOT here: it is the divider BETWEEN panes
+    /// (`session_view::divider`) and the sub-line marker inside the refusal block, never a border
+    /// around anything. Corners are what make a box, and corners are what must be zero.
+    const BOX_CORNERS: [&str; 9] = ["┌", "┐", "└", "┘", "├", "┤", "┬", "┴", "┼"];
+
     fn rendered_frame(app: &App, now: Instant) -> String {
         rendered_frame_at_size(app, now, 80, 24)
     }
@@ -6720,6 +6725,7 @@ mod tests {
         });
         let now = Instant::now();
         let mut names = Vec::new();
+        let mut boxed_frames: Vec<&'static str> = Vec::new();
         let mut capture = |name: &'static str, app: &App, width: u16, height: u16, needle: &str| {
             let buffer = rendered_buffer_at_size(app, now, width, height);
             let text = test_gallery::buffer_text(&buffer);
@@ -6727,6 +6733,14 @@ mod tests {
                 text.contains(needle),
                 "{name} did not render expected text {needle:?}\n{text}"
             );
+            // 🔴 NO BOX REACHES A LIVE FRAME. The catalog draws zero corners and the live renderer
+            // drew them on eight of these eighteen surfaces — one row carried both languages at
+            // once: `╌╌ session · uqeu/estelle ╌╌╌  │  ┌ CONTEXT  Alt+M · /context ────┐`. The
+            // guard runs over every state this gallery already builds, so it costs nothing and it
+            // is the only thing that stops the boxes coming back a third time.
+            if BOX_CORNERS.iter().any(|corner| text.contains(*corner)) {
+                boxed_frames.push(name);
+            }
             if let Some(output) = output.as_deref() {
                 test_gallery::write_frame(output, name, &buffer);
             }
@@ -6881,7 +6895,7 @@ mod tests {
             &orchestra,
             180,
             34,
-            "Estelle Orchestra",
+            "Task(Trace checkout failures · 24 workers)",
         );
 
         let mut completed = test_app();
@@ -6950,7 +6964,13 @@ mod tests {
             "diff --git a/billing/charge.rs b/billing/charge.rs\n@@ -82 +82 @@\n-old()\n+retry_after()\n"
                 .to_string(),
         );
-        capture("05-proposed-diff", &diff, 150, 34, "WORK DRAFT");
+        capture(
+            "05-proposed-diff",
+            &diff,
+            150,
+            34,
+            "╌╌ work draft · /work · read only ╌",
+        );
 
         let mut slash = test_app();
         slash.prod_panel_visible = false;
@@ -7028,7 +7048,7 @@ mod tests {
             &models,
             130,
             34,
-            "MODEL POOL · ACCOUNT-WIDE",
+            "╌╌ model pool · account-wide ╌",
         );
 
         let mut cream = test_app();
@@ -7054,7 +7074,7 @@ mod tests {
         let mut skills = test_app();
         skills.prod_panel_visible = false;
         skills.picker = Some(PickerSurface::skills(&skills_reply));
-        capture("12-skills", &skills, 130, 34, "SKILLS");
+        capture("12-skills", &skills, 130, 34, "╌╌ skills ╌");
 
         let todo: estelle_client::TodoSnapshot = serde_json::from_value(json!({
             "observed_at": 4102444800.0,
@@ -7134,8 +7154,54 @@ mod tests {
             "Checking every claim against your code",
         );
 
+        assert!(
+            boxed_frames.is_empty(),
+            "these live frames still draw a boxed panel: {boxed_frames:?}"
+        );
+
         if let Some(output) = output.as_deref() {
             test_gallery::write_index(output, &names);
+        }
+    }
+
+    /// 🔴 THE POSITIVE CONTROL FOR THE GUARD ABOVE.
+    ///
+    /// `boxed_frames.is_empty()` is exactly the shape of assertion that passes forever on a
+    /// detector that cannot fire. This renders a `Borders::ALL` block through the same buffer
+    /// dump the gallery uses and asserts the corner set DOES catch it — so the green above is a
+    /// claim about the frames, not about the check.
+    #[test]
+    fn the_box_guard_fires_on_a_frame_that_actually_draws_one() {
+        let backend = TestBackend::new(40, 6);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    ratatui::widgets::Block::default()
+                        .borders(ratatui::widgets::Borders::ALL)
+                        .title(" SETTINGS "),
+                    frame.area(),
+                );
+            })
+            .expect("render a boxed panel");
+        let text = test_gallery::buffer_text(terminal.backend().buffer());
+
+        // A plain `Borders::ALL` panel draws the four corners; the tees appear when panels are
+        // joined. Both halves are asserted: the guard catches THIS frame, and no glyph in the set
+        // is dead weight that could never fire.
+        assert!(
+            BOX_CORNERS.iter().any(|corner| text.contains(*corner)),
+            "the guard did not catch a boxed frame\n{text}"
+        );
+        for corner in ["┌", "┐", "└", "┘"] {
+            assert!(text.contains(corner), "the box lacked {corner:?}\n{text}");
+        }
+        for corner in BOX_CORNERS {
+            let synthetic = format!("a{corner}b");
+            assert!(
+                BOX_CORNERS.iter().any(|probe| synthetic.contains(*probe)),
+                "{corner:?} is in the guard set but the guard cannot see it"
+            );
         }
     }
 
@@ -7185,37 +7251,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn fleet_progress_colour_boundary_encodes_the_completed_fraction() {
-        let line = styled_fleet_progress_line("◐ Working... [━━━━────] 2/4".to_string());
-        assert!(
-            line.spans
-                .iter()
-                .any(|span| span.style.fg == Some(Color::Green) && span.content.contains("━━━━"))
-        );
-        assert!(
-            line.spans
-                .iter()
-                .any(|span| span.style.fg == Some(Color::Blue) && span.content.contains("────"))
-        );
-    }
-
-    #[test]
-    fn fleet_terminal_glyphs_have_distinct_colours_as_well_as_shapes() {
-        let line = styled_fleet_agent_line(
-            "001 ✓ Completed  002 × Failed  003 ◷ Timed out  004 ■ Killed  005 ? Lost".to_string(),
-        );
-        let colours = line
-            .spans
-            .iter()
-            .filter_map(|span| span.style.fg)
-            .collect::<std::collections::HashSet<_>>();
-        assert!(colours.contains(&Color::Green));
-        assert!(colours.contains(&Color::Red));
-        assert!(colours.contains(&Color::Yellow));
-        assert!(colours.contains(&Color::Magenta));
-        assert!(colours.contains(&Color::Cyan));
-    }
+    // ⚠️ `fleet_progress_colour_boundary_encodes_the_completed_fraction` and
+    // `fleet_terminal_glyphs_have_distinct_colours_as_well_as_shapes` moved to
+    // `orchestra_view::tests` with the renderer they guarded. They asserted properties of the
+    // deleted keyword-colouring helpers, which searched a rendered STRING for `✓`/`━` and coloured
+    // what they found; the same two properties are now asserted against the worker table, where
+    // the colour comes from the worker's state rather than from the text.
 
     #[test]
     fn question_mark_opens_real_shortcuts_without_enter() {
@@ -7271,7 +7312,7 @@ mod tests {
 
         app.submit("/settings".to_string(), &tx);
         let opened = rendered_frame_at_size(&app, Instant::now(), 120, 32);
-        assert!(opened.contains("SETTINGS"));
+        assert!(opened.contains("╌╌ settings ╌"), "{opened}");
         assert!(opened.contains("> 1 Mode"));
         assert!(opened.contains("server enforced"));
         assert!(opened.contains("client display"));
@@ -7670,7 +7711,7 @@ mod tests {
         );
 
         let model = rendered_frame_at_size(&app, Instant::now(), 120, 32);
-        assert!(model.contains("MODEL POOL · ACCOUNT-WIDE"));
+        assert!(model.contains("╌╌ model pool · account-wide ╌"), "{model}");
         assert!(model.contains("> 1 claude-opus"));
         assert!(model.contains("current"));
         assert!(model.contains("gpt-5.5"));
@@ -7702,7 +7743,7 @@ mod tests {
         );
 
         let skills = rendered_frame_at_size(&app, Instant::now(), 120, 32);
-        assert!(skills.contains("SKILLS"));
+        assert!(skills.contains("╌╌ skills ╌"), "{skills}");
         assert!(skills.contains("> 1 review"));
         assert!(skills.contains("trace"));
         handle_key(
@@ -7844,11 +7885,15 @@ mod tests {
 
         let rendered = rendered_frame_at_size(&app, Instant::now(), 180, 30);
 
-        assert!(rendered.contains("Estelle Orchestra · Mutation lane detection ×5"));
-        assert!(rendered.contains("Participants · K3"));
-        assert!(rendered.contains("001"));
-        assert!(rendered.contains("005"));
-        assert!(rendered.contains("Working..."));
+        // The band is the design's worker table now: `w1`..`w5` rows, not `001`..`005` cells.
+        assert!(
+            rendered.contains("Task(Mutation lane detection · 5 workers)"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("models · K3"), "{rendered}");
+        assert!(rendered.contains("w1"), "{rendered}");
+        assert!(rendered.contains("w5"), "{rendered}");
+        assert!(rendered.contains("Working..."), "{rendered}");
     }
 
     #[test]
@@ -7872,7 +7917,10 @@ mod tests {
 
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 30);
 
-        assert!(rendered.contains("CONTEXT"));
+        assert!(
+            rendered.contains("╌╌ context · alt+m · /context"),
+            "{rendered}"
+        );
         assert!(rendered.contains("Repo graph"));
         assert!(rendered.contains("billing.py:88"));
         assert!(rendered.contains("charge_card"));
@@ -7903,10 +7951,16 @@ mod tests {
             rendered.contains("╌╌ production · uqeu/estelle"),
             "{rendered}"
         );
-        assert!(rendered.contains("APP HEALTH"));
-        assert!(rendered.contains("AGENT HEALTH"));
-        assert!(rendered.contains("ESTELLE STATUS"));
-        assert!(rendered.contains("ESTELLE QUEUE"));
+        // Every band opens on the design's rule now, not a shouted `APP HEALTH` heading.
+        for band in [
+            "╌╌ app · ",
+            "╌╌ agents · ",
+            "╌╌ estelle · ",
+            "╌╌ queue · ",
+            "╌╌ github · ",
+        ] {
+            assert!(rendered.contains(band), "missing {band:?}\n{rendered}");
+        }
         assert!(rendered.contains("Run /login"));
         assert!(!rendered.contains("0 errors"));
         assert!(!rendered.contains("healthy"));
@@ -7956,7 +8010,7 @@ mod tests {
             }))
             .expect("disabled health"),
         );
-        let disabled = production_workspace_lines(&app)
+        let disabled = production_workspace_lines(&app, 80)
             .into_iter()
             .flat_map(|line| line.spans)
             .map(|span| span.content.into_owned())
@@ -7973,7 +8027,7 @@ mod tests {
             }))
             .expect("unknown health"),
         );
-        let unknown = production_workspace_lines(&app)
+        let unknown = production_workspace_lines(&app, 80)
             .into_iter()
             .flat_map(|line| line.spans)
             .map(|span| span.content.into_owned())
@@ -8018,7 +8072,7 @@ mod tests {
             .expect("proposed PRs"),
         );
 
-        let rendered = production_workspace_lines(&app)
+        let rendered = production_workspace_lines(&app, 80)
             .into_iter()
             .flat_map(|line| line.spans)
             .map(|span| span.content.into_owned())
@@ -8053,7 +8107,7 @@ mod tests {
             .expect("unknown github status"),
         );
 
-        let rendered = production_workspace_lines(&app)
+        let rendered = production_workspace_lines(&app, 80)
             .into_iter()
             .flat_map(|line| line.spans)
             .map(|span| span.content.into_owned())
@@ -8083,7 +8137,7 @@ mod tests {
         );
         let rendered = rendered_frame_at_size(&review, Instant::now(), 120, 32);
         assert!(
-            rendered.contains(" WORK DRAFT · /work · READ ONLY "),
+            rendered.contains("╌╌ work draft · /work · read only ╌"),
             "{rendered}"
         );
         assert!(rendered.contains("╌╌ session · "), "{rendered}");
@@ -8320,14 +8374,23 @@ mod tests {
         let rendered = test_gallery::buffer_text(&buffer);
         let settings_rule = rendered
             .lines()
-            .find(|line| line.contains(" SETTINGS "))
+            .find(|line| line.contains("╌╌ settings ╌"))
             .expect("settings rule");
 
-        assert!(settings_rule.ends_with('┐'), "{rendered}");
+        // The dock is closed by a RULE that runs to the right edge, not by a box corner.
+        assert!(settings_rule.ends_with('╌'), "{rendered}");
+        // ⚠️ This used to assert a `└────┘` bottom edge. The dock is not boxed any more, so the
+        // claim it was really making — ONE surface, not a window nested inside the frame — is
+        // asserted directly: no corner anywhere, and the picker's own hint row is the last thing
+        // on the dock.
+        for corner in BOX_CORNERS {
+            assert!(
+                !rendered.contains(corner),
+                "a boxed dock survived\n{rendered}"
+            );
+        }
         assert!(
-            rendered
-                .lines()
-                .any(|line| line.starts_with('└') && line.ends_with('┘')),
+            rendered.lines().any(|line| line.contains("↑↓ navigate")),
             "{rendered}"
         );
         assert!(!rendered.contains(" ASK ESTELLE "), "{rendered}");
@@ -8430,7 +8493,7 @@ mod tests {
             .expect("issues"),
         );
 
-        let rendered = production_workspace_lines(&app)
+        let rendered = production_workspace_lines(&app, 80)
             .iter()
             .map(|line| {
                 line.spans
@@ -8513,7 +8576,10 @@ mod tests {
         app.submit("/diff".to_string(), &tx);
 
         let rendered = rendered_frame_at_size(&app, Instant::now(), 140, 34);
-        assert!(rendered.contains("WORK DRAFT"));
+        assert!(
+            rendered.contains("╌╌ work draft · /work · read only ╌"),
+            "{rendered}"
+        );
         assert!(rendered.contains("src/charge.rs"));
         assert!(
             rendered
@@ -8617,7 +8683,7 @@ mod tests {
         // What this test is for is the FETCH, so the fetched fields are asserted on the panel
         // MODEL, where a phrase cannot be split by the rail's word wrap. The frame assertion
         // below is the separate claim that the rail reaches the customer at all.
-        let panel = production_workspace_lines(&app)
+        let panel = production_workspace_lines(&app, 80)
             .into_iter()
             .flat_map(|line| line.spans)
             .map(|span| span.content.into_owned())
@@ -9104,7 +9170,7 @@ mod tests {
             Some("Connect Estelle")
         );
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 30);
-        assert!(rendered.contains("CONNECT ESTELLE"));
+        assert!(rendered.contains("╌╌ connect estelle ╌"), "{rendered}");
         assert!(rendered.contains("grounds your coding agent in your real codebase"));
         assert!(rendered.contains("never bills you for model tokens"));
         assert!(!rendered.contains("Claude subscription"));
@@ -9945,7 +10011,12 @@ mod tests {
         }
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
 
-        assert!(rendered.contains("EDIT REFUSED"));
+        // ⚠️ `EDIT REFUSED` was this modal's own headline and the catalog's was `Gate refused`.
+        // One block, one wording: the modal now renders `gate_refusal::lines`, so the headline
+        // here is the catalog's. The sentence naming what happened to the edit is kept.
+        assert!(rendered.contains("╌╌ gate · refused"), "{rendered}");
+        assert!(rendered.contains("Gate refused"), "{rendered}");
+        assert!(rendered.contains("verdict blocked"), "{rendered}");
         assert!(rendered.contains("Gate protected this repository"));
         assert!(rendered.contains("blast radius"));
         assert!(rendered.contains("2 files"));
@@ -10753,8 +10824,8 @@ mod tests {
         let lines = rendered.lines().collect::<Vec<_>>();
         let picker = lines
             .iter()
-            .position(|line| line.contains("SETTINGS"))
-            .expect("settings picker title");
+            .position(|line| line.contains("╌╌ settings ╌"))
+            .expect("settings picker rule");
         assert!(!rendered.contains("ASK ESTELLE"));
         assert!(
             picker >= lines.len().saturating_sub(20),
@@ -10790,7 +10861,21 @@ mod tests {
         );
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
 
-        assert!(rendered.contains("Estelle Orchestra"));
+        // The design's worker table, drawn by `orchestra_view` — the same function screen 9 of
+        // the catalog draws. `Estelle Orchestra · <batch> ×N` was the plain-string grid's header
+        // and is now the `/orchestra` REPLY's wording only; the live panel opens on the task line.
+        assert!(
+            rendered.contains("Task(Trace checkout failures · 1 workers)"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("models · GPT-5.5"), "{rendered}");
+        assert!(rendered.contains("state"), "{rendered}");
+        assert!(rendered.contains("cost"), "{rendered}");
+        // 🔴 The cost column is empty AND the frame says which contract is missing.
+        assert!(
+            rendered.contains("per-worker model and cost · no server contract"),
+            "{rendered}"
+        );
         assert!(!rendered.contains("Ask about"));
         assert!(!rendered.contains("/sweep another repo"));
     }

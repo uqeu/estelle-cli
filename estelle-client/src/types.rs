@@ -850,6 +850,27 @@ impl FleetSnapshot {
             .filter(|value| value.is_finite() && *value >= 0.0)
             .map(|floor| format!("Plan floor · ${floor:.6} · not expected or final spend"))
     }
+
+    /// The participant models the server reported, deduplicated in first-reported order, or
+    /// `None` when neither `models` nor the legacy `model` names one.
+    ///
+    /// `None` is the honest answer for an unnamed roster: the contract
+    /// (`docs/ORCHESTRA-VIEW-DATA-CONTRACT.md`) forbids inferring a model from routing policy or
+    /// from agent prose, so the caller must say "models unknown" rather than guess.
+    pub fn model_roster(&self) -> Option<String> {
+        let mut models: Vec<&str> = Vec::new();
+        for model in &self.models {
+            let model = model.trim();
+            if !model.is_empty() && !models.contains(&model) {
+                models.push(model);
+            }
+        }
+        if models.is_empty() {
+            let fallback = self.model.trim();
+            return (!fallback.is_empty()).then(|| fallback.to_string());
+        }
+        Some(models.join(" · "))
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -1420,6 +1441,53 @@ pub struct MonitorUptimeCounts {
     pub down: u64,
 }
 
+/// One row of `GET /monitor/overview`'s `uptime_checks` array — a single monitored service.
+///
+/// The wire field stays `Vec<Value>` on [`MonitorOverviewResponse`] on purpose: a row whose shape
+/// drifts must cost that ROW, never the whole overview. [`MonitorOverviewResponse::uptime_check_rows`]
+/// parses each element on its own and the caller is told how many did not parse, so a dropped row
+/// is reported rather than silently rendered as "no services".
+///
+/// Every field is nullable because the server emits `None` for a check that has never been probed
+/// (`monitor_uptime.py:464-481`). `None` means NOT MEASURED and is rendered as such; it is never
+/// read as zero, and `up` defaulting to `true` here would be an invented healthy row, so it does not.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct MonitorUptimeCheck {
+    #[serde(default)]
+    pub check_id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub up: Option<bool>,
+    #[serde(default)]
+    pub last_status: Option<i64>,
+    #[serde(default)]
+    pub last_latency_ms: Option<f64>,
+    #[serde(default)]
+    pub last_detail: String,
+    #[serde(default)]
+    pub last_checked: Option<f64>,
+}
+
+impl MonitorUptimeCheck {
+    /// The name a human recognises this service by, or `None` when the server named it nothing.
+    /// Never synthesised from the URL's path or the row's index — an unnamed check is unnamed.
+    pub fn display_name(&self) -> Option<&str> {
+        [
+            self.name.as_str(),
+            self.url.as_str(),
+            self.check_id.as_str(),
+        ]
+        .into_iter()
+        .map(str::trim)
+        .find(|candidate| !candidate.is_empty())
+    }
+}
+
 impl MonitorOverviewResponse {
     pub fn error_buckets(&self) -> Vec<MonitorErrorBucket> {
         if let Some(series) = &self.series {
@@ -1446,6 +1514,21 @@ impl MonitorOverviewResponse {
         self.series
             .as_ref()
             .and_then(|series| series.requests_source.as_deref())
+    }
+
+    /// Every readable `uptime_checks` row, plus the count of rows that were NOT readable.
+    ///
+    /// The second half of the pair is the point: a renderer that silently dropped an
+    /// unparseable row would show "3 services" over a wire that reported four, and nothing
+    /// would ever say so. The caller must render the unreadable count rather than hide it.
+    pub fn uptime_check_rows(&self) -> (Vec<MonitorUptimeCheck>, usize) {
+        let rows = self
+            .uptime_checks
+            .iter()
+            .filter_map(|row| serde_json::from_value::<MonitorUptimeCheck>(row.clone()).ok())
+            .collect::<Vec<_>>();
+        let unreadable = self.uptime_checks.len().saturating_sub(rows.len());
+        (rows, unreadable)
     }
 }
 

@@ -195,6 +195,49 @@ pub(crate) fn cited_rule(repo: &str, width: usize, palette: &Palette) -> Line<'s
     design_rule("cited", repo, width, palette, palette.warn)
 }
 
+/// `╌╌ <label> · <mode> ╌╌╌…` for a section INSIDE a pane — the production rail's `app`,
+/// `services`, `agents`, `queue` and `github` bands.
+///
+/// 🔴 **THESE WERE BOLD ALL-CAPS HEADINGS (`APP HEALTH`, `AGENT HEALTH`, `GITHUB`) UNTIL NOW.**
+/// The design has one heading vocabulary and it is the dashed rule; a pane that opens on a rule
+/// and then switches to shouted headings is two design languages inside one column. Every rule the
+/// frame draws — outer and inner — now comes from [`crate::cols::rule`].
+pub(crate) fn section_rule(
+    label: &str,
+    mode: &str,
+    width: usize,
+    palette: &Palette,
+    accent: Color,
+) -> Line<'static> {
+    design_rule(label, mode, width, palette, accent)
+}
+
+/// A pane's heading, built from a human title like `Model pool · account-wide`.
+///
+/// 🔴 **THIS IS WHAT REPLACES `Block::default().borders(Borders::ALL).title(" MODEL POOL ")`.**
+/// Eight of the live frame's eighteen surfaces still drew a box while the catalog drew none, and
+/// one rendered row carried both languages at once:
+/// `╌╌ session · uqeu/estelle ╌╌╌  │  ┌ CONTEXT  Alt+M · /context ────┐`.
+///
+/// The title's first ` · ` splits label from mode, and BOTH are lowercased: the shouted
+/// `┌ SETTINGS ┐` heading is the old language, and `╌╌ settings ╌╌` is this one.
+pub(crate) fn title_rule(
+    title: &str,
+    width: usize,
+    palette: &Palette,
+    accent: Color,
+) -> Line<'static> {
+    let title = title.trim().to_lowercase();
+    let (label, mode) = title
+        .split_once(" · ")
+        .map(|(label, mode)| (label.trim(), mode.trim()))
+        .unwrap_or((title.as_str(), ""));
+    design_rule(label, mode, width, palette, accent)
+}
+
+/// The dashes `crate::cols::rule` keeps even when the label and mode have used the whole row.
+const MIN_RULE_DASHES: usize = 4;
+
 fn design_rule(
     label: &str,
     mode: &str,
@@ -202,7 +245,24 @@ fn design_rule(
     palette: &Palette,
     accent: Color,
 ) -> Line<'static> {
-    owned(rule(label, mode, width, palette.dim, palette.mid, accent))
+    // ⚠️ `cols::rule` does not shorten its mode: given a long one it emits a line WIDER than the
+    // frame, which the rail then wraps onto a second row and the rule stops looking like a rule.
+    // A repo slug alone is long enough to do it at the design's own 30-column rail. So the mode is
+    // trimmed here, where the frame's width is known, rather than inside the shared primitive
+    // whose other callers pass a page width they have already sized for.
+    let fixed = 3 + label.chars().count() + 3 + 1 + MIN_RULE_DASHES;
+    let budget = width.saturating_sub(fixed);
+    let mode = if mode.chars().count() <= budget {
+        mode.to_string()
+    } else if budget == 0 {
+        String::new()
+    } else {
+        mode.chars()
+            .take(budget.saturating_sub(1))
+            .chain(std::iter::once('…'))
+            .collect()
+    };
+    owned(rule(label, &mode, width, palette.dim, palette.mid, accent))
 }
 
 /// A rule borrows its label; the live frame needs it to outlive the borrow of `app`.
@@ -327,5 +387,32 @@ mod tests {
                 .starts_with("╌╌ production · fernpost ╌")
         );
         assert!(text(&ask_rule("fernpost", 40, &palette)).starts_with("╌╌ ask · fernpost ╌"));
+    }
+
+    /// 🔴 A RULE WIDER THAN ITS FRAME IS NOT A RULE — IT IS TWO WRAPPED ROWS.
+    /// The design's own 30-column rail is narrower than a repo slug plus a label, which is exactly
+    /// where this used to break, so the sweep starts there and asserts the RENDERED width.
+    ///
+    /// ⚠️ **THE LIMIT, SAID OUT LOUD:** the sweep starts at [`RAIL_WIDTH`] because that is the
+    /// narrowest surface the frame ever draws a rule on — [`split`] refuses to open a rail below
+    /// it. Below that a label like `production` cannot fit at all and nothing here would help; the
+    /// guard is a guarantee about the frame's real widths, not about every integer.
+    #[test]
+    fn no_rule_is_ever_wider_than_the_frame_it_is_drawn_in() {
+        let palette = ScreenTheme::Dark.palette();
+        for width in RAIL_WIDTH..160 {
+            for line in [
+                session_rule("fernpost/checkout-api-and-then-some", width, &palette),
+                production_rule("fernpost/checkout-api", width, &palette),
+                section_rule("services", "12/12 up", width, &palette, palette.green),
+                section_rule("estelle", "3 unresolved", width, &palette, palette.red),
+            ] {
+                let rendered = text(&line).chars().count();
+                assert!(
+                    rendered <= width.max(MIN_RULE_DASHES),
+                    "width {width} produced a {rendered}-column rule"
+                );
+            }
+        }
     }
 }

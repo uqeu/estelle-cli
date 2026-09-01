@@ -1,7 +1,8 @@
+use crate::cols::{Cell, Col, head, row};
 use crate::mask_secret;
 use crate::theme::Palette;
 use crate::theme::pulse;
-use estelle_client::{Client, Repo};
+use estelle_client::{Client, MonitorOverviewResponse, Repo};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use serde_json::Value;
@@ -115,19 +116,166 @@ async fn call_graph_tool(
         .ok_or_else(|| format!("{name} returned no text content"))
 }
 
+/// The service row: glyph, name, last status code, last latency. The name column takes whatever
+/// the rail has left, because a truncated service NAME is recoverable and a truncated NUMBER is a
+/// different number.
+const SERVICE_GLYPH: usize = 2;
+const SERVICE_CODE: usize = 4;
+const SERVICE_LATENCY: usize = 9;
+const SERVICE_GAP: usize = 2;
+/// `2 + 2 + <name> + 2 + 4 + 2 + 9`, with the name column excluded.
+const SERVICE_FIXED: usize =
+    SERVICE_GLYPH + SERVICE_GAP + SERVICE_GAP + SERVICE_CODE + SERVICE_GAP + SERVICE_LATENCY;
+/// Below this the rail cannot name a service at all, so the name stops shrinking and truncates.
+const MIN_SERVICE_NAME: usize = 8;
+
+fn service_columns(width: usize) -> [Col; 4] {
+    let name = width.saturating_sub(SERVICE_FIXED).max(MIN_SERVICE_NAME);
+    [
+        Col::l(SERVICE_GLYPH),
+        Col::l(name),
+        Col::r(SERVICE_CODE),
+        Col::r(SERVICE_LATENCY),
+    ]
+}
+
+/// The HUD's service rows — one line per monitored service, from `GET /monitor/overview`'s
+/// `uptime_checks` array.
+///
+/// 🔴 **THIS ARRAY WAS ON THE WIRE AND NOTHING RENDERED IT.** `MonitorOverviewResponse` has carried
+/// `uptime_checks` since the type was written; the live rail showed only the `up/checks` roll-up
+/// and, before any snapshot arrived, the words "Loading a real Monitor window...". The catalog's
+/// screen 9 shows a service list (`● api`, `● postgres`, `◐ postgrest restarting`) as fixture text.
+/// These rows are that list, drawn from the real array, by the one renderer both callers use.
+///
+/// ⚠️ Every absence is printed as an absence. A check that has never been probed prints `no probe`
+/// and `—`; it never borrows another row's number and never leaves the cell blank, because a blank
+/// cell reads as "measured, and fine".
+pub fn service_lines(
+    overview: &MonitorOverviewResponse,
+    palette: &Palette,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let (rows, unreadable) = overview.uptime_check_rows();
+    let columns = service_columns(width);
+    // A column header over nothing is noise that reads as a table that failed to load.
+    let mut output = if rows.is_empty() {
+        Vec::new()
+    } else {
+        vec![head(
+            &columns,
+            &["", "service", "code", "latency"],
+            palette.dim,
+            0,
+        )]
+    };
+    for check in &rows {
+        let (glyph, colour) = match (check.enabled, check.up) {
+            (Some(false), _) => ("◌", palette.dim),
+            (_, Some(true)) => ("●", palette.green),
+            (_, Some(false)) => ("▲", palette.red),
+            (_, None) => ("·", palette.dim),
+        };
+        let name = check
+            .display_name()
+            .map(mask_secret)
+            .unwrap_or_else(|| "unnamed check".to_string());
+        let code = check
+            .last_status
+            .map_or_else(|| "—".to_string(), |status| status.to_string());
+        let latency = match (check.last_latency_ms, check.last_checked) {
+            (Some(ms), _) if ms.is_finite() => format!("{ms:.0}ms"),
+            (_, None) => "no probe".to_string(),
+            _ => "—".to_string(),
+        };
+        let code_colour = match check.last_status {
+            Some(status) if (200..400).contains(&status) => palette.dim,
+            Some(_) => palette.warn,
+            None => palette.dim,
+        };
+        output.push(owned(row(
+            &columns,
+            &[
+                Cell(glyph, colour),
+                Cell(&name, palette.mid),
+                Cell(&code, code_colour),
+                Cell(&latency, palette.dim),
+            ],
+            0,
+        )));
+    }
+    if rows.is_empty() {
+        output.push(Line::styled(
+            "no uptime checks registered · POST /monitor/uptime adds one",
+            Style::default().fg(palette.dim),
+        ));
+    }
+    if unreadable > 0 {
+        output.push(Line::styled(
+            format!("{unreadable} uptime row(s) did not match the check shape"),
+            Style::default().fg(palette.warn),
+        ));
+    }
+    output
+}
+
+/// One file that hangs off the failing symbol: an indent, the kind of relationship, the path.
+const RELATED_INDENT: usize = 2;
+const RELATED_KIND: usize = 5;
+const RELATED_GAP: usize = 2;
+
+fn related_columns(width: usize) -> [Col; 2] {
+    let file = width
+        .saturating_sub(RELATED_INDENT + RELATED_KIND + RELATED_GAP)
+        .max(MIN_SERVICE_NAME);
+    [Col::l(RELATED_KIND), Col::l(file)]
+}
+
+fn related_row(
+    columns: &[Col; 2],
+    kind: &str,
+    file: &str,
+    file_colour: ratatui::style::Color,
+    palette: &Palette,
+) -> Line<'static> {
+    owned(row(
+        columns,
+        &[Cell(kind, palette.dim), Cell(file, file_colour)],
+        RELATED_INDENT,
+    ))
+}
+
+/// A `cols` row borrows its cells; the live rail needs the line to outlive them.
+fn owned(line: Line<'_>) -> Line<'static> {
+    Line::from(
+        line.spans
+            .into_iter()
+            .map(|span| Span::styled(span.content.into_owned(), span.style))
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// The graph rows: which subsystems are healthy, which symbol is failing, and what depends on it.
+///
+/// ⚠️ **THE `├─`/`└─` TREE CONNECTORS ARE GONE.** They were the last box-drawing glyphs this file
+/// emitted into a live frame, and the rule is flat: there are no boxes in Estelle, with no
+/// exemption for a connector that only looks like part of one. The relationship they drew — these
+/// files hang off that symbol — is now carried by indentation and a `cols` table, so the kind and
+/// the path line up in columns instead of being pushed around by a glyph.
 pub fn lines(
     graph: &ProductionGraph,
     palette: &Palette,
+    width: usize,
     tick: u64,
     pulse_enabled: bool,
 ) -> Vec<Line<'static>> {
-    let mut output = vec![Line::from(vec![
-        Span::styled(
-            "╌╌ production · code graph ",
-            Style::default().fg(palette.dim),
-        ),
-        Span::styled("╌╌╌╌╌╌╌╌╌╌", Style::default().fg(palette.dim)),
-    ])];
+    let mut output = vec![crate::session_view::section_rule(
+        "production",
+        "code graph",
+        width,
+        palette,
+        palette.green,
+    )];
 
     if graph.healthy_subsystems.is_empty() {
         output.push(Line::styled(
@@ -135,9 +283,12 @@ pub fn lines(
             Style::default().fg(palette.dim),
         ));
     } else {
-        output.push(Line::styled(
-            "HEALTHY SUBSYSTEMS",
-            Style::default().fg(palette.mid),
+        output.push(crate::session_view::section_rule(
+            "healthy",
+            &format!("{} subsystems", graph.healthy_subsystems.len()),
+            width,
+            palette,
+            palette.green,
         ));
         for subsystem in &graph.healthy_subsystems {
             output.push(Line::from(vec![
@@ -152,9 +303,12 @@ pub fn lines(
     }
 
     output.push(Line::from(""));
-    output.push(Line::styled(
-        "FAILING PATH",
-        Style::default().fg(palette.mid),
+    output.push(crate::session_view::section_rule(
+        "failing",
+        "path",
+        width,
+        palette,
+        palette.red,
     ));
     output.push(Line::from(vec![
         Span::styled("▲ ", pulse(palette.red, tick, pulse_enabled)),
@@ -172,6 +326,7 @@ pub fn lines(
         ),
     ]));
 
+    let related = related_columns(width);
     if graph.blast_radius.is_empty() {
         output.push(Line::styled(
             "  blast radius returned no dependants",
@@ -179,23 +334,14 @@ pub fn lines(
         ));
     } else {
         for file in &graph.blast_radius {
-            output.push(Line::from(vec![
-                Span::styled("├─ blast  ", Style::default().fg(palette.warn)),
-                Span::styled(file.clone(), Style::default().fg(palette.warn)),
-            ]));
+            output.push(related_row(&related, "blast", file, palette.warn, palette));
         }
     }
     for file in &graph.chokepoints {
-        output.push(Line::from(vec![
-            Span::styled("├─ choke  ", Style::default().fg(palette.dim)),
-            Span::styled(file.clone(), Style::default().fg(palette.mid)),
-        ]));
+        output.push(related_row(&related, "choke", file, palette.mid, palette));
     }
     for file in &graph.core_files {
-        output.push(Line::from(vec![
-            Span::styled("└─ core   ", Style::default().fg(palette.dim)),
-            Span::styled(file.clone(), Style::default().fg(palette.mid)),
-        ]));
+        output.push(related_row(&related, "core", file, palette.mid, palette));
     }
 
     output.push(Line::from(""));
@@ -274,6 +420,125 @@ mod tests {
             .await;
     }
 
+    fn overview(value: Value) -> MonitorOverviewResponse {
+        serde_json::from_value(value).expect("typed overview")
+    }
+
+    fn text(lines: &[Line<'_>]) -> String {
+        lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn every_registered_service_gets_a_row_with_its_measured_code_and_latency() {
+        let palette = ScreenTheme::Dark.palette();
+        let rendered = text(&service_lines(
+            &overview(json!({
+                "uptime": {"checks": 3, "up": 2, "down": 1},
+                "uptime_checks": [
+                    {"check_id": "c1", "name": "api", "url": "https://api.fatelabs.ca/health",
+                     "enabled": true, "up": true, "last_status": 200, "last_latency_ms": 142.4,
+                     "last_checked": 4102444800.0},
+                    {"check_id": "c2", "name": "postgrest", "url": "https://db/health",
+                     "enabled": true, "up": false, "last_status": 503, "last_latency_ms": 1902.0,
+                     "last_checked": 4102444700.0},
+                    {"check_id": "c3", "name": "worker", "url": "https://worker/health",
+                     "enabled": false, "up": true, "last_status": null, "last_latency_ms": null,
+                     "last_checked": null}
+                ]
+            })),
+            &palette,
+            40,
+        ));
+
+        assert!(rendered.contains("service"), "{rendered}");
+        assert!(
+            rendered.contains("● ") && rendered.contains("api"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("▲ ") && rendered.contains("postgrest"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("◌ ") && rendered.contains("worker"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("200") && rendered.contains("142ms"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("503") && rendered.contains("1902ms"),
+            "{rendered}"
+        );
+        // 🔴 A NEVER-PROBED CHECK MAY NOT BORROW ANOTHER ROW'S NUMBER OR SHOW A BLANK.
+        assert!(rendered.contains("no probe"), "{rendered}");
+        assert!(!rendered.contains("0ms"), "{rendered}");
+    }
+
+    #[test]
+    fn a_row_that_is_not_a_check_is_counted_out_loud_rather_than_dropped() {
+        let palette = ScreenTheme::Dark.palette();
+        let rendered = text(&service_lines(
+            &overview(json!({"uptime_checks": [
+                {"check_id": "c1", "name": "api", "up": true, "last_status": 200,
+                 "last_latency_ms": 12.0, "last_checked": 1.0},
+                "not-an-object"
+            ]})),
+            &palette,
+            40,
+        ));
+        assert!(
+            rendered.contains("1 uptime row(s) did not match the check shape"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn no_registered_checks_names_the_call_that_registers_one() {
+        let palette = ScreenTheme::Dark.palette();
+        let rendered = text(&service_lines(&overview(json!({})), &palette, 40));
+        assert!(
+            rendered.contains("no uptime checks registered · POST /monitor/uptime adds one"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn every_service_row_is_the_same_width_at_every_rail_width() {
+        let palette = ScreenTheme::Dark.palette();
+        let snapshot = overview(json!({"uptime_checks": [
+            {"check_id": "c1", "name": "api", "up": true, "last_status": 200,
+             "last_latency_ms": 12.0, "last_checked": 1.0},
+            {"check_id": "c2", "name": "a-very-long-service-name-indeed", "up": false,
+             "last_status": 500, "last_latency_ms": 9999.0, "last_checked": 1.0}
+        ]}));
+        for width in [30usize, 46, 80] {
+            let widths = service_lines(&snapshot, &palette, width)
+                .iter()
+                .map(|line| {
+                    line.spans
+                        .iter()
+                        .map(|span| span.content.chars().count())
+                        .sum::<usize>()
+                })
+                .collect::<Vec<_>>();
+            assert!(
+                widths.windows(2).all(|pair| pair[0] == pair[1]),
+                "width {width} produced ragged service rows: {widths:?}"
+            );
+        }
+    }
+
     #[test]
     fn failing_symbol_is_red_blast_radius_is_amber_and_healthy_context_is_green() {
         let palette = ScreenTheme::Dark.palette();
@@ -284,7 +549,7 @@ mod tests {
             blast_radius: vec!["checkout.py".to_string()],
             ..Default::default()
         };
-        let rendered = lines(&graph, &palette, 0, true);
+        let rendered = lines(&graph, &palette, 82, 0, true);
         let spans = rendered
             .iter()
             .flat_map(|line| line.spans.iter())
@@ -313,7 +578,7 @@ mod tests {
             drill_down: true,
             ..Default::default()
         };
-        let text = lines(&graph, &palette, 0, false)
+        let text = lines(&graph, &palette, 82, 0, false)
             .iter()
             .flat_map(|line| line.spans.iter())
             .map(|span| span.content.as_ref())

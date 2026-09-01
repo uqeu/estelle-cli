@@ -139,6 +139,8 @@ fn production_hud(palette: &Palette, tick: u64, pulse_enabled: bool) -> Vec<Line
             drill_down: false,
         },
         palette,
+        // The catalog page is 100 columns and every other screen rules at 82.
+        82,
         tick,
         pulse_enabled,
     )
@@ -1032,27 +1034,30 @@ fn everything(p: &Palette, tick: u64, on: bool) -> Vec<Line<'static>> {
 
 // ── 10 ───────────────────────────────────────────────────────────────────
 fn broken(p: &Palette, tick: u64, on: bool) -> Vec<Line<'static>> {
-    const C: &[Col] = &[Col::l(3), Col::l(30), Col::l(34)];
-    let mut v = vec![rule("gate", "refused", 66, p.dim, p.mid, p.red), blank()];
-    v.push(Line::from(vec![
-        Span::styled("⏹ ".to_string(), pulse(p.red, tick, on)),
-        Span::styled("Gate refused".to_string(), pulse(p.red, tick, on)),
-        Span::styled(
-            "  ·  repairing  ·  round 1 of 3".to_string(),
-            Style::default().fg(p.dim),
-        ),
-    ]));
-    v.push(blank());
-    for (g, what, whr) in [
-        ("│", "reqwest::Client::retry()", "does not exist"),
-        ("│", "src/client.rs:88", "graph: 0 definition sites"),
-    ] {
-        v.push(row(
-            C,
-            &[Cell(g, p.red), Cell(what, p.mid), Cell(whr, p.dim)],
-            2,
-        ));
-    }
+    // 🔴 The refusal block itself is NOT drawn here any more. It is `gate_refusal::lines`, the
+    // single renderer the live `render_gate_modal` also calls — this screen and the customer's
+    // terminal now show the same block by construction rather than by two people agreeing.
+    let mut v = crate::gate_refusal::lines(
+        &crate::gate_refusal::Refusal {
+            detail: "repairing  ·  round 1 of 3",
+            note: None,
+            blockers: &[
+                crate::gate_refusal::Blocker {
+                    claim: "reqwest::Client::retry()",
+                    finding: Some("does not exist"),
+                },
+                crate::gate_refusal::Blocker {
+                    claim: "src/client.rs:88",
+                    finding: Some("graph: 0 definition sites"),
+                },
+            ],
+            files: &[],
+        },
+        p,
+        66,
+        tick,
+        on,
+    );
     v.push(blank());
     v.push(Line::from(vec![
         Span::styled("▲ ".to_string(), pulse(p.warn, tick, on)),

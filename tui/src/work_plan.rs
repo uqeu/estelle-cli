@@ -1,5 +1,4 @@
 use estelle_client::WorkPlan;
-use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::cols::{Cell, Col, head, row};
@@ -59,18 +58,15 @@ pub(crate) fn lines(plan: &WorkPlan, palette: &Palette) -> Vec<Line<'static>> {
 pub(crate) fn lines_at(plan: &WorkPlan, palette: &Palette, width: usize) -> Vec<Line<'static>> {
     let columns = plan_columns(width);
     let mut output = vec![
-        Line::from(vec![
-            Span::styled(
-                "THE PLAN",
-                Style::default()
-                    .fg(palette.mid)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!("  · revision {}", plan.revision),
-                Style::default().fg(palette.dim),
-            ),
-        ]),
+        // ⚠️ `THE PLAN` in bold caps was the old language. The design has no uppercase heading
+        // anywhere; a plan opens on the same rule every other band in the frame opens on.
+        crate::session_view::section_rule(
+            "plan",
+            &format!("revision {}", plan.revision),
+            width,
+            palette,
+            palette.plan,
+        ),
         head(&columns, &["", "state", "step", "evidence"], palette.dim, 0),
     ];
     for step in &plan.steps {
@@ -130,7 +126,7 @@ mod tests {
             .expect("render plan");
         let frame = format!("{}", terminal.backend());
 
-        assert!(frame.contains("THE PLAN"));
+        assert!(frame.contains("╌╌ plan · revision 3 ╌"), "{frame}");
         assert!(frame.contains("✓") && frame.contains("●") && frame.contains("☐"));
         assert!(frame.contains("▲") && frame.contains("Deploy"));
         assert!(frame.contains("parser.py:parse"));

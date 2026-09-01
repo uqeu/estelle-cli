@@ -79,6 +79,10 @@ pub fn head<'a>(cols: &[Col], labels: &[&'a str], dim: Color, indent: usize) -> 
     row(cols, &cells, indent)
 }
 
+/// `╌╌ label · mode ╌╌╌…`, or `╌╌ label ╌╌╌…` when there is no mode.
+///
+/// ⚠️ An empty `mode` drops the separator with it. A pane that has no second half — `settings`,
+/// `skills` — would otherwise render `╌╌ settings ·  ╌╌`, a separator pointing at nothing.
 pub fn rule<'a>(
     label: &'a str,
     mode: &'a str,
@@ -87,16 +91,20 @@ pub fn rule<'a>(
     mid: Color,
     accent: Color,
 ) -> Line<'a> {
-    let used = 3 + label.chars().count() + 3 + mode.chars().count() + 1;
+    let separator = if mode.is_empty() { 0 } else { 3 };
+    let used = 3 + label.chars().count() + separator + mode.chars().count() + 1;
     let dashes = width.saturating_sub(used).max(4);
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled("╌╌ ", Style::default().fg(dim)),
         Span::styled(label, Style::default().fg(mid)),
-        Span::styled(" · ", Style::default().fg(dim)),
-        Span::styled(mode, Style::default().fg(accent)),
-        Span::raw(" "),
-        Span::styled("╌".repeat(dashes), Style::default().fg(dim)),
-    ])
+    ];
+    if !mode.is_empty() {
+        spans.push(Span::styled(" · ", Style::default().fg(dim)));
+        spans.push(Span::styled(mode, Style::default().fg(accent)));
+    }
+    spans.push(Span::raw(" "));
+    spans.push(Span::styled("╌".repeat(dashes), Style::default().fg(dim)));
+    Line::from(spans)
 }
 
 fn truncate(value: &str, width: usize) -> String {
@@ -188,6 +196,32 @@ mod tests {
             joined.contains('…'),
             "truncation must be visible, got {joined:?}"
         );
+    }
+
+    #[test]
+    fn a_rule_with_no_mode_drops_the_separator_with_it() {
+        let text = |line: &Line<'_>| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        };
+        let with = rule(
+            "gate",
+            "refused",
+            40,
+            Color::Reset,
+            Color::Reset,
+            Color::Reset,
+        );
+        let without = rule("settings", "", 40, Color::Reset, Color::Reset, Color::Reset);
+
+        assert!(text(&with).starts_with("╌╌ gate · refused ╌"));
+        assert!(text(&without).starts_with("╌╌ settings ╌"));
+        assert!(!text(&without).contains(" · "));
+        // Both still fill the same row: dropping the separator lengthens the dashes, not the line.
+        assert_eq!(width(&with), 40);
+        assert_eq!(width(&without), 40);
     }
 
     #[test]

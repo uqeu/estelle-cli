@@ -30,6 +30,7 @@ pub(super) fn render_transcript_with_citations(
 }
 
 pub(super) fn header_line(app: &App, _width: u16) -> Line<'static> {
+    let palette = app.theme.screen_palette();
     let mut spans = vec![
         Span::styled(
             "ESTELLE",
@@ -50,7 +51,7 @@ pub(super) fn header_line(app: &App, _width: u16) -> Line<'static> {
         ));
         spans.push(Span::styled(
             plan.to_string(),
-            Style::default().fg(Color::Gray),
+            Style::default().fg(palette.mid),
         ));
     }
     if let Some(team) = app
@@ -65,7 +66,7 @@ pub(super) fn header_line(app: &App, _width: u16) -> Line<'static> {
         ));
         spans.push(Span::styled(
             format!("{label} · {}", team.role.as_deref().unwrap_or("member")),
-            Style::default().fg(Color::Gray),
+            Style::default().fg(palette.mid),
         ));
     }
     if let Some(indexed) = app.header.indexed {
@@ -93,7 +94,7 @@ pub(super) fn header_line(app: &App, _width: u16) -> Line<'static> {
         ));
         spans.push(Span::styled(
             format!("{} files", commas(files)),
-            Style::default().fg(Color::Gray),
+            Style::default().fg(palette.mid),
         ));
     }
     Line::from(spans)
@@ -103,10 +104,11 @@ pub(super) fn session_tabs_line(app: &App) -> Line<'static> {
     if app.session_tabs.is_empty() {
         return Line::default();
     }
+    let palette = app.theme.screen_palette();
     let mut spans = vec![Span::styled(
-        "SESSIONS  ",
+        "sessions  ",
         Style::default()
-            .fg(app.theme.ghost())
+            .fg(palette.dim)
             .add_modifier(Modifier::BOLD),
     )];
     for session in &app.session_tabs {
@@ -133,12 +135,13 @@ pub(super) fn session_tabs_line(app: &App) -> Line<'static> {
     Line::from(spans)
 }
 
-pub(super) fn value_style(resolved: bool) -> Style {
-    Style::default().fg(if resolved {
-        Color::Gray
-    } else {
-        Color::DarkGray
-    })
+/// A value the server RESOLVED reads as body text; one it did not reads as tertiary.
+///
+/// ⚠️ Takes the palette rather than reaching for `Color::Gray`/`Color::DarkGray`: those are the
+/// USER'S terminal's idea of grey, so on a solarized or light profile the "unresolved" style could
+/// be the more legible of the two — inverting the meaning this function exists to carry.
+pub(super) fn value_style(resolved: bool, palette: &theme::Palette) -> Style {
+    Style::default().fg(if resolved { palette.mid } else { palette.dim })
 }
 
 pub(super) fn commas(value: u64) -> String {
@@ -170,6 +173,7 @@ pub(super) fn observed_model(reply: &CommandReply) -> Option<&str> {
 }
 
 pub(super) fn status_line(app: &App, now: Instant) -> Line<'static> {
+    let palette = app.theme.screen_palette();
     if let Some(active) = &app.active {
         let elapsed = now.saturating_duration_since(active.started).as_secs();
         let local_shell = active.label.starts_with("local shell");
@@ -181,7 +185,7 @@ pub(super) fn status_line(app: &App, now: Instant) -> Line<'static> {
             active.label.clone()
         };
         let mut spans = vec![
-            Span::styled(label, Style::default().fg(Color::Yellow)),
+            Span::styled(label, Style::default().fg(palette.warn)),
             Span::raw(format!(
                 "  {}  |  Esc cancels",
                 estelle_tui::fmt_elapsed_compact(elapsed)
@@ -199,7 +203,7 @@ pub(super) fn status_line(app: &App, now: Instant) -> Line<'static> {
     if !app.queue.is_empty() {
         return Line::styled(
             format!("{} queued", app.queue.len()),
-            Style::default().fg(Color::Gray),
+            Style::default().fg(palette.mid),
         );
     }
     let mode = commands::mode_name(commands::effective_mode(
@@ -221,20 +225,23 @@ pub(super) fn status_line(app: &App, now: Instant) -> Line<'static> {
         },
     );
     let mut spans = vec![
-        Span::styled(mode.to_string(), Style::default().fg(Color::Gray)),
-        Span::styled("  ·  ", Style::default().fg(Color::DarkGray)),
-        Span::styled(model, value_style(model_resolved)),
+        Span::styled(mode.to_string(), Style::default().fg(palette.mid)),
+        Span::styled("  ·  ", Style::default().fg(palette.dim)),
+        Span::styled(model, value_style(model_resolved, &palette)),
     ];
     if let Some(count) = app.header.memories {
         spans.extend([
-            Span::styled("  ·  ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("memory {}", commas(count)), value_style(true)),
+            Span::styled("  ·  ", Style::default().fg(palette.dim)),
+            Span::styled(
+                format!("memory {}", commas(count)),
+                value_style(true, &palette),
+            ),
         ]);
     }
     if app.header.connected {
         spans.extend([
-            Span::styled("  ·  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("connected", value_style(true)),
+            Span::styled("  ·  ", Style::default().fg(palette.dim)),
+            Span::styled("connected", value_style(true, &palette)),
         ]);
     }
     Line::from(spans)
@@ -335,6 +342,7 @@ pub(super) fn render_picker(frame: &mut Frame<'_>, picker: &PickerSurface, area:
         height,
     };
     frame.render_widget(Clear, modal);
+    let palette = app.theme.screen_palette();
     let inner_width = usize::from(modal.width.saturating_sub(3));
     let label_width = (inner_width / 3).clamp(12, 24);
     let detail_width = inner_width.saturating_sub(label_width.saturating_add(3));
@@ -364,34 +372,44 @@ pub(super) fn render_picker(frame: &mut Frame<'_>, picker: &PickerSurface, area:
                                 .fg(app.theme.primary())
                                 .add_modifier(Modifier::BOLD)
                         } else {
-                            Style::default().fg(Color::Gray)
+                            Style::default().fg(palette.mid)
                         },
                     ),
                     Span::styled(
                         truncate_display(&row.detail, detail_width),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(palette.dim),
                     ),
                 ])
             })
             .chain(std::iter::once(Line::styled(
                 "↑↓ navigate · 1-9 or Enter select · Esc close",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(palette.dim),
             ))),
     );
+    // 🔴 `┌ SETTINGS ─────┐` WAS FIVE OF THE EIGHT BOXED FRAMES ON ITS OWN — this one block drew
+    // the settings, skills, model-pool, autonomy and monitor-settings surfaces. It is now the
+    // design's rule, from the same builder the session and production columns use.
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .split(modal);
     frame.render_widget(
-        Paragraph::new(lines)
-            .style(
-                Style::default()
-                    .fg(app.theme.primary())
-                    .bg(app.theme.background()),
-            )
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(app.theme.primary()))
-                    .title(format!(" {} ", picker.title.to_ascii_uppercase())),
-            ),
-        modal,
+        Paragraph::new(session_view::title_rule(
+            &picker.title,
+            usize::from(rows[0].width),
+            &palette,
+            palette.cite,
+        ))
+        .style(Style::default().bg(app.theme.background())),
+        rows[0],
+    );
+    frame.render_widget(
+        Paragraph::new(lines).style(
+            Style::default()
+                .fg(app.theme.primary())
+                .bg(app.theme.background()),
+        ),
+        rows[1],
     );
 }
 
@@ -422,20 +440,28 @@ pub(super) fn render_resume_picker(
         },
         Style::default().fg(app.theme.ghost()),
     ));
+    let palette = app.theme.screen_palette();
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .split(modal);
     frame.render_widget(
-        Paragraph::new(lines)
-            .style(
-                Style::default()
-                    .fg(app.theme.primary())
-                    .bg(app.theme.background()),
-            )
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(app.theme.primary()))
-                    .title(" RESUME A PREVIOUS SESSION "),
-            ),
-        modal,
+        Paragraph::new(session_view::title_rule(
+            "resume · a previous session",
+            usize::from(rows[0].width),
+            &palette,
+            palette.cite,
+        ))
+        .style(Style::default().bg(app.theme.background())),
+        rows[0],
+    );
+    frame.render_widget(
+        Paragraph::new(lines).style(
+            Style::default()
+                .fg(app.theme.primary())
+                .bg(app.theme.background()),
+        ),
+        rows[1],
     );
 }
 
@@ -598,6 +624,7 @@ pub(super) fn symbol_ground_layout(width: usize, height: usize) -> Arc<SymbolGro
 }
 
 pub(super) fn render_symbol_ground(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let palette = app.theme.screen_palette();
     let width = usize::from(area.width);
     let height = usize::from(area.height);
     if width == 0 || height == 0 {
@@ -622,7 +649,7 @@ pub(super) fn render_symbol_ground(frame: &mut Frame<'_>, area: Rect, app: &App)
                 match ink_level {
                     2 => Style::default().fg(FATE_RED).add_modifier(Modifier::BOLD),
                     1 => Style::default().fg(if app.theme == Theme::CreamInk {
-                        Color::Black
+                        palette.bright
                     } else {
                         FATE_INK
                     }),
@@ -697,6 +724,7 @@ pub(super) fn session_handoff_lines(app: &App) -> Option<Vec<String>> {
 }
 
 pub(super) fn render_empty_state(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let palette = app.theme.screen_palette();
     let sweep = match app.header.indexed {
         Some(true) => "Refresh this repo's index",
         Some(false) => "Index this repo before asking grounded questions",
@@ -721,7 +749,7 @@ pub(super) fn render_empty_state(frame: &mut Frame<'_>, area: Rect, app: &App) {
                 .human_lines
                 .iter()
                 .take(4)
-                .map(|line| Line::styled(line.clone(), Style::default().fg(Color::Gray))),
+                .map(|line| Line::styled(line.clone(), Style::default().fg(palette.mid))),
         );
     }
     if let Some(account) = &app.account {
@@ -732,13 +760,13 @@ pub(super) fn render_empty_state(frame: &mut Frame<'_>, area: Rect, app: &App) {
             (None, Some(plan)) => format!("Account · {plan}"),
             (None, None) => "Account connected".to_string(),
         };
-        lines.push(Line::styled(identity, Style::default().fg(Color::Gray)));
+        lines.push(Line::styled(identity, Style::default().fg(palette.mid)));
         if let Some(team) = &account.team {
             let name = team.name.as_deref().unwrap_or(&team.id);
             let role = team.role.as_deref().unwrap_or("role not returned");
             lines.push(Line::styled(
                 format!("Team · {name} · {role}"),
-                Style::default().fg(Color::Gray),
+                Style::default().fg(palette.mid),
             ));
         }
     }
@@ -746,158 +774,112 @@ pub(super) fn render_empty_state(frame: &mut Frame<'_>, area: Rect, app: &App) {
         Line::default(),
         Line::from(vec![
             Span::styled("/review  ", Style::default().fg(app.theme.primary())),
-            Span::styled("Read current changes", Style::default().fg(Color::Gray)),
+            Span::styled("Read current changes", Style::default().fg(palette.mid)),
         ]),
         Line::from(vec![
             Span::styled("/sweep   ", Style::default().fg(app.theme.primary())),
-            Span::styled(sweep, Style::default().fg(Color::Gray)),
+            Span::styled(sweep, Style::default().fg(palette.mid)),
         ]),
         Line::from(vec![
             Span::styled("?        ", Style::default().fg(app.theme.primary())),
-            Span::styled("Show shortcuts", Style::default().fg(Color::Gray)),
+            Span::styled("Show shortcuts", Style::default().fg(palette.mid)),
         ]),
     ]);
     lines.truncate(usize::from(area.height));
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
 
+/// The live refusal, in the design's language, through the ONE renderer the catalog also calls.
+///
+/// 🔴 **THIS USED TO BE A SECOND DESIGN.** It drew `┌ gate · deterministic · no model ┐` with
+/// `Borders::ALL`, a braille scatter `Chart` of changed lines per file, `{:>6}  {path}`
+/// hand-positioned rows and three literal `Color::Gray`/`FATE_RED` styles — while `screens.rs`
+/// drew the dashed-rule block the design specifies. The block below is now
+/// [`crate::gate_refusal::lines`], the same function screen 10 renders, so the refusal a customer
+/// sees and the refusal the catalog shows cannot drift apart.
+///
+/// The modal still `Clear`s and paints its own ground, because it overlays the transcript and a
+/// transparent overlay is unreadable — that is an overlay, not a boxed panel.
 pub(super) fn render_gate_modal(
     frame: &mut Frame<'_>,
     modal: &GateModal,
     content_area: Rect,
     app: &App,
+    now: Instant,
 ) {
     let width = content_area.width.saturating_sub(4).min(86);
     let height = content_area.height.saturating_sub(2).min(18);
     let area = centered_rect(width, height, content_area);
+    let palette = app.theme.screen_palette();
     frame.render_widget(Clear, area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(FATE_RED))
-        .title(" gate · deterministic · no model ");
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    frame.render_widget(
+        Block::default().style(Style::default().fg(palette.mid).bg(palette.ground)),
+        area,
+    );
 
-    if inner.height < 10 || inner.width < 48 {
-        let total_lines = modal
-            .files
-            .iter()
-            .map(|file| file.changed_lines)
-            .sum::<u64>();
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::styled(
-                    "EDIT REFUSED",
-                    Style::default().fg(FATE_RED).add_modifier(Modifier::BOLD),
-                ),
-                Line::raw("Gate protected this repository. Nothing was written."),
-                Line::raw(format!("Verdict  {}", modal.verdict)),
-                Line::raw(format!(
-                    "blast radius  {} files · {total_lines} changed lines",
-                    modal.files.len()
-                )),
-                Line::raw(modal.reasons.join(" | ")),
-                Line::styled(
-                    "Enter or Esc closes · Ask Estelle",
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ])
-            .wrap(Wrap { trim: false }),
-            inner,
-        );
-        return;
-    }
-
+    let blockers = modal
+        .reasons
+        .iter()
+        .map(|reason| gate_refusal::Blocker {
+            claim: reason.as_str(),
+            finding: None,
+        })
+        .collect::<Vec<_>>();
+    let files = modal
+        .files
+        .iter()
+        .map(|file| (file.path.clone(), file.changed_lines))
+        .collect::<Vec<_>>();
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(6),
-            Constraint::Min(1),
-            Constraint::Length(1),
-        ])
-        .split(inner);
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(area);
     frame.render_widget(
-        Paragraph::new("EDIT REFUSED")
-            .style(Style::default().fg(FATE_RED).add_modifier(Modifier::BOLD))
-            .alignment(Alignment::Center),
+        Paragraph::new(gate_refusal::lines(
+            &gate_refusal::Refusal {
+                detail: &format!("verdict {}", modal.verdict),
+                note: Some("Gate protected this repository. Nothing was written."),
+                blockers: &blockers,
+                files: &files,
+            },
+            &palette,
+            usize::from(rows[0].width),
+            pulse_tick(app, now),
+            true,
+        )),
         rows[0],
     );
     frame.render_widget(
-        Paragraph::new("Gate protected this repository. Nothing was written.")
-            .alignment(Alignment::Center),
+        Paragraph::new(Line::styled(
+            "Enter or Esc closes · Ask Estelle",
+            Style::default().fg(palette.dim),
+        )),
         rows[1],
-    );
-    frame.render_widget(
-        Paragraph::new(format!("Verdict  {}", modal.verdict))
-            .style(Style::default().fg(Color::Gray)),
-        rows[2],
-    );
-
-    let total_lines = modal
-        .files
-        .iter()
-        .map(|file| file.changed_lines)
-        .sum::<u64>();
-    let points = modal
-        .files
-        .iter()
-        .enumerate()
-        .map(|(index, file)| (index as f64, file.changed_lines as f64))
-        .collect::<Vec<_>>();
-    let max_lines = modal
-        .files
-        .iter()
-        .map(|file| file.changed_lines)
-        .max()
-        .unwrap_or(1)
-        .max(1) as f64;
-    let x_max = modal.files.len().saturating_sub(1).max(1) as f64;
-    let dataset = Dataset::default()
-        .name("changed lines")
-        .marker(Marker::Braille)
-        .graph_type(GraphType::Scatter)
-        .style(Style::default().fg(app.theme.primary()))
-        .data(&points);
-    frame.render_widget(
-        Chart::new(vec![dataset])
-            .block(Block::default().title(format!(
-                " blast radius · {} files · {total_lines} changed lines ",
-                modal.files.len()
-            )))
-            .x_axis(Axis::default().bounds([0.0, x_max]))
-            .y_axis(Axis::default().bounds([0.0, max_lines])),
-        rows[3],
-    );
-
-    let mut details = modal
-        .files
-        .iter()
-        .map(|file| Line::from(format!("{:>6}  {}", file.changed_lines, file.path)))
-        .collect::<Vec<_>>();
-    details.extend(
-        modal
-            .reasons
-            .iter()
-            .map(|reason| Line::from(format!("blocked  {reason}"))),
-    );
-    frame.render_widget(
-        Paragraph::new(details)
-            .style(Style::default().fg(Color::Gray))
-            .wrap(Wrap { trim: false }),
-        rows[4],
-    );
-    frame.render_widget(
-        Paragraph::new("Enter or Esc closes · Ask Estelle")
-            .style(Style::default().fg(Color::DarkGray))
-            .alignment(Alignment::Center),
-        rows[5],
     );
 }
 
+/// Unix epoch seconds — the clock the wire's own `state_observed_at` is expressed in.
+///
+/// ⚠️ `render_frame`'s `now` is an `Instant`, which is a monotonic reading with no epoch, so it
+/// cannot be compared to a server timestamp. A row whose observation is dated AHEAD of this clock
+/// therefore renders its age as `?` rather than as `0s`; see `orchestra_view::age`.
+pub(super) fn epoch_seconds() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |duration| duration.as_secs_f64())
+}
+
+/// The animation clock the design's `pulse` reads, in the one place that derives it.
+pub(super) fn pulse_tick(app: &App, now: Instant) -> u64 {
+    now.saturating_duration_since(app.boot_started)
+        .as_millis()
+        .checked_div(50)
+        .and_then(|value| u64::try_from(value).ok())
+        .unwrap_or(0)
+}
+
 pub(super) fn render_context_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let palette = app.theme.screen_palette();
     let mut lines = vec![
         Line::styled(
             "Repo graph · team's swept copy",
@@ -916,7 +898,7 @@ pub(super) fn render_context_panel(frame: &mut Frame<'_>, area: Rect, app: &App)
     if app.citations.is_empty() {
         lines.push(Line::styled(
             "No grounded sources in the current answer.",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(palette.dim),
         ));
     } else {
         for source in app.citations.iter().take(8) {
@@ -929,7 +911,7 @@ pub(super) fn render_context_panel(frame: &mut Frame<'_>, area: Rect, app: &App)
                 .unwrap_or("symbol not disclosed");
             lines.push(Line::styled(
                 format!("  symbol  {symbol}"),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(palette.dim),
             ));
         }
     }
@@ -942,16 +924,16 @@ pub(super) fn render_context_panel(frame: &mut Frame<'_>, area: Rect, app: &App)
     ));
     lines.push(Line::styled(
         "Sent through the configured Estelle model path.",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(palette.dim),
     ));
     lines.push(Line::styled(
         "Not added to the team's Repo graph.",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(palette.dim),
     ));
     if app.working_memory_paths.is_empty() {
         lines.push(Line::styled(
             "No eligible local files were attached to the last question.",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(palette.dim),
         ));
     } else {
         lines.extend(
@@ -964,25 +946,28 @@ pub(super) fn render_context_panel(frame: &mut Frame<'_>, area: Rect, app: &App)
     lines.push(Line::from(""));
     lines.push(Line::styled(
         "Alt+M or /context closes",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(palette.dim),
     ));
+    // ⚠️ This box was the one that rendered BESIDE the new language in a single row:
+    // `╌╌ session · uqeu/estelle ╌╌╌  │  ┌ CONTEXT  Alt+M · /context ────┐`.
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .split(area);
     frame.render_widget(
-        Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(
-                        Style::default().fg(if app.focus == FocusSurface::Auxiliary {
-                            app.theme.primary()
-                        } else {
-                            app.theme.ghost()
-                        }),
-                    )
-                    .title(" CONTEXT  Alt+M · /context "),
-            )
-            .wrap(Wrap { trim: false }),
-        area,
+        Paragraph::new(session_view::title_rule(
+            "context · alt+m · /context",
+            usize::from(rows[0].width),
+            &palette,
+            if app.focus == FocusSurface::Auxiliary {
+                palette.cite
+            } else {
+                palette.dim
+            },
+        )),
+        rows[0],
     );
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), rows[1]);
 }
 
 #[cfg(test)]
@@ -1113,16 +1098,48 @@ pub(super) fn production_health_lines(
     lines
 }
 
-pub(super) fn production_workspace_lines(app: &App) -> Vec<Line<'static>> {
-    let heading = |text: String| {
-        Line::styled(
-            text,
-            Style::default()
-                .fg(app.theme.primary())
-                .add_modifier(Modifier::BOLD),
-        )
-    };
-    let dim = |text: String| Line::styled(text, Style::default().fg(app.theme.ghost()));
+/// The production rail's model: the app, its services, its agents, Estelle's own status, the
+/// repair queue and GitHub — in the design's language.
+///
+/// 🔴 **THE RAIL SPOKE A DIFFERENT DESIGN FROM THE COLUMN IT SITS IN.** Its sections opened on
+/// shouted bold headings (`APP HEALTH`, `AGENT HEALTH`, `ESTELLE STATUS`, `ESTELLE QUEUE`,
+/// `GITHUB`) in `app.theme.primary()` while the frame around it opened on `╌╌ production · repo ╌╌`
+/// from the palette. Every section now opens on a rule from [`crate::cols::rule`] and every colour
+/// comes from [`crate::theme::Palette`], so the rail and its frame are one design.
+///
+/// ⚠️ **AN EMPTY STATE HERE NAMES THE READ THAT HAS NOT ANSWERED.** `Loading a real Monitor
+/// window...` and `Waiting for the live issue feed...` told the reader that something was expected
+/// and nothing about WHAT. Each absence below names its endpoint, so a rail that stays empty is a
+/// bug report the customer can act on.
+pub(super) fn production_workspace_lines(app: &App, width: usize) -> Vec<Line<'static>> {
+    let palette = app.theme.screen_palette();
+    let mut lines = app_health_lines(app, &palette, width);
+    for section in [
+        agent_health_lines(app, &palette, width),
+        estelle_status_lines(app, &palette, width),
+        queue_lines(app, &palette, width),
+        github_lines(app, &palette, width),
+    ] {
+        lines.push(Line::from(""));
+        lines.extend(section);
+    }
+    lines
+}
+
+fn dim_line(text: String, palette: &theme::Palette) -> Line<'static> {
+    Line::styled(text, Style::default().fg(palette.dim))
+}
+
+fn mid_line(text: String, palette: &theme::Palette) -> Line<'static> {
+    Line::styled(text, Style::default().fg(palette.mid))
+}
+
+fn alert_line(text: String, palette: &theme::Palette) -> Line<'static> {
+    Line::styled(text, Style::default().fg(palette.red))
+}
+
+/// The app band: which app this is, its measured error window, and one row per monitored service.
+fn app_health_lines(app: &App, palette: &theme::Palette, width: usize) -> Vec<Line<'static>> {
     let repo = app
         .prod_issues
         .as_ref()
@@ -1139,196 +1156,296 @@ pub(super) fn production_workspace_lines(app: &App) -> Vec<Line<'static>> {
             .find_map(|key| overview.extra.get(key).and_then(Value::as_str))
     });
     let identity = match (app_name, org) {
-        (Some(app_name), Some(org)) => format!("APP HEALTH · {org}/{app_name}"),
-        (Some(app_name), None) => format!("APP HEALTH · {app_name}"),
-        (None, _) => format!("APP HEALTH · repo {repo}"),
+        (Some(app_name), Some(org)) => format!("{org}/{app_name}"),
+        (Some(app_name), None) => app_name.to_string(),
+        (None, _) => format!("repo {repo}"),
     };
-    let mut lines = vec![heading(identity)];
+    let mut lines = vec![session_view::section_rule(
+        "app",
+        &identity,
+        width,
+        palette,
+        palette.green,
+    )];
 
     if !app.auth_resolved {
-        lines.push(dim("Connecting to Estelle...".to_string()));
-    } else if app.client.is_none() {
-        lines.push(dim("Live Monitor unavailable.".to_string()));
-        lines.push(dim("Run /login here.".to_string()));
-    } else if let Some(error) = &app.prod_issue_error {
-        lines.push(Line::styled(
-            error.clone(),
-            Style::default().fg(app.theme.alert()),
+        lines.push(dim_line("Connecting to Estelle...".to_string(), palette));
+        return lines;
+    }
+    if app.client.is_none() {
+        lines.push(dim_line("Live Monitor unavailable.".to_string(), palette));
+        lines.push(dim_line("Run /login here.".to_string(), palette));
+        return lines;
+    }
+    if let Some(error) = &app.prod_issue_error {
+        lines.push(alert_line(error.clone(), palette));
+        lines.push(dim_line(
+            "The client will retry in the background.".to_string(),
+            palette,
         ));
-        lines.push(dim("The client will retry in the background.".to_string()));
-    } else if let Some(overview) = &app.prod_overview {
-        let buckets = overview.error_buckets();
-        if buckets.is_empty() {
-            lines.push(dim("No measured error window was returned.".to_string()));
-        } else {
-            let errors = buckets.iter().map(|bucket| bucket.errors).sum::<u64>();
-            let requests = buckets
-                .iter()
-                .filter_map(|bucket| bucket.requests)
-                .sum::<u64>();
-            let has_denominator = overview.requests_source() != Some("unavailable")
-                && buckets.iter().all(|bucket| bucket.requests.is_some());
-            lines.push(Line::from(format!(
+        return lines;
+    }
+    let Some(overview) = &app.prod_overview else {
+        lines.push(dim_line(
+            "GET /monitor/overview has not returned yet.".to_string(),
+            palette,
+        ));
+        return lines;
+    };
+
+    let buckets = overview.error_buckets();
+    if buckets.is_empty() {
+        lines.push(dim_line(
+            "No measured error window was returned.".to_string(),
+            palette,
+        ));
+    } else {
+        let errors = buckets.iter().map(|bucket| bucket.errors).sum::<u64>();
+        let requests = buckets
+            .iter()
+            .filter_map(|bucket| bucket.requests)
+            .sum::<u64>();
+        let has_denominator = overview.requests_source() != Some("unavailable")
+            && buckets.iter().all(|bucket| bucket.requests.is_some());
+        lines.push(mid_line(
+            format!(
                 "error counts · {}  {errors}",
                 error_count_sparkline(&buckets)
-            )));
-            if has_denominator {
-                lines.push(Line::from(format!(
-                    "measured · {errors}/{requests} requests"
-                )));
-            } else {
-                lines.push(dim("request denominator unavailable".to_string()));
-            }
-        }
-        if overview.uptime.checks == 0 {
-            lines.push(dim(
-                "No uptime checks · add one with POST /monitor/uptime.".to_string()
+            ),
+            palette,
+        ));
+        if has_denominator {
+            lines.push(mid_line(
+                format!("measured · {errors}/{requests} requests"),
+                palette,
             ));
         } else {
-            lines.push(Line::from(format!(
-                "uptime checks · {}/{} up",
-                overview.uptime.up, overview.uptime.checks
-            )));
-            if overview.uptime.down > 0 {
-                lines.push(Line::styled(
-                    format!("{} uptime check(s) down", overview.uptime.down),
-                    Style::default().fg(app.theme.alert()),
-                ));
-            }
+            lines.push(dim_line(
+                "request denominator unavailable".to_string(),
+                palette,
+            ));
         }
-    } else {
-        lines.push(dim("Loading a real Monitor window...".to_string()));
     }
 
     lines.push(Line::from(""));
-    lines.push(heading("AGENT HEALTH".to_string()));
+    let uptime = &overview.uptime;
+    lines.push(session_view::section_rule(
+        "services",
+        &format!("{}/{} up", uptime.up, uptime.checks),
+        width,
+        palette,
+        if uptime.down > 0 {
+            palette.red
+        } else {
+            palette.green
+        },
+    ));
+    lines.extend(production_hud::service_lines(overview, palette, width));
+    lines
+}
+
+/// The agent band. `enabled: null` stays unknown and prints the server's own reason; it never
+/// becomes `0 reporting`, which is a measurement.
+fn agent_health_lines(app: &App, palette: &theme::Palette, width: usize) -> Vec<Line<'static>> {
+    let mode = match app
+        .prod_agent_health
+        .as_ref()
+        .and_then(|health| health.enabled)
+    {
+        Some(true) => "reporting",
+        Some(false) => "not enabled",
+        None => "unread",
+    };
+    let mut lines = vec![session_view::section_rule(
+        "agents",
+        mode,
+        width,
+        palette,
+        palette.cite,
+    )];
     if let Some(error) = &app.prod_agent_health_error {
-        lines.push(Line::styled(
-            error.clone(),
-            Style::default().fg(app.theme.alert()),
+        lines.push(alert_line(error.clone(), palette));
+        lines.push(dim_line(
+            "The client will retry in the background.".to_string(),
+            palette,
         ));
-        lines.push(dim("The client will retry in the background.".to_string()));
-    } else if let Some(health) = &app.prod_agent_health {
-        match health.enabled {
-            Some(false) => lines.push(dim(
+        return lines;
+    }
+    let Some(health) = &app.prod_agent_health else {
+        lines.push(dim_line(
+            "GET /agent/health has not returned yet · send POST /agent/events.".to_string(),
+            palette,
+        ));
+        return lines;
+    };
+    match health.enabled {
+        Some(false) => {
+            lines.push(dim_line(
                 "Agent telemetry not enabled · send POST /agent/events after enabling it."
                     .to_string(),
-            )),
-            None => lines.push(dim(format!(
-                "Agent health unknown · {}",
-                health
-                    .enabled_absent_reason
-                    .as_deref()
-                    .filter(|reason| !reason.trim().is_empty())
-                    .unwrap_or("server returned no reason")
-            ))),
-            Some(true) => {
-                if let Some(counts) = &health.counts {
-                    let count = |value: Option<u64>, label: &str| match value {
-                        Some(value) => format!("{value} {label}"),
-                        None => format!("{label} unknown"),
-                    };
-                    lines.push(Line::from(format!(
-                        "{} · {} · {}",
-                        count(counts.reporting, "reporting"),
-                        count(counts.degraded, "degraded"),
-                        count(counts.silent, "silent")
-                    )));
-                } else {
-                    lines.push(dim(
-                        "Agent counts unavailable · server returned no measurement.".to_string(),
-                    ));
-                }
-                match (health.observed_at, health.stale_after_s) {
-                    (Some(observed_at), Some(stale_after_s)) => lines.push(dim(format!(
-                        "observed {observed_at:.0} · stale threshold {stale_after_s}s"
-                    ))),
-                    _ => lines.push(dim("Snapshot freshness unavailable.".to_string())),
-                }
-                for agent in health.agents.iter().take(3) {
-                    let state = match agent.state {
-                        estelle_client::AgentHealthState::Healthy => "healthy",
-                        estelle_client::AgentHealthState::Degraded => "degraded",
-                        estelle_client::AgentHealthState::Silent => "silent",
-                        estelle_client::AgentHealthState::Disabled => "disabled",
-                        estelle_client::AgentHealthState::Unknown => "unknown",
-                    };
-                    let events = agent
-                        .events
-                        .map(|events| format!("{events}ev"))
-                        .unwrap_or_else(|| "events?".to_string());
-                    let signal = agent
-                        .current_signal
-                        .as_deref()
-                        .filter(|signal| !signal.trim().is_empty())
-                        .or(agent.state_absent_reason.as_deref())
-                        .unwrap_or("signal unavailable");
-                    lines.push(Line::from(format!(
-                        "{state} {} · {events} · {signal}",
-                        agent.id
-                    )));
-                    if let Some(last_seen) = agent.last_seen {
-                        lines.push(dim(format!("       last seen {last_seen:.0}")));
-                    }
-                }
-                if health.agents.len() > 3 {
-                    lines.push(dim(format!("+{} more agents", health.agents.len() - 3)));
-                }
-            }
+                palette,
+            ));
+            return lines;
         }
+        None => {
+            lines.push(dim_line(
+                format!(
+                    "Agent health unknown · {}",
+                    health
+                        .enabled_absent_reason
+                        .as_deref()
+                        .filter(|reason| !reason.trim().is_empty())
+                        .unwrap_or("server returned no reason")
+                ),
+                palette,
+            ));
+            return lines;
+        }
+        Some(true) => {}
+    }
+    if let Some(counts) = &health.counts {
+        let count = |value: Option<u64>, label: &str| match value {
+            Some(value) => format!("{value} {label}"),
+            None => format!("{label} unknown"),
+        };
+        lines.push(mid_line(
+            format!(
+                "{} · {} · {}",
+                count(counts.reporting, "reporting"),
+                count(counts.degraded, "degraded"),
+                count(counts.silent, "silent")
+            ),
+            palette,
+        ));
     } else {
-        lines.push(dim(
-            "State unavailable · no read contract · send POST /agent/events.".to_string(),
+        lines.push(dim_line(
+            "Agent counts unavailable · server returned no measurement.".to_string(),
+            palette,
         ));
     }
-
-    lines.push(Line::from(""));
-    lines.push(heading("ESTELLE STATUS".to_string()));
-    match app.prod_issues.as_ref() {
-        Some(response) => {
-            let unresolved = response
-                .issues
-                .iter()
-                .filter(|issue| issue.status != "resolved")
-                .collect::<Vec<_>>();
-            if !unresolved.is_empty() {
-                for issue in unresolved.iter().take(2) {
-                    let events = issue.event_count();
-                    let location = issue
-                        .bound_location()
-                        .map(|(file, line)| format!("{file}:{line}"))
-                        .unwrap_or_else(|| "unbound · reason not recorded".to_string());
-                    lines.push(Line::from(format!("caught · {}", issue_title(issue))));
-                    lines.push(dim(format!(
-                        "grouped · {events} event(s) · traced to · {location}"
-                    )));
-                    if let Some(range) = &issue.symbol_range
-                        && range.line_end > range.line_start
-                    {
-                        lines.push(dim(format!(
-                            "       range {}:{}-{}",
-                            range.file, range.line_start, range.line_end
-                        )));
-                    }
-                }
-                if unresolved.len() > 2 {
-                    lines.push(dim(format!(
-                        "+{} more · open /monitor issues",
-                        unresolved.len() - 2
-                    )));
-                }
-            } else {
-                lines.push(dim("No errors have reached Estelle yet.".to_string()));
-                lines.push(dim(
-                    "Point OTLP or Sentry at api.fatelabs.ca/monitor/ingest.".to_string(),
-                ));
-            }
-        }
-        None => lines.push(dim("Waiting for the live issue feed...".to_string())),
+    match (health.observed_at, health.stale_after_s) {
+        (Some(observed_at), Some(stale_after_s)) => lines.push(dim_line(
+            format!("observed {observed_at:.0} · stale threshold {stale_after_s}s"),
+            palette,
+        )),
+        _ => lines.push(dim_line(
+            "Snapshot freshness unavailable.".to_string(),
+            palette,
+        )),
     }
+    for agent in health.agents.iter().take(3) {
+        let (state, colour) = match agent.state {
+            estelle_client::AgentHealthState::Healthy => ("healthy", palette.green),
+            estelle_client::AgentHealthState::Degraded => ("degraded", palette.warn),
+            estelle_client::AgentHealthState::Silent => ("silent", palette.red),
+            estelle_client::AgentHealthState::Disabled => ("disabled", palette.dim),
+            estelle_client::AgentHealthState::Unknown => ("unknown", palette.dim),
+        };
+        let events = agent
+            .events
+            .map(|events| format!("{events}ev"))
+            .unwrap_or_else(|| "events?".to_string());
+        let signal = agent
+            .current_signal
+            .as_deref()
+            .filter(|signal| !signal.trim().is_empty())
+            .or(agent.state_absent_reason.as_deref())
+            .unwrap_or("signal unavailable");
+        lines.push(Line::from(vec![
+            Span::styled(state.to_string(), Style::default().fg(colour)),
+            Span::styled(
+                format!(" {} · {events} · {signal}", agent.id),
+                Style::default().fg(palette.mid),
+            ),
+        ]));
+        if let Some(last_seen) = agent.last_seen {
+            lines.push(dim_line(
+                format!("       last seen {last_seen:.0}"),
+                palette,
+            ));
+        }
+    }
+    if health.agents.len() > 3 {
+        lines.push(dim_line(
+            format!("+{} more agents", health.agents.len() - 3),
+            palette,
+        ));
+    }
+    lines
+}
 
-    lines.push(Line::from(""));
-    lines.push(heading("ESTELLE QUEUE".to_string()));
+/// What Estelle itself has caught, bound and traced.
+fn estelle_status_lines(app: &App, palette: &theme::Palette, width: usize) -> Vec<Line<'static>> {
+    let Some(response) = app.prod_issues.as_ref() else {
+        return vec![
+            session_view::section_rule("estelle", "unread", width, palette, palette.dim),
+            dim_line("GET /issues has not returned yet.".to_string(), palette),
+        ];
+    };
+    let unresolved = response
+        .issues
+        .iter()
+        .filter(|issue| issue.status != "resolved")
+        .collect::<Vec<_>>();
+    let mut lines = vec![session_view::section_rule(
+        "estelle",
+        &format!("{} unresolved", unresolved.len()),
+        width,
+        palette,
+        if unresolved.is_empty() {
+            palette.green
+        } else {
+            palette.red
+        },
+    )];
+    if unresolved.is_empty() {
+        lines.push(dim_line(
+            "No errors have reached Estelle yet.".to_string(),
+            palette,
+        ));
+        lines.push(dim_line(
+            "Point OTLP or Sentry at api.fatelabs.ca/monitor/ingest.".to_string(),
+            palette,
+        ));
+        return lines;
+    }
+    for issue in unresolved.iter().take(2) {
+        let events = issue.event_count();
+        let location = issue
+            .bound_location()
+            .map(|(file, line)| format!("{file}:{line}"))
+            .unwrap_or_else(|| "unbound · reason not recorded".to_string());
+        lines.push(mid_line(
+            format!("caught · {}", issue_title(issue)),
+            palette,
+        ));
+        lines.push(dim_line(
+            format!("grouped · {events} event(s) · traced to · {location}"),
+            palette,
+        ));
+        if let Some(range) = &issue.symbol_range
+            && range.line_end > range.line_start
+        {
+            lines.push(dim_line(
+                format!(
+                    "       range {}:{}-{}",
+                    range.file, range.line_start, range.line_end
+                ),
+                palette,
+            ));
+        }
+    }
+    if unresolved.len() > 2 {
+        lines.push(dim_line(
+            format!("+{} more · open /monitor issues", unresolved.len() - 2),
+            palette,
+        ));
+    }
+    lines
+}
+
+/// The repair queue: what Estelle has drafted, where it is going, and the gate's verdict on it.
+fn queue_lines(app: &App, palette: &theme::Palette, width: usize) -> Vec<Line<'static>> {
     let queued = app
         .prod_issues
         .as_ref()
@@ -1341,59 +1458,99 @@ pub(super) fn production_workspace_lines(app: &App) -> Vec<Line<'static>> {
         })
         .take(3)
         .collect::<Vec<_>>();
+    let mut lines = vec![session_view::section_rule(
+        "queue",
+        &format!("{} repair(s)", queued.len()),
+        width,
+        palette,
+        if queued.is_empty() {
+            palette.dim
+        } else {
+            palette.warn
+        },
+    )];
     if queued.is_empty() {
-        lines.push(dim("Queue empty · no repair work is reported.".to_string()));
-        lines.push(dim("Issue selection: /monitor issues".to_string()));
-    } else {
-        for issue in queued {
-            let repair_pr = issue.effective_repair_pr();
-            let repair_status = issue.effective_repair_status();
-            let destination = if repair_pr.trim().is_empty() {
-                "awaiting human review".to_string()
-            } else {
-                repair_pr.to_string()
-            };
-            let label = if repair_status == "proposed" {
-                "drafted repair"
-            } else {
-                repair_status
-            };
-            lines.push(Line::from(format!(
-                "{label} · {} · {destination}",
-                issue_title(issue)
-            )));
-            if let Some(verdict) = issue.effective_gate_verdict() {
-                lines.push(dim(format!("       gate · {verdict}")));
-            } else if let Some(reason) = issue
-                .gate_absent_reason
-                .as_deref()
-                .filter(|reason| !reason.trim().is_empty())
-            {
-                lines.push(dim(format!("       gate absent · {reason}")));
-            }
-            if let Some(patch) = issue.effective_repair_patch() {
-                let short_sha = patch.base_sha.chars().take(12).collect::<String>();
-                lines.push(dim(format!(
-                    "       patch · {} · base {short_sha}",
-                    patch.format
-                )));
-                lines.extend(github_diff_lines(&patch.text, 96, app));
-            } else {
-                let reason = issue
-                    .effective_patch_absent_reason()
-                    .unwrap_or("unavailable");
-                lines.push(dim(format!("       diff unavailable - {reason}")));
-            }
+        lines.push(dim_line(
+            "Queue empty · no repair work is reported.".to_string(),
+            palette,
+        ));
+        lines.push(dim_line(
+            "Issue selection: /monitor issues".to_string(),
+            palette,
+        ));
+        return lines;
+    }
+    for issue in queued {
+        let repair_pr = issue.effective_repair_pr();
+        let repair_status = issue.effective_repair_status();
+        let destination = if repair_pr.trim().is_empty() {
+            "awaiting human review".to_string()
+        } else {
+            repair_pr.to_string()
+        };
+        let label = if repair_status == "proposed" {
+            "drafted repair"
+        } else {
+            repair_status
+        };
+        lines.push(mid_line(
+            format!("{label} · {} · {destination}", issue_title(issue)),
+            palette,
+        ));
+        if let Some(verdict) = issue.effective_gate_verdict() {
+            lines.push(dim_line(format!("       gate · {verdict}"), palette));
+        } else if let Some(reason) = issue
+            .gate_absent_reason
+            .as_deref()
+            .filter(|reason| !reason.trim().is_empty())
+        {
+            lines.push(dim_line(format!("       gate absent · {reason}"), palette));
+        }
+        if let Some(patch) = issue.effective_repair_patch() {
+            let short_sha = patch.base_sha.chars().take(12).collect::<String>();
+            lines.push(dim_line(
+                format!("       patch · {} · base {short_sha}", patch.format),
+                palette,
+            ));
+            lines.extend(github_diff_lines(&patch.text, 96, app));
+        } else {
+            let reason = issue
+                .effective_patch_absent_reason()
+                .unwrap_or("unavailable");
+            lines.push(dim_line(
+                format!("       diff unavailable - {reason}"),
+                palette,
+            ));
         }
     }
+    lines
+}
 
-    lines.push(Line::from(""));
-    lines.push(heading("GITHUB".to_string()));
+/// The GitHub band. An unknown connection stays unknown — a proposed-PR list is not read, and
+/// certainly not inferred, without a measured App binding.
+fn github_lines(app: &App, palette: &theme::Palette, width: usize) -> Vec<Line<'static>> {
+    let connected = app
+        .prod_github_status
+        .as_ref()
+        .and_then(|status| status.connected);
+    let mode = match connected {
+        Some(true) => "connected",
+        Some(false) => "unbound",
+        None => "unknown",
+    };
+    let mut lines = vec![session_view::section_rule(
+        "github",
+        mode,
+        width,
+        palette,
+        match connected {
+            Some(true) => palette.green,
+            Some(false) => palette.dim,
+            None => palette.warn,
+        },
+    )];
     if let Some(error) = &app.prod_github_status_error {
-        lines.push(Line::styled(
-            error.clone(),
-            Style::default().fg(app.theme.alert()),
-        ));
+        lines.push(alert_line(error.clone(), palette));
     } else if let Some(status) = &app.prod_github_status {
         match status.connected {
             Some(true) => {
@@ -1403,17 +1560,22 @@ pub(super) fn production_workspace_lines(app: &App) -> Vec<Line<'static>> {
                     .filter(|login| !login.trim().is_empty())
                     .map(|login| format!(" · @{login}"))
                     .unwrap_or_default();
-                lines.push(Line::from(format!("Connected{identity}")));
+                lines.push(mid_line(format!("Connected{identity}"), palette));
                 if let Some(observed_at) = status.observed_at {
-                    lines.push(dim(format!("binding observed {observed_at:.0}")));
+                    lines.push(dim_line(
+                        format!("binding observed {observed_at:.0}"),
+                        palette,
+                    ));
                 }
             }
             Some(false) => {
-                lines.push(dim(
-                    "Not connected · run estelle github connect.".to_string()
+                lines.push(dim_line(
+                    "Not connected · run estelle github connect.".to_string(),
+                    palette,
                 ));
-                lines.push(dim(
+                lines.push(dim_line(
                     "Proposed PRs are not read without a measured App binding.".to_string(),
+                    palette,
                 ));
             }
             None => {
@@ -1422,65 +1584,77 @@ pub(super) fn production_workspace_lines(app: &App) -> Vec<Line<'static>> {
                     .as_deref()
                     .filter(|reason| !reason.trim().is_empty())
                     .unwrap_or("server returned no reason");
-                lines.push(dim(format!("Connection unknown · {reason}")));
-                lines.push(dim("Proposed PR state is not inferred.".to_string()));
+                lines.push(dim_line(format!("Connection unknown · {reason}"), palette));
+                lines.push(dim_line(
+                    "Proposed PR state is not inferred.".to_string(),
+                    palette,
+                ));
             }
         }
     } else {
-        lines.push(dim(
-            "Waiting for measured GitHub connection state...".to_string()
+        lines.push(dim_line(
+            "GET /github/status has not returned yet.".to_string(),
+            palette,
         ));
     }
 
-    if app
-        .prod_github_status
-        .as_ref()
-        .and_then(|status| status.connected)
-        == Some(true)
-    {
-        if let Some(error) = &app.prod_proposed_prs_error {
-            lines.push(Line::styled(
-                error.clone(),
-                Style::default().fg(app.theme.alert()),
-            ));
-        } else if let Some(response) = &app.prod_proposed_prs {
-            if response.prs.is_empty() {
-                lines.push(dim("No open Estelle-proposed PRs returned.".to_string()));
-            }
-            for pr in response.prs.iter().take(3) {
-                let title = if pr.title.trim().is_empty() {
-                    "untitled PR"
-                } else {
-                    pr.title.as_str()
-                };
-                lines.push(Line::from(format!("#{} · {title}", pr.number)));
-                lines.push(dim(format!("       {}", pr.url)));
-                if let Some(gate) = &pr.gate {
-                    let verified = if gate.verified { " · verified" } else { "" };
-                    lines.push(dim(format!(
-                        "       gate · {} · {} · {} blocker(s){verified}",
-                        gate.state, gate.verdict, gate.blockers
-                    )));
-                } else {
-                    let reason = pr
-                        .gate_absent_reason
-                        .as_deref()
-                        .filter(|reason| !reason.trim().is_empty())
-                        .unwrap_or("server returned no reason");
-                    lines.push(dim(format!("       gate absent · {reason}")));
-                }
-                if !pr.updated_at.trim().is_empty() {
-                    lines.push(dim(format!("       updated {}", pr.updated_at)));
-                }
-            }
-            if response.has_more {
-                lines.push(dim(
-                    "More open proposed PRs exist than this page shows.".to_string()
-                ));
-            }
+    if connected != Some(true) {
+        return lines;
+    }
+    if let Some(error) = &app.prod_proposed_prs_error {
+        lines.push(alert_line(error.clone(), palette));
+        return lines;
+    }
+    let Some(response) = &app.prod_proposed_prs else {
+        lines.push(dim_line(
+            "GET /prs has not returned yet.".to_string(),
+            palette,
+        ));
+        return lines;
+    };
+    if response.prs.is_empty() {
+        lines.push(dim_line(
+            "No open Estelle-proposed PRs returned.".to_string(),
+            palette,
+        ));
+    }
+    for pr in response.prs.iter().take(3) {
+        let title = if pr.title.trim().is_empty() {
+            "untitled PR"
         } else {
-            lines.push(dim("Waiting for the proposed-PR feed...".to_string()));
+            pr.title.as_str()
+        };
+        lines.push(mid_line(format!("#{} · {title}", pr.number), palette));
+        lines.push(dim_line(format!("       {}", pr.url), palette));
+        if let Some(gate) = &pr.gate {
+            let confirmed = if gate.verified { " · verified" } else { "" };
+            lines.push(dim_line(
+                format!(
+                    "       gate · {} · {} · {} blocker(s){confirmed}",
+                    gate.state, gate.verdict, gate.blockers
+                ),
+                palette,
+            ));
+        } else {
+            let reason = pr
+                .gate_absent_reason
+                .as_deref()
+                .filter(|reason| !reason.trim().is_empty())
+                .unwrap_or("server returned no reason");
+            lines.push(dim_line(format!("       gate absent · {reason}"), palette));
         }
+        if !pr.updated_at.trim().is_empty() {
+            lines.push(dim_line(
+                format!("       updated {}", pr.updated_at),
+                palette,
+            ));
+        }
+    }
+    if response.has_more {
+        lines.push(dim_line(
+            "More open proposed PRs exist than this page shows.".to_string(),
+            palette,
+        ));
     }
     lines
 }
@@ -1511,20 +1685,23 @@ pub(super) fn error_count_sparkline(buckets: &[estelle_client::MonitorErrorBucke
 }
 
 pub(super) fn render_prod_panel(frame: &mut Frame<'_>, area: Rect, app: &App, now: Instant) {
+    let palette = app.theme.screen_palette();
+    // The rail's own rule takes the first row; every line under it is sized to what is left, so
+    // the section rules inside the rail end on the same column as the rail's heading.
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .split(area);
     let lines = if let Some(graph) = &app.prod_graph {
-        let palette = match app.theme {
-            Theme::Dark => theme::ScreenTheme::Dark.palette(),
-            Theme::CreamInk => theme::ScreenTheme::Cream.palette(),
-        };
-        let tick = now
-            .saturating_duration_since(app.boot_started)
-            .as_millis()
-            .checked_div(50)
-            .and_then(|value| u64::try_from(value).ok())
-            .unwrap_or(0);
-        production_hud::lines(graph, &palette, tick, true)
+        production_hud::lines(
+            graph,
+            &palette,
+            usize::from(rows[1].width),
+            pulse_tick(app, now),
+            true,
+        )
     } else {
-        let mut lines = production_workspace_lines(app);
+        let mut lines = production_workspace_lines(app, usize::from(rows[1].width));
         if app.prod_graph_in_flight {
             lines.push(Line::styled(
                 "Reading blast_radius · chokepoints · subsystems · core_files...",
@@ -1544,11 +1721,6 @@ pub(super) fn render_prod_panel(frame: &mut Frame<'_>, area: Rect, app: &App, no
             .iter()
             .any(|issue| issue.status != "resolved")
     });
-    let palette = app.theme.screen_palette();
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(1)])
-        .split(area);
     frame.render_widget(
         Paragraph::new(session_view::production_rule(
             app.repo.as_str(),
@@ -1577,34 +1749,32 @@ pub(super) fn render_prod_panel(frame: &mut Frame<'_>, area: Rect, app: &App, no
 }
 
 pub(super) fn render_diff_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    let palette = app.theme.screen_palette();
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .split(area);
     let mut lines = vec![Line::styled(
         "read-only · /apply submits this exact patch",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(palette.dim),
     )];
     if let Some(diff) = app.last_diff.as_deref() {
-        lines.extend(github_diff_lines(
-            diff,
-            usize::from(area.width.saturating_sub(2)),
-            app,
-        ));
+        lines.extend(github_diff_lines(diff, usize::from(rows[1].width), app));
     }
     frame.render_widget(
-        Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(
-                        Style::default().fg(if app.focus == FocusSurface::Auxiliary {
-                            app.theme.primary()
-                        } else {
-                            app.theme.ghost()
-                        }),
-                    )
-                    .title(" WORK DRAFT · /work · READ ONLY "),
-            )
-            .wrap(Wrap { trim: false }),
-        area,
+        Paragraph::new(session_view::title_rule(
+            "work draft · /work · read only",
+            usize::from(rows[0].width),
+            &palette,
+            if app.focus == FocusSurface::Auxiliary {
+                palette.warn
+            } else {
+                palette.dim
+            },
+        )),
+        rows[0],
     );
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), rows[1]);
 }
 
 pub(super) fn hunk_line_numbers(header: &str) -> Option<(usize, usize)> {
@@ -1621,6 +1791,7 @@ pub(super) fn hunk_line_numbers(header: &str) -> Option<(usize, usize)> {
 }
 
 pub(super) fn github_diff_lines(diff: &str, width: usize, app: &App) -> Vec<Line<'static>> {
+    let palette = app.theme.screen_palette();
     let mut lines = Vec::new();
     let mut old_line = 0_usize;
     let mut new_line = 0_usize;
@@ -1673,7 +1844,7 @@ pub(super) fn github_diff_lines(diff: &str, width: usize, app: &App) -> Vec<Line
             }
             lines.push(Line::styled(
                 truncate_display(source, width),
-                Style::default().fg(Color::Cyan),
+                Style::default().fg(palette.cite),
             ));
             continue;
         }
@@ -1690,7 +1861,7 @@ pub(super) fn github_diff_lines(diff: &str, width: usize, app: &App) -> Vec<Line
                     if app.theme == Theme::CreamInk {
                         FATE_INK
                     } else {
-                        Color::Green
+                        palette.green
                     },
                 );
                 new_line = new_line.saturating_add(1);
@@ -1727,7 +1898,7 @@ pub(super) fn github_diff_lines(diff: &str, width: usize, app: &App) -> Vec<Line
             } else {
                 lines.push(Line::styled(
                     truncate_display(source, width),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(palette.dim),
                 ));
                 continue;
             };
@@ -1850,30 +2021,25 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         );
         let primary_area = session_rows[1];
 
+        // 🔴 THE ORCHESTRA BAND IS THE DESIGN'S WORKER TABLE NOW. It was a five-across grid of
+        // plain strings re-coloured by searching each line for `✓`/`×`/`◷` — so the colour was a
+        // guess about text rather than a fact about a worker's state, and every width was
+        // `usize::from(width) / 5`. `orchestra_view` draws the catalog's table off `cols` and the
+        // palette, and `screens.rs` draws the SAME function.
         let transcript_band = if let Some(fleet) = &app.fleet {
-            let raw_lines = commands::fleet_view_lines(fleet, primary_area.width);
-            let wanted = u16::try_from(raw_lines.len()).unwrap_or(u16::MAX);
+            let lines = orchestra_view::lines(
+                fleet,
+                &palette,
+                usize::from(primary_area.width),
+                epoch_seconds(),
+            );
+            let wanted = u16::try_from(lines.len()).unwrap_or(u16::MAX);
             let fleet_height = wanted.min(primary_area.height.saturating_sub(1));
             let fleet_rows = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(fleet_height), Constraint::Min(1)])
                 .split(primary_area);
-            let last = raw_lines.len().saturating_sub(1);
-            let lines = raw_lines
-                .into_iter()
-                .enumerate()
-                .map(|(index, line)| {
-                    if index == last {
-                        styled_fleet_progress_line(line)
-                    } else {
-                        styled_fleet_agent_line(line)
-                    }
-                })
-                .collect::<Vec<_>>();
-            frame.render_widget(
-                Paragraph::new(lines).style(Style::default().fg(Color::Gray)),
-                fleet_rows[0],
-            );
+            frame.render_widget(Paragraph::new(lines), fleet_rows[0]);
             fleet_rows[1]
         } else {
             primary_area
@@ -1892,18 +2058,18 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
                     .map(|line| {
                         let style = if line.starts_with("✓ ") {
                             Style::default()
-                                .fg(Color::Green)
+                                .fg(palette.green)
                                 .add_modifier(Modifier::CROSSED_OUT)
                         } else if line.starts_with("● ") {
                             Style::default()
-                                .fg(Color::Cyan)
+                                .fg(palette.cite)
                                 .add_modifier(Modifier::BOLD)
                         } else if line == "Todo" {
                             Style::default()
                                 .fg(app.theme.primary())
                                 .add_modifier(Modifier::BOLD)
                         } else {
-                            Style::default().fg(Color::Gray)
+                            Style::default().fg(palette.mid)
                         };
                         Line::styled(line, style)
                     })
@@ -1943,7 +2109,7 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
                             .fg(app.theme.primary())
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(progress.line(now), Style::default().fg(Color::Gray)),
+                    Span::styled(progress.line(now), Style::default().fg(palette.mid)),
                 ])),
                 work_rows[1],
             );
@@ -1970,7 +2136,7 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
                             .fg(app.theme.primary())
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(progress.line(), Style::default().fg(Color::Gray)),
+                    Span::styled(progress.line(), Style::default().fg(palette.mid)),
                 ])),
                 sweep_rows[0],
             );
@@ -2042,7 +2208,7 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
                     Line::from(vec![
                         Span::styled(
                             format!("{:>2}  ", index + 1),
-                            Style::default().fg(Color::DarkGray),
+                            Style::default().fg(palette.dim),
                         ),
                         Span::styled(
                             source_label(source),
@@ -2069,7 +2235,7 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
                         Style::default().fg(if app.focus == FocusSurface::Auxiliary {
                             app.theme.primary()
                         } else {
-                            Color::DarkGray
+                            palette.dim
                         }),
                     )
                     .wrap(Wrap { trim: false }),
@@ -2110,7 +2276,7 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
     } else if let Some(picker) = &app.picker {
         render_picker(frame, picker, rows[1], app);
     } else if let Some(modal) = &app.gate_modal {
-        render_gate_modal(frame, modal, rows[1], app);
+        render_gate_modal(frame, modal, rows[1], app, now);
     } else if !app.boot_active(now)
         && app.focus == FocusSurface::Composer
         && let Some(position) = app.composer.cursor_pos(composer_area)
@@ -2128,69 +2294,6 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             );
         }
     }
-}
-
-pub(super) fn styled_fleet_progress_line(line: String) -> Line<'static> {
-    let Some(open) = line.find('[') else {
-        return Line::from(line);
-    };
-    let Some(relative_close) = line[open..].find(']') else {
-        return Line::from(line);
-    };
-    let close = open + relative_close;
-    let prefix = line[..open].to_string();
-    let bar = &line[open + 1..close];
-    let boundary = bar.find('─').unwrap_or(bar.len());
-    let completed = bar[..boundary].to_string();
-    let remaining = bar[boundary..].to_string();
-    let suffix = line[close + 1..].to_string();
-    Line::from(vec![
-        Span::styled(prefix, Style::default().fg(Color::Cyan)),
-        Span::styled("[", Style::default().fg(Color::Gray)),
-        Span::styled(completed, Style::default().fg(Color::Green)),
-        Span::styled(remaining, Style::default().fg(Color::Blue)),
-        Span::styled(format!("]{suffix}"), Style::default().fg(Color::Gray)),
-    ])
-}
-
-pub(super) fn styled_fleet_agent_line(line: String) -> Line<'static> {
-    let markers = [
-        ("✓ ", Color::Green),
-        ("× ", Color::Red),
-        ("◷ ", Color::Yellow),
-        ("■ ", Color::Magenta),
-        ("? ", Color::Cyan),
-    ];
-    let mut spans = Vec::new();
-    let mut remaining = line.as_str();
-    while let Some((offset, marker, colour)) = markers
-        .iter()
-        .filter_map(|(marker, colour)| {
-            remaining
-                .find(marker)
-                .map(|offset| (offset, *marker, *colour))
-        })
-        .min_by_key(|(offset, _, _)| *offset)
-    {
-        if offset > 0 {
-            spans.push(Span::styled(
-                remaining[..offset].to_string(),
-                Style::default().fg(Color::Gray),
-            ));
-        }
-        spans.push(Span::styled(
-            marker.to_string(),
-            Style::default().fg(colour).add_modifier(Modifier::BOLD),
-        ));
-        remaining = &remaining[offset + marker.len()..];
-    }
-    if !remaining.is_empty() {
-        spans.push(Span::styled(
-            remaining.to_string(),
-            Style::default().fg(Color::Gray),
-        ));
-    }
-    Line::from(spans)
 }
 
 pub(super) fn draw(
