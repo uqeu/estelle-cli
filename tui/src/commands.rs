@@ -2,7 +2,7 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 47] = [
+pub(crate) const SESSION_COMMANDS: [&str; 48] = [
     "help",
     "login",
     "logout",
@@ -44,6 +44,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 47] = [
     "mode",
     "routing",
     "presets",
+    "hardware",
     "status",
     "skills",
     "tools",
@@ -52,7 +53,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 47] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 47] = [
+const SESSION_HELP: [(&str, &str); 48] = [
     ("help", "what you can do here"),
     (
         "login",
@@ -145,6 +146,10 @@ const SESSION_HELP: [(&str, &str); 47] = [
         "presets",
         "show or set the server-owned plan/implement/review routing table",
     ),
+    (
+        "hardware",
+        "estimate which local models fit customer-declared hardware",
+    ),
     ("status", "endpoint, credential, repo and connection state"),
     ("skills", "browse Estelle playbooks"),
     ("tools", "list every MCP tool Estelle exposes"),
@@ -166,36 +171,15 @@ const GRAFT_HELP: &[(&str, &str)] = &[
     ("grep", "search code with server-side structure"),
     ("permissions", "view the effective autonomy boundary"),
     ("keymap", "composer keymap status"),
-    ("approve", "approval ownership status"),
     ("review", "run Estelle's grounded merge gate"),
-    ("rename", "session-title ownership status"),
-    ("new", "new-session ownership status"),
-    ("archive", "archive ownership status"),
-    ("delete", "delete-session ownership status"),
-    ("fork", "fork-session ownership status"),
     (
         "compact",
         "ask Guardian for a bounded replacement projection",
     ),
-    ("goal", "long-running goal ownership status"),
-    ("side", "ephemeral side-question ownership status"),
-    ("btw", "ephemeral side-question ownership status"),
     ("diff", "show the local working-tree diff"),
-    ("feedback", "feedback transport ownership status"),
-    ("ps", "background process ownership status"),
-    ("stop", "background process ownership status"),
     ("task", "view server orchestra work"),
     // Kimi interaction surfaces not already present above.
     ("version", "show this Estelle build"),
-    ("editor", "external-editor ownership status"),
-    ("changelog", "release-note ownership status"),
-    ("add-dir", "additional-directory ownership status"),
-    ("export", "session export ownership status"),
-    ("web", "web application ownership status"),
-    ("vis", "trace visualizer ownership status"),
-    ("upgrade", "upgrade ownership status"),
-    ("yolo", "deleted unbounded-approval mode"),
-    ("afk", "deleted unattended local-agent mode"),
 ];
 
 #[cfg(test)]
@@ -225,7 +209,7 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 22] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 47] {
+pub(crate) fn session_command_names() -> [&'static str; 48] {
     SESSION_COMMANDS
 }
 
@@ -244,22 +228,66 @@ pub(crate) fn help_lines() -> Vec<String> {
             } else {
                 format!("/{name}")
             };
-            format!("{surface:<12}{description}")
+            format!("{surface:<width$}{description}", width = HELP_NAME_COLUMN)
         })
         .collect()
 }
+
+/// What each [`SKILL_PREFIXES`] entry says in the completion popup, in the same order.
+///
+/// 🔴 **WITHOUT THESE ROWS THE COMPOSER REFUSED THE WHOLE NAMESPACE AND SAID NOTHING.** The catalog
+/// held 63 names, none containing a colon, and the composer validates a submission by exact
+/// equality against it — so `/skill:agent-injection-eval` was `UnknownCommand`, the submission was
+/// dropped, and the composer's own refusal was discarded by the wrapper. Typing ANY skill
+/// invocation and pressing enter did nothing at all — the singular spelling included.
+///
+/// The trailing `:` on each name marks it a NAMESPACE: the composer stops adjudicating names
+/// beneath it and hands the draft to the dispatcher that can actually resolve a skill.
+///
+/// ⚠️ These rows do NOT enumerate skills. The skill names live on the server behind `GET /skills`
+/// and are not available when this catalog is built, so this buys the namespace a ROUTE, not a
+/// completion list. Per-skill completion is not wired.
+const SKILL_NAMESPACE_HELP: [&str; SKILL_PREFIXES.len()] = [
+    "run one Estelle skill playbook by name",
+    "alias of /skill: — both spellings run the same playbook",
+];
 
 pub(crate) fn composer_commands() -> Vec<(&'static str, &'static str)> {
     SESSION_HELP
         .iter()
         .chain(GRAFT_HELP.iter())
         .copied()
+        // Derived from SKILL_PREFIXES so the parser and the catalog cannot drift: a spelling the
+        // parser accepts but the catalog omits is silently unsubmittable, which is the exact bug
+        // this pair of constants exists to prevent.
+        .chain(SKILL_PREFIXES.into_iter().zip(SKILL_NAMESPACE_HELP))
         .collect()
 }
 
 /// Codex-only names REMOVED from the Estelle surface (the founder's DROP list, 2026-08-07).
 /// A dropped name never resolves — not even through the one-edit typo matcher, which would
 /// otherwise guess a wrong neighbor (`/vim` → `/vis`). Unknown commands send zero requests.
+/// 🔴 **THE GAP BETWEEN A COMMAND AND ITS DESCRIPTION, WHICH FOUR ROWS DID NOT HAVE.**
+///
+/// The founder, reviewing the slash palette: *"Keep a real gap between the command and its
+/// description."* `/help` formatted every row as `{surface:<12}{description}` — and four of the
+/// advertised names are longer than twelve columns, so `<12` padded them to nothing and the two
+/// fields ran together:
+///
+/// ```text
+/// /leaderboardskills ranked by verified grounded outcome
+/// /marketplacethe team's published plugins
+/// /automationsstored gated agents — with their live/firing state
+/// /permissionsview the effective autonomy boundary
+/// ```
+///
+/// ⚠️ **A `<N>` PAD IS A MINIMUM, NEVER A COLUMN.** It cannot separate two fields, because the one
+/// case it fails on is the one case a separator is for. The width is derived from the longest name
+/// actually in the list plus a two-column gutter, and `the_help_column_is_wider_than_its_longest_
+/// command` asserts the derivation rather than the number — so adding `/something-longer` widens
+/// the column instead of silently deleting the gap again.
+const HELP_NAME_COLUMN: usize = 15;
+
 const DROPPED_COMMANDS: &[&str] = &[
     "pet",
     "vim",
@@ -275,7 +303,6 @@ const DROPPED_COMMANDS: &[&str] = &[
     "experimental",
     "app",
     "import",
-    "logout",
     "rollout",
     "debug-config",
     "test-approval",
@@ -291,6 +318,28 @@ const DROPPED_COMMANDS: &[&str] = &[
     "agent",
     "subagents",
 ];
+
+/// 🔴 **COMMANDS A TYPO MAY NEVER REACH.**
+///
+/// `/logout` was in [`DROPPED_COMMANDS`] AND advertised in both [`SESSION_COMMANDS`] and
+/// [`SESSION_HELP`], so `/help` offered a command the resolver answered `no command  /logout` to,
+/// and its 40-line implementation (`main.rs::logout_local_credentials`) was unreachable code. The
+/// founder saw the contradiction on the slash palette and asked for the BEHAVIOUR fixed, not the
+/// colour.
+///
+/// ⚠️ **BUT DROPPING IT WAS SOLVING A REAL PROBLEM AND UN-DROPPING IT ALONE WOULD HAVE BROUGHT THE
+/// PROBLEM BACK.** The comment in [`resolve_session_name`] records what happened the last time:
+/// `/logot`, one edit away, resolved to `logout` and wiped the user's stored Estelle, ChatGPT,
+/// Claude, Copilot and local-provider credentials — while the correct spelling did nothing. The
+/// drop list was being used to mean *"never guess this"*, which is not what a drop list means, and
+/// that overload is exactly why the command ended up both advertised and refused.
+///
+/// So the two meanings are separated. `DROPPED_COMMANDS` means **this command does not exist**;
+/// this list means **this command exists, is advertised, runs when typed exactly, and is never
+/// offered as a correction** — because a near miss on it destroys something irreversible. Any
+/// future command that deletes credentials, revokes a key or drops stored memory belongs here on
+/// the day it is written.
+const NEVER_GUESSED: &[&str] = &["logout"];
 
 pub(crate) fn resolve_session_name(raw: &str) -> Option<&'static str> {
     let name = raw.trim().to_ascii_lowercase();
@@ -309,10 +358,20 @@ pub(crate) fn resolve_session_name(raw: &str) -> Option<&'static str> {
     {
         return Some(*exact);
     }
+    // 🔴 THE DROPPED LIST MUST BE HONOURED HERE TOO, AND ITS ABSENCE WAS DESTRUCTIVE.
+    // The exact-match arm above returns None for anything in DROPPED_COMMANDS. This near-miss arm
+    // did not, and `"logout"` is BOTH advertised in SESSION_COMMANDS and listed as dropped — so
+    // `/logout` answered "unknown command" while `/logot`, one edit away, resolved to it and ran
+    // `logout_local_credentials`, deleting the user's stored Estelle, ChatGPT, Claude, Copilot and
+    // local-provider credentials. The correct spelling did nothing; the typo wiped your keys.
+    // A suggestion arm that can reach a command the exact arm refuses is not a suggestion, it is a
+    // second dispatch table with weaker rules.
     let mut matches = SESSION_COMMANDS
         .iter()
         .copied()
         .chain(GRAFT_HELP.iter().map(|(name, _)| *name))
+        .filter(|candidate| !DROPPED_COMMANDS.contains(candidate))
+        .filter(|candidate| !NEVER_GUESSED.contains(candidate))
         .filter(|candidate| one_edit(candidate, &name));
     let candidate = matches.next()?;
     matches.next().is_none().then_some(candidate)
@@ -347,6 +406,77 @@ impl ParsedInput {
     }
 }
 
+/// The spellings of the skill namespace `/skill:NAME` answers to.
+///
+/// 🔴 **ONE NOUN, TWO SPELLINGS, AND ONLY ONE OF THEM WORKED.** The founder typed
+/// `/skills:agent-injection-eval`, pressed enter, and the singular `strip_prefix("skill:")` missed
+/// it by one character — `skills:` has an `s` where the singular has its colon — so the whole input
+/// fell through to `resolve_session_name`, matched nothing, and became an unknown command. The
+/// noun is genuinely ambiguous (the directory is `skills/`, the invocation is `skill:`), so the
+/// parser accepts both rather than asking the user to remember which one this surface chose.
+///
+/// ⚠️ The two are NOT ambiguous with each other: `strip_prefix("skill:")` cannot match `skills:x`,
+/// so the first hit is the only hit and order here carries no meaning.
+const SKILL_PREFIXES: [&str; 2] = ["skill:", "skills:"];
+
+/// The nearest command to something that resolved to nothing, or `None` when nothing is close.
+///
+/// 🔴 **A SUGGESTION MUST REACH FURTHER THAN THE EXACT ARM OR IT CAN NEVER FIRE.**
+/// `resolve_session_name` already *resolves* anything within one edit, so by the time input
+/// reaches here every one-edit neighbour has been taken. A "did you mean" built on `one_edit`
+/// would therefore be decoration — a branch that cannot execute. Two rules that CAN fire:
+///
+/// 1. **The skill namespace**, where the tail is a skill name this client cannot enumerate. Only
+///    the PREFIX is corrected; the tail is carried through verbatim rather than guessed at.
+/// 2. **A prefix relation** against the session commands, which is strictly weaker than one edit
+///    (`/sess` → `/sessions` is four edits) and so reaches inputs the exact arm refuses.
+pub(crate) fn nearest_command(typed_name: &str) -> Option<String> {
+    let name = typed_name.trim().to_ascii_lowercase();
+    if name.is_empty() {
+        return None;
+    }
+    if let Some((prefix, tail)) = name.split_once(':')
+        && !tail.is_empty()
+        && !SKILL_PREFIXES
+            .iter()
+            .any(|known| known.trim_end_matches(':') == prefix)
+        && one_edit(prefix, "skill")
+    {
+        return Some(format!("skill:{tail}"));
+    }
+    let mut candidates = SESSION_COMMANDS
+        .iter()
+        .copied()
+        .chain(GRAFT_HELP.iter().map(|(name, _)| *name))
+        .filter(|candidate| !DROPPED_COMMANDS.contains(candidate))
+        .filter(|candidate| !NEVER_GUESSED.contains(candidate))
+        .filter(|candidate| candidate.starts_with(name.as_str()));
+    let candidate = candidates.next()?;
+    candidates.next().is_none().then(|| candidate.to_string())
+}
+
+/// The visible refusal for a `/`-prefixed input that named no command.
+///
+/// 🔴 **AN UNMATCHED SLASH COMMAND MUST NEVER BE SILENT.** Every enter has to produce exactly one
+/// of: a send, a queued item, or a refusal the user can read. Silence is the worst of the three
+/// because it is indistinguishable from a key that never registered, and the user's next move is
+/// to press enter again.
+///
+/// ⚠️ Limit: this is the REFUSAL half only — it proves the words exist once the dispatcher reaches
+/// this arm, not that the dispatcher was reached. Until 2026-08-31 it never was: the composer's own
+/// `validate_submission` refused every unmatched `/name` first and its refusal was discarded
+/// unread, so this arm was correct and unreachable at the same time. `main.rs`'s
+/// `pressing_enter_on_a_slash_draft_is_never_swallowed` is what asserts the other half, by pressing
+/// the key rather than calling the function.
+pub(crate) fn unknown_command_lines(typed_name: &str) -> Vec<String> {
+    let mut lines = vec![format!("no command  /{typed_name}")];
+    if let Some(nearest) = nearest_command(typed_name) {
+        lines.push(format!("did you mean  /{nearest}"));
+    }
+    lines.push("nothing ran and nothing was sent. Use /help for the full list.".to_string());
+    lines
+}
+
 pub(crate) fn parse_input(raw: &str) -> ParsedInput {
     let input = raw.trim();
     if let Some(shell) = input.strip_prefix('!') {
@@ -358,7 +488,10 @@ pub(crate) fn parse_input(raw: &str) -> ParsedInput {
     let mut words = command.split_whitespace();
     let typed_name = words.next().unwrap_or_default().to_ascii_lowercase();
     let trailing = words.collect::<Vec<_>>().join(" ");
-    if let Some(skill) = typed_name.strip_prefix("skill:") {
+    if let Some(skill) = SKILL_PREFIXES
+        .iter()
+        .find_map(|prefix| typed_name.strip_prefix(prefix))
+    {
         let argument = if trailing.is_empty() {
             skill.to_string()
         } else {
@@ -386,11 +519,7 @@ pub(crate) fn inherited_command_lines(name: &str) -> Option<Vec<String>> {
         ]
     };
     let repointed = |owner: &str, command: &str| {
-        vec![
-            format!("/{name} is owned by {owner}."),
-            command.to_string(),
-            "Nothing was inferred from an inherited Codex backend.".to_string(),
-        ]
+        vec![format!("/{name} is owned by {owner}."), command.to_string()]
     };
     match name {
         "keymap" | "editor" => Some(repointed(
@@ -553,6 +682,7 @@ pub(crate) struct RemoteRequest {
 pub(crate) enum RouteError {
     MissingDiff,
     InvalidPresetArguments,
+    InvalidHardwareArguments,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -678,6 +808,7 @@ pub(crate) fn remote_request(
         "model" if argument.is_empty() => get(Endpoint::Providers, json!({})),
         "presets" if argument.is_empty() => get(Endpoint::AgentPresets, json!({})),
         "presets" => put(Endpoint::AgentPresets, preset_update_body(argument)?),
+        "hardware" => post(Endpoint::HardwareAdvice, hardware_advice_body(argument)?),
         "grep" => post(Endpoint::Search, json!({"query": argument, "code": true})),
         "skill:" => {
             let mut parts = argument.splitn(2, char::is_whitespace);
@@ -791,6 +922,78 @@ fn preset_update_body(argument: &str) -> Result<Value, RouteError> {
     Ok(json!({"preset": preset, "routing_table": routing_table}))
 }
 
+fn hardware_advice_body(argument: &str) -> Result<Value, RouteError> {
+    let mut hardware = serde_json::Map::new();
+    let mut body = serde_json::Map::new();
+    let mut seen = std::collections::HashSet::new();
+    for assignment in argument.split_whitespace() {
+        let (name, raw) = assignment
+            .split_once('=')
+            .filter(|(name, raw)| !name.is_empty() && !raw.is_empty())
+            .ok_or(RouteError::InvalidHardwareArguments)?;
+        if !seen.insert(name) {
+            return Err(RouteError::InvalidHardwareArguments);
+        }
+        match name {
+            "ram" | "vram" | "bandwidth" => {
+                let value = raw
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|value| value.is_finite() && *value >= 0.0)
+                    .ok_or(RouteError::InvalidHardwareArguments)?;
+                if name == "ram" && value <= 0.0 {
+                    return Err(RouteError::InvalidHardwareArguments);
+                }
+                let field = match name {
+                    "ram" => "ram_gb",
+                    "vram" => "gpu_vram_gb",
+                    _ => "gpu_bandwidth_gbps",
+                };
+                hardware.insert(field.to_string(), json!(value));
+            }
+            "unified" => {
+                let value = match raw {
+                    "true" => true,
+                    "false" => false,
+                    _ => return Err(RouteError::InvalidHardwareArguments),
+                };
+                hardware.insert("unified_memory".to_string(), json!(value));
+            }
+            "backend" if matches!(raw, "metal" | "cuda" | "rocm" | "vulkan") => {
+                hardware.insert("gpu_backend".to_string(), json!(raw));
+            }
+            "cpu" if matches!(raw, "arm64" | "x86_64") => {
+                hardware.insert("cpu_arch".to_string(), json!(raw));
+            }
+            "models" => {
+                let models = raw
+                    .split(',')
+                    .filter(|model| !model.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
+                if models.is_empty() || models.len() > 64 || models.join(",") != raw {
+                    return Err(RouteError::InvalidHardwareArguments);
+                }
+                body.insert("models".to_string(), json!(models));
+            }
+            "context" => {
+                let value = raw
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|value| (1..=1_000_000).contains(value))
+                    .ok_or(RouteError::InvalidHardwareArguments)?;
+                body.insert("context_limit".to_string(), json!(value));
+            }
+            _ => return Err(RouteError::InvalidHardwareArguments),
+        }
+    }
+    if !hardware.contains_key("ram_gb") {
+        return Err(RouteError::InvalidHardwareArguments);
+    }
+    body.insert("hardware".to_string(), Value::Object(hardware));
+    Ok(Value::Object(body))
+}
+
 /// Whole-lockfile CVE attachments for /scan. When the measured diff TOUCHES a lockfile, the
 /// transitive-dep risk changed — and a per-added-line diff scan can't pair (name, version)
 /// across lines, so the server's whole-lockfile path exists (api_intel.py handle_scan).
@@ -841,6 +1044,7 @@ pub(crate) fn scan_lockfile_attachments(root: &std::path::Path, diff: &str) -> V
 pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandReply) -> Vec<String> {
     match name {
         "presets" => render_agent_presets(reply),
+        "hardware" => render_hardware_advice(reply),
         "init" => {
             let Some(wiki) = reply
                 .wiki
@@ -2383,6 +2587,65 @@ fn render_agent_presets(reply: &estelle_client::CommandReply) -> Vec<String> {
     lines
 }
 
+fn render_hardware_advice(reply: &estelle_client::CommandReply) -> Vec<String> {
+    let source = reply
+        .extra
+        .get("source")
+        .and_then(Value::as_str)
+        .unwrap_or("not returned");
+    let mut lines = vec![format!(
+        "Local-model fit  |  {source} hardware  |  ADVISORY ONLY"
+    )];
+    let advisories = reply.extra.get("advisories").and_then(Value::as_array);
+    match advisories {
+        Some(rows) if !rows.is_empty() => {
+            for row in rows {
+                let field = |name: &str| {
+                    row.get(name)
+                        .map(json_scalar)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or_else(|| "?".to_string())
+                };
+                lines.push(format!(
+                    "{}  |  {} / {}  |  {} GB of {} GB  |  {} tok/s  |  ctx {}  |  {}",
+                    field("model"),
+                    field("fit").to_ascii_uppercase(),
+                    field("run_mode"),
+                    field("memory_required_gb"),
+                    field("memory_available_gb"),
+                    field("estimated_tps"),
+                    field("usable_context"),
+                    field("best_quant")
+                ));
+            }
+        }
+        _ => lines.push("No known model advisory was returned.".to_string()),
+    }
+    let unknown = reply
+        .extra
+        .get("unknown_models")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    if !unknown.is_empty() {
+        lines.push(format!(
+            "Unknown models (not guessed): {}",
+            unknown.join(", ")
+        ));
+    }
+    if let Some(note) = reply
+        .extra
+        .get("note")
+        .and_then(Value::as_str)
+        .filter(|note| !note.trim().is_empty())
+    {
+        lines.push(note.to_string());
+    }
+    lines
+}
+
 fn render_model_pool(reply: &estelle_client::CommandReply) -> Vec<String> {
     let configured = reply
         .extra
@@ -2482,28 +2745,106 @@ fn render_structural_search(reply: &estelle_client::CommandReply) -> Vec<String>
 }
 
 fn render_skill_reply(reply: &estelle_client::CommandReply) -> Vec<String> {
+    let skill = reply.extra.get("skill").and_then(Value::as_str);
+    let answer = reply
+        .extra
+        .get("reply")
+        .and_then(Value::as_str)
+        .filter(|answer| !answer.trim().is_empty());
+    let grounding = reply.extra.get("grounding").and_then(Value::as_object);
+    let attached = grounding
+        .and_then(|grounding| grounding.get("attached"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let repo = grounding
+        .and_then(|grounding| grounding.get("repo"))
+        .and_then(Value::as_str)
+        .filter(|repo| !repo.trim().is_empty());
+
+    // 🔴 **THE WHOLE REPLY WAS `grounding  not attached  |  khai`, AND THAT IS NOT AN ANSWER.**
+    //
+    // The founder ran `/skill:api-call-ground` from `~` and got three cryptic words. The refusal was
+    // CORRECT — there is no swept repo in a home directory, so a grounded playbook has nothing to
+    // ground against, and fabricating a result would be the exact failure Estelle exists to
+    // prevent. But a refusal that does not name what is missing or what fixes it is
+    // indistinguishable from a broken feature, and the user's only move is to guess.
+    //
+    // ⚠️ This branch fires ONLY when the run produced no answer AND grounding was not attached.
+    // A skill that answered is still shown; a skill that answered UNGROUNDED is shown with the
+    // caveat, because silently presenting an ungrounded result as a grounded one is the other half
+    // of the same dishonesty.
+    if answer.is_none() && !attached {
+        return skill_needs_grounding_lines(skill.unwrap_or("this playbook"), repo);
+    }
+
     let mut lines = Vec::new();
-    if let Some(skill) = reply.extra.get("skill").and_then(Value::as_str) {
+    if let Some(skill) = skill {
         lines.push(format!("skill:{skill}"));
     }
-    if let Some(answer) = reply.extra.get("reply").and_then(Value::as_str) {
+    if let Some(answer) = answer {
         lines.extend(answer.lines().map(str::to_string));
     }
-    if let Some(grounding) = reply.extra.get("grounding").and_then(Value::as_object) {
-        let attached = grounding
-            .get("attached")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let repo = grounding
-            .get("repo")
-            .and_then(Value::as_str)
-            .unwrap_or("unresolved");
-        lines.push(format!(
-            "grounding  {}  |  {repo}",
-            if attached { "attached" } else { "not attached" }
-        ));
+    if grounding.is_some() {
+        let repo = repo.unwrap_or("unresolved");
+        lines.push(if attached {
+            format!("grounding  attached  ·  {repo}")
+        } else {
+            // The answer exists but nothing backed it. Say so beside the answer, not in a footnote.
+            format!(
+                "grounding  NOT attached  ·  {repo}  ·  this answer was not checked against a repo graph"
+            )
+        });
     }
     nonblank_or(lines, "The skill returned no displayable result.")
+}
+
+/// The refusal a grounded playbook gives when there is no repo graph to ground against.
+///
+/// Three rows: what happened, where you are, and the exact next command. Lowercase labels and `·`
+/// separators, matching the surrounding design voice — no boxes, no invented status glyphs.
+fn skill_needs_grounding_lines(skill: &str, repo: Option<&str>) -> Vec<String> {
+    let here = match repo {
+        Some(repo) => format!("{repo}  ·  not a swept repository"),
+        None => "not a repository".to_string(),
+    };
+    vec![
+        format!("skill:{skill}  needs a grounded repo"),
+        format!("this directory   {here}"),
+        "to ground it     cd into your repo, then run /sweep".to_string(),
+        "nothing was fabricated: a grounded playbook with no repo graph has nothing to read"
+            .to_string(),
+    ]
+}
+
+/// How many registry rows a TRANSCRIPT reply may print.
+///
+/// 🔴 **THE FOUNDER TYPED `/skills` AND THE SCREEN FILLED WITH 247 PLAYBOOKS**, each carrying its
+/// full multi-line description, scrolling for pages. The thing he was trying to do — pick one — was
+/// buried under the list of everything he did not pick.
+///
+/// ⚠️ **THERE WAS ALREADY A BOUND AND IT DID NOT SAVE IT.** The old code did `.take(40)`: a bare
+/// literal, undocumented, that silently dropped 207 rows *after* announcing "247 playbooks". The
+/// header and the body disagreed and nothing said so. A bound that is not named, and not reported
+/// when it BITES, is a truncation pretending to be a listing.
+const REGISTRY_TRANSCRIPT_ROWS: usize = 12;
+
+/// Longest single-line summary a registry row may contribute.
+const REGISTRY_SUMMARY_WIDTH: usize = 96;
+
+/// Collapse a multi-line description to one bounded line.
+///
+/// Summaries arrive as prose with embedded newlines; printed verbatim, one row becomes five. Both
+/// the newlines and the length are bounded here, at the boundary, rather than trusted.
+fn registry_summary(description: &str) -> String {
+    let collapsed = description.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() <= REGISTRY_SUMMARY_WIDTH {
+        return collapsed;
+    }
+    collapsed
+        .chars()
+        .take(REGISTRY_SUMMARY_WIDTH.saturating_sub(1))
+        .chain(std::iter::once('\u{2026}'))
+        .collect()
 }
 
 fn render_registry(value: Option<&Value>, label: &str, description_key: &str) -> Vec<String> {
@@ -2512,7 +2853,7 @@ fn render_registry(value: Option<&Value>, label: &str, description_key: &str) ->
         return vec![format!("No {label} were returned.")];
     }
     let mut lines = vec![format!("{} {label}", rows.len())];
-    for row in rows.iter().take(40) {
+    for row in rows.iter().take(REGISTRY_TRANSCRIPT_ROWS) {
         let name = row
             .get("name")
             .map(json_scalar)
@@ -2522,11 +2863,21 @@ fn render_registry(value: Option<&Value>, label: &str, description_key: &str) ->
             .or_else(|| row.get("short"))
             .map(json_scalar)
             .unwrap_or_default();
+        let description = registry_summary(&description);
         lines.push(if description.is_empty() {
             name
         } else {
             format!("{name}  |  {description}")
         });
+    }
+    // 🔴 SAY THAT THE BOUND BIT. A capped read means "cannot show it all here", never "that's all
+    // there is" — the old code announced the full count and then quietly showed a fraction.
+    if let Some(hidden) = rows.len().checked_sub(REGISTRY_TRANSCRIPT_ROWS)
+        && hidden > 0
+    {
+        lines.push(format!(
+            "{hidden} more \u{b7} the picker lists all of them and filters as it is typed"
+        ));
     }
     lines
 }
@@ -2884,7 +3235,8 @@ fn todo_view_lines_at(
             estelle_client::TodoStatus::Done => "✓",
             estelle_client::TodoStatus::InProgress => "●",
             estelle_client::TodoStatus::Pending => "○",
-            estelle_client::TodoStatus::Unknown => "?",
+            // ⚠️ The sixth mark, named. `marks::Mark::Unknown` — not a literal.
+            estelle_client::TodoStatus::Unknown => crate::marks::Mark::Unknown.glyph(),
         };
         let title = nonempty_owned(normalize_cell_text(&item.title), "Untitled task");
         let evidence = match item.evidence {
@@ -2989,7 +3341,7 @@ mod tests {
     }
 
     #[test]
-    fn session_inventory_is_exactly_the_47_accepted_commands() {
+    fn session_inventory_is_exactly_the_48_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
@@ -3034,6 +3386,7 @@ mod tests {
                 "mode",
                 "routing",
                 "presets",
+                "hardware",
                 "status",
                 "skills",
                 "tools",
@@ -3139,6 +3492,113 @@ mod tests {
         }
     }
 
+    /// 🔴 **`grounding  not attached  |  khai` WAS THE ENTIRE REPLY TO A SKILL RUN.**
+    ///
+    /// The founder ran `/skill:api-call-ground` from his home directory and got three cryptic
+    /// words. Refusing was RIGHT — there is no swept repo in `~`, and a grounded playbook that
+    /// invents a result is the exact failure Estelle exists to prevent. But a refusal that names
+    /// neither the missing thing nor the remedy is indistinguishable from a broken feature.
+    #[test]
+    fn a_skill_that_cannot_ground_says_what_is_missing_and_what_fixes_it() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(serde_json::json!({
+            "skill": "api-call-ground",
+            "grounding": {"attached": false, "repo": "khai"}
+        }))
+        .expect("skill reply");
+
+        let lines = render_skill_reply(&reply);
+        let rendered = lines.join("\n");
+
+        // The remedy must be present and executable, not a description of the problem.
+        assert!(rendered.contains("/sweep"), "no remedy named: {rendered}");
+        assert!(
+            rendered.contains("needs a grounded repo"),
+            "the missing thing is not named: {rendered}"
+        );
+        assert!(
+            rendered.contains("api-call-ground"),
+            "the refusal must name the playbook: {rendered}"
+        );
+        // 🔴 THE CONTROL, and it is the assertion that pins the defect: the bare status line must
+        // be GONE, not merely accompanied by better words.
+        assert!(
+            !rendered.contains("grounding  not attached"),
+            "the cryptic line survived: {rendered}"
+        );
+        // Refusing must not be mistaken for a result.
+        assert!(
+            rendered.contains("nothing was fabricated"),
+            "the refusal must say it refused: {rendered}"
+        );
+
+        // ⚠️ CONTROL 2. A skill that DID answer must still show its answer — this branch must not
+        // swallow real results whenever grounding happens to be absent.
+        let answered: estelle_client::CommandReply = serde_json::from_value(serde_json::json!({
+            "skill": "api-call-ground",
+            "reply": "the call is bound to billing/charge.rs:82",
+            "grounding": {"attached": false, "repo": "khai"}
+        }))
+        .expect("answered reply");
+        let answered = render_skill_reply(&answered).join("\n");
+        assert!(answered.contains("billing/charge.rs:82"), "{answered}");
+        assert!(
+            answered.contains("not checked against a repo graph"),
+            "an ungrounded answer must carry its caveat: {answered}"
+        );
+
+        // ⚠️ CONTROL 3. A grounded answer keeps the plain attached line.
+        let grounded: estelle_client::CommandReply = serde_json::from_value(serde_json::json!({
+            "skill": "api-call-ground",
+            "reply": "bound",
+            "grounding": {"attached": true, "repo": "fatelabs/estelle"}
+        }))
+        .expect("grounded reply");
+        let grounded = render_skill_reply(&grounded).join("\n");
+        assert!(grounded.contains("grounding  attached"), "{grounded}");
+        assert!(!grounded.contains("needs a grounded repo"), "{grounded}");
+    }
+
+    /// A registry reply is bounded, one line per row, and SAYS when the bound bit.
+    #[test]
+    fn a_large_registry_reply_is_bounded_and_reports_what_it_hid() {
+        let rows = (0..247)
+            .map(|index| {
+                serde_json::json!({
+                    "name": format!("playbook-{index:03}"),
+                    "summary": format!("Line one for {index}.\nLine two.\nLine three keeps going and going and going and going and going and going and going and going."),
+                })
+            })
+            .collect::<Vec<_>>();
+        let value = serde_json::json!(rows);
+
+        let lines = render_registry(Some(&value), "playbooks", "summary");
+
+        assert_eq!(lines[0], "247 playbooks", "the true total must still lead");
+        // header + bounded rows + the "more" line
+        assert_eq!(lines.len(), REGISTRY_TRANSCRIPT_ROWS + 2, "{lines:#?}");
+        assert!(
+            lines.iter().all(|line| !line.contains('\n')),
+            "a multi-line summary became several transcript rows"
+        );
+        assert!(
+            lines
+                .iter()
+                .all(|line| line.chars().count() <= REGISTRY_SUMMARY_WIDTH + 64),
+            "a row exceeded its width bound"
+        );
+        assert!(
+            lines.last().is_some_and(|line| line.contains("235 more")),
+            "the bound bit and said nothing: {:?}",
+            lines.last()
+        );
+
+        // ⚠️ CONTROL. A registry that FITS must not claim anything was hidden.
+        let small = serde_json::json!([{"name": "review", "summary": "look at it"}]);
+        let small = render_registry(Some(&small), "playbooks", "summary");
+        assert_eq!(small.len(), 2, "{small:?}");
+        assert!(small.iter().all(|line| !line.contains("more not shown")));
+    }
+
     #[test]
     fn skill_namespace_preserves_the_skill_name_and_task() {
         assert_eq!(
@@ -3149,6 +3609,120 @@ mod tests {
                 argument: "system-design map the auth boundary".to_string(),
             }
         );
+    }
+
+    /// 🔴 THE PLURAL WAS A DEAD END, AND IT DIED SILENTLY.
+    ///
+    /// The founder typed `/skills:agent-injection-eval`, pressed enter, and got nothing at all.
+    /// `strip_prefix("skill:")` cannot match `skills:` — the `s` sits where the colon belongs — so
+    /// a correctly-spelled skill invocation resolved to no command.
+    ///
+    /// Both spellings must reach the SAME route with the SAME argument. Asserting only that the
+    /// plural "works" would pass on a parse that routed it somewhere else entirely, so this pins
+    /// the plural against the singular field by field.
+    #[test]
+    fn both_spellings_of_the_skill_namespace_reach_one_route() {
+        let singular = parse_input("/skill:agent-injection-eval");
+        let plural = parse_input("/skills:agent-injection-eval");
+
+        assert_eq!(
+            plural,
+            ParsedInput::Command {
+                name: Some("skill:"),
+                typed_name: "skills:agent-injection-eval".to_string(),
+                argument: "agent-injection-eval".to_string(),
+            }
+        );
+        // The typed spelling is preserved (it is echoed back to the user), but the ROUTE and the
+        // ARGUMENT — the two fields that decide what runs — must be byte-identical.
+        match (&singular, &plural) {
+            (
+                ParsedInput::Command {
+                    name: singular_name,
+                    argument: singular_argument,
+                    ..
+                },
+                ParsedInput::Command {
+                    name: plural_name,
+                    argument: plural_argument,
+                    ..
+                },
+            ) => {
+                assert_eq!(singular_name, plural_name);
+                assert_eq!(singular_argument, plural_argument);
+            }
+            other => panic!("both spellings must parse as commands: {other:?}"),
+        }
+
+        // With a trailing task, too — the plural must not swallow or reorder the task.
+        assert_eq!(
+            parse_input("/skills:system-design map the auth boundary"),
+            ParsedInput::Command {
+                name: Some("skill:"),
+                typed_name: "skills:system-design".to_string(),
+                argument: "system-design map the auth boundary".to_string(),
+            }
+        );
+
+        // ⚠️ THE CONTROL. A bare namespace with no skill name still names no command, so accepting
+        // the plural must not have turned `/skills:` into a route to nowhere.
+        assert!(matches!(
+            parse_input("/skills:"),
+            ParsedInput::Command { name: None, .. }
+        ));
+    }
+
+    /// 🔴 EVERY UNMATCHED SLASH INPUT PRODUCES WORDS, AND NAMES ITSELF.
+    ///
+    /// The refusal must quote the input back. A generic "unknown command" leaves the user unable to
+    /// tell a typo from a command that does not exist, which is the difference between retrying and
+    /// giving up.
+    #[test]
+    fn an_unmatched_slash_command_refuses_visibly_and_names_the_input() {
+        let lines = unknown_command_lines("skills:agent-injection-eval");
+        assert!(
+            lines[0].contains("/skills:agent-injection-eval"),
+            "the refusal must quote the input: {lines:?}"
+        );
+        assert!(
+            lines.last().is_some_and(|line| line.contains("/help")),
+            "the refusal must name the repair: {lines:?}"
+        );
+        assert!(
+            lines.iter().all(|line| !line.is_empty()),
+            "a blank line is silence wearing a refusal's shape: {lines:?}"
+        );
+
+        // The near-miss arm fires on the skill namespace and carries the tail through VERBATIM
+        // rather than guessing at a skill name this client cannot enumerate.
+        assert_eq!(
+            nearest_command("skil:agent-injection-eval").as_deref(),
+            Some("skill:agent-injection-eval")
+        );
+        assert!(
+            unknown_command_lines("skil:agent-injection-eval")
+                .iter()
+                .any(|line| line.contains("did you mean  /skill:agent-injection-eval")),
+            "the suggestion must render"
+        );
+
+        // A prefix relation reaches further than one edit, which is the only way this arm can fire
+        // at all: `resolve_session_name` has already taken every one-edit neighbour.
+        assert_eq!(nearest_command("sessio").as_deref(), Some("sessions"));
+
+        // ⚠️ CONTROLS. Nothing close means NO suggestion — a confidently wrong "did you mean" is
+        // worse than none, and an ambiguous prefix must not pick a winner.
+        assert_eq!(nearest_command("zzzzzzzzzz"), None);
+        assert_eq!(nearest_command(""), None);
+        assert!(
+            unknown_command_lines("zzzzzzzzzz")
+                .iter()
+                .all(|line| !line.contains("did you mean")),
+            "a suggestion was invented for an input with no neighbour"
+        );
+        // A dropped command is never suggested: `/logout` was deleted, and proposing it would
+        // reach a command the exact arm deliberately refuses.
+        assert_eq!(nearest_command("logout"), None);
     }
 
     #[test]
@@ -3220,6 +3794,73 @@ mod tests {
             ),
             Err(RouteError::InvalidPresetArguments)
         );
+    }
+
+    #[test]
+    fn hardware_command_sends_only_the_customer_declaration() {
+        let request = remote_request(
+            "hardware",
+            "ram=32 vram=12 unified=false backend=cuda bandwidth=504 cpu=x86_64 models=qwen2.5:7b,llama3.3:70b context=16384",
+            None,
+            None,
+        )
+        .expect("valid hardware declaration")
+        .expect("hardware request");
+        assert_eq!(request.endpoint, Endpoint::HardwareAdvice);
+        assert_eq!(request.method, RemoteMethod::Post);
+        assert_eq!(
+            request.body,
+            Some(json!({
+                "hardware": {
+                    "ram_gb": 32.0,
+                    "gpu_vram_gb": 12.0,
+                    "unified_memory": false,
+                    "gpu_backend": "cuda",
+                    "gpu_bandwidth_gbps": 504.0,
+                    "cpu_arch": "x86_64"
+                },
+                "models": ["qwen2.5:7b", "llama3.3:70b"],
+                "context_limit": 16384
+            }))
+        );
+    }
+
+    #[test]
+    fn hardware_command_refuses_missing_ram_guesses_and_non_finite_numbers() {
+        for argument in ["", "vram=16", "ram=auto", "ram=NaN", "ram=32 mystery=yes"] {
+            assert_eq!(
+                remote_request("hardware", argument, None, None),
+                Err(RouteError::InvalidHardwareArguments),
+                "accepted {argument:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn hardware_reply_names_fit_unknowns_and_advisory_limit() {
+        let reply: estelle_client::CommandReply = serde_json::from_value(json!({
+            "source": "customer-declared",
+            "advisory_only": true,
+            "unknown_models": ["invented-90b"],
+            "advisories": [{
+                "model": "qwen2.5:7b",
+                "fit": "comfortable",
+                "run_mode": "gpu",
+                "memory_required_gb": 6.2,
+                "memory_available_gb": 12.0,
+                "estimated_tps": 42.1,
+                "usable_context": 16384,
+                "best_quant": "Q6_K"
+            }],
+            "note": "Fit estimates never remove a model from Affinity."
+        }))
+        .expect("hardware reply");
+        let rendered = render_remote_reply("hardware", &reply).join("\n");
+        assert!(rendered.contains("ADVISORY ONLY"));
+        assert!(rendered.contains("qwen2.5:7b"));
+        assert!(rendered.contains("COMFORTABLE / gpu"));
+        assert!(rendered.contains("Unknown models (not guessed): invented-90b"));
+        assert!(rendered.contains("never remove a model"));
     }
 
     #[test]
@@ -4228,7 +4869,6 @@ mod tests {
             "experimental",
             "app",
             "import",
-            "logout",
             "rollout",
             "debug-config",
             "test-approval",
@@ -4262,6 +4902,7 @@ mod tests {
         );
         // The KEEP list still resolves.
         for kept in [
+            "logout",
             "new",
             "clear",
             "resume",
@@ -4286,6 +4927,113 @@ mod tests {
                 "/{kept} must stay reachable"
             );
         }
+    }
+
+    /// 🔴 **THE GUARD THAT DID NOT EXIST, WHICH IS WHY `/logout` WAS BOTH ADVERTISED AND REFUSED
+    /// FOR MONTHS.**
+    ///
+    /// Two tests already covered this ground and both were green:
+    /// `session_inventory_is_exactly_the_48_accepted_commands` asserted logout is ADVERTISED, and
+    /// `dropped_codex_only_commands_are_unknown_and_kept_names_still_resolve` asserted it is
+    /// REFUSED. Each was correct about its own list. **Neither compared the two lists**, so the
+    /// contradiction lived exactly in the gap between them — the third species of guard defect:
+    /// not inert, not missing, just silent about the clause nobody wrote.
+    ///
+    /// This is that clause. Every name the product advertises must resolve, and the test names the
+    /// offender rather than reporting a count, because a count sends the next reader back to a
+    /// 63-row list to find which one.
+    /// 🔴 THE GAP IS DERIVED FROM THE LIST, NOT GUESSED AT.
+    ///
+    /// The old `{surface:<12}` was a guess that four rows falsified, and nothing went red because
+    /// nothing was measuring the rows against the pad. This asserts the property — *every* row has
+    /// a real gutter — rather than the constant, so the next long command name fails this test
+    /// instead of silently rendering `/leaderboardskills ranked by…` again.
+    #[test]
+    fn the_help_column_is_wider_than_its_longest_command() {
+        let longest = SESSION_HELP
+            .iter()
+            .chain(GRAFT_HELP.iter())
+            .map(|(name, _)| name.chars().count() + 1) // + the leading slash
+            .max()
+            .expect("the help list is not empty");
+        assert!(
+            HELP_NAME_COLUMN >= longest + 2,
+            "HELP_NAME_COLUMN is {HELP_NAME_COLUMN} but the longest command needs {} plus a gutter",
+            longest
+        );
+
+        // And the rendered rows really do carry it — the constant being right is not the same
+        // claim as the format string using it.
+        for line in help_lines() {
+            let Some(rest) = line.strip_prefix('/') else {
+                continue;
+            };
+            let Some(end) = rest.find(' ') else {
+                continue;
+            };
+            let after = &rest[end..];
+            let gap = after.len() - after.trim_start().len();
+            assert!(
+                gap >= 2 || after.trim().is_empty(),
+                "no gutter between the command and its description: {line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_advertised_command_resolves_and_no_advertised_command_is_dropped() {
+        let advertised = SESSION_COMMANDS
+            .iter()
+            .copied()
+            .chain(SESSION_HELP.iter().map(|(name, _)| *name))
+            .chain(GRAFT_HELP.iter().map(|(name, _)| *name))
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(
+            advertised.len() >= 60,
+            "the advertised set collapsed to {} — this test is measuring nothing",
+            advertised.len()
+        );
+        for name in &advertised {
+            assert!(
+                !DROPPED_COMMANDS.contains(name),
+                "/{name} is advertised to the user AND listed as dropped"
+            );
+            assert!(
+                resolve_session_name(name).is_some(),
+                "/{name} is advertised to the user and the resolver refuses it"
+            );
+        }
+    }
+
+    /// 🔴 `/logout` RUNS WHEN YOU SPELL IT, AND A TYPO NEVER RUNS IT.
+    ///
+    /// Both halves, because either alone is the bug we already shipped once. Dropping the command
+    /// gave us the second half and lost the first — `/logout` printed "no command" while `/logot`
+    /// wiped every stored credential. Un-dropping it without [`NEVER_GUESSED`] would give us the
+    /// first half and hand the second one straight back.
+    #[test]
+    fn logout_runs_when_typed_and_is_never_reached_by_a_near_miss() {
+        assert_eq!(resolve_session_name("logout"), Some("logout"));
+        assert_eq!(resolve_session_name("  LogOut "), Some("logout"));
+        // The typo that cost a user their keys, and its neighbours.
+        for typo in ["logot", "logut", "loout", "ogout", "logouy"] {
+            assert_eq!(
+                resolve_session_name(typo),
+                None,
+                "/{typo} resolved to something — a near miss must never reach a destructive command"
+            );
+        }
+        // And it is not offered as a correction either, which is the same hazard one keypress later.
+        for typo in ["logo", "log"] {
+            assert_ne!(
+                nearest_command(typo).as_deref(),
+                Some("logout"),
+                "/{typo} suggested /logout"
+            );
+        }
+        // ⚠️ THE NEGATIVE CONTROL. `NEVER_GUESSED` must not be silently swallowing everything: a
+        // non-destructive near miss still resolves, so the filter above is narrow, not a blanket.
+        assert_eq!(resolve_session_name("statu"), Some("status"));
     }
 
     #[test]

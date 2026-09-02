@@ -2,10 +2,9 @@
 source: tui/src/chatwidget/tests/app_server.rs
 expression: popup
 ---
-  Our systems are thinking a bit more about this request before responding.
+  An extra safety pass is running on this turn.
 
 › 1. Dismiss and keep waiting
   2. Learn more
 
-  No action is required. Codex will keep waiting, and this menu will close when
-  the response is ready.
+  Still waiting. This closes when the response lands.

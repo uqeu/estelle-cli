@@ -20,7 +20,7 @@ fn test_key() -> ApiKey {
 
 #[test]
 fn endpoint_inventory_is_unique_and_matches_the_server_audit() {
-    assert_eq!(API_ENDPOINTS.len(), 84);
+    assert_eq!(API_ENDPOINTS.len(), 85);
     let unique = API_ENDPOINTS
         .iter()
         .map(|spec| spec.path)
@@ -98,6 +98,13 @@ fn govern_is_the_unscoped_session_compaction_owner() {
     assert_eq!(Endpoint::Govern.path(), "govern");
     assert_eq!(Endpoint::Govern.methods(), &[HttpMethod::Post]);
     assert!(!Endpoint::Govern.requires_repo());
+}
+
+#[test]
+fn hardware_advice_is_an_unscoped_post_endpoint() {
+    assert_eq!(Endpoint::HardwareAdvice.path(), "hardware/advice");
+    assert_eq!(Endpoint::HardwareAdvice.methods(), &[HttpMethod::Post]);
+    assert!(!Endpoint::HardwareAdvice.requires_repo());
 }
 
 #[tokio::test]
@@ -764,6 +771,39 @@ fn redact_secrets_replaces_the_value_with_a_named_marker_and_leaves_prose_alone(
     let plain = "an ordinary sentence about auth";
     assert_eq!(crate::redact_secrets(plain), plain);
     assert_eq!(crate::redact_secrets(&redacted), redacted);
+}
+
+#[test]
+fn the_wire_now_covers_the_full_catalogue_with_entropy_gates_and_allowlists_on() {
+    // Beyond the legacy seven: an invented slack token in prose is flagged by the engine and
+    // redacted with the engine's fingerprinted marker. The fixture is assembled, never a
+    // literal — a verbatim scanner-shaped token in source trips GitHub push protection.
+    let slack = format!(
+        "xoxb-{}-{}-{}",
+        "123456789012", "123456789012", "AbCdEfGhIjKlMnOpQrStUvWx"
+    );
+    let sentence = format!("here is the bot token {slack} please rotate it");
+    let (shape, line) = crate::find_secret_shape(&sentence).expect("engine coverage");
+    assert_eq!(shape, "slack-bot-token");
+    assert_eq!(line, 1);
+    let redacted = crate::redact_secrets(&sentence);
+    assert!(!redacted.contains(&slack));
+    assert!(redacted.contains("[REDACTED:slack-bot-token:"));
+    assert!(redacted.contains("please rotate it"));
+
+    // Negative controls on the WIRE path — allowlists and entropy gates are ON: AWS's own
+    // published example key and a git SHA-256 checksum survive untouched. Paired positive
+    // controls: a real-shaped AWS key and a real-shaped slack token DO fire.
+    let docs = "the AWS docs use AKIAIOSFODNN7EXAMPLE as their example";
+    assert_eq!(crate::redact_secrets(docs), docs);
+    assert_eq!(crate::find_secret_shape(docs), None);
+    let checksum = "checksum e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 ok";
+    assert_eq!(crate::redact_secrets(checksum), checksum);
+    assert_eq!(crate::find_secret_shape(checksum), None);
+    // The positive control is assembled like every other credential-shaped fixture — no
+    // scanner-shaped literal sits in source (GitHub push protection).
+    let live_aws = format!("key AKIA{} here", "QF7DMC5BAZ2W7XKP");
+    assert!(crate::find_secret_shape(&live_aws).is_some());
 }
 
 #[test]
@@ -1554,4 +1594,66 @@ fn the_receipt_path_is_read_at_the_one_constructor_every_caller_reaches() {
         "{VAR} is read in production() as well as new(). One owner per derived fact: production() \
          delegates to new(), so the read belongs in exactly one of them."
     );
+}
+
+/// 🔴 THE BLOCK IS THE SERVER'S SHAPE, PARSED, NOT GUESSED AT.
+///
+/// Fields and vocabulary come from `serve/answer_currency.py::_fields` and
+/// `serve/graph_currency.py`. Parsing a payload written in that shape is the only thing that can
+/// tell a correct type from a plausible one — and a plausible one is what a client invents when it
+/// duck-types a contract that is written down elsewhere.
+#[test]
+fn a_decertified_answer_parses_its_currency_block() {
+    let payload = serde_json::json!({
+        "answer": "NOT CERTIFIED - this answer quotes indexed code that may no longer be current.\n\ncharge_card lives in billing/charge.rs.",
+        "sources": [{"file": "billing/charge.rs", "line": 82}],
+        "grounded": false,
+        "code_currency": {
+            "status": "stale",
+            "indexed_head": "6ff03b1857ab4c0d9e21",
+            "current_head": "75557c7f11ab2e0044aa",
+            "depends_on_code": "certified_code_claim",
+            "cited_paths": 1,
+            "detail": "uqeu/estelle: STALE — indexed at 6ff03b1857ab, repo is now 75557c7f11ab. \
+                       Real code added since then reads as invented. Re-sweep/reindex this repo to \
+                       advance the marker, then retry."
+        }
+    });
+
+    let response: DeepSearchResponse = serde_json::from_value(payload).expect("decertified answer");
+    let currency = response.code_currency.expect("the block is present");
+
+    assert!(currency.is_stale());
+    assert_eq!(currency.depends_on_code, "certified_code_claim");
+    assert_eq!(currency.cited_paths, 1);
+    assert_eq!(CodeCurrency::short(&currency.indexed_head), "6ff03b1857ab");
+    assert_eq!(CodeCurrency::short(&currency.current_head), "75557c7f11ab");
+    assert!(currency.detail.contains("Re-sweep/reindex this repo"));
+}
+
+/// The negative control, and it is the whole point of the field being an `Option`.
+///
+/// `serve/answer_currency.py` returns the block ONLY when the index is behind AND the answer leans
+/// on the code; the healthy payload is byte-identical to one from a build that never had the
+/// field. So a healthy answer must parse to `None` — not to a default-filled block that a renderer
+/// would then have to guess was meaningless.
+#[test]
+fn a_current_index_produces_no_currency_block_at_all() {
+    let payload = serde_json::json!({
+        "answer": "charge_card lives in billing/charge.rs.",
+        "sources": [{"file": "billing/charge.rs", "line": 82}],
+        "grounded": true
+    });
+
+    let response: DeepSearchResponse = serde_json::from_value(payload).expect("healthy answer");
+    assert!(response.code_currency.is_none());
+}
+
+/// A head shorter than the cut is returned WHOLE. Shortening it to a stub would produce a SHA that
+/// looks like a SHA and identifies nothing, which is the failure mode this repo has paid for twice.
+#[test]
+fn a_short_head_is_not_padded_or_clipped_into_a_plausible_one() {
+    assert_eq!(CodeCurrency::short("abc"), "abc");
+    assert_eq!(CodeCurrency::short(""), "");
+    assert_eq!(CodeCurrency::short("6ff03b1857ab4c0d"), "6ff03b1857ab");
 }

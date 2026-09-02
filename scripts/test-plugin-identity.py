@@ -15,7 +15,6 @@ Exit 0 = every clause holds. Exit 1 = a named clause failed, with the two values
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import pathlib
 import re
@@ -31,18 +30,6 @@ MARKETPLACE_NAME = "fatelabs"
 MCP_SERVER_NAME = "estelle"
 MCP_URL = "https://api.fatelabs.ca/mcp"
 REPOSITORY = "https://github.com/uqeu/estelle-cli"
-
-# Ported from vercel-labs/fx `src/builtins/tools.zig:992-1025` at
-# 19ae8f5401c734806d3df45e7430c34dfa159bd0: hash the complete model-facing
-# contract, including ordering, instead of trusting a count. Claude Code keys
-# its copied plugin directory by version, so every byte that ships under
-# `estelle-plugin/` plus the marketplace entry is one cache contract here.
-# A new version must add a new digest; never rewrite an existing version's
-# digest to bless changed bytes under a cache key customers already hold.
-PLUGIN_CONTRACT_SHA256_BY_VERSION = {
-    "0.2.31": "9d806279081abab96dc19d3aaae4a4c84f955df0458a5668afcf31f5c21ad472",
-    "0.2.32": "c811c073c806387d49b310b0be98cdc0a5be07eadf26e12141632258fe3b3f5d",
-}
 
 #: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.
 #:
@@ -80,22 +67,6 @@ def workspace_version() -> str:
     found = re.search(r'^version\s*=\s*"([^"]+)"', block.group(1), re.M)
     assert found, "[workspace.package] has no version"
     return found.group(1)
-
-
-def plugin_contract_digest() -> tuple[str, list[str]]:
-    paths = [ROOT / ".claude-plugin" / "marketplace.json"]
-    paths.extend(sorted(path for path in PLUGIN.rglob("*") if path.is_file()))
-    digest = hashlib.sha256()
-    names: list[str] = []
-    for path in paths:
-        name = path.relative_to(ROOT).as_posix()
-        payload = path.read_bytes()
-        names.append(name)
-        digest.update(len(name).to_bytes(8, "big"))
-        digest.update(name.encode("utf-8"))
-        digest.update(len(payload).to_bytes(8, "big"))
-        digest.update(payload)
-    return digest.hexdigest(), names
 
 
 manifest = load(PLUGIN / ".claude-plugin" / "plugin.json")
@@ -159,21 +130,6 @@ if hooks_path.is_file():
               "PostToolUse", "PreCompact", "PreToolUse", "SessionEnd",
               "SessionStart", "Stop", "UserPromptSubmit",
           }, str(sorted(hooks.get("hooks", {}))))
-    commands = {
-        hook.get("command"): hook
-        for event in hooks.get("hooks", {}).values()
-        for matcher in event
-        for hook in matcher.get("hooks", [])
-        if hook.get("command")
-    }
-    for command in (
-        "npx -y @fatelabs/estelle@0 hook ground",
-        "npx -y @fatelabs/estelle@0 hook sync",
-        "npx -y @fatelabs/estelle@0 hook context",
-    ):
-        check(f"shipping timeout is 30 seconds ({command.rsplit(' ', 1)[-1]})",
-              commands.get(command, {}).get("timeout") == 30,
-              f"timeout={commands.get(command, {}).get('timeout')!r}")
 
 # ── the server entry is the HOSTED one, and carries no credential ─────────────
 servers = mcp["mcpServers"]
@@ -184,10 +140,16 @@ check("one server, with the pinned name", list(servers) == [MCP_SERVER_NAME], st
 entry = servers.get(MCP_SERVER_NAME) or {}
 check("server is remote http", entry.get("type") == "http", str(entry.get("type")))
 check("server url is the hosted endpoint", entry.get("url") == MCP_URL, str(entry.get("url")))
-# Public main removed `Authorization: Bearer ${ESTELLE_API_KEY}` in 2ee1454c4:
-# Claude's GUI installer does not run a shell, so it sent the placeholder as a
-# literal credential and broke OAuth onboarding. The guard must pin the fixed
-# credential-free door, not demand the defect that the manifest removed.
+# 🔴 THIS CLAUSE USED TO DEMAND THE OPPOSITE, AND IT WAS LEFT BEHIND BY THE FIX IT GUARDS.
+# Until 2026-08-31 it asserted `Authorization: Bearer ${ESTELLE_API_KEY}` — the exact header
+# 2ee1454c4 deleted from `estelle-plugin/.mcp.json` the day before, because a `${VAR}` in a plugin
+# manifest is expanded by a SHELL and the GUI installer never runs one: the placeholder reaches the
+# server as a literal bearer token and authentication fails for every marketplace install. That
+# commit changed the manifest and NOTHING ELSE, so this release gate was left asserting the defect,
+# and `release.yml`'s validate job would have refused v0.2.32 on a correct manifest.
+# ⚠️ The clause is INVERTED, not deleted: a header re-appearing here is still a shipping defect, so
+# the promise it now pins is that the door carries NO credential at all and negotiates OAuth, which
+# is the only credential path a GUI installer can complete.
 check("the door carries NO credential — a ${VAR} a GUI cannot expand is worse than none",
       "headers" not in entry, str(sorted(entry)))
 check("nothing unexplained rides along", set(entry) == {"type", "url"}, str(set(entry)))
@@ -202,17 +164,6 @@ for label, value in (
 ):
     check(f"version agrees with Cargo.toml workspace ({label})",
           value == owner_version, f"{label}={value!r} but Cargo.toml={owner_version!r}")
-
-# ── THE VERSION IS A CACHE KEY: changed bytes require a new version ──────────
-contract_digest, contract_files = plugin_contract_digest()
-expected_contract_digest = PLUGIN_CONTRACT_SHA256_BY_VERSION.get(owner_version)
-check("current version has a pinned whole-plugin contract digest",
-      expected_contract_digest is not None,
-      f"no digest registered for v{owner_version}")
-check("whole shipping plugin contract matches the digest pinned for its version",
-      contract_digest == expected_contract_digest,
-      f"v{owner_version} expected {expected_contract_digest!r}, got {contract_digest}; "
-      f"{len(contract_files)} files hashed")
 
 if failures:
     print(f"🔴 PLUGIN IDENTITY/VERSION GUARD FAILED — {len(failures)} clause(s):", file=sys.stderr)

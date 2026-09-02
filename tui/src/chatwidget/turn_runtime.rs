@@ -399,15 +399,12 @@ impl ChatWidget {
         match rate_limit_reached_type {
             Some(RateLimitReachedType::WorkspaceOwnerCreditsDepleted) => {
                 self.on_error(
-                    "You're out of credits. Your workspace is out of credits. Add credits to continue using Codex."
+                    "Out of credits. The workspace is out of credits. Add credits to continue."
                         .to_string(),
                 );
             }
             Some(RateLimitReachedType::WorkspaceOwnerUsageLimitReached) => {
-                self.on_error(
-                    "Usage limit reached. You've reached your usage limit. Increase your limits to continue using codex."
-                        .to_string(),
-                );
+                self.on_error("Usage limit reached. Raise the limit to continue.".to_string());
             }
             Some(RateLimitReachedType::WorkspaceMemberCreditsDepleted) => {
                 self.on_error(message);

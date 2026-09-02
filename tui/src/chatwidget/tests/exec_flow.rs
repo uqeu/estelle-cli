@@ -549,7 +549,7 @@ async fn exec_history_shows_unified_exec_tool_calls() {
     end_exec(&mut chat, begin, "", "", /*exit_code*/ 0);
 
     let blob = active_blob(&chat);
-    assert_eq!(blob, "• Explored\n  └ List ls\n");
+    assert_eq!(blob, "• Explored\n  │ List ls\n");
 }
 
 #[tokio::test]
@@ -1703,14 +1703,14 @@ async fn apply_patch_untrusted_shows_approval_modal() -> anyhow::Result<()> {
         for x in 0..area.width {
             row.push(buf[(x, y)].symbol().chars().next().unwrap_or(' '));
         }
-        if row.contains("Would you like to make the following edits?") {
+        if row.contains("Make the following edits?") {
             contains_title = true;
             break;
         }
     }
     assert!(
         contains_title,
-        "expected approval modal to be visible with title 'Would you like to make the following edits?'"
+        "expected approval modal to be visible with title 'Make the following edits?'"
     );
 
     Ok(())

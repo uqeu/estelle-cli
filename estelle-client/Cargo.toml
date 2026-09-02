@@ -8,6 +8,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+base64 = { workspace = true }
 codex-login = { workspace = true }
 dirs = { workspace = true }
 futures = { workspace = true }
@@ -16,6 +17,7 @@ reqwest = { workspace = true, features = ["json", "stream"] }
 regex = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["preserve_order"] }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "process", "time"] }
 tokio-util = { workspace = true, features = ["rt"] }
@@ -23,7 +25,6 @@ url = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
-base64 = { workspace = true }
 codex-protocol = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }

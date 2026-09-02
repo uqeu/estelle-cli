@@ -4,7 +4,7 @@ assertion_line: 1826
 expression: "render_snapshot(&pane, area)"
 ---
 • Working (0s • esc to interrupt)               
-  └ First detail line                           
+  │ First detail line                           
     Second detail line                          
                                                 
 • Queued follow-up inputs                       

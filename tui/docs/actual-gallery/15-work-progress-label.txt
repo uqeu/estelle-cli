@@ -1,34 +1,34 @@
 ESTELLE  ·  uqeu/estelle
 
-┌ CONVERSATION  Tab · Ctrl+←/→ focus ────────────────────────────────────────────────────────────────────────────────────────────┐
-│work  Checking every claim against your code · revision 6 · elapsed 1.2s · scope 0.2s · recall 0.2s · conventions 0.2s · prompt │
-│scope ✓ → recall ✓ → conventions ✓ → prompt ✓ → implement ✓ → gate ✓                                                            │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ ASK ESTELLE ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                                                                                                                │
-│› Ask Estelle                                                                                                                   │
-│                                                                                                                                │
-│  ? for shortcuts                                                                                                               │
-└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-/work  0s  |  Esc cancels
+── session · uqeu/estelle ───────────────────────────────────────────────────  │  ── production · uqeu/estelle ───────────────────
+   uqeu/estelle · main                                                         │  ── app · repo uqeu/estelle ─────────────────────
+── plan · revision 4 ────────────────────────────────────────────────────────  │  connecting · api.fatelabs.ca
+          step                                evidence                         │
+  ✓    1  read the failing test               gate ok · 2 cites                │  ── agents · unread ─────────────────────────────
+  ✓    2  locate every parse_header call      12 refs · graph                  │  ○   agents            no read yet · GET /agent/…
+  ✓    3  rewrite for the folded shape        headers.rs:288                   │
+  ✓    4  update the 12 call sites            blast radius 12                  │  ── estelle · unread ────────────────────────────
+  ▶    5  run the suite + the mutant          — unevidenced                    │  ○   issues            no read yet · GET /issues
+  ▲    6  deploy the checkout worker          human-gated                      │
+          step 5 has no evidence — Estelle is guessing there                   │  ── queue · 0 repair(s) ─────────────────────────
+          step 6 is blocked — human-gated                                      │  ○   repairs           none reported
+work  Checking every claim against your code · revision 6 · elapsed 1.2s · sc  │  ○   select            /monitor issues
+scope ✓ → recall ✓ → conventions ✓ → prompt ✓ → implement ✓ → gate ✓           │
+                                                                               │  ── github · unknown ────────────────────────────
+                                                                               │  ○   connection        no read yet · GET /github…
+                                                                               │
+                                                                               │
+                                                                               │
+                                                                               │
+                                                                               │
+                                                                               │
+◐ Working · 4 of 6 landed · run the suite + the mutant
+
+── ask · uqeu/estelle ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+
+
+
+
+
+  enter send · tab repo · ctrl+s spend · ctrl+g context · esc stop · ctrl+o selection

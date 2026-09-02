@@ -249,10 +249,10 @@ async fn stale_rate_limit_reads_preserve_newer_workspace_hard_stop_for_every_ori
         match origin_name {
             "usage" => assert!(popup.contains("No usage limit resets available.")),
             "reset-picker" => {
-                assert!(popup.contains("You don't have any usage limit resets available."));
+                assert!(popup.contains("No usage limit resets available."));
             }
             "reset-consume" => {
-                assert!(popup.contains("Usage reset. You have 0 usage limit resets left."));
+                assert!(popup.contains("Usage reset. 0 usage limit resets left."));
             }
             "startup" | "status" => {}
             _ => unreachable!("unknown refresh origin"),
@@ -266,7 +266,7 @@ async fn stale_rate_limit_reads_preserve_newer_workspace_hard_stop_for_every_ori
         deliver_usage_limit_error(&mut app);
         let popup = render_bottom_popup(&app.chat_widget, /*width*/ 100);
         assert!(
-            popup.contains("Request a limit increase from your owner"),
+            popup.contains("limit increase from the workspace owner"),
             "expected {origin_name} to preserve workspace error routing, got: {popup}"
         );
 
@@ -378,7 +378,7 @@ async fn post_hard_stop_rate_limit_read_clears_recovered_workspace_limit() -> Re
     deliver_usage_limit_error(&mut app);
     let popup = render_bottom_popup(&app.chat_widget, /*width*/ 100);
     assert!(
-        !popup.contains("Request a limit increase from your owner"),
+        !popup.contains("limit increase from the workspace owner"),
         "expected recovered state to clear workspace error routing, got: {popup}"
     );
 

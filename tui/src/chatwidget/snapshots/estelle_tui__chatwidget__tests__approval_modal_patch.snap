@@ -2,7 +2,7 @@
 source: tui/src/chatwidget/tests/exec_flow.rs
 expression: contents
 ---
-  Would you like to make the following edits?
+  Make the following edits?
 
   Reason: The model wants to apply changes
 

@@ -318,7 +318,7 @@ impl HooksBrowserView {
         let mut lines = vec![format!("{} hooks", event_label(event_name)).bold().into()];
         match review_needed_message(review_needed_count) {
             None => lines.push(
-                "Turn hooks on or off. Your changes are saved automatically."
+                "Turn hooks on or off. Changes save automatically."
                     .dim()
                     .into(),
             ),

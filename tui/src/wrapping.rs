@@ -477,26 +477,21 @@ fn is_substantive_non_url_token(raw_token: &str) -> bool {
     token.chars().any(char::is_alphanumeric)
 }
 
+/// A token that is only a list bullet or a tree/rule glyph carries no content of its own.
+///
+/// ⚠️ The box-drawing half of this set is asked of [`crate::box_glyphs`] rather than written out
+/// here. Two reasons, both load-bearing: the corners had been hand-copied into three files and
+/// this copy had already drifted — it listed six of the nine, so a lone `┤`, `┬` or `┴` counted
+/// as content — and a literal corner in this file is indistinguishable, to a source scanner, from
+/// the rendered connector that scanner exists to ban. These glyphs are RECOGNISED here, never
+/// emitted; `│` and `┆` are verticals rather than corners, so they stay spelled out.
 fn is_decorative_marker_token(raw_token: &str, token: &str) -> bool {
     let raw = raw_token.trim();
     matches!(
         raw,
-        "-" | "*"
-            | "+"
-            | "•"
-            | "◦"
-            | "▪"
-            | ">"
-            | "|"
-            | "│"
-            | "┆"
-            | "└"
-            | "├"
-            | "┌"
-            | "┐"
-            | "┘"
-            | "┼"
-    ) || is_ordered_list_marker(raw, token)
+        "-" | "*" | "+" | "•" | "◦" | "▪" | ">" | "|" | "│" | "┆"
+    ) || crate::box_glyphs::is_lone_box_corner(raw)
+        || is_ordered_list_marker(raw, token)
 }
 
 fn is_ordered_list_marker(raw_token: &str, token: &str) -> bool {

@@ -1,38 +1,38 @@
 ESTELLE  ·  uqeu/estelle  ·  Fate Labs · owner
 
-┌ CONVERSATION  Tab · Ctrl+←/→ focus ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│Ask about uqeu/estelle                                                                                                                                        │
-│                                                                                                                                                              │
-│Since your last session                                                                                                           ·       ·                   │
-│Welcome back - you were last here about 3 hours ago.                                                                                                          │
-│Code you touched has changed since:                                                                                         ·   ·   ·   ·   ·   ·             │
-│- billing/charge.rs - by Dana, about 2 hours ago - bound retry telemetry                                                                                      │
-│                                                                                                                                                              │
-│Signed in · khai@fatelabs.ca · team                                                                                                                           │
-│Team · Fate Labs · owner                                                                                                                                      │
-│                                                                                                                                                              │
-│/review  Read current changes                                                                                                                                 │
-│/sweep   Index or refresh this repo                                                                                                                           │
-│?        Show shortcuts                                                                                                                                       │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                    ⢀ ⡀ ⡀⡄  ⡀  ⡀⡀                             │
-│                                                                                                ·   ·   ∷   ·   · ⠂ ⠚⠠⣤⣄⡀⢸⣄⢀⢁⣤⡀⣀⣌⠂ ⠠⣀⡀                        │
-│                                                                                                               ⠄   ⠸⣿⢷⣬⣻⣷⣼⣿⢸⣿⣫⣿⡟⣿⣦⡿⣦⣀⣀⡑                       │
-│  ·       ·       ·       ∷       ·       ·       ·       ·       ∷ ∷     ·       ·       ·   · ∷ ·       ∷      ⢾⠛⠻⠿⣶⣭⣻⢿⣿⣿⣾⣷⣿⡿⢟⣋⣭⣴⡿⢶⣆ ⠑  ·     ∷ ∷ ∷ ·   ·   │
-│                                                                                                                 ⠈⠃   ⠈⢉⣛⣻⣿⣿⣿⡿⠛⠛⠉⠁  ⠸⠃                        │
-│∷   · · ·   · · ·   ∷ · ·   · ∷ ∷   · · ∷   · · ·   · · ·   ∷ · ·   · ∷ ·   · · ∷   · · ·   · · ·   ∷ · ·   · ∷ ·   · ⠟⠋⠉  ⡇⠈⠙⠛⠾⠶   ·   ·   ∷   ·   ·   ·   · │
-│                                                       ∷                                                                  ⠠⠇                                  │
-│  ∷   ·   ·   ·   ·   ∷   ·   ·   ·   ·   ∷   ·   ∷ ∷ ∷ ∷ ·   ∷   · · ·   · · ·   ∷ · ·   · ∷ ·   · ∷ ∷ ∷ ∷ ∷ ·   · · ·   ∷ · ·   · ∷ ·   ∷ ∷ ∷ ∷ · · ·   · · │
-│                                                                                                                                       ∷   ∷   ∷              │
-│· · · · · · · · · · · · · · · · · · · · · · · · · · ∷ · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · ∷ · ∷ · · · · · · · · │
-│ ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷                                                                                                │
-│∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ · · · · ∷ · · · · ∷ · · · · ∷ · · · · ∷ · · · · ∷ · · · · ∷ · │
-│∷  ∷       ∷       ∷       ∷       ∷       ∷       ∷       ∷       ∷       ∷       ∷       ∷       ∷       ∷       ∷                                          │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ ASK ESTELLE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                                                                                                                                              │
-│› Ask Estelle                                                                                                                                                 │
-│                                                                                                                                                              │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-shift+tab change mode  ·  tab move focus  ·  / commands  |  plan  ·  routing auto
+── session · uqeu/estelle ──────────────────────────────────────────────────────────────────────  │  ── production · uqeu/estelle ──────────────────────────────
+   uqeu/estelle · main                                                                            │  ── app · repo uqeu/estelle ────────────────────────────────
+Ask about uqeu/estelle                                                                            │  ▲   error counts      ▂▅▃█ 14
+                                                                                                  │  ●   measured          14/3292 requests
+Since the last session                                                                            │      ───────────────────────────────────────────────────────
+Welcome back - you were last here about 3 hours ago.                                              │  ── services · 4/4 up ──────────────────────────────────────
+Code you touched has changed since:                                                               │  no uptime checks registered · POST /monitor/uptime adds one
+- billing/charge.rs - by Dana, about 2 hours ago - bound retry telemetry                          │
+                                                                                                  │  ── agents · unread ────────────────────────────────────────
+Signed in · khai@fatelabs.ca · team                                                               │  ○   agents            no read yet · GET /agent/health
+Team · Fate Labs · owner                                                                          │
+                                                                                                  │  ── estelle · 0 unresolved ─────────────────────────────────
+/review  Read current changes                                                                     │  No errors have reached Estelle yet.
+/sweep   Index or refresh this repo                                                               │  Point OTLP or Sentry at api.fatelabs.ca/monitor/ingest.
+?        Show shortcuts                                                                           │
+                                                                                                  │  ── queue · 0 repair(s) ────────────────────────────────────
+                                                                                                  │  ○   repairs           none reported
+                                                                                                  │  ○   select            /monitor issues
+                                                                                                  │
+                                                                                                  │  ── github · unknown ───────────────────────────────────────
+                                                                                                  │  ○   connection        no read yet · GET /github/status
+                                                                                                  │
+                                                                                                  │
+                                                                                           ⣀⣆     │
+·   ∷ ∷ ·   · · ·   ·   ·   ·   ·   ·   · ∷ ∷   ·   ·   ·   ·   ·   ·   ·   ·   ·   ·   · ∷ ⠁     │
+∷                                ∷                                                 ∷ ∷            │
+
+
+── ask · uqeu/estelle ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+
+
+
+
+
+  enter send · tab repo · ctrl+s spend · ctrl+g context · esc stop · ctrl+o selection

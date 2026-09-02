@@ -1,32 +1,32 @@
 ESTELLE  ·  uqeu/estelle  ·  repo graph current
 
-┌ CONVERSATION  Tab · Ctrl+←/→ focus ──────────────────────────────────────────────────────────────┐
-│Ask about uqeu/estelle                                                                            │
-│                                                                                                  │
-│/review  Read current changes                                                     ∷               │
-│/sweep   Refresh this repo's index                                                                │
-│?        Show shortcuts                                                         ·   ·             │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                      ⢀ ⠔⠠⠐⠂ ⠒⠠⠢                  │
-│                                                                     ⠄⠐⠠⣦⣸⣷⣹⣬⡞⣷⢾⣠⣜ ⠠              │
-│      ·       ·       ·       ·       ·       ·       ·   · · ·       ⢾⠳⠷⣽⣿⣿⣿⣿⡿⣛⣥⡿⢦⠉⠂ ·   ∷   ·   │
-│                                                                      ⠈  ⣀⡭⠿⡿⢿⣋⡉  ⠋               │
-│· · ∷   · · ·   · ∷ ∷ · ∷ · ·   · ∷ ·   · · ∷   · · ·   · · ·   ∷ · ·   ⠈⠁∷ ⡇ ⠈⠉·   ∷   ·   ·   · │
-│                                 ∷                               ∷          ⠁                     │
-│  ·   ∷   ·   ·   ·   ·   ∷ · · ∷ · ∷ · · · · ∷ · · · · ∷ · · · · ∷ · · · · ∷ · · · ∷ ∷ ∷ · · · ∷ │
-│                                                                                                  │
-│∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ · · · · ∷ · · · · ∷ · · · · ∷ · · · · ∷ · · · │
-│∷∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷                            │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ ASK ESTELLE ─────────────────────────────────────────────────────────────────────────────────────┐
-│                                                                                                  │
-│› Ask Estelle                                                                                     │
-│                                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-shift+tab change mode  ·  tab move focus  ·  / commands  |  plan  ·  routing auto
+── session · uqeu/estelle ────────────────────────────────  │  ── production · uqeu/estelle ────────
+   uqeu/estelle · main                                      │  ── app · repo uqeu/estelle ──────────
+Ask about uqeu/estelle                                      │  connecting · api.fatelabs.ca
+                                                            │
+/review  Read current changes                               │  ── agents · unread ──────────────────
+/sweep   Refresh this repo's index                          │  ○   agents            no read yet · …
+?        Show shortcuts                                     │
+                                                            │  ── estelle · unread ─────────────────
+                                                            │  ○   issues            no read yet · …
+                                                            │
+                                                            │  ── queue · 0 repair(s) ──────────────
+                                                            │  ○   repairs           none reported
+                                                            │  ○   select            /monitor issues
+                                                            │
+                                                            │  ── github · unknown ─────────────────
+                                                            │  ○   connection        no read yet · …
+                                                            │
+                                                            │
+                                                      ⠠⠶    │
+∷                                                           │
+
+
+── ask · uqeu/estelle ──────────────────────────────────────────────────────────────────────────────
+❯
+
+
+
+
+
+  enter send · tab repo · ctrl+s spend · ctrl+g context · esc stop · ctrl+o selection

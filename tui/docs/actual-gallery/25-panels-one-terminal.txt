@@ -1,0 +1,34 @@
+agents       ● scope        ◐ implement        ○ review        ○ gate       + new
+
+── agents · 4 in this terminal ───────────────────────────  │  ── production · fernpost/checkout-api ──────────────────────────────────────────────────────
+❯ add retry to the http client                              │  ●   api           071b1aa6 · 16/246
+                                                            │  ●   postgres      17/60 · 47% disk
+• Three attempts, exponential backoff, jitter.              │  ▲   postgrest     restarting · 4m
+• The 429 path keeps the Retry-After header.                │      errors 1h     ▁▁▂█▂  47
+                                                            │
+⏺ Edit(src/client.rs)                                       │  ── orchestra · fleet 3 · rev 7 ─────────────────────────────────────────────────────────────
+   ⎿  +34 −6 · gate clean                                   │      wkr  model        task                      state        tokens    price  last seen
+                                                            │  ✓   w1   haiku-4.5    scope the retry path      Completed     4,120   $0.001    41s ago
+◐ Working · 31s · 3 of 4 landed                             │  ◐   w2   sonnet-4.6   patch src/client.rs       Working      27,480   $0.061    27s ago
+                                                            │  ·   w3   opus-4.6     review the diff           Queued            —        —          —
+                                                            │  fleet 31,600 tokens · $0.062 this run
+──────────────────────────────────────────────────────────  │  ────────────────────────────────────────────────────────────────────────────────────────────
+
+▲ postgrest has been restarting for 4m  ·  the monitor opened a repair
+
+  orchestra · per-worker model + cost · no server contract — the model, tokens and price cells above are FIXTURE
+  last seen · when the worker last reported state, not how long it has run; a row dated ahead of this clock reads "clock ahead", never 0s
+  tab strip · click a tab · drag the divider · ctrl+\ splits · ctrl+w closes a VIEW, never the agent
+
+
+
+
+
+
+
+
+
+
+
+
+

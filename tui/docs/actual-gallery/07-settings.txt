@@ -1,38 +1,38 @@
 ESTELLE  ·  uqeu/estelle
 
-┌ CONVERSATION  Tab · Ctrl+←/→ focus ────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-│                                                                                                                                │
-┌ SETTINGS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│> Mode                      plan · account ceiling · server enforced                                                            │
-│  Theme                     Estelle Dark · client display                                                                       │
-│  Production home           hidden · client-owned                                                                               │
-│  Model                     account-wide auto route · server-owned                                                              │
-│  Skills                    server registry · invoke explicitly                                                                 │
-│  Credential                secure store · managed by estelle login                                                             │
-│  Code                      1 setting · server schema                                                                           │
-│  Monitor                   1 setting · server schema                                                                           │
-│  Review                    no configurable settings · server contract                                                          │
-│  Repair                    1 setting · server schema                                                                           │
-│  Prod                      no configurable settings · server contract                                                          │
-│  Guardian                  no configurable settings · server contract                                                          │
-│  Research                  no configurable settings · server contract                                                          │
-│  Memory                    no configurable settings · server contract                                                          │
-│  Agent                     no configurable settings · server contract                                                          │
-│  Global                    1 setting · server schema                                                                           │
-└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-shift+tab change mode  ·  tab move focus  ·  / commands  |  plan  ·  routing auto
+── session · uqeu/estelle ────────────────────────────────────────────────────────────────────────────────────────────────────────
+   uqeu/estelle · main
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+── settings ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+> 1 Mode                      plan · account ceiling · server enforced
+  2 Theme                     Estelle Dark · client display
+  3 Production home           hidden · client-owned
+  4 Model                     account-wide auto route · server-owned
+  5 Skills                    server registry · invoke explicitly
+  6 Credential                secure store · managed by /login
+  7 Code                      1 setting · server schema
+  8 Monitor                   1 setting · server schema
+  9 Review                    no configurable settings · server contract
+    Repair                    1 setting · server schema
+    Prod                      no configurable settings · server contract
+    Guardian                  no configurable settings · server contract
+    Research                  no configurable settings · server contract
+    Memory                    no configurable settings · server contract
+    Agent                     no configurable settings · server contract
+    Global                    1 setting · server schema
+↑↓ navigate · 1-9 or Enter select · Esc close
+
+

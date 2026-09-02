@@ -15,6 +15,7 @@ use crate::bottom_pane::slash_commands::ExternalCommand;
 use crate::bottom_pane::slash_commands::ServiceTierCommand;
 use crate::bottom_pane::slash_commands::SlashCommandItem;
 use crate::bottom_pane::slash_commands::find_external_command;
+use crate::bottom_pane::slash_commands::find_external_namespace;
 use crate::bottom_pane::slash_commands::find_slash_command;
 use crate::bottom_pane::slash_commands::has_external_command_prefix;
 use crate::bottom_pane::slash_commands::has_slash_command_prefix;
@@ -88,7 +89,33 @@ impl<'a> SlashInput<'a> {
         if input_starts_with_space || name.contains('/') {
             return SubmissionValidation::Valid;
         }
-        if self.command(name).is_some() || self.external_command(name).is_some() {
+        // 🔴 **AN UNKNOWN COMMAND WAS REFUSED HERE AND THE REFUSAL WAS THROWN AWAY.**
+        //
+        // When the builtin catalog is off, this composer is running under
+        // `ChatComposerConfig::external_commands()` — documented as *"a full composer whose command
+        // surface belongs to the embedding application"* — and the embedding application owns
+        // dispatch. Adjudicating names here made a SECOND dispatch table with weaker rules: it knew
+        // 63 exact names, the real dispatcher knows aliases, a typo matcher and a server-side skill
+        // namespace, and the two disagreed.
+        //
+        // The disagreement was invisible because the refusal this produced was sent as an
+        // `AppEvent::InsertHistoryCell`, and `ComposerInput::drain_app_events` discards every event
+        // the composer emits. So `/blorp` and `/skill:<anything>` submitted NOTHING, printed
+        // NOTHING, and left the draft sitting in the composer — indistinguishable from a keypress
+        // the terminal never delivered.
+        //
+        // Handing the draft on is what lets `App::submit` answer, which it already does: it names
+        // the input, offers the nearest command, and says nothing ran.
+        //
+        // ⚠️ This is NOT "unknown commands are now allowed to run". It moves the refusal to the one
+        // owner that can tell an unknown command from a valid one, and whose refusal is rendered.
+        if !self.builtin_commands_enabled {
+            return SubmissionValidation::Valid;
+        }
+        if self.command(name).is_some()
+            || self.external_command(name).is_some()
+            || self.external_namespace(name).is_some()
+        {
             SubmissionValidation::Valid
         } else {
             SubmissionValidation::UnknownCommand(name.to_string())
@@ -214,6 +241,14 @@ impl<'a> SlashInput<'a> {
 
     pub(super) fn external_command(&self, name: &str) -> Option<&ExternalCommand> {
         find_external_command(name, self.external_commands)
+    }
+
+    /// The namespace catalog entry (one ending in `:`) that owns `name`, if any.
+    ///
+    /// See [`find_external_namespace`]: a namespace's members are resolved by the embedding
+    /// application, not by this catalog, so the composer must not refuse them on its own.
+    pub(super) fn external_namespace(&self, name: &str) -> Option<&ExternalCommand> {
+        find_external_namespace(name, self.external_commands)
     }
 }
 

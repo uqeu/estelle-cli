@@ -41,7 +41,7 @@ impl KeyboardHandler for WelcomeWidget {
             return;
         }
         if key_event.kind == KeyEventKind::Press && keys::TOGGLE_ANIMATION.is_pressed(key_event) {
-            tracing::warn!("Welcome background to press '.'");
+            tracing::warn!("background variant changed on '.'");
             let _ = self.animation.pick_random_variant();
         }
     }
@@ -91,9 +91,10 @@ impl WidgetRef for &WelcomeWidget {
             lines.extend(frame.lines().map(Into::into));
             lines.push("".into());
         }
+        // 🔴 THE GREETING IS GONE AND THE NAME IS NOT. `Welcome to ` was the software saying hello
+        // before it had done anything; what a first screen owes a reader is what this program is.
         lines.push(Line::from(vec![
             "  ".into(),
-            "Welcome to ".into(),
             "Estelle".bold(),
             ", Fate Labs' grounded coding agent".into(),
         ]));
@@ -148,8 +149,9 @@ mod tests {
         let frame_lines = widget.animation.current_frame().lines().count() as u16;
         (&widget).render_ref(area, &mut buf);
 
-        let welcome_row = row_containing(&buf, "Welcome");
-        assert_eq!(welcome_row, Some(frame_lines + 1));
+        // The banner names the program; the greeting it used to open with is gone.
+        let banner_row = row_containing(&buf, "Estelle");
+        assert_eq!(banner_row, Some(frame_lines + 1));
     }
 
     #[test]
@@ -163,8 +165,8 @@ mod tests {
         let mut buf = Buffer::empty(area);
         (&widget).render_ref(area, &mut buf);
 
-        let welcome_row = row_containing(&buf, "Welcome");
-        assert_eq!(welcome_row, Some(0));
+        let banner_row = row_containing(&buf, "Estelle");
+        assert_eq!(banner_row, Some(0));
     }
 
     #[test]

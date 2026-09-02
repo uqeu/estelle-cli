@@ -58,6 +58,7 @@ endpoints! {
     (Suites, "suites", [Get], false),
     (Providers, "providers", [Get], false),
     (AgentPresets, "agent-presets", [Get, Put], false),
+    (HardwareAdvice, "hardware/advice", [Post], false),
     (TurnRoute, "turn/route", [Post], false),
     (ProviderKey, "key", [Post], false),
     (ProviderSelect, "provider/select", [Post], false),

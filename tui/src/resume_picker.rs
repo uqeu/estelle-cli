@@ -3201,7 +3201,7 @@ fn render_conversation_preview_lines(
     if lines.is_empty() {
         return vec![
             vec![
-                "  └ ".dim(),
+                "  │ ".dim(),
                 "No transcript preview available".italic().dim(),
             ]
             .into(),
@@ -3218,7 +3218,7 @@ fn render_conversation_preview_lines(
         .enumerate()
         .map(|(idx, line)| {
             let prefix = if idx + 1 == rendered_len {
-                "  └ "
+                "  │ "
             } else {
                 "  │ "
             };

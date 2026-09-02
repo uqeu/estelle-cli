@@ -228,8 +228,60 @@ pub struct DeepSearchResponse {
     pub candidates: Vec<String>,
     #[serde(default)]
     pub reason: Option<String>,
+    /// The server's refusal to certify an answer that quotes code the index may be behind on.
+    ///
+    /// 🔴 **PRESENT ONLY WHEN IT MEANS SOMETHING.** `serve/answer_currency.py` returns the block
+    /// exclusively when the index is not current AND the answer depends on the code; on the
+    /// healthy path the payload is byte-identical to one that never had the field. So `None` is
+    /// the normal case and reads as *nothing to disclose*, never as *no data*.
+    #[serde(default)]
+    pub code_currency: Option<CodeCurrency>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+/// Why the server withdrew certification from an answer, and against which two commits.
+///
+/// ⚠️ **THE SHAPE IS THE SERVER'S, NOT A GUESS.** Fields and vocabulary are taken from
+/// `serve/answer_currency.py` (`_fields`) and `serve/graph_currency.py`: `status` re-uses the
+/// pinned four-valued currency vocabulary (`current` · `stale` · `unknown` · `unreachable`) and
+/// `depends_on_code` names WHICH signal decided it (`certified_code_claim` · `names_indexed_path`
+/// · `no_code_dependence` · `unknown`). Every field is `#[serde(default)]` so a block that gains a
+/// field, or arrives from an older build without one, still parses.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct CodeCurrency {
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub indexed_head: String,
+    #[serde(default)]
+    pub current_head: String,
+    #[serde(default)]
+    pub depends_on_code: String,
+    #[serde(default)]
+    pub cited_paths: u64,
+    /// The server's own sentence for this state. **One owner for the wording** — it comes from
+    /// `GraphHealth.describe()`, the same function the navigation door uses, so the CLI cannot
+    /// date one repo differently from the tool that refused the lookup a second earlier.
+    #[serde(default)]
+    pub detail: String,
+}
+
+impl CodeCurrency {
+    /// A short head, the way the server writes one: twelve characters, never a clipped SHA
+    /// pretending to be a full one.
+    ///
+    /// ⚠️ Returns the WHOLE string when it is shorter than the cut. A head this client shortened
+    /// past recognition is worse than a long one, and an empty head stays empty rather than
+    /// becoming a plausible-looking stub.
+    pub fn short(head: &str) -> &str {
+        head.get(..12).unwrap_or(head)
+    }
+
+    /// `true` when the block says the index is behind the tree, rather than merely undated.
+    pub fn is_stale(&self) -> bool {
+        self.status == "stale"
+    }
 }
 
 impl DeepSearchResponse {
@@ -644,6 +696,30 @@ pub struct TeamView {
     pub seat_ledger: Option<SeatLedger>,
     #[serde(default)]
     pub invites: Vec<serde_json::Value>,
+    /// 🔴 **`team` IS TWO DIFFERENT PAYLOADS ON TWO DIFFERENT ENDPOINTS, AND THIS FIELD IS WHERE
+    /// THE SECOND ONE SURVIVES.**
+    ///
+    /// `GET /me/team` sends `{"team": {id, name, role, members, …}}` — a roster, which is what
+    /// every field above reads. `GET /settings` sends `{"schema": …, "team": {<suite>: {<key>:
+    /// <value>}}, "personal": …}` — the team-SCOPED SETTING VALUES, an entirely different shape
+    /// under an identical key.
+    ///
+    /// ⚠️ **AND THE TYPED FIELD ATE IT SILENTLY.** [`CommandReply::extra`] is `#[serde(flatten)]`,
+    /// which does not receive keys a named field already claimed — so `team` went to `me_team`,
+    /// every field of `TeamView` is `#[serde(default)]`, the settings map deserialised into an
+    /// EMPTY roster without an error, and `resolved_setting_value` found nothing in `extra` and
+    /// fell back to the schema's `default`. The result: **every team-scoped setting in the CLI
+    /// displayed the schema default instead of the value the server had saved.** The founder
+    /// caught it on one row — `Data retention (days)` showing `30` while the wire said `45` — and
+    /// it was never one row.
+    ///
+    /// This is Power-of-Ten rule 8 (one meaning per name) failing at a wire boundary, where the
+    /// name is not ours to change. So the map is captured rather than dropped, and
+    /// `resolved_setting_value` reads it for `team` scope the same way it reads `extra` for
+    /// `personal`. **Do not "tidy" this flatten away** — it is load-bearing and its absence is
+    /// invisible, which is why this paragraph is longer than the field.
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -849,6 +925,27 @@ impl FleetSnapshot {
         self.plan_floor_usd
             .filter(|value| value.is_finite() && *value >= 0.0)
             .map(|floor| format!("Plan floor · ${floor:.6} · not expected or final spend"))
+    }
+
+    /// The participant models the server reported, deduplicated in first-reported order, or
+    /// `None` when neither `models` nor the legacy `model` names one.
+    ///
+    /// `None` is the honest answer for an unnamed roster: the contract
+    /// (`docs/ORCHESTRA-VIEW-DATA-CONTRACT.md`) forbids inferring a model from routing policy or
+    /// from agent prose, so the caller must say "models unknown" rather than guess.
+    pub fn model_roster(&self) -> Option<String> {
+        let mut models: Vec<&str> = Vec::new();
+        for model in &self.models {
+            let model = model.trim();
+            if !model.is_empty() && !models.contains(&model) {
+                models.push(model);
+            }
+        }
+        if models.is_empty() {
+            let fallback = self.model.trim();
+            return (!fallback.is_empty()).then(|| fallback.to_string());
+        }
+        Some(models.join(" · "))
     }
 }
 
@@ -1420,6 +1517,53 @@ pub struct MonitorUptimeCounts {
     pub down: u64,
 }
 
+/// One row of `GET /monitor/overview`'s `uptime_checks` array — a single monitored service.
+///
+/// The wire field stays `Vec<Value>` on [`MonitorOverviewResponse`] on purpose: a row whose shape
+/// drifts must cost that ROW, never the whole overview. [`MonitorOverviewResponse::uptime_check_rows`]
+/// parses each element on its own and the caller is told how many did not parse, so a dropped row
+/// is reported rather than silently rendered as "no services".
+///
+/// Every field is nullable because the server emits `None` for a check that has never been probed
+/// (`monitor_uptime.py:464-481`). `None` means NOT MEASURED and is rendered as such; it is never
+/// read as zero, and `up` defaulting to `true` here would be an invented healthy row, so it does not.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct MonitorUptimeCheck {
+    #[serde(default)]
+    pub check_id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub up: Option<bool>,
+    #[serde(default)]
+    pub last_status: Option<i64>,
+    #[serde(default)]
+    pub last_latency_ms: Option<f64>,
+    #[serde(default)]
+    pub last_detail: String,
+    #[serde(default)]
+    pub last_checked: Option<f64>,
+}
+
+impl MonitorUptimeCheck {
+    /// The name a human recognises this service by, or `None` when the server named it nothing.
+    /// Never synthesised from the URL's path or the row's index — an unnamed check is unnamed.
+    pub fn display_name(&self) -> Option<&str> {
+        [
+            self.name.as_str(),
+            self.url.as_str(),
+            self.check_id.as_str(),
+        ]
+        .into_iter()
+        .map(str::trim)
+        .find(|candidate| !candidate.is_empty())
+    }
+}
+
 impl MonitorOverviewResponse {
     pub fn error_buckets(&self) -> Vec<MonitorErrorBucket> {
         if let Some(series) = &self.series {
@@ -1446,6 +1590,21 @@ impl MonitorOverviewResponse {
         self.series
             .as_ref()
             .and_then(|series| series.requests_source.as_deref())
+    }
+
+    /// Every readable `uptime_checks` row, plus the count of rows that were NOT readable.
+    ///
+    /// The second half of the pair is the point: a renderer that silently dropped an
+    /// unparseable row would show "3 services" over a wire that reported four, and nothing
+    /// would ever say so. The caller must render the unreadable count rather than hide it.
+    pub fn uptime_check_rows(&self) -> (Vec<MonitorUptimeCheck>, usize) {
+        let rows = self
+            .uptime_checks
+            .iter()
+            .filter_map(|row| serde_json::from_value::<MonitorUptimeCheck>(row.clone()).ok())
+            .collect::<Vec<_>>();
+        let unreadable = self.uptime_checks.len().saturating_sub(rows.len());
+        (rows, unreadable)
     }
 }
 

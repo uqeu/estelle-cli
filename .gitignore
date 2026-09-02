@@ -10,3 +10,7 @@
 # macOS junk. Left untracked these still entered the fork audit's high-risk census via
 # `git ls-files --others`, so a Finder visit to network-proxy/ could block a release.
 .DS_Store
+
+# insta writes a .snap.new beside every snapshot whose test failed. A local artifact of a
+# red run, never a source file.
+*.snap.new

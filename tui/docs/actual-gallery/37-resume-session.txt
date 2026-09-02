@@ -1,0 +1,30 @@
+── sessions · ranked by frecency ───────────────────────────────────────────────────────────────────────────────────
+
+       #  session                       repository            when         how it ended     turns    spend
+  ›    1  the gate timeout              uqeu/estelle          2h ago       answered            41    $1.82
+       2  memory chat, stale index      uqeu/estelle          yesterday    refused              9    $0.31
+       3  the design book in Rust       uqeu/cli-rs           yesterday    still running       17    $0.94
+       4  purge left secrets behind     uqeu/estelle          2 days ago   answered            63    $2.40
+       5  railway variable rebuild      uqeu/estelle          3 days ago   you closed it        4    $0.08
+       6  the affinity ledger           uqeu/estelle          5 days ago   answered            22    $0.77
+       7  LoCoMo provenance             uqeu/estelle-bench    12 days ago  refused              6    $0.19
+
+  ↑↓ navigate · enter resumes · d forgets · / filters · esc closes
+
+  ranked by FRECENCY, not recency: a session you opened six times last week outranks one you
+  opened once an hour ago. frequency times recency, the way zoxide ranks directories.
+  "how it ended" is the LAST turn's verdict, not a summary. a refused session resumes AT the
+  refusal, with the reason still on screen, because a refusal is a step in a loop.
+
+  ~/estelle · $6.51 over 7 · ◐ 1 running
+
+
+
+
+
+
+
+
+
+
+

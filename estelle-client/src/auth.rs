@@ -14,6 +14,7 @@ use serde::Serialize;
 
 use crate::ApiKey;
 use crate::Error;
+use crate::secret_engine;
 
 static SECRET_SHAPE: LazyLock<Result<Regex, regex::Error>> = LazyLock::new(|| {
     Regex::new(
@@ -42,25 +43,55 @@ static SECRET_SHAPE_RES: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(||
 });
 
 /// The first credential shape found, as (shape name, 1-based line), else None.
+///
+/// Two passes, contract first: the seven legacy shapes run as always (shape only, no entropy
+/// gate — a tight prefix needs none) and keep their established names, which the hook contract
+/// tests pin. Anything they miss goes through the shared secret engine (the full gitleaks set
+/// plus the Estelle-local extensions, WITH entropy gates and allowlists on), so the fence now
+/// also catches the rest of the catalogue — slack, GCP, JWTs, DSN passwords, and the base64
+/// sweep. An engine finding's name is its rule id. A value any rule's upstream allowlist
+/// names as a published example (e.g. AWS's AKIAIOSFODNN7EXAMPLE) never fires either pass —
+/// the 2026-08-10 false positive was exactly such a fixture.
 pub fn find_secret_shape(value: &str) -> Option<(&'static str, usize)> {
-    value.lines().enumerate().find_map(|(index, line)| {
-        SECRET_SHAPE_RES
-            .iter()
-            .find(|(_, re)| re.is_match(line))
-            .map(|(name, _)| (*name, index + 1))
-    })
+    for (index, line) in value.lines().enumerate() {
+        if let Some((name, _)) = SECRET_SHAPE_RES.iter().find(|(_, re)| {
+            re.find_iter(line)
+                .any(|m| !secret_engine::engine().is_allowlisted(m.as_str()))
+        }) {
+            return Some((*name, index + 1));
+        }
+    }
+    // The engine pass reports the earliest line it fires on — the refusal should point at the
+    // first credential, not the first rule in the catalogue.
+    secret_engine::find_secret_shapes(value)
+        .iter()
+        .min_by_key(|finding| finding.line)
+        .map(|finding| (finding.rule, finding.line))
 }
 
-/// Redact every credential-shaped value, in place, as `[redacted: <shape>]`. THE CHECKPOINT WIRE'S
-/// RULE (finding F-2, 2026-08-13): a transcript is not a reviewed diff, so no exemptions exist here —
-/// the shape is named so the loss is visible downstream; the VALUE never survives. NOT the same job as
-/// `mask_secret`: that masks a whole credential-bearing FIELD for display; this redacts a value embedded
-/// in prose.
+/// Redact every credential-shaped value, in place. THE CHECKPOINT WIRE'S RULE (finding F-2,
+/// 2026-08-13): a transcript is not a reviewed diff, so no exemptions exist here — the shape is
+/// named so the loss is visible downstream; the VALUE never survives. NOT the same job as
+/// `mask_secret`: that masks a whole credential-bearing FIELD for display; this redacts a value
+/// embedded in prose.
+///
+/// The shared engine runs first (full catalogue + entropy + allowlists + the base64 sweep) and
+/// marks `[REDACTED:<rule>:<fingerprint>]`; the seven legacy shapes then catch what the engine's
+/// entropy gate deliberately passes over (the contract's own fixture is an all-one-letter GitHub
+/// token) and keep their established `[redacted: <shape>]` marker. Allowlisted published
+/// examples are exempt from BOTH passes.
 pub fn redact_secrets(value: &str) -> String {
-    let mut out = value.to_string();
+    let mut out = secret_engine::redact_secrets_engine(value);
     for (name, re) in SECRET_SHAPE_RES.iter() {
         out = re
-            .replace_all(&out, format!("[redacted: {name}]"))
+            .replace_all(&out, |captures: &regex::Captures| {
+                let matched = captures.get(0).map(|m| m.as_str()).unwrap_or_default();
+                if secret_engine::engine().is_allowlisted(matched) {
+                    matched.to_string()
+                } else {
+                    format!("[redacted: {name}]")
+                }
+            })
             .into_owned();
     }
     out
@@ -111,7 +142,17 @@ impl CredentialStore {
     }
 
     pub fn resolve(&self) -> Result<ResolvedCredential, Error> {
-        self.resolve_with_environment(env::var_os("ESTELLE_API_KEY"))
+        // 🔴 BOTH NAMES ARE ACCEPTED, AND THAT IS NOT A CONVENIENCE — IT IS A CORRECTNESS FIX.
+        // `ESTELLE_API_KEY` is what this client has always read. `ESTELLE_KEY` is what the published
+        // documentation at fatelabs.ca/docs tells users to export, in eight separate places, and what
+        // the onboarding page hands them. Before 2026-08-31 a user who followed our own docs exported
+        // a variable nothing read, and got a credential error while looking at the instruction that
+        // caused it. Documentation IS a claim about the system; when the two disagree, one of them is
+        // a defect, and the cheaper honest fix is to make the claim true.
+        // `ESTELLE_API_KEY` still wins when both are set, so no existing setup changes behaviour.
+        self.resolve_with_environment(
+            env::var_os("ESTELLE_API_KEY").or_else(|| env::var_os("ESTELLE_KEY")),
+        )
     }
 
     pub(crate) fn resolve_with_environment(

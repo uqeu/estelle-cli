@@ -5635,7 +5635,7 @@ async fn feedback_submission_for_inactive_thread_replays_into_origin_thread() {
         }
     }
     assert!(rendered_cells.iter().any(|cell| {
-        cell.contains("• Feedback uploaded. Please open an issue using the following URL:")
+        cell.contains("• Feedback uploaded. Open an issue at this URL:")
             && cell.contains("uploaded-thread")
     }));
 }
@@ -6569,7 +6569,7 @@ async fn prompt_edit_forks_before_selected_prompt_and_preserves_source() -> Resu
         .expect("forked history should replay the retained prompt");
     let notice_index = history
         .iter()
-        .position(|line| line == "• You’re continuing from this point in a new conversation")
+        .position(|line| line == "• A new conversation continues from this point")
         .expect("prompt edit should emit the branch notice");
     assert!(retained_index < notice_index);
     assert!(
@@ -6636,9 +6636,9 @@ async fn prompt_edit_before_first_prompt_starts_fresh_thread() -> Result<()> {
         })
         .collect::<Vec<_>>();
     assert!(
-        history.iter().any(|line| {
-            line == "• You’re continuing from this point in a new conversation"
-        })
+        history
+            .iter()
+            .any(|line| { line == "• A new conversation continues from this point" })
     );
     assert!(
         !history

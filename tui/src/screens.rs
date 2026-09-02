@@ -3,8 +3,8 @@
 
 use crate::cols::{Cell, Col, head, row, rule};
 use crate::production_hud::ProductionGraph;
+use crate::theme::Palette;
 use crate::theme::ScreenTheme;
-use crate::theme::{Palette, pulse};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::style::{Modifier, Style};
@@ -139,6 +139,8 @@ fn production_hud(palette: &Palette, tick: u64, pulse_enabled: bool) -> Vec<Line
             drill_down: false,
         },
         palette,
+        // The catalog page is 100 columns and every other screen rules at 82.
+        82,
         tick,
         pulse_enabled,
     )
@@ -928,7 +930,7 @@ fn skill(p: &Palette) -> Vec<Line<'static>> {
     v.push(blank());
     v.push(Line::from(vec![
         Span::styled("» ".to_string(), Style::default().fg(p.skill)),
-        Span::styled("This looks like ".to_string(), Style::default().fg(p.mid)),
+        Span::styled("matches ".to_string(), Style::default().fg(p.mid)),
         Span::styled(
             "improve-codebase-architecture".to_string(),
             Style::default().fg(p.skill),
@@ -937,6 +939,50 @@ fn skill(p: &Palette) -> Vec<Line<'static>> {
     ]));
     v.push(dim(p, "  tab to use it · enter to answer normally"));
     v
+}
+
+/// The catalog's four workers, drawn by the SHARED renderer and flattened to text so screen 9's
+/// two-column mockup can carry them in its left column.
+///
+/// ⚠️ The clock is fixed so the page is deterministic: the rows are observed 41, 28, 31 and 0
+/// seconds before `NOW`, which is where the design's own `41s` column came from.
+fn orchestra_fixture(palette: &Palette) -> Vec<String> {
+    const OBSERVED: f64 = 1_000.0;
+    const NOW: f64 = OBSERVED + 41.0;
+    let agent = |index: u64, status: &str, action: &str, ago: f64| estelle_client::FleetAgent {
+        index,
+        status: serde_json::from_value(serde_json::Value::String(status.to_string()))
+            .unwrap_or_default(),
+        state_observed_at: NOW - ago,
+        current_action: (!action.is_empty()).then(|| action.to_string()),
+        ..Default::default()
+    };
+    let fleet = estelle_client::FleetSnapshot {
+        batch: "gate cluster".to_string(),
+        models: vec!["opus-4-8".to_string(), "sonnet-5".to_string()],
+        state: "running".to_string(),
+        observed_at: NOW,
+        completed: Some(1),
+        total: Some(4),
+        agents: vec![
+            agent(1, "completed", "the rewrite", 41.0),
+            agent(2, "running", "12 call sites", 28.0),
+            agent(3, "running", "the regression suite", 31.0),
+            agent(4, "queued", "", 0.0),
+        ],
+        ..Default::default()
+    };
+    crate::orchestra_view::lines(&fleet, palette, 46, NOW)
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect()
 }
 
 // ── 9 ────────────────────────────────────────────────────────────────────
@@ -968,31 +1014,22 @@ fn everything(p: &Palette, tick: u64, on: bool) -> Vec<Line<'static>> {
         p.dim,
     );
     two("", p.dim, "◐ postgrest restarting", p.warn);
-    two(
-        "⏺ Task(gate cluster · 4 workers)",
-        p.green,
+    // 🔴 THE WORKER ROWS ARE NOT WRITTEN HERE ANY MORE. They were four fixture strings
+    // (`⎿ ✓ w1 opus-4-8 41s $0.212`) while the live session drew a five-across grid of plain
+    // text — two presentations of one fact, and only the one nobody ships was designed. Both
+    // callers now render `orchestra_view::lines`, so this screen cannot drift from the terminal.
+    // The right column keeps its own fixture text: this screen is a mockup of the WHOLE frame.
+    let right = [
         "errors 1h ▁▁▂█▃▁▁ 12",
-        p.dim,
-    );
-    two(
-        "  ⎿  ✓ w1 opus-4-8   41s  $0.212",
-        p.dim,
         "────────────────────────────",
-        p.dim,
-    );
-    two(
-        "      ◐ w2 sonnet-5   28s  $0.061",
-        p.dim,
         "orchestra · rev 12",
-        p.mid,
-    );
-    two(
-        "      ◐ w3 v4-pro     31s  $0.008",
-        p.dim,
         "◐ 3 running · 1 queued",
-        p.dim,
-    );
-    two("      · w4 queued", p.dim, "$0.281 this fleet", p.green);
+        "$0.281 this fleet",
+    ];
+    for (index, left) in orchestra_fixture(p).into_iter().enumerate() {
+        let right = right.get(index).copied().unwrap_or("");
+        two(&left, p.dim, right, p.dim);
+    }
     two("", p.dim, "────────────────────────────", p.dim);
     two(
         "⏺ Bash(pytest tests/ -x)",
@@ -1014,54 +1051,59 @@ fn everything(p: &Palette, tick: u64, on: bool) -> Vec<Line<'static>> {
         p.skill,
     );
     v.push(blank());
-    v.push(Line::from(vec![
-        Span::styled("▲ ".to_string(), pulse(p.red, tick, on)),
-        Span::styled(
-            "postgrest has been restarting for 4m".to_string(),
-            pulse(p.red, tick, on),
-        ),
-        Span::styled(
-            "  ·  monitor opened a repair".to_string(),
-            Style::default().fg(p.dim),
-        ),
-    ]));
+    v.push(crate::marks::headline(
+        crate::marks::Mark::Blocked,
+        "postgrest has been restarting for 4m",
+        "monitor opened a repair",
+        p,
+        tick,
+        on,
+    ));
     v.push(blank());
-    v.push(dim(p, "❯   tab repo · ctrl+s spend · ctrl+m models"));
+    // ⚠️ SECOND OWNER OF THE HINT ROW, AND IT KEPT THE DEAD CHORD FOR A WHILE AFTER
+    // `ASK_HINTS` DROPPED IT. `ctrl+m` is carriage return in this binary and can never be
+    // bound; a catalog screen may print an UNBUILT binding, but not an IMPOSSIBLE one — that
+    // is a promise no future commit can keep. Fixing the live row and leaving this behind is
+    // the "guard on the path you remembered" defect in its cheapest form.
+    v.push(dim(p, "❯   tab repo · ctrl+s spend · ctrl+g context"));
     v
 }
 
 // ── 10 ───────────────────────────────────────────────────────────────────
 fn broken(p: &Palette, tick: u64, on: bool) -> Vec<Line<'static>> {
-    const C: &[Col] = &[Col::l(3), Col::l(30), Col::l(34)];
-    let mut v = vec![rule("gate", "refused", 66, p.dim, p.mid, p.red), blank()];
-    v.push(Line::from(vec![
-        Span::styled("⏹ ".to_string(), pulse(p.red, tick, on)),
-        Span::styled("Gate refused".to_string(), pulse(p.red, tick, on)),
-        Span::styled(
-            "  ·  repairing  ·  round 1 of 3".to_string(),
-            Style::default().fg(p.dim),
-        ),
-    ]));
+    // 🔴 The refusal block itself is NOT drawn here any more. It is `gate_refusal::lines`, the
+    // single renderer the live `render_gate_modal` also calls — this screen and the customer's
+    // terminal now show the same block by construction rather than by two people agreeing.
+    let mut v = crate::gate_refusal::lines(
+        &crate::gate_refusal::Refusal {
+            detail: "repairing  ·  round 1 of 3",
+            note: None,
+            blockers: &[
+                crate::gate_refusal::Blocker {
+                    claim: "reqwest::Client::retry()",
+                    finding: Some("does not exist"),
+                },
+                crate::gate_refusal::Blocker {
+                    claim: "src/client.rs:88",
+                    finding: Some("graph: 0 definition sites"),
+                },
+            ],
+            files: &[],
+        },
+        p,
+        66,
+        tick,
+        on,
+    );
     v.push(blank());
-    for (g, what, whr) in [
-        ("│", "reqwest::Client::retry()", "does not exist"),
-        ("│", "src/client.rs:88", "graph: 0 definition sites"),
-    ] {
-        v.push(row(
-            C,
-            &[Cell(g, p.red), Cell(what, p.mid), Cell(whr, p.dim)],
-            2,
-        ));
-    }
-    v.push(blank());
-    v.push(Line::from(vec![
-        Span::styled("▲ ".to_string(), pulse(p.warn, tick, on)),
-        Span::styled("compact BLOCKED".to_string(), pulse(p.warn, tick, on)),
-        Span::styled(
-            "   latest_turn_exceeds_usable_window".to_string(),
-            Style::default().fg(p.dim),
-        ),
-    ]));
+    v.push(crate::marks::headline(
+        crate::marks::Mark::Blocked,
+        "compact BLOCKED",
+        "latest_turn_exceeds_usable_window",
+        p,
+        tick,
+        on,
+    ));
     v.push(dim(
         p,
         "   your last message alone is larger than the model's window.",
@@ -1225,17 +1267,14 @@ fn monitor(p: &Palette, tick: u64, on: bool) -> Vec<Line<'static>> {
     }
 
     v.push(blank());
-    v.push(Line::from(vec![
-        Span::styled("▲ ".to_string(), pulse(p.warn, tick, on)),
-        Span::styled(
-            "31 of 2,014 returned empty".to_string(),
-            pulse(p.warn, tick, on),
-        ),
-        Span::styled(
-            "   all of them q=\"\"  ·  search.py:41".to_string(),
-            Style::default().fg(p.dim),
-        ),
-    ]));
+    v.push(crate::marks::headline(
+        crate::marks::Mark::Blocked,
+        "31 of 2,014 returned empty",
+        "all of them q=\"\"  ·  search.py:41",
+        p,
+        tick,
+        on,
+    ));
     v.push(Line::from(vec![
         Span::styled(
             "  monitor opened a repair  ·  ".to_string(),

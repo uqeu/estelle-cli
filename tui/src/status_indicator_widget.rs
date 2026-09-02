@@ -33,7 +33,7 @@ use crate::wrapping::RtOptions;
 use crate::wrapping::word_wrap_lines;
 
 pub(crate) const STATUS_DETAILS_DEFAULT_MAX_LINES: usize = 3;
-const DETAILS_PREFIX: &str = "  └ ";
+const DETAILS_PREFIX: &str = "  │ ";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StatusDetailsCapitalization {

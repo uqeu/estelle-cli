@@ -23,7 +23,7 @@ pub const CONDENSE_MS: u64 = PLAY_MS * 62 / 100;
 
 pub const TIPS: [&str; 5] = [
     "Grounded memory: every answer cited to file and line.",
-    "The gate blocks any answer that invents an API before it reaches you.",
+    "The gate blocks any answer that invents an API, before it is shown.",
     "A swarm fans work across agents; every result returns through the gate.",
     "Context that never runs out: a 4,000-turn session held under 800 tokens.",
     "One merge gate: grounding, secrets, static analysis, CVEs. Pass or block.",
@@ -87,25 +87,62 @@ pub enum BootPalette {
     Light,
 }
 
+/// 🔴 **THE BOOT SCREEN DREW 1,019 CELLS AND READ NOT ONE DESIGN TOKEN.**
+///
+/// Four colours lived here — a ground, a faint dither dot, a bright foreground and the lily's red —
+/// and every one of them was a NEAR MISS of a token `theme::Palette` already ships:
+///
+/// | boot, before   | dark        | the token it was almost | delta |
+/// |----------------|-------------|-------------------------|-------|
+/// | `bone`         | `#17140F`   | `Palette::ground`  `#16130F` | 1·1·0 |
+/// | `ghost`        | `#605A4E`   | `Palette::dim`     `#6F6A5E` | 15·16·16 |
+/// | `ink`          | `#D6D1C5`   | `Palette::bright`  `#E9E6DC` | 19·21·23 |
+/// | lily           | `#C91A0C`   | `Palette::red`     `#C52416` | 4·10·10 |
+///
+/// The light row was worse than a near miss: `#F1EFE9` is the cream this repo **replaced** — the
+/// stale value `DESIGN.md` still printed after `globals.css` had moved on — so the first screen a
+/// new user ever sees was painted in a colour nothing else in the product uses.
+///
+/// ⚠️ **WHY THE VALUES ARE STILL WRITTEN HERE RATHER THAN IMPORTED.** `boot_scene` is in the
+/// `estelle_tui` LIBRARY and `theme` is declared in the `estelle` BINARY, so this module cannot see
+/// it. Moving `theme` into the library is the right fix and is a bigger change than this one; until
+/// then the binary owns a test — `the_boot_screen_paints_in_the_products_own_tokens` in `main.rs`,
+/// which is the only place both modules are visible — that asserts each of the four EQUALS its
+/// token. Drift is therefore a red test rather than a thing somebody notices in a screenshot.
 impl BootPalette {
-    fn bone(self) -> Color {
+    /// The ground the whole field is painted on. `theme::Palette::ground`.
+    pub fn bone(self) -> Color {
         match self {
-            Self::Dark => Color::from_u32(0x17_14_0F),
-            Self::Light => Color::from_u32(0xF1_EF_E9),
+            Self::Dark => Color::from_u32(0x16_13_0F),
+            Self::Light => Color::from_u32(0xDD_DA_D1),
         }
     }
 
-    fn ghost(self) -> Color {
+    /// The faint dither dot, the byline and `skip`. `theme::Palette::dim`.
+    pub fn ghost(self) -> Color {
         match self {
-            Self::Dark => Color::from_u32(0x60_5A_4E),
-            Self::Light => Color::from_u32(0xC8_C2_B3),
+            Self::Dark => Color::from_u32(0x6F_6A_5E),
+            Self::Light => Color::from_u32(0x8B_85_78),
         }
     }
 
-    fn ink(self) -> Color {
+    /// The dense dither, the wordmark and the tip. `theme::Palette::bright`.
+    pub fn ink(self) -> Color {
         match self {
-            Self::Dark => Color::from_u32(0xD6_D1_C5),
-            Self::Light => Color::from_u32(0x46_43_3B),
+            Self::Dark => Color::from_u32(0xE9_E6_DC),
+            Self::Light => Color::from_u32(0x1F_1C_17),
+        }
+    }
+
+    /// The higanbana. `theme::Palette::red`.
+    ///
+    /// ⚠️ This value was an inline literal at FIVE call sites — one that painted it and four that
+    /// searched the buffer for it to assert the flower had been drawn. A colour with five owners is
+    /// four chances to change it in one place and silently break a test's subject.
+    pub fn lily(self) -> Color {
+        match self {
+            Self::Dark => Color::from_u32(0xC5_24_16),
+            Self::Light => Color::from_u32(0xB0_21_0F),
         }
     }
 }
@@ -247,7 +284,7 @@ impl BootScene {
                 let lily = lily_braille_symbol(local_x, local_y, width, height, lily_emerge);
                 let lily_symbol = lily.map(|symbol| symbol.to_string());
                 let (symbol, foreground) = if let Some(symbol) = lily_symbol.as_deref() {
-                    (symbol, Color::from_u32(0xC9_1A_0C))
+                    (symbol, palette.lily())
                 } else if coverage > 0.035 && coverage > bayer_at(local_x, local_y) {
                     if coverage > 0.45 {
                         ("∷", palette.ink())
@@ -812,7 +849,7 @@ mod tests {
         let mut red = 0;
         let mut structural = 0;
         for cell in &buffer.content {
-            if cell.fg == Color::from_u32(0xC9_1A_0C) {
+            if cell.fg == BootPalette::Dark.lily() {
                 red += 1;
             }
             if matches!(cell.symbol(), "·" | "∷") {
@@ -834,7 +871,7 @@ mod tests {
         let red = buffer
             .content
             .iter()
-            .filter(|cell| cell.fg == Color::from_u32(0xC9_1A_0C))
+            .filter(|cell| cell.fg == BootPalette::Dark.lily())
             .count();
 
         assert!(red > 0, "gallery-sized boot lost the earned red ink");
@@ -849,7 +886,7 @@ mod tests {
             .iter()
             .enumerate()
             .filter_map(|(index, cell)| {
-                (cell.fg == Color::from_u32(0xC9_1A_0C)).then_some((index % 180, index / 180))
+                (cell.fg == BootPalette::Dark.lily()).then_some((index % 180, index / 180))
             })
             .collect::<Vec<_>>();
 
@@ -879,7 +916,7 @@ mod tests {
 
         let mut subpixels = Vec::new();
         for (index, cell) in buffer.content.iter().enumerate() {
-            if cell.fg != Color::from_u32(0xC9_1A_0C) {
+            if cell.fg != BootPalette::Dark.lily() {
                 continue;
             }
             let symbol = cell.symbol().chars().next().expect("red cell symbol");

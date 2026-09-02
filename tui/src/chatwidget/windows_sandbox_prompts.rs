@@ -104,7 +104,7 @@ impl ChatWidget {
             });
         let info_line = if failed_scan {
             Line::from(vec![
-                "We couldn't complete the world-writable scan, so protections cannot be verified. "
+                "The world-writable scan did not complete, so protections cannot be verified. "
                     .into(),
                 format!("The Windows sandbox cannot guarantee protection in {mode_label}.")
                     .fg(Color::Red),
@@ -238,11 +238,11 @@ impl ChatWidget {
         header.push(*Box::new(
             Paragraph::new(if allow_unelevated {
                 vec![
-                    line!["Set up the Codex agent sandbox to protect your files and control network access. Learn more <https://developers.openai.com/codex/windows>"],
+                    line!["Set up the Codex agent sandbox to protect files and control network access. Details: <https://developers.openai.com/codex/windows>"],
                 ]
             } else {
                 vec![
-                    line!["Your organization requires the default Codex agent sandbox to continue. Set it up to protect your files and control network access."],
+                    line!["This organization requires the default Codex agent sandbox. Set it up to protect files and control network access."],
                     line!["Learn more <https://developers.openai.com/codex/windows>"],
                 ]
             })
@@ -346,16 +346,16 @@ impl ChatWidget {
             !allow_unelevated || self.elevated_windows_sandbox_setup_required();
         let mut lines = Vec::new();
         lines.push(line![
-            "Couldn't set up your sandbox with Administrator permissions".bold()
+            "Could not set up the sandbox with Administrator permissions".bold()
         ]);
         lines.push(line![""]);
         if allow_unelevated {
             lines.push(line![
-                "You can still use Codex in a non-admin sandbox. It carries greater risk if prompt injected."
+                "Codex still runs in a non-admin sandbox. That carries greater risk under prompt injection."
             ]);
         } else {
             lines.push(line![
-                "Your organization requires the default sandbox before Codex can continue."
+                "This organization requires the default sandbox before Codex can continue."
             ]);
         }
         lines.push(line![
@@ -487,7 +487,7 @@ impl ChatWidget {
             .set_interrupt_hint_visible(/*visible*/ false);
         self.set_status(
             "Setting up sandbox...".to_string(),
-            Some("Hang tight, this may take a few minutes".to_string()),
+            Some("no result yet · a few minutes is normal".to_string()),
             StatusDetailsCapitalization::CapitalizeFirst,
             STATUS_DETAILS_DEFAULT_MAX_LINES,
         );

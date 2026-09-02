@@ -1,23 +1,57 @@
 #![deny(clippy::print_stderr, clippy::print_stdout)]
 
 mod agent_brief;
+#[cfg(test)]
+mod answer_currency_tests;
 mod binding_probe;
 mod claude_import;
 mod cols;
 mod commands;
+#[cfg(test)]
+mod composer_band_tests;
 mod copilot_login;
+/// 🎬 `estelle demo --session N` — the design book's screens reassembled into ONE continuous
+/// working session, played unattended in the real renderer.
+///
+/// The gallery above is a product tour: a full-frame render per screen, advanced by a keypress.
+/// The founder watched it and asked for the other thing — *"one minute of this guy just working in
+/// the CLI"* — so this module owns a transcript that only ever grows. It is a separate module
+/// rather than a flag on `run_demo` because the two have opposite invariants: the gallery REPLACES
+/// the frame every beat and the session may never reset it.
+mod demo_session;
+/// 🔴 THE DESIGN BOOK'S SCREENS, AND WHY THEY SHIP NOW.
+///
+/// They used to be `#[cfg(test)]`, on the argument that compiling fixture data into the binary
+/// puts it one wrong `match` arm away from a customer's terminal. The founder overruled the shape,
+/// not the risk: *"I still need to have them hard made. Basically you fake them, you fake the tool
+/// call and all that stuff in the demo, because we just have to send this to them."* A screen that
+/// only exists inside `cargo test` is not a screen he can record.
+///
+/// ⚠️ **SO THE GUARD MOVED FROM THE COMPILER TO ONE FUNCTION, AND GOT STRONGER, NOT WEAKER.**
+/// `design_book::render` is the only entry point, and with [`design_book::fixtures_allowed`] shut
+/// — which is the default, in every configuration, on every path — it renders an empty state that
+/// NAMES the missing contract instead of drawing a number nobody measured. Reaching the fixtures
+/// now takes `--demo` or `ESTELLE_DEMO_FIXTURES=1`: an explicit request, by name, per process.
+/// `fixture_data_cannot_reach_a_default_configuration_run` asserts that over every screen.
+mod design_book;
 mod doctor;
+mod gate_refusal;
 mod history_import;
 mod hook_distil;
 mod hook_guard;
+mod leaked;
+mod live_renderer;
 mod local_provider;
 mod login;
+mod marks;
+mod orchestra_view;
 mod production_hud;
 mod provider_catalog;
 mod provider_keys;
 mod provider_store;
 mod screens;
 mod session_server;
+mod session_view;
 mod setup_flow;
 #[cfg(test)]
 mod test_gallery;
@@ -43,6 +77,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -85,13 +120,13 @@ use estelle_client::Repo;
 use estelle_client::RepoResolver;
 use estelle_client::ReposResponse;
 use estelle_client::Source;
+use estelle_client::SuiteDispatch;
 use estelle_client::SuiteDispatchRequest;
 use estelle_client::is_secret_shaped;
 use estelle_client::mask_secret;
 use estelle_tui::ComposerAction;
 use estelle_tui::ComposerCommand;
 use estelle_tui::ComposerInput;
-use estelle_tui::ComposerPanePalette;
 use estelle_tui::ExternalResumePicker;
 use estelle_tui::ExternalResumeRow;
 use estelle_tui::boot_scene::BootPalette;
@@ -101,10 +136,10 @@ use estelle_tui::boot_scene::spider_lily_coverage;
 use estelle_tui::session_gap;
 use futures::StreamExt;
 use history_import::ExternalHistorySource;
+use live_renderer::*;
 use ratatui::Frame;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::Alignment;
 use ratatui::layout::Constraint;
 use ratatui::layout::Direction;
 use ratatui::layout::Layout;
@@ -112,18 +147,12 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 use ratatui::style::Modifier;
 use ratatui::style::Style;
-use ratatui::symbols::Marker;
 use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::text::Text;
-use ratatui::widgets::Axis;
 use ratatui::widgets::Block;
-use ratatui::widgets::Borders;
-use ratatui::widgets::Chart;
 use ratatui::widgets::Clear;
-use ratatui::widgets::Dataset;
 use ratatui::widgets::Gauge;
-use ratatui::widgets::GraphType;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
 use serde_json::Value;
@@ -152,10 +181,22 @@ const WORK_PHASES: [&str; 6] = [
     "implement",
     "gate",
 ];
-// P6's brand palette is intentionally truecolor; the rest of the TUI remains theme-safe ANSI.
+/// 🔴 **THE CREAM THE FOUNDER ASKED US TO STOP USING, KEPT ONLY SO A TEST CAN REFUSE IT.**
+///
+/// `#E9E6DC` is the light ground he said *"kind of hurt my eye"*. `theme::Palette` came down to
+/// `#DDDAD1` and `Theme::CreamInk::background` went on returning this one, so the fix landed in
+/// the palette and not on the screen. Nothing renders it now; it survives as the needle in
+/// `dark_theme_inherits_the_terminal_background_instead_of_painting_ansi_black`, which asserts the
+/// background is NOT this. A retired value with a live guard on it is cheaper than a comment.
+///
+/// ⚠️ `FATE_GHOST` (`#C8C2B3`) and `FATE_INK` (`#46433B`) stood beside this and are gone entirely:
+/// between them they were **309 untokened cells** in the design book, and both had exact
+/// counterparts in `theme::Palette` (`mid` and `dim`) that already existed in both themes.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "retired value, kept as a test needle")
+)]
 const FATE_BG: Color = Color::from_u32(0xE9_E6_DC);
-const FATE_GHOST: Color = Color::from_u32(0xC8_C2_B3);
-const FATE_INK: Color = Color::from_u32(0x46_43_3B);
 const FATE_RED: Color = Color::from_u32(0xC9_1A_0C);
 const FATE_RED_SOFT: Color = Color::from_u32(0xE2_8F_86);
 const BAYER_8: [[u8; 8]; 8] = [
@@ -184,28 +225,42 @@ impl Theme {
         }
     }
 
+    /// 🔴 **THE 5%-DIMMER CREAM LANDED IN THE PALETTE AND NOT ON THE SCREEN.**
+    ///
+    /// The founder said the light ground *"kind of hurt my eye"*, [`theme::Palette`] came down to
+    /// `#DDDAD1`, its test asserts the move clause by clause — and this function went on returning
+    /// `FATE_BG` (`#E9E6DC`), so **the cream frame the book shows him still painted the old
+    /// value.** The book's own CSS had already been rewritten to `#DDDAD1`, which means the swatch
+    /// and the picture beside it disagreed. Two owners for one derived fact, and the one nobody
+    /// audited was the one that ships.
+    ///
+    /// Dark stays [`Color::Reset`] on purpose: ANSI 0 is a painted colour that most terminal
+    /// themes render as a grey sheet, and `Reset` inherits the terminal's own ground.
     fn background(self) -> Color {
         match self {
-            // ANSI 0 is a painted colour — most terminal themes render it as a grey sheet.
-            // Reset inherits the terminal's own background. Cream Ink is the deliberate
-            // painted surface and stays painted.
             Self::Dark => Color::Reset,
-            Self::CreamInk => FATE_BG,
+            Self::CreamInk => self.screen_palette().ground,
         }
     }
 
+    /// 🔴 **`Color::Black` IS NOT INK, IT IS WHATEVER THE TERMINAL DECIDES.**
+    ///
+    /// The cream theme's primary text was ANSI 0 while `theme.rs` declared cream ink as `#1F1C17`
+    /// — the same defect class as the `#65A8FF` "Claude-like semantic blue" the previous pass
+    /// removed, and it was the largest single block of untokened colour left in the book: **71
+    /// cells on `13-cream-ink`**. Dark is unchanged in value (`bright` IS `#E9E6DC`); only its
+    /// owner moved.
     fn primary(self) -> Color {
-        match self {
-            Self::Dark => FATE_BG,
-            Self::CreamInk => Color::Black,
-        }
+        self.screen_palette().bright
     }
 
+    /// The secondary prose role — separators, the session-gap paragraph, the signed-in line.
+    ///
+    /// ⚠️ It was `#C8C2B3`/`#787267`, in no palette, and it was the **biggest** untokened colour in
+    /// the book at 293 cells across seven frames. [`theme::Palette::mid`] is exactly this role and
+    /// already existed in both themes; the name was never the problem, the value was hand-typed.
     fn ghost(self) -> Color {
-        match self {
-            Self::Dark => FATE_GHOST,
-            Self::CreamInk => Color::from_u32(0x78_72_67),
-        }
+        self.screen_palette().mid
     }
 
     fn alert(self) -> Color {
@@ -215,12 +270,17 @@ impl Theme {
         }
     }
 
+    /// The colour a file path, a symbol and a citation are drawn in.
+    ///
+    /// 🔴 **IT WAS `#65A8FF`, DESCRIBED IN ITS OWN COMMENT AS "Claude-like semantic blue".** A
+    /// colour named after a rival product, in no palette this repo ships, on the most Estelle-ish
+    /// thing on the screen — the path back to the user's own code. The gallery counted it: 17 cells
+    /// on `01b-waiting-answer`, every one of them a character of `billing/charge.rs`.
+    ///
+    /// [`theme::Palette::cite`] is exactly this role and already existed. The name of the role was
+    /// never the problem; the value was borrowed.
     fn semantic(self) -> Color {
-        match self {
-            // Claude-like semantic blue: luminous on an inherited dark terminal, darker on cream.
-            Self::Dark => Color::from_u32(0x65_A8_FF),
-            Self::CreamInk => Color::from_u32(0x1F_5A_A6),
-        }
+        self.screen_palette().cite
     }
 
     fn boot_palette(self) -> BootPalette {
@@ -270,12 +330,55 @@ enum Command {
     },
     /// Diagnose credential stores and provider-runtime readiness without printing secrets.
     Doctor,
+    /// Page through the design book's screens in this terminal, rendered by the real renderer.
+    ///
+    /// 🔴 The DATA behind these screens is a design fixture and it is OFF by default: without
+    /// `--demo` (or `ESTELLE_DEMO_FIXTURES=1`) each screen renders an empty state naming the
+    /// contract it still needs. The LAYOUT is production either way.
+    Demo {
+        /// Render one screen by name instead of paging through all of them.
+        #[arg(value_name = "SCREEN")]
+        screen: Option<String>,
+        /// List every screen with the contract it still needs, and exit.
+        #[arg(long)]
+        list: bool,
+        /// Draw the design fixtures. Without this the screens render their empty state.
+        #[arg(long)]
+        demo: bool,
+        /// Render on the cream ground rather than the dark one.
+        #[arg(long)]
+        cream: bool,
+        /// 🎬 Play one scripted SESSION instead of paging the gallery: `--session 1`.
+        ///
+        /// One continuous transcript in the real renderer, typed character by character, played
+        /// unattended, exiting on its own. `--session 0` lists the films and their real runtimes.
+        #[arg(long, value_name = "FILM")]
+        session: Option<u8>,
+        /// Playback speed for `--session`. `1` is the rehearsed pace; `0.75` plays at three
+        /// quarters speed and runs LONGER, which is what a voiceover wants.
+        ///
+        /// A named multiplier rather than a literal buried in the timing loop: every duration in
+        /// the film is divided by it, so the whole rhythm stretches together instead of only the
+        /// typing.
+        #[arg(long, default_value_t = 1.0, value_name = "MULTIPLIER")]
+        speed: f32,
+    },
+    /// Scan your own ~/.claude and ~/.codex for exposed credentials. Fully offline: no network,
+    /// no account; prints rule + fingerprint + path + line, never the value.
+    Leaked,
     /// Configure Estelle for the current repository.
     Init {
         #[arg(long)]
         client: Option<String>,
         #[arg(long)]
         dry_run: bool,
+        /// One-shot Estelle API key. Equivalent to exporting ESTELLE_API_KEY for this command
+        /// only: it is used and discarded, never written to the credential store. Present because
+        /// every published onboarding surface hands the user `--key <their key>` and, until
+        /// 2026-08-31, the flag did not exist and the command exited 2 on the first thing a new
+        /// user was told to paste.
+        #[arg(long, value_name = "KEY")]
+        key: Option<String>,
     },
     /// Write or refresh Estelle's managed standing rule in agent instruction files.
     Brief {
@@ -301,6 +404,13 @@ enum Command {
         path: Option<PathBuf>,
         #[arg(long)]
         dry_run: bool,
+        /// One-shot Estelle API key. Equivalent to exporting ESTELLE_API_KEY for this command
+        /// only: it is used and discarded, never written to the credential store. Present because
+        /// every published onboarding surface hands the user `--key <their key>` and, until
+        /// 2026-08-31, the flag did not exist and the command exited 2 on the first thing a new
+        /// user was told to paste.
+        #[arg(long, value_name = "KEY")]
+        key: Option<String>,
     },
     /// Update changed or explicitly named files.
     Reindex {
@@ -344,10 +454,10 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         values: Vec<String>,
     },
-    /// Render the Estelle terminal surface catalog with clearly labelled fixture data.
+    /// Snapshot the live Estelle terminal renderer with bounded sample state.
     Screens {
-        /// Render one 1-based screen number; omit to render all twelve.
-        #[arg(long, value_name = "1..12")]
+        /// Render one 1-based screen number; omit to render all thirteen.
+        #[arg(long, value_name = "1..13")]
         screen: Option<usize>,
         /// Use the cream-on-ink palette instead of the dark palette.
         #[arg(long)]
@@ -406,11 +516,18 @@ enum Command {
     /// Report whether this CLI is behind the newest published release.
     ///
     /// Prints the install command; it never runs it. Tell, then let them run it.
+    /// `update` is what people type. It errored with `unrecognized subcommand 'update'` and a tip
+    /// pointing at `upgrade` — a papercut on the command a user reaches for the moment they suspect
+    /// they are behind. Aliased rather than renamed, so every existing doc and script keeps working.
+    #[command(visible_alias = "update")]
     Upgrade {
         /// Ignore the once-a-day cache and ask GitHub now.
         #[arg(long)]
         check: bool,
     },
+    /// Print the version. `--version` already did this; `estelle version` did not, and errored with a
+    /// tip suggesting `verify`. Both spellings now work.
+    Version,
 }
 
 struct TerminalSession;
@@ -464,13 +581,57 @@ impl EventSourceLease<EventStream> {
     }
 }
 
-fn enter_terminal_screen(writer: &mut impl io::Write) -> io::Result<()> {
-    execute!(
-        writer,
-        EnterAlternateScreen,
-        EnableBracketedPaste,
-        EnableMouseCapture
-    )
+/// Whether Estelle is holding the mouse, and therefore whether the terminal emulator can see a
+/// drag at all.
+///
+/// 🔴 **`EnableMouseCapture` TAKES EVERY DRAG AWAY FROM THE TERMINAL.** It was executed
+/// unconditionally on entry with no toggle anywhere in the crate, so for a whole session the user
+/// could not highlight a single line of output, let alone copy it. Scroll and click-to-focus are
+/// real and depend on capture, so `ctrl+o` (or `/select`) SUSPENDS it and hands the mouse back —
+/// this is not a deletion.
+///
+/// Process-global on purpose, and this is the case that earns it: there is exactly ONE terminal
+/// per process and capture is a property of that terminal, not of an `App`. It has exactly one
+/// writer, [`toggle_mouse_capture`], which moves the terminal and this flag together and rolls the
+/// flag back if the terminal refuses — so the flag can never claim a state the terminal declined.
+/// Rule 9: one owner for a derived fact.
+static MOUSE_CAPTURED: AtomicBool = AtomicBool::new(true);
+
+fn mouse_is_captured() -> bool {
+    MOUSE_CAPTURED.load(Ordering::SeqCst)
+}
+
+/// Ask the terminal for, or release, mouse reporting. Pure in `captured`, so both directions are
+/// testable without touching the global.
+fn write_mouse_capture(writer: &mut impl io::Write, captured: bool) -> io::Result<()> {
+    if captured {
+        execute!(writer, EnableMouseCapture)
+    } else {
+        execute!(writer, DisableMouseCapture)
+    }
+}
+
+/// Hand the mouse to the terminal emulator so the user can drag-select and copy, or take it back.
+/// Returns the state now in force.
+fn toggle_mouse_capture(writer: &mut impl io::Write) -> io::Result<bool> {
+    let next = !mouse_is_captured();
+    MOUSE_CAPTURED.store(next, Ordering::SeqCst);
+    if let Err(error) = write_mouse_capture(writer, next) {
+        // Never leave the flag advertising a mode the terminal declined.
+        MOUSE_CAPTURED.store(!next, Ordering::SeqCst);
+        return Err(error);
+    }
+    Ok(next)
+}
+
+/// ⚠️ `capture_mouse` is a PARAMETER rather than a constant so that re-entering the screen cannot
+/// silently take the mouse back from a user who had handed it to the terminal. `resume` re-enters
+/// after every inline login, and a hardcoded `EnableMouseCapture` here would undo the toggle
+/// behind the user's back with nothing to notice. The compiler now makes every caller say which
+/// state it wants.
+fn enter_terminal_screen(writer: &mut impl io::Write, capture_mouse: bool) -> io::Result<()> {
+    execute!(writer, EnterAlternateScreen, EnableBracketedPaste)?;
+    write_mouse_capture(writer, capture_mouse)
 }
 
 fn leave_terminal_screen(writer: &mut impl io::Write) -> io::Result<()> {
@@ -486,7 +647,7 @@ impl TerminalSession {
     fn enter() -> io::Result<Self> {
         enable_raw_mode()?;
         let session = Self;
-        enter_terminal_screen(&mut io::stdout())?;
+        enter_terminal_screen(&mut io::stdout(), mouse_is_captured())?;
         Ok(session)
     }
 
@@ -497,7 +658,9 @@ impl TerminalSession {
 
     fn resume(&mut self) -> io::Result<()> {
         enable_raw_mode()?;
-        enter_terminal_screen(&mut io::stdout())
+        // Restores the CURRENT decision, not the startup one: a login handoff must not
+        // repossess a mouse the user handed to the terminal before signing in.
+        enter_terminal_screen(&mut io::stdout(), mouse_is_captured())
     }
 }
 
@@ -570,6 +733,28 @@ enum QueuedRequest {
     },
 }
 
+impl QueuedRequest {
+    /// What the user typed, as the waiting band should show it back to them.
+    ///
+    /// 🔴 **THE BAND READS `app.queue` DIRECTLY, WHICH IS WHY IT CANNOT LIE.** The alternative
+    /// considered was decorating the transcript's trailing `User` rows — and it is UNSOUND: a
+    /// local command like `/help` echoes a `User` row WITHOUT enqueuing anything, so "the last
+    /// `queue.len()` user rows" points at the wrong rows the moment one is submitted. Deriving
+    /// the band from the queue itself has one owner and no correlation to get wrong.
+    fn label(&self) -> String {
+        match self {
+            Self::Question { question, .. } => question.clone(),
+            Self::Shell { command, .. } => format!("!{command}"),
+            Self::Command(command) => format!("/{} {}", command.name, command.argument)
+                .trim_end()
+                .to_string(),
+            Self::Sweep => "/sweep".to_string(),
+            Self::Compact { .. } => "/compact".to_string(),
+            Self::Apply { reverse, .. } => if *reverse { "/undo" } else { "/apply" }.to_string(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PendingLogin {
     Estelle,
@@ -579,12 +764,37 @@ enum PendingLogin {
     EstelleThenProvider(&'static str),
 }
 
+/// The lifted band under the user's own turn.
+///
+/// 🔴 **THE BAND USED TO VANISH ON EVERY TERMINAL THAT DOES NOT ANSWER AN OSC QUERY.** It was
+/// blended against `default_bg()` — the background the terminal *reports* — which is `None`
+/// anywhere that is not an answering tty. On Dark that meant **no band at all**, which is why the
+/// founder's screen showed a bare `you` label over an unhighlighted message and why he asked for
+/// the highlight back: *"When a message arrives it should be visually highlighted the way ChatGPT
+/// and Codex highlight yours. Same treatment, our palette."*
+///
+/// ⚠️ **"OUR PALETTE" IS THE INSTRUCTION THAT RESOLVED THE OPEN QUESTION.** The previous docstring
+/// said swapping the owner to [`theme::Palette::tint`] — the role the active plan step already
+/// lifts its row with — was a real improvement and the founder's call to make. He made it. So the
+/// blend is still preferred WHEN the terminal answers (nothing he approved changes on those
+/// terminals), and `tint` is the fallback instead of nothing.
+///
+/// ⚠️ And the cream ground is read from the palette rather than written here. It used to be the
+/// literal `(0xE9, 0xE6, 0xDC)`, which made this function a SECOND owner of a colour
+/// [`theme::ScreenTheme::Cream`] already owns — so when the founder asked for a dimmer light ground
+/// it would have gone stale here silently and blended the band against a value nothing renders.
 fn user_turn_background(theme: Theme) -> Option<Color> {
+    let palette = theme.screen_palette();
     let terminal_bg = match theme {
-        Theme::CreamInk => Some((0xE9, 0xE6, 0xDC)),
+        Theme::CreamInk => match palette.ground {
+            Color::Rgb(red, green, blue) => Some((red, green, blue)),
+            _ => None,
+        },
         Theme::Dark => estelle_tui::default_bg(),
     };
-    estelle_tui::user_message_style_for(terminal_bg).bg
+    estelle_tui::user_message_style_for(terminal_bg)
+        .bg
+        .or(Some(palette.tint))
 }
 
 enum InlineLoginOutcome {
@@ -678,6 +888,13 @@ struct AnswerReply {
     degraded: bool,
     sources: Vec<Source>,
     working_paths: Vec<String>,
+    /// The server's refusal to certify this answer, when it sent one.
+    ///
+    /// 🔴 **`None` MEANS NOTHING TO DISCLOSE, NEVER "NOT MEASURED".** `serve/answer_currency.py`
+    /// omits the block entirely on a current index — the healthy payload is byte-identical to one
+    /// from a build that never had the field — so absence here is a positive statement, and the
+    /// two readings of an absent field are exactly the ambiguity this repo keeps paying for.
+    code_currency: Option<estelle_client::CodeCurrency>,
 }
 
 type WorkProgressSink = Arc<dyn Fn(estelle_client::WorkProgress) + Send + Sync>;
@@ -831,15 +1048,31 @@ fn resolved_setting_value(
     scope: &str,
     spec: &Value,
 ) -> Value {
-    let owner = if scope == "personal" {
-        "personal"
+    // 🔴 **THE TEAM-SCOPED HALF DOES NOT ARRIVE IN `extra`, AND READING IT THERE MADE EVERY
+    // TEAM SETTING SHOW ITS SCHEMA DEFAULT.**
+    //
+    // `CommandReply` has a typed `me_team` field renamed to `"team"` for `GET /me/team`, and a
+    // `#[serde(flatten)] extra` for everything else. Flatten does not receive a key a named field
+    // already claimed — so `/settings`'s `{"team": {"monitor": {"retention_days": 45}}}` was
+    // deserialised into an empty `TeamView` roster and this lookup fell straight through to
+    // `spec["default"]`. The founder read `30 · team · server` off a frame whose own fixture said
+    // 45. See `TeamView::extra` for the whole story.
+    //
+    // ⚠️ The `personal` path was never broken, and that is exactly why nobody found this: half the
+    // settings screen was correct, which reads as a working screen.
+    let team_scoped = scope != "personal";
+    let values = if team_scoped {
+        settings
+            .me_team
+            .as_ref()
+            .and_then(|team| team.extra.get(suite))
     } else {
-        "team"
+        settings
+            .extra
+            .get("personal")
+            .and_then(|values| values.get(suite))
     };
-    settings
-        .extra
-        .get(owner)
-        .and_then(|values| values.get(suite))
+    values
         .and_then(|values| values.get(key))
         .cloned()
         .or_else(|| spec.get("default").cloned())
@@ -964,6 +1197,55 @@ struct PickerSurface {
     title: String,
     rows: Vec<PickerRow>,
     selected: usize,
+}
+
+/// The most playbook rows the skills picker will ever hand to the renderer.
+///
+/// A NAMED bound, not a literal buried in a `.take()`: `render_picker` paints rows with no scroll
+/// offset, so any row past this is unreachable by keypress and printing more is not "a longer list"
+/// but an invisible one. Nine because the picker's own footer offers `1-9` direct selection — the
+/// window and the advertised affordance are the same size on purpose.
+const MAX_SKILL_PICKER_ROWS: usize = 9;
+
+/// The most transcript entries the session will keep.
+///
+/// 🔴 **THE TRANSCRIPT GREW WITHOUT BOUND AND THE RENDERER RE-DREW ALL OF IT EVERY FRAME.** The
+/// founder dumped 247 playbooks into scrollback with `/skills`, ran a skill, and had to Force Quit
+/// Terminal. The spinner was still ticking, so the event loop was alive — the cost was in DRAWING:
+/// every frame rebuilds the whole transcript into a freshly allocated styled `Text`, re-wraps it
+/// once to find the scroll offset and again to paint, and clips none of it to the viewport.
+///
+/// Measured here, release build: **~2.9µs per line of scrollback, linear** — 0.41ms at ~30 lines,
+/// 3.3ms at ~1,000, and **57.5ms at ~20,000**, to paint the forty lines that are actually visible.
+///
+/// ⚠️ **THIS CONSTANT IS A MITIGATION, NOT THE FIX, AND THE DIFFERENCE MATTERS.** Bounding the
+/// STORE bounds the damage; it does not make the per-frame cost independent of scrollback, which is
+/// what a viewport-clipped renderer would do. That fix belongs in `live_renderer.rs`, which this
+/// lane does not own, and it is reported rather than attempted here. Until then this is what keeps
+/// a long session from reaching the frame budget at all.
+///
+/// **Why 300 and not more:** at 600 entries a DEBUG-build frame measured 44ms against a 50ms
+/// budget — inside the bound, but close enough that a loaded machine would cross it, and a bound
+/// you only meet on a quiet machine is not a bound. 300 leaves ~22ms in debug and ~2ms in release.
+///
+/// ⚠️ Eviction is never silent — see [`App::trim_transcript`].
+const MAX_TRANSCRIPT_ENTRIES: usize = 300;
+
+/// Collapse prose to a single bounded line.
+///
+/// Server summaries arrive as paragraphs with embedded newlines. A picker row is one line, so a
+/// three-line summary silently became three rows and pushed the rest off the modal.
+fn one_line(value: &str) -> String {
+    let collapsed = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    const MAX: usize = 72;
+    if collapsed.chars().count() <= MAX {
+        return collapsed;
+    }
+    collapsed
+        .chars()
+        .take(MAX.saturating_sub(1))
+        .chain(std::iter::once('\u{2026}'))
+        .collect()
 }
 
 impl PickerSurface {
@@ -1384,8 +1666,13 @@ impl PickerSurface {
         }
     }
 
-    fn skills(reply: &CommandReply) -> Self {
-        let mut rows = reply
+    /// Every playbook the server returned, validated, in server order and UNBOUNDED.
+    ///
+    /// This is the CATALOG, not a surface. Nothing renders it directly — [`Self::skills_filtered`]
+    /// takes a bounded slice of it. Separating the two is what stopped 247 rows from being handed
+    /// to a renderer that clips without scrolling, where every row past the fold was unreachable.
+    fn skill_catalog(reply: &CommandReply) -> Vec<PickerRow> {
+        reply
             .extra
             .get("skills")
             .and_then(Value::as_array)
@@ -1405,20 +1692,69 @@ impl PickerSurface {
                         .get("summary")
                         .and_then(Value::as_str)
                         .map(mask_secret)
+                        .map(|summary| one_line(&summary))
                         .unwrap_or_else(|| "server playbook".to_string()),
                     action: PickerAction::InvokeSkill(name.to_string()),
                 })
             })
+            .collect()
+    }
+
+    /// A SCREENFUL of the catalog, narrowed by `filter`.
+    ///
+    /// 🔴 **BOUND THE RESOURCE BEFORE YOU TAKE IT.** `render_picker` sizes its modal from
+    /// `rows.len()`, clamps that to the available height, and then paints the rows with **no scroll
+    /// offset** — so handing it 247 rows does not produce a long list, it produces a list whose
+    /// tail cannot be reached by any keypress. The bound belongs here, at the point the surface is
+    /// built, not in the renderer that would have to clip it.
+    ///
+    /// ⚠️ The title carries the counts because the footer cannot: the hint row inside
+    /// `render_picker` is a fixed string owned by another lane, so "type to filter" cannot be
+    /// advertised there. Users therefore have to discover filtering, which is a real
+    /// discoverability gap and is reported rather than papered over.
+    fn skills_filtered(catalog: &[PickerRow], filter: &str) -> Self {
+        let needle = filter.trim().to_ascii_lowercase();
+        let matched = catalog
+            .iter()
+            .filter(|row| needle.is_empty() || row.label.to_ascii_lowercase().contains(&needle))
             .collect::<Vec<_>>();
+        let mut rows = matched
+            .iter()
+            .take(MAX_SKILL_PICKER_ROWS)
+            .map(|row| (*row).clone())
+            .collect::<Vec<_>>();
+        let title = if catalog.is_empty() {
+            "Skills".to_string()
+        } else if needle.is_empty() {
+            format!(
+                "Skills · {} of {} · type to filter",
+                rows.len(),
+                catalog.len()
+            )
+        } else {
+            format!(
+                "Skills · {} of {} match \"{needle}\" · backspace clears",
+                rows.len(),
+                matched.len()
+            )
+        };
         if rows.is_empty() {
             rows.push(PickerRow {
-                label: "No playbooks returned".to_string(),
-                detail: "the server registry is empty".to_string(),
+                label: if catalog.is_empty() {
+                    "No playbooks returned".to_string()
+                } else {
+                    "No playbook matches".to_string()
+                },
+                detail: if catalog.is_empty() {
+                    "the server registry is empty".to_string()
+                } else {
+                    "backspace to widen the filter".to_string()
+                },
                 action: PickerAction::None,
             });
         }
         Self {
-            title: "Skills".to_string(),
+            title,
             rows,
             selected: 0,
         }
@@ -1530,6 +1866,19 @@ fn render_gate_blocker(blocker: &Value) -> String {
     )
 }
 
+/// How many requests may wait behind the one in flight.
+///
+/// 🔴 **POWER OF TEN RULE 2: THE GROWTH HAS A STATED BOUND AND THE BOUND IS A NAMED CONSTANT.**
+/// The queue had none. A held-down Enter, a paste that submits, or a script driving the terminal
+/// would grow it without limit — a memory leak wearing a user interface.
+///
+/// Sixteen is chosen to be far past any reasonable burst of typing and far short of a runaway:
+/// a person queuing seventeen turns behind one request has lost track of what they asked, and the
+/// honest answer is to say the queue is full rather than to accept work nobody is tracking. At the
+/// cap a send is REFUSED IN THE TRANSCRIPT — never silently dropped, which is the exact defect
+/// this bound exists to prevent.
+const MAX_QUEUED_REQUESTS: usize = 16;
+
 struct App {
     boot: Option<BootScene>,
     boot_started: Instant,
@@ -1537,6 +1886,19 @@ struct App {
     composer: ComposerInput,
     transcript: Vec<TranscriptEntry>,
     queue: VecDeque<QueuedRequest>,
+    /// The messages `↑` pulled back out of the queue, still as SEPARATE items.
+    ///
+    /// 🔴 **THE MESSAGE BOUNDARIES LIVE HERE, NOT IN THE DRAFT TEXT.** Recall shows the messages
+    /// joined by newlines because that is the only way a plain text area can display several of
+    /// them — but the join is a VIEW. Sending re-reads this vector, so two messages stay two
+    /// turns and a single pasted message that happens to contain a newline stays one. Splitting
+    /// the draft on `\n` at send time cannot tell those two cases apart, which is precisely the
+    /// bug this field exists to make impossible.
+    recalled: Vec<String>,
+    /// The exact draft text produced by the last recall, so an UNEDITED draft is recognisable.
+    /// Once the user edits the merged view, the boundaries are genuinely unknowable and the draft
+    /// becomes one message — stated as a limit rather than guessed at.
+    recall_draft: String,
     active: Option<ActiveRequest>,
     header: HeaderState,
     account: Option<AccountResponse>,
@@ -1574,6 +1936,19 @@ struct App {
     citations: Vec<Source>,
     sweep_progress: Option<top_level::SweepProgress>,
     work_progress: Option<WorkProgressView>,
+    /// Measured spend for this session, or `None` because nothing produces it yet.
+    ///
+    /// ⚠️ `WorkCompletion.spend_usd` exists on the wire type with `spend_known` /
+    /// `spend_is_upper_bound` / `spend_is_lower_bound` beside it, and this client never reads a
+    /// completion, so there is no honest number to show. The status row omits the cell rather
+    /// than printing `$0.000`, which would be a claim that a measurement happened.
+    session_spend_usd: Option<f64>,
+    /// The checked-out branch, read once at startup. `None` when this is not a git worktree or
+    /// git could not answer - the frame then prints the repo alone rather than guessing a name.
+    branch: Option<String>,
+    /// How many times the gate has refused an edit in THIS session — counted where the refusal
+    /// modal is opened, so it is a fact about what the user was actually shown.
+    gate_refusals: u64,
     shell_timeout: Duration,
     gate_modal: Option<GateModal>,
     fleet: Option<estelle_client::FleetSnapshot>,
@@ -1616,6 +1991,15 @@ struct App {
     tool_click_targets: RefCell<Vec<ToolClickTarget>>,
     dither_wake: VecDeque<usize>,
     picker: Option<PickerSurface>,
+    /// Every playbook `/skills` returned, unfiltered. Non-empty ONLY while the skills picker is
+    /// open, which is what makes "is this picker filterable" a fact about state rather than a
+    /// string comparison on the picker's title.
+    skill_catalog: Vec<PickerRow>,
+    /// What the user has typed to narrow [`Self::skill_catalog`].
+    skill_filter: String,
+    /// Every skill name this session has learned, kept so composer completion survives the
+    /// composer being rebuilt between turns.
+    skill_names: Vec<String>,
     resume_picker: Option<ExternalResumePicker>,
     settings: Option<CommandReply>,
     pending_setting_input: Option<PendingSettingInput>,
@@ -1633,13 +2017,113 @@ enum FocusSurface {
     Auxiliary,
 }
 
+/// The demo frame's hint row: `enter send · tab repo · ctrl+s spend · ctrl+g context · esc stop`.
+///
+/// 🔴 **THE FOURTH PAIR WAS `ctrl+m models` AND IT ADVERTISED A CHORD THAT CANNOT EXIST.**
+///
+/// `Ctrl+M` is ASCII carriage return (0x0D). This binary never calls
+/// `PushKeyboardEnhancementFlags` — that lives in `tui/keyboard_modes.rs`, on the Codex path
+/// `main.rs` cannot reach — so input takes crossterm's legacy byte parser, where the `b'\r'` arm
+/// shadows the `\x01..=\x1A` control-character arm and yields `KeyCode::Enter` with NO modifier.
+/// Binding it would swallow every Enter before the composer submits: **sending a message would
+/// stop working.** The other unbound hints are debts. This one was a promise that could not be
+/// kept, printed on every frame of the founder's own demo.
+///
+/// ⚠️ **THE ROW WAS HIS, VERBATIM, AND CHANGING IT IS A DECISION SOMEBODY MADE ON PURPOSE.**
+/// The rule that settles it: *the hint and the binding must agree, and when they cannot both be
+/// right, the working binding wins.* His words were written before anyone had measured the
+/// constraint; the feature he wanted reachable is reachable — the model pool is `/model`, named on
+/// screen 27 of the design book, and screen 8 records this change so he can see it was deliberate.
+///
+/// `ctrl+g context` takes the slot because it is the pair's opposite: a real binding that had no
+/// hint at all, on a panel a user cannot press a key they were never told about.
+const ASK_HINTS: &[(&str, &str)] = &[
+    ("enter", "send"),
+    ("tab", "repo"),
+    ("ctrl+s", "spend"),
+    ("ctrl+g", "context"),
+    ("esc", "stop"),
+];
+
+/// The subset of [`ASK_HINTS`] the live keymap does NOT handle today.
+///
+/// Test-only because it is a LEDGER, not a switch: nothing reads it to change what renders, and
+/// wiring it into the renderer would be the first step towards quietly hiding the two hints
+/// instead of binding the two keys.
+///
+/// ⚠️ **IT WAS THREE UNTIL 2026-09-02, AND ONE OF THE THREE WAS NOT A DEBT.** `ctrl+m` is
+/// carriage return in this binary and could never have been bound; it is off the row now, and the
+/// reason is enforced by `the_advertised_keys_that_are_not_yet_bound_are_exactly_these` rather than
+/// left as a sentence. `tab` and `ctrl+s` are genuine debts: nothing stops them being bound.
+#[cfg(test)]
+const ASK_HINTS_NOT_BOUND: &[&str] = &["tab", "ctrl+s"];
+
 fn estelle_composer() -> ComposerInput {
-    ComposerInput::with_commands(
-        "Ask Estelle",
+    let mut composer = ComposerInput::with_commands(
+        // ⚠️ No placeholder. The demo is a bare prompt and a cursor; `Ask Estelle` was hint text
+        // living inside the input line, which is the one place a hint cannot be dismissed.
+        "",
         commands::composer_commands()
             .into_iter()
             .map(|(name, description)| ComposerCommand::new(name, description)),
-    )
+    );
+    // The hint row is rendered by the frame, not by the composer: the composer places its own
+    // hints below its chrome, which is what pushed `? for shortcuts` two rows away from the
+    // prompt. Clearing them here is what makes the demo's one-row-under-the-prompt possible.
+    composer.clear_hint_items();
+    composer
+}
+
+/// The demo's hint row, joined, plus the selection state WHEN IT IS ON.
+fn ask_hints_line() -> String {
+    ask_hints_line_with(!mouse_is_captured())
+}
+
+/// 🔴 **THE SIXTH PAIR IS PERMANENT, AND THAT IS A DELIBERATE DEPARTURE FROM THE DEMO ROW.**
+///
+/// The first version of this appended `selection on` only while the mouse was already suspended,
+/// to keep the founder's five demo pairs untouched. That made the feature **undiscoverable**: a
+/// user cannot press a key they have never been told exists, and in fact he learned it existed
+/// from a message rather than from the product. Discoverability wins over the verbatim row, and
+/// the five keep their wording and their order — the row gains a pair, it does not lose one.
+///
+/// Worth saying plainly: this sixth pair is the only one of the six that is BOUND AND WORKS on
+/// macOS today. Three of the demo's five (`tab`, `ctrl+s`, `ctrl+m`) are still unbound, which is
+/// recorded in `ASK_HINTS_NOT_BOUND`.
+///
+/// Split from [`ask_hints_line`] so both states are testable without writing the process-global.
+fn ask_hints_line_with(selection_on: bool) -> String {
+    let mut row = ASK_HINTS
+        .iter()
+        .map(|(key, label)| format!("{key} {label}"))
+        .collect::<Vec<_>>()
+        .join(" \u{b7} ");
+    row.push_str(if selection_on {
+        " \u{b7} ctrl+o selection on"
+    } else {
+        " \u{b7} ctrl+o selection"
+    });
+    row
+}
+
+/// The checked-out branch, or `None`.
+///
+/// One bounded synchronous read at startup, not a poll: the branch is in the frame's identity
+/// line, and a line that lags the working tree by a poll interval is worse than one that is
+/// honestly fixed for the session. Any failure - not a worktree, git missing, a detached HEAD
+/// answering `HEAD` - yields `None`, and the frame prints the repo alone.
+fn read_branch(root: &Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let branch = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    (!branch.is_empty() && branch != "HEAD").then_some(branch)
 }
 
 fn env_truthy(name: &str) -> bool {
@@ -1723,13 +2207,25 @@ impl App {
     fn new(args: Args) -> Self {
         let root = std::env::current_dir().unwrap_or_default();
         let override_repo = args.repo.and_then(Repo::new);
+        // 🔴 TWO QUESTIONS, ASKED SEPARATELY, BECAUSE CONFLATING THEM IS THE BUG.
+        //
+        // `RepoResolver::resolve` answers "what name would a hook compute for this path", and it
+        // deliberately falls back to the directory's own name — a cross-language parity test pins
+        // that against the live Python `repo_name_for`. Asking it alone is how running from `~`
+        // labelled every surface `session · khai` for a repository that does not exist.
+        //
+        // `is_repository` answers "is there a git repository here at all", which is the question
+        // an INTERFACE has to answer before printing a name. An explicit `--repo` still wins, so
+        // a caller who states an identity is believed; otherwise a directory that is not a
+        // repository resolves to the unresolved state and the frame renders `no repo`.
+        //
+        // ⚠️ The second basename fallback that used to live here is gone: it re-derived the same
+        // fact with no git check of its own, so it would have reinstated exactly what this guard
+        // refuses.
+        let stated = override_repo.is_some();
         let repo = RepoResolver::new(override_repo, &root)
             .resolve()
-            .or_else(|| {
-                root.file_name()
-                    .and_then(|name| name.to_str())
-                    .and_then(Repo::new)
-            })
+            .filter(|_| stated || estelle_client::is_repository(&root))
             .unwrap_or_default();
         let boot_preferences = BootPreferences {
             already_seen: false,
@@ -1751,6 +2247,8 @@ impl App {
             composer: estelle_composer(),
             transcript: Vec::new(),
             queue: VecDeque::new(),
+            recalled: Vec::new(),
+            recall_draft: String::new(),
             active: None,
             header: HeaderState::default(),
             account: None,
@@ -1774,6 +2272,7 @@ impl App {
             next_request_id: rand::random(),
             credential_input_hidden: false,
             auth_resolved: false,
+            branch: read_branch(&root),
             root,
             last_question: None,
             last_diff: None,
@@ -1786,6 +2285,8 @@ impl App {
             citations: Vec::new(),
             sweep_progress: None,
             work_progress: None,
+            session_spend_usd: None,
+            gate_refusals: 0,
             shell_timeout: shell_timeout_from_value(
                 std::env::var(SHELL_TIMEOUT_ENV).ok().as_deref(),
             ),
@@ -1830,6 +2331,9 @@ impl App {
             tool_click_targets: RefCell::new(Vec::new()),
             dither_wake: VecDeque::from([0]),
             picker: None,
+            skill_catalog: Vec::new(),
+            skill_filter: String::new(),
+            skill_names: Vec::new(),
             resume_picker: None,
             settings: None,
             pending_setting_input: None,
@@ -1841,7 +2345,41 @@ impl App {
         }
     }
 
+    /// Send what the user typed — or, when the draft is an untouched recall, send the messages it
+    /// was made from, each as its own turn.
+    ///
+    /// 🔴 **TWO THINGS SAID ARE TWO TURNS.** Recall joins the queue into one editable string, and
+    /// the previous version sent that string: four messages became one turn carrying newlines, and
+    /// the server answered "I don't have enough context to determine what '2' and '3' refer to"
+    /// because it had received one. The boundaries are read back from [`Self::recalled`] — DATA,
+    /// never re-derived from the text, because a message may contain a newline of its own and no
+    /// split can tell that apart from two messages.
+    ///
+    /// ⚠️ **LIMIT, STATED:** once the merged draft is EDITED the boundaries are genuinely
+    /// unknowable, and the edit is treated as one message. That is the conservative reading of
+    /// "the user rewrote this", and it is the one case where recall cannot preserve the split.
     fn submit(&mut self, text: String, tx: &mpsc::UnboundedSender<UiEvent>) {
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        if !self.recalled.is_empty() {
+            let recalled = std::mem::take(&mut self.recalled);
+            let unedited = text == std::mem::take(&mut self.recall_draft).trim();
+            if unedited {
+                // Bounded by construction: `recalled` came out of a queue capped at
+                // MAX_QUEUED_REQUESTS and was emptied above, so no item re-enters this branch.
+                for message in recalled {
+                    self.submit_one(message, tx);
+                }
+                return;
+            }
+        }
+        self.submit_one(text, tx);
+    }
+
+    fn submit_one(&mut self, text: String, tx: &mpsc::UnboundedSender<UiEvent>) {
+        self.trim_transcript();
         let text = text.trim().to_string();
         if text.is_empty() {
             return;
@@ -1869,7 +2407,20 @@ impl App {
                     ]));
                 }
             }
-            self.composer = estelle_composer();
+            self.composer = self.fresh_composer();
+            return;
+        }
+        // 🔴 THE CAP IS CHECKED BEFORE THE ECHO, NOT AFTER IT. A message refused after being
+        // pushed to the transcript is precisely the shape the founder photographed — his own
+        // words on screen with nothing ever happening to them. Refusing here means the turn is
+        // never echoed unless it is genuinely accepted, so the "echoed implies accounted for"
+        // invariant holds by construction rather than by remembering to clean up.
+        if self.queue.len() >= MAX_QUEUED_REQUESTS {
+            self.transcript.push(TranscriptEntry::System(format!(
+                "The queue is full at {MAX_QUEUED_REQUESTS} waiting requests, so that message \
+                 was not accepted and was left in the composer. Wait for one to land, or press \
+                 esc to drop the queue."
+            )));
             return;
         }
         self.transcript_scroll = 0;
@@ -1882,7 +2433,18 @@ impl App {
             self.transcript.push(TranscriptEntry::System(
                 "Credential-shaped input was masked and was not sent.".to_string(),
             ));
-            self.composer = estelle_composer();
+            self.composer = self.fresh_composer();
+            return;
+        }
+        // `/select` and `/mouse` never leave the client, so they are handled ahead of the
+        // parser. ⚠️ LIMIT, stated: because this does not go through `commands.rs`, the name does
+        // NOT appear in the `/` autocomplete menu or in `/help` — the hint row is what makes it
+        // discoverable. `commands.rs` is another lane's file and is uncommitted in this tree; a
+        // catalog entry there is the follow-up, not a thing to sweep into this commit.
+        if matches!(text.as_str(), "/select" | "/mouse") {
+            self.transcript.push(TranscriptEntry::User(text));
+            self.toggle_terminal_selection();
+            self.composer = self.fresh_composer();
             return;
         }
         let parsed = commands::parse_input(&text);
@@ -1892,7 +2454,20 @@ impl App {
         {
             self.transcript.push(TranscriptEntry::SessionHandoff(lines));
         }
-        self.transcript.push(TranscriptEntry::User(text));
+        // 🔴 **A QUEUED MESSAGE IS AN INTENTION; THE TRANSCRIPT IS A RECORD OF WHAT HAPPENED.**
+        // This used to echo EVERY submission immediately, so seven messages waiting behind one
+        // in-flight request drew seven `you › …` bands in the session pane — duplicating the
+        // waiting list below and reading, correctly, as if the queue had fired them all at once.
+        //
+        // A message that enqueues is echoed by `begin_active` at the moment it is SENT, which is
+        // the moment it becomes true. A message handled LOCALLY (a refusal, a picker, an unknown
+        // command) is echoed here, because for those the exchange has already happened.
+        //
+        // ⚠️ The position is RECORDED rather than appended: the local branches below push their
+        // own reply first, so appending afterwards would print the answer above the question.
+        // `insert` at the mark puts the row exactly where the old unconditional push had it.
+        let echo_at = self.transcript.len();
+        let queued_before = self.queue.len();
         match parsed {
             commands::ParsedInput::Ask(question) => {
                 self.has_submitted_question = true;
@@ -1921,9 +2496,11 @@ impl App {
                 name: None,
                 typed_name,
                 ..
-            } => self.transcript.push(TranscriptEntry::System(format!(
-                "Unknown command /{typed_name}; nothing ran and nothing was sent. Use /help."
-            ))),
+            } => {
+                for line in commands::unknown_command_lines(&typed_name) {
+                    self.transcript.push(TranscriptEntry::System(line));
+                }
+            }
             commands::ParsedInput::Command {
                 name: Some(name),
                 typed_name,
@@ -1964,6 +2541,10 @@ impl App {
                     }));
                 }
             }
+        }
+        // Nothing was enqueued, so this input was answered locally and belongs in the record now.
+        if self.queue.len() == queued_before {
+            self.transcript.insert(echo_at, TranscriptEntry::User(text));
         }
         self.start_next(tx);
     }
@@ -2456,6 +3037,76 @@ impl App {
         )));
     }
 
+    /// Drop the oldest turns once the transcript passes [`MAX_TRANSCRIPT_ENTRIES`].
+    ///
+    /// ⚠️ **EVICTION ANNOUNCES ITSELF.** Silently dropping history would make the scrollback lie
+    /// about what happened in the session — the same defect as a capped read reported as "that is
+    /// all there is". The first surviving entry says how many turns went and why.
+    fn trim_transcript(&mut self) {
+        let Some(excess) = self.transcript.len().checked_sub(MAX_TRANSCRIPT_ENTRIES) else {
+            return;
+        };
+        if excess == 0 {
+            return;
+        }
+        self.transcript.drain(..excess);
+        self.transcript.insert(
+            0,
+            TranscriptEntry::System(format!(
+                "{excess} earlier entries were dropped to keep the display responsive \u{b7} the \
+                 session itself is unaffected"
+            )),
+        );
+    }
+
+    /// A cleared composer that still knows every skill name this session has learned.
+    ///
+    /// 🔴 **THE COMPOSER IS REBUILT AFTER EVERY SUBMIT, AND THAT WIPED THE SKILL CATALOG.**
+    /// `estelle_composer()` returns a composer holding only the hardcoded command names, so
+    /// resetting it after each turn discarded the server's skill names — completion would have
+    /// worked for exactly one message and then silently stopped. Re-applied here, at the one place
+    /// that rebuilds it.
+    fn fresh_composer(&self) -> ComposerInput {
+        let mut composer = estelle_composer();
+        if !self.skill_names.is_empty() {
+            composer.set_commands(self.completion_catalog());
+        }
+        composer
+    }
+
+    /// The built-in command names plus every skill name this session has learned.
+    ///
+    /// Skill entries are named `skill:<name>` so that selecting one inserts a directly runnable
+    /// command, and so the namespace rule in `slash_commands.rs` already accepts them.
+    fn completion_catalog(&self) -> Vec<ComposerCommand> {
+        commands::composer_commands()
+            .into_iter()
+            .map(|(name, description)| ComposerCommand::new(name, description))
+            .chain(
+                self.skill_names
+                    .iter()
+                    .map(|name| ComposerCommand::new(format!("skill:{name}"), "skill playbook")),
+            )
+            .collect()
+    }
+
+    /// Forget the playbook catalog, so the picker stops consuming letters once it is closed.
+    ///
+    /// ⚠️ Leaving the catalog loaded would make every subsequent picker swallow typed characters —
+    /// the filter's own affordance leaking into surfaces that never advertised it.
+    fn clear_skill_filter(&mut self) {
+        self.skill_catalog.clear();
+        self.skill_filter.clear();
+    }
+
+    /// Rebuild the visible skills picker from the catalog and the current filter.
+    fn refilter_skills(&mut self) {
+        self.picker = Some(PickerSurface::skills_filtered(
+            &self.skill_catalog,
+            &self.skill_filter,
+        ));
+    }
+
     fn activate_picker(&mut self, tx: &mpsc::UnboundedSender<UiEvent>) {
         let action = self
             .picker
@@ -2542,9 +3193,18 @@ impl App {
                 self.picker = None;
                 self.submit("/skills".to_string(), tx);
             }
+            // 🔴 **SELECTING A PLAYBOOK LOADS THE COMPOSER; IT DOES NOT FIRE THE REQUEST.**
+            //
+            // Firing immediately sent `/skill:<name>` with an EMPTY task, which is how a skill run
+            // comes back having done nothing. Almost every playbook needs a task, and the picker is
+            // where the user has just decided WHICH playbook — not yet what to point it at.
+            // Loading the composer with a trailing space puts the caret exactly where the task
+            // goes, and enter is still one keypress away.
             PickerAction::InvokeSkill(name) => {
                 self.picker = None;
-                self.submit(format!("/skill:{name}"), tx);
+                self.clear_skill_filter();
+                self.composer.set_text(format!("/skill:{name} "));
+                let _ = tx;
             }
             PickerAction::OpenSuite(suite) => {
                 self.picker = Some(PickerSurface::suite(self, &suite));
@@ -2792,10 +3452,15 @@ impl App {
         let Some(pending) = self.queue.pop_front() else {
             return;
         };
+        // Captured before `pending` is moved into the match. One string, handed to whichever
+        // branch starts the turn, so no branch can invent its own spelling of what the user typed.
+        let echo = pending.label();
         match pending {
             QueuedRequest::Shell { command, timeout } => {
-                let (id, cancel) =
-                    self.begin_active(&format!("local shell · timeout {}s", timeout.as_secs()));
+                let (id, cancel) = self.begin_active(
+                    &format!("local shell · timeout {}s", timeout.as_secs()),
+                    &echo,
+                );
                 let tx = tx.clone();
                 let root = self.root.clone();
                 tokio::spawn(async move {
@@ -2810,7 +3475,7 @@ impl App {
             }
             QueuedRequest::Apply { diff, reverse } => {
                 let name = if reverse { "undo" } else { "apply" };
-                let (id, cancel) = self.begin_active(name);
+                let (id, cancel) = self.begin_active(name, &echo);
                 let tx = tx.clone();
                 let root = self.root.clone();
                 tokio::spawn(async move {
@@ -2831,18 +3496,21 @@ impl App {
                 model,
             } => {
                 let Some(client) = self.client.clone() else {
-                    self.handle_missing_client(QueuedRequest::Compact {
-                        messages,
-                        session_id,
-                        generation,
-                        task,
-                        model,
-                    });
+                    self.handle_missing_client(
+                        QueuedRequest::Compact {
+                            messages,
+                            session_id,
+                            generation,
+                            task,
+                            model,
+                        },
+                        tx,
+                    );
                     return;
                 };
                 let source = messages.clone();
                 let response_session_id = session_id.clone();
-                let (id, cancel) = self.begin_active("/compact");
+                let (id, cancel) = self.begin_active("/compact", &echo);
                 let tx = tx.clone();
                 tokio::spawn(async move {
                     let result = transcript::request_compaction(
@@ -2863,7 +3531,7 @@ impl App {
                 session_context,
             } => {
                 if let Some(session) = self.session.clone() {
-                    let (id, _cancel) = self.begin_active("thinking");
+                    let (id, _cancel) = self.begin_active("thinking", &echo);
                     self.session_questions.insert(id);
                     if let Err(error) = session.send(session_server::ClientRequest::Ask {
                         id,
@@ -2881,15 +3549,18 @@ impl App {
                     return;
                 }
                 let Some(client) = self.client.clone() else {
-                    self.handle_missing_client(QueuedRequest::Question {
-                        question,
-                        session_context,
-                    });
+                    self.handle_missing_client(
+                        QueuedRequest::Question {
+                            question,
+                            session_context,
+                        },
+                        tx,
+                    );
                     return;
                 };
                 let repo = self.repo.clone();
                 let root = self.root.clone();
-                let (id, cancel) = self.begin_active("thinking");
+                let (id, cancel) = self.begin_active("thinking", &echo);
                 let tx = tx.clone();
                 tokio::spawn(async move {
                     let result =
@@ -2900,7 +3571,7 @@ impl App {
             }
             QueuedRequest::Sweep => {
                 if let Some(session) = self.session.clone() {
-                    let (id, _cancel) = self.begin_active("/sweep");
+                    let (id, _cancel) = self.begin_active("/sweep", &echo);
                     self.session_questions.insert(id);
                     if let Err(error) = session.send(session_server::ClientRequest::Sweep { id }) {
                         self.active = None;
@@ -2914,12 +3585,12 @@ impl App {
                     return;
                 }
                 let Some(client) = self.client.clone() else {
-                    self.handle_missing_client(QueuedRequest::Sweep);
+                    self.handle_missing_client(QueuedRequest::Sweep, tx);
                     return;
                 };
                 let repo = self.repo.clone();
                 let root = self.root.clone();
-                let (id, cancel) = self.begin_active("/sweep");
+                let (id, cancel) = self.begin_active("/sweep", &echo);
                 let tx = tx.clone();
                 tokio::spawn(async move {
                     let progress_tx = tx.clone();
@@ -2941,7 +3612,7 @@ impl App {
             QueuedRequest::Command(command) => {
                 if let Some(session) = self.session.clone() {
                     let name = command.name;
-                    let (id, _cancel) = self.begin_active(&format!("/{name}"));
+                    let (id, _cancel) = self.begin_active(&format!("/{name}"), &echo);
                     self.session_questions.insert(id);
                     if let Err(error) = session.send(session_server::ClientRequest::Command {
                         id,
@@ -2961,13 +3632,13 @@ impl App {
                     return;
                 }
                 let Some(client) = self.client.clone() else {
-                    self.handle_missing_client(QueuedRequest::Command(command));
+                    self.handle_missing_client(QueuedRequest::Command(command), tx);
                     return;
                 };
                 let repo = self.repo.clone();
                 let root = self.root.clone();
                 let name = command.name;
-                let (id, cancel) = self.begin_active(&format!("/{name}"));
+                let (id, cancel) = self.begin_active(&format!("/{name}"), &echo);
                 let tx = tx.clone();
                 tokio::spawn(async move {
                     let progress_events: Option<WorkProgressSink> = (name == "work").then(|| {
@@ -2999,7 +3670,20 @@ impl App {
         }
     }
 
-    fn begin_active(&mut self, label: &str) -> (u64, CancellationToken) {
+    /// Mark a request as the one in flight, and PUT IT IN THE TRANSCRIPT.
+    ///
+    /// 🔴 **THIS IS THE SINGLE POINT WHERE A QUEUED MESSAGE BECOMES PART OF THE RECORD**, because
+    /// it is the single point where a turn actually starts: every dispatch in `start_next` — the
+    /// session path and the HTTP path, for questions, commands, sweeps, compactions, shells and
+    /// patches — calls this immediately before sending. Echoing here rather than at submit time
+    /// means the transcript can never contain a message that was not sent, and `app.queue` is the
+    /// only owner of "what is waiting" — so there are no two lists to correlate.
+    ///
+    /// ⚠️ A request PARKED by `handle_missing_client` while auth resolves never reaches here, which
+    /// is correct: it has not been sent, so it is not in the record.
+    fn begin_active(&mut self, label: &str, echo: &str) -> (u64, CancellationToken) {
+        self.transcript
+            .push(TranscriptEntry::User(echo.to_string()));
         let id = self.next_request_id;
         self.next_request_id = self.next_request_id.wrapping_add(1);
         let cancel = CancellationToken::new();
@@ -3012,31 +3696,162 @@ impl App {
         (id, cancel)
     }
 
-    fn handle_missing_client(&mut self, pending: QueuedRequest) {
+    /// Resolve a request that reached the front of the queue with no credential behind it.
+    ///
+    /// 🔴 **A SYNCHRONOUS FAILURE MUST DRIVE THE QUEUE, EXACTLY LIKE A SUCCESS DOES.** This
+    /// pushed a failure and returned, leaving the in-flight slot empty and every message behind
+    /// it parked until some unrelated event happened to call `start_next`. Every asynchronous
+    /// path drains on completion; this one settled instantly and drained nothing, so a burst of
+    /// messages resolved ONE PER EXTERNAL EVENT instead of one after another. That is the
+    /// mechanism behind two of the founder's four messages producing nothing at all.
+    ///
+    /// ⚠️ Parking while `auth_resolved` is false is NOT that bug and is kept: the request is
+    /// pushed back to the FRONT and the credential probe re-drives the queue when it lands. That
+    /// is a request waiting for a known event, not one waiting for nothing.
+    fn handle_missing_client(
+        &mut self,
+        pending: QueuedRequest,
+        tx: &mpsc::UnboundedSender<UiEvent>,
+    ) {
         let Some(client) = self.client.clone() else {
             if !self.auth_resolved {
                 self.queue.push_front(pending);
                 return;
             }
+            // ⚠️ **A REFUSED TURN IS STILL A TURN, SO IT IS ECHOED HERE.** `begin_active` owns the
+            // echo for every request that STARTS, and this branch is the one place a queued
+            // request settles WITHOUT starting — it reached the front and was definitively
+            // refused. Without this the failure below would be orphaned: a "not sent" banner with
+            // no question above it, and the user's own words gone from the record entirely.
+            // The PARK path above deliberately does not echo; that request has not settled.
+            self.transcript.push(TranscriptEntry::User(pending.label()));
             self.transcript.push(TranscriptEntry::Failure([
                 "The request was not sent.".to_string(),
                 "This client has no Estelle credential.".to_string(),
                 "Set ESTELLE_API_KEY or run /login, then retry.".to_string(),
             ]));
+            self.start_next(tx);
             return;
         };
         drop(client);
     }
 
+    /// Cancel the in-flight request, and SAY WHAT WAS AND WAS NOT CANCELLED.
+    ///
+    /// 🔴 "Request cancelled." is true and incomplete: with messages waiting behind the one that
+    /// was cancelled, it reads as "everything stopped" while the queue is still live. The founder
+    /// saw that line and then watched two more messages produce nothing, which is exactly the
+    /// ambiguity this copy has to remove — the sentence now names the depth left behind.
     fn cancel_active(&mut self) {
         if let Some(active) = self.active.take() {
             if let Some(session) = &self.session {
                 let _ = session.send(session_server::ClientRequest::Cancel { id: active.id });
             }
             active.cancel.cancel();
-            self.transcript
-                .push(TranscriptEntry::System("Request cancelled.".to_string()));
+            let waiting = self.queue.len();
+            self.transcript.push(TranscriptEntry::System(match waiting {
+                0 => "Request cancelled.".to_string(),
+                1 => "Request cancelled. 1 queued message is still waiting; esc again drops it."
+                    .to_string(),
+                many => format!(
+                    "Request cancelled. {many} queued messages are still waiting; esc again \
+                         drops them."
+                ),
+            }));
         }
+    }
+
+    /// Pull every waiting message back into the composer as ONE editable draft.
+    ///
+    /// The founder asked for exactly this: *"press the up arrow to combine all of them and then
+    /// you can edit all of them"*. Combine, not walk — one draft carrying every waiting message
+    /// in order, which he can then edit as a block and resend.
+    ///
+    /// ⚠️ **THE ECHOES STAY, AND THE TRANSCRIPT SAYS WHY.** Each recalled message was already
+    /// echoed when it was submitted. Removing those rows would need a transcript-row-to-queue
+    /// correlation this client does not have and cannot soundly derive (see
+    /// [`QueuedRequest::label`]). Leaving them silently would show the user his own words with no
+    /// account of what became of them — the exact defect this whole item exists to remove. So the
+    /// rows stay as the historical record and a line states plainly that they were NOT sent.
+    fn recall_queue_into_composer(&mut self) {
+        if self.queue.is_empty() {
+            return;
+        }
+        let recalled = self
+            .queue
+            .iter()
+            .map(QueuedRequest::label)
+            .collect::<Vec<_>>();
+        self.queue.clear();
+        let count = recalled.len();
+        // ⚠️ The join is a VIEW for editing. The items themselves are kept so that sending an
+        // untouched draft sends them back as SEPARATE turns — see `submit`.
+        let draft = recalled.join("\n");
+        self.recalled = recalled;
+        self.recall_draft = draft.clone();
+        self.composer.set_text(draft);
+        self.transcript.push(TranscriptEntry::System(format!(
+            "Recalled {count} queued message{} into the composer. \
+             {} not sent; edit and press enter to send {}.",
+            if count == 1 { "" } else { "s" },
+            if count == 1 { "It was" } else { "They were" },
+            if count == 1 { "it" } else { "them" }
+        )));
+    }
+
+    /// Drop the message at the BACK of the queue — the most recently added, and the one a user
+    /// reaching for "undo that" means. The rest keep their order.
+    fn drop_last_queued(&mut self) {
+        let Some(dropped) = self.queue.pop_back() else {
+            return;
+        };
+        self.transcript.push(TranscriptEntry::System(format!(
+            "Dropped {:?} from the queue. {} still waiting.",
+            dropped.label(),
+            self.queue.len()
+        )));
+    }
+
+    /// Drop everything still waiting, and name how much was dropped.
+    ///
+    /// The queue must be REMOVABLE, not merely visible — and a drop that does not say what it
+    /// dropped is the same silent failure in the other direction.
+    fn drop_queue(&mut self) {
+        let dropped = self.queue.len();
+        if dropped == 0 {
+            return;
+        }
+        self.queue.clear();
+        self.transcript.push(TranscriptEntry::System(format!(
+            "Dropped {dropped} queued message{}. Nothing was sent for {}.",
+            if dropped == 1 { "" } else { "s" },
+            if dropped == 1 { "it" } else { "them" }
+        )));
+    }
+
+    /// Hand the mouse to the terminal emulator, or take it back, and say which happened.
+    ///
+    /// The transcript line is the only immediate feedback: the hint row picks the state up on the
+    /// next frame, but a user who just pressed a key deserves to be told what it did in the place
+    /// they are already reading.
+    fn toggle_terminal_selection(&mut self) {
+        let note = match toggle_mouse_capture(&mut io::stdout()) {
+            Ok(false) => "selection on \u{b7} the terminal owns the mouse now, so drag to select \
+                 and copy the way you would anywhere else. ctrl+o (or /select) hands it back to \
+                 Estelle, which is what scroll and click-to-focus need."
+                .to_string(),
+            Ok(true) => "selection off \u{b7} Estelle owns the mouse again: scroll and \
+                 click-to-focus work, and the terminal can no longer see a drag. ctrl+o to select."
+                .to_string(),
+            // A terminal that refuses the mode change must not take the session down, and must not
+            // be reported as if it had complied.
+            Err(error) => {
+                format!(
+                    "This terminal refused the mouse-mode change, so selection is unchanged: {error}"
+                )
+            }
+        };
+        self.transcript.push(TranscriptEntry::System(note));
     }
 
     fn handle_paste(&mut self, pasted: String) {
@@ -3073,7 +3888,7 @@ impl App {
             self.transcript.push(TranscriptEntry::System(
                 "Credential-shaped input was masked and was not sent.".to_string(),
             ));
-            self.composer = estelle_composer();
+            self.composer = self.fresh_composer();
             return;
         }
         self.submit(text, tx);
@@ -3083,6 +3898,12 @@ impl App {
         if !response.text.trim().is_empty() {
             self.citations = response.sources.clone();
             self.working_memory_paths = response.working_paths;
+            // ⚠️ BEFORE the answer, not after it. A reader who has already read a fluent paragraph
+            // and its citations has acted on it; the point of the disclosure is that it arrives
+            // first. The server puts the same notice at the head of the prose for the same reason.
+            if let Some(currency) = response.code_currency {
+                self.transcript.push(TranscriptEntry::Stale(currency));
+            }
             self.transcript.push(TranscriptEntry::Answer {
                 text: response.text,
                 grounded: response.grounded,
@@ -3176,6 +3997,9 @@ impl App {
     fn apply_command_success(&mut self, name: &'static str, result: RemoteCommandReply) {
         if name == "gate" {
             self.gate_modal = GateModal::from_reply(&result.reply, &result.inspected_files);
+            if self.gate_modal.is_some() {
+                self.gate_refusals = self.gate_refusals.saturating_add(1);
+            }
         }
         let reply = result.reply;
         if name == "sessions" {
@@ -3232,7 +4056,18 @@ impl App {
         if name == "model" {
             self.picker = Some(PickerSurface::model(&reply));
         } else if name == "skills" {
-            self.picker = Some(PickerSurface::skills(&reply));
+            self.skill_catalog = PickerSurface::skill_catalog(&reply);
+            self.skill_names = self
+                .skill_catalog
+                .iter()
+                .map(|row| row.label.clone())
+                .collect();
+            // In place, NOT a rebuild: replacing the composer here would discard whatever the user
+            // was mid-way through typing when the registry happened to arrive.
+            let catalog = self.completion_catalog();
+            self.composer.set_commands(catalog);
+            self.skill_filter.clear();
+            self.picker = Some(PickerSurface::skills_filtered(&self.skill_catalog, ""));
         }
         if matches!(name, "model" | "routing")
             && let Some(model) = observed_model(&reply)
@@ -3376,7 +4211,8 @@ impl App {
                 {
                     tab.active = false;
                 }
-                if self.active.as_ref().is_some_and(|active| active.id == id) {
+                let was_current = self.active.as_ref().is_some_and(|active| active.id == id);
+                if was_current {
                     if self
                         .active
                         .as_ref()
@@ -3385,6 +4221,12 @@ impl App {
                         self.work_progress = None;
                     }
                     self.active = None;
+                    // 🔴 THIRD SITE IN THIS FAMILY. `ctrl+c` and `handle_missing_client` both
+                    // released the in-flight slot without driving the queue, and both stranded
+                    // every message behind them. This one is the SERVER cancelling a turn — it
+                    // emptied the slot and left the queue with nothing to start it. Every path
+                    // that clears `active` must hand the queue on, or the queue stops forever.
+                    self.start_next(tx);
                 }
             }
             session_server::ServerMessage::SweepProgress { id, progress } => {
@@ -3525,6 +4367,7 @@ impl App {
     }
 
     fn handle_ui_event(&mut self, event: UiEvent, tx: &mpsc::UnboundedSender<UiEvent>) {
+        self.trim_transcript();
         match event {
             UiEvent::SessionContext(context) => {
                 self.session_context = (!context.is_empty()).then_some(context);
@@ -4088,12 +4931,88 @@ async fn answer_question(
         .await?
         .dispatch;
 
-    if dispatch.action != "research.ask" {
-        return answer_dispatched_suite(client, repo, root, question, dispatch.action, cancel)
+    if dispatch.action == "research.ask" {
+        return answer_research_question(client, repo, root, question, session_context, cancel)
             .await;
     }
 
-    answer_research_question(client, repo, root, question, session_context, cancel).await
+    answer_dispatched_suite(client, repo, root, question, dispatch, cancel).await
+}
+
+/// What a dispatched action DOES to the caller's world.
+///
+/// The ONE owner of that judgement on this side of the wire. [`answer_dispatched_suite`] asks this
+/// BEFORE it picks an endpoint, so an action cannot reach a call by being added to the `match`
+/// alone. An action no table below names is [`ActionShape::Unbound`] and is named back to the
+/// caller rather than guessed at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ActionShape {
+    /// Reads, and the reply is a synthesised answer or typed rows the client formats. A plain
+    /// sentence may fire one directly.
+    Read,
+    /// Edits files, opens a PR, or spends autonomy. A typed sentence does not carry consent for
+    /// that, so one is never fired from this path.
+    Write,
+    /// The reply IS the retrieval evidence, which the renderers put verbatim into the answer slot.
+    Evidence,
+    /// Bound nowhere. Named back to the caller.
+    Unbound,
+}
+
+/// Every action the server's closed set can emit (`src/estelle/serve/suite_dispatch.py::_action`),
+/// paired with what it does.
+///
+/// Written out rather than derived from the `match` in [`answer_dispatched_suite`]: a table derived
+/// from those arms could never catch an arm added without a shape, which is the regression that
+/// matters here. `every_read_shaped_action_reaches_its_own_surface` is the clause-by-clause check
+/// that each entry actually reaches a distinct surface.
+const DISPATCH_ACTION_SHAPES: &[(&str, ActionShape)] = &[
+    ("research.ask", ActionShape::Read),
+    ("review.diff", ActionShape::Read),
+    ("guardian.verify_diff", ActionShape::Read),
+    ("affinity.route", ActionShape::Read),
+    ("monitor.logs", ActionShape::Read),
+    ("monitor.uptime", ActionShape::Read),
+    ("memory.list", ActionShape::Read),
+    // `POST /search` answers with `recall` — the raw text of the retrieved chunks — and
+    // `commands::render_structural_search` puts it straight into the answer slot. Routing a
+    // sentence here once printed 26,259 characters of repository source in place of an answer.
+    // The FIXED server no longer emits it (`suite_dispatch.reject_evidence_passthrough`) and a
+    // DEPLOYED server still can, which is exactly why the refusal has to live on this side too
+    // instead of only on the side that was patched.
+    ("memory.search", ActionShape::Evidence),
+];
+
+/// Classify one action. Unknown is not an error here — it is a shape, and it fails closed.
+fn action_shape(action: &str) -> ActionShape {
+    if let Some((_, shape)) = DISPATCH_ACTION_SHAPES
+        .iter()
+        .find(|(name, _)| *name == action)
+    {
+        return *shape;
+    }
+    // The two suites that EDIT. No shipped server build emits an action in either family today, so
+    // these are classified by FAMILY rather than by names this side would have to invent. The point
+    // is that the first such action to arrive is withheld by default, instead of arriving as an
+    // ordinary unknown that somebody later binds to a handler without noticing it writes.
+    if action.starts_with("work.") || action.starts_with("orchestra.") {
+        return ActionShape::Write;
+    }
+    ActionShape::Unbound
+}
+
+/// An answer that reports what was NOT done. `degraded` is set because the turn did not produce the
+/// suite's own reply, and `grounded` is `false` because no grounding gate ran over it.
+fn dispatch_refusal(text: String) -> AnswerReply {
+    AnswerReply {
+        text,
+        grounded: Some(false),
+        degraded: true,
+        sources: Vec::new(),
+        working_paths: Vec::new(),
+        // Nothing was answered from the index, so there is nothing to decertify.
+        code_currency: None,
+    }
 }
 
 async fn answer_research_question(
@@ -4143,6 +5062,7 @@ async fn answer_research_question(
         degraded: response.degraded,
         sources: response.sources,
         working_paths,
+        code_currency: response.code_currency,
     })
 }
 
@@ -4151,21 +5071,55 @@ async fn answer_dispatched_suite(
     repo: Repo,
     root: PathBuf,
     question: String,
-    action: String,
+    dispatch: SuiteDispatch,
     cancel: &CancellationToken,
 ) -> Result<AnswerReply, Error> {
+    let action = dispatch.action.clone();
+    debug_assert!(
+        !action.trim().is_empty(),
+        "the server's dispatch always names an action"
+    );
+    debug_assert_ne!(
+        action, "research.ask",
+        "research is answered on its own path before this function is reached"
+    );
+    // Said once, so every refusal below discloses the same routing decision the caller never saw.
+    let routed = format!(
+        "Estelle routed this to the {} suite ({}), action {action:?}.",
+        dispatch.suite, dispatch.reason
+    );
+    match action_shape(&action) {
+        // Read-shaped: fall through to the call table below.
+        ActionShape::Read => {}
+        ActionShape::Evidence => {
+            return Ok(dispatch_refusal(format!(
+                "{routed} That action replies with raw retrieved text rather than an answer, so \
+                 nothing was sent. Ask again in words and the synthesis path will read the same \
+                 material and reply in prose."
+            )));
+        }
+        ActionShape::Write => {
+            return Ok(dispatch_refusal(format!(
+                "{routed} That suite EDITS your code, and a typed sentence does not carry consent \
+                 to do that, so nothing was run. Start it deliberately with /work when you want \
+                 the change proposed."
+            )));
+        }
+        ActionShape::Unbound => {
+            return Ok(dispatch_refusal(format!(
+                "{routed} This build binds no handler for that action, so nothing else was sent."
+            )));
+        }
+    }
     let (name, reply): (&str, CommandReply) = match action.as_str() {
         "review.diff" | "guardian.verify_diff" => {
             let measured = match git_diff(&root, "", cancel).await {
                 Ok(measured) if !measured.patch.trim().is_empty() => measured,
                 _ => {
-                    return Ok(AnswerReply {
-                        text: "I understood the request, but there is no readable local diff to inspect. Nothing was sent to Review or Guardian.".to_string(),
-                        grounded: Some(false),
-                        degraded: true,
-                        sources: Vec::new(),
-                        working_paths: Vec::new(),
-                    });
+                    return Ok(dispatch_refusal(
+                        "No readable local diff. Nothing was sent to Review or Guardian."
+                            .to_string(),
+                    ));
                 }
             };
             let inspected = measured
@@ -4227,17 +5181,6 @@ async fn answer_dispatched_suite(
                 )
                 .await?,
         ),
-        "memory.search" => (
-            "grep",
-            client
-                .post_scoped(
-                    estelle_client::Endpoint::Search,
-                    &repo,
-                    &serde_json::json!({"query": question}),
-                    cancel,
-                )
-                .await?,
-        ),
         "memory.list" => (
             "memories",
             client
@@ -4250,15 +5193,13 @@ async fn answer_dispatched_suite(
                 .await?,
         ),
         _ => {
-            return Ok(AnswerReply {
-                text: format!(
-                    "The server returned unsupported dispatch action {action:?}. Nothing else was sent."
-                ),
-                grounded: Some(false),
-                degraded: true,
-                sources: Vec::new(),
-                working_paths: Vec::new(),
-            });
+            // `DISPATCH_ACTION_SHAPES` calls this action readable and no arm above calls it. The
+            // two disagree, which is a defect in THIS file rather than anything the caller did —
+            // so say that, instead of reporting the server sent something unsupported.
+            return Ok(dispatch_refusal(format!(
+                "{routed} This build lists that action as readable but has no call for it, so \
+                 nothing else was sent."
+            )));
         }
     };
     Ok(answer_from_command(name, reply, Vec::new()))
@@ -4271,6 +5212,10 @@ fn answer_from_command(name: &str, reply: CommandReply, working_paths: Vec<Strin
         degraded: reply.degraded,
         sources: Vec::new(),
         working_paths,
+        // 🔴 A COMMAND REPLY IS A DIFFERENT DOOR. `code_currency` is `/memory/chat`'s; wiring it
+        // here from `CommandReply::extra` would invent a second owner for the same verdict, and
+        // the other doors were named as UNCHECKED in the server's own receipt.
+        code_currency: None,
     }
 }
 
@@ -4438,6 +5383,11 @@ async fn execute_remote_command(
                 "/presets needs one complete server-owned routing table.".to_string(),
                 "Use: /presets set <coding|research|review> plan=<auto|provider:model> implement=<auto|provider:model> review=<auto|provider:model>".to_string(),
                 "No model was selected and nothing was sent.".to_string(),
+            ],
+            commands::RouteError::InvalidHardwareArguments => [
+                "/hardware needs a positive RAM declaration.".to_string(),
+                "Use: /hardware ram=32 [vram=16] [unified=true] [backend=metal|cuda|rocm|vulkan] [bandwidth=400] [cpu=arm64|x86_64] [models=name,name] [context=8192]".to_string(),
+                "The CLI does not inspect your machine; nothing was sent.".to_string(),
             ],
         })
     })?
@@ -5266,2171 +6216,16 @@ fn failure_lines(error: &Error) -> [String; 3] {
     failure_lines_for(&FailureView::from(error))
 }
 
-#[cfg(test)]
-fn render_transcript(entries: &[TranscriptEntry]) -> Text<'static> {
-    render_transcript_with_citations(entries, true, Theme::Dark, 120).text
-}
-
-fn render_transcript_with_citations(
-    entries: &[TranscriptEntry],
-    include_citations: bool,
-    theme: Theme,
-    width: u16,
-) -> estelle_tui::RenderedHistoryTranscript {
-    transcript::render(
-        entries,
-        include_citations,
-        TranscriptPalette {
-            primary: theme.primary(),
-            ghost: theme.ghost(),
-            semantic: theme.semantic(),
-            user_background: user_turn_background(theme),
-        },
-        width,
-        Path::new("."),
-    )
-}
-
-fn header_line(app: &App, _width: u16) -> Line<'static> {
-    let mut spans = vec![
-        Span::styled(
-            "ESTELLE",
-            Style::default()
-                .fg(app.theme.primary())
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("  ·  ", Style::default().fg(app.theme.ghost())),
-        Span::styled(
-            app.repo.to_string(),
-            Style::default().fg(app.theme.primary()),
-        ),
-    ];
-    if let Some(plan) = app.header.plan.as_deref() {
-        spans.push(Span::styled(
-            "  ·  ",
-            Style::default().fg(app.theme.ghost()),
-        ));
-        spans.push(Span::styled(
-            plan.to_string(),
-            Style::default().fg(Color::Gray),
-        ));
-    }
-    if let Some(team) = app
-        .account
-        .as_ref()
-        .and_then(|account| account.team.as_ref())
-    {
-        let label = team.name.as_deref().unwrap_or(team.id.as_str());
-        spans.push(Span::styled(
-            "  ·  ",
-            Style::default().fg(app.theme.ghost()),
-        ));
-        spans.push(Span::styled(
-            format!("{label} · {}", team.role.as_deref().unwrap_or("member")),
-            Style::default().fg(Color::Gray),
-        ));
-    }
-    if let Some(indexed) = app.header.indexed {
-        spans.push(Span::styled(
-            "  ·  ",
-            Style::default().fg(app.theme.ghost()),
-        ));
-        spans.push(Span::styled(
-            if indexed {
-                "repo graph current"
-            } else {
-                "repo graph absent"
-            },
-            Style::default().fg(if indexed {
-                app.theme.primary()
-            } else {
-                FATE_RED
-            }),
-        ));
-    }
-    if let Some(files) = app.header.files {
-        spans.push(Span::styled(
-            "  ·  ",
-            Style::default().fg(app.theme.ghost()),
-        ));
-        spans.push(Span::styled(
-            format!("{} files", commas(files)),
-            Style::default().fg(Color::Gray),
-        ));
-    }
-    Line::from(spans)
-}
-
-fn session_tabs_line(app: &App) -> Line<'static> {
-    if app.session_tabs.is_empty() {
-        return Line::default();
-    }
-    let mut spans = vec![Span::styled(
-        "SESSIONS  ",
-        Style::default()
-            .fg(app.theme.ghost())
-            .add_modifier(Modifier::BOLD),
-    )];
-    for session in &app.session_tabs {
-        if app.hidden_session_tabs.contains(&session.id) {
-            continue;
-        }
-        let marker = if session.active { "+" } else { "·" };
-        let label = format!(" {marker} {} ", session.id);
-        let style = if session.id == app.session_id {
-            Style::default()
-                .fg(app.theme.background())
-                .bg(app.theme.primary())
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(app.theme.ghost())
-        };
-        spans.push(Span::styled(label, style));
-        spans.push(Span::raw(" "));
-    }
-    spans.push(Span::styled(
-        "Alt+Left/Right switch · Ctrl+W close view",
-        Style::default().fg(app.theme.ghost()),
-    ));
-    Line::from(spans)
-}
-
-fn value_style(resolved: bool) -> Style {
-    Style::default().fg(if resolved {
-        Color::Gray
-    } else {
-        Color::DarkGray
-    })
-}
-
-fn commas(value: u64) -> String {
-    let digits = value.to_string();
-    let mut output = String::with_capacity(digits.len() + digits.len() / 3);
-    for (index, character) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            output.push(',');
-        }
-        output.push(character);
-    }
-    output
-}
-
-fn observed_model(reply: &CommandReply) -> Option<&str> {
-    reply
-        .extra
-        .get("active")
-        .and_then(Value::as_object)
-        .and_then(|active| active.get("model"))
-        .and_then(Value::as_str)
-        .filter(|model| !model.trim().is_empty())
-        .or_else(|| {
-            reply
-                .routed
-                .as_deref()
-                .filter(|model| !model.trim().is_empty())
-        })
-}
-
-fn status_line(app: &App, now: Instant) -> Line<'static> {
-    if let Some(active) = &app.active {
-        let elapsed = now.saturating_duration_since(active.started).as_secs();
-        let local_shell = active.label.starts_with("local shell");
-        let label = if elapsed >= 30 && active.label.starts_with("/gate ·") {
-            format!("{} · still waiting for Estelle", active.label)
-        } else if elapsed >= 30 && !local_shell {
-            "still waiting for Estelle".to_string()
-        } else {
-            active.label.clone()
-        };
-        let mut spans = vec![
-            Span::styled(label, Style::default().fg(Color::Yellow)),
-            Span::raw(format!(
-                "  {}  |  Esc cancels",
-                estelle_tui::fmt_elapsed_compact(elapsed)
-            )),
-        ];
-        if elapsed >= 30 {
-            spans.push(Span::raw(if local_shell {
-                "  |  local command has not exited"
-            } else {
-                "  |  no response received yet"
-            }));
-        }
-        return Line::from(spans);
-    }
-    if !app.queue.is_empty() {
-        return Line::styled(
-            format!("{} queued", app.queue.len()),
-            Style::default().fg(Color::Gray),
-        );
-    }
-    let mode = commands::mode_name(commands::effective_mode(
-        &app.local_mode,
-        app.server_mode.as_deref(),
-    ));
-    let (model, model_resolved) = app.active_model.as_ref().map_or_else(
-        || ("routing auto".to_string(), false),
-        |model| {
-            let freshness = if app
-                .active_model_observed_at
-                .is_some_and(|observed| now.saturating_duration_since(observed).as_secs() <= 300)
-            {
-                "observed"
-            } else {
-                "stale"
-            };
-            (format!("model {model} · {freshness}"), true)
-        },
-    );
-    let mut spans = vec![
-        Span::styled(mode.to_string(), Style::default().fg(Color::Gray)),
-        Span::styled("  ·  ", Style::default().fg(Color::DarkGray)),
-        Span::styled(model, value_style(model_resolved)),
-    ];
-    if let Some(count) = app.header.memories {
-        spans.extend([
-            Span::styled("  ·  ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("memory {}", commas(count)), value_style(true)),
-        ]);
-    }
-    if app.header.connected {
-        spans.extend([
-            Span::styled("  ·  ", Style::default().fg(Color::DarkGray)),
-            Span::styled("connected", value_style(true)),
-        ]);
-    }
-    Line::from(spans)
-}
-
-fn footer_line(app: &App, now: Instant, width: u16) -> Line<'static> {
-    if app.active.is_some() || !app.queue.is_empty() {
-        return status_line(app, now);
-    }
-    let mut spans = vec![
-        Span::styled("shift+tab", Style::default().fg(app.theme.primary())),
-        Span::styled(" change mode  ·  ", Style::default().fg(app.theme.ghost())),
-    ];
-    if width >= 96 {
-        spans.extend([
-            Span::styled("tab", Style::default().fg(app.theme.primary())),
-            Span::styled(" move focus  ·  ", Style::default().fg(app.theme.ghost())),
-        ]);
-    }
-    if width >= 64 {
-        spans.extend([
-            Span::styled("/", Style::default().fg(app.theme.primary())),
-            Span::styled(" commands  |  ", Style::default().fg(app.theme.ghost())),
-        ]);
-    }
-    spans.extend(status_line(app, now).spans);
-    Line::from(spans)
-}
-
-fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
-    Rect {
-        x: area.x + area.width.saturating_sub(width) / 2,
-        y: area.y + area.height.saturating_sub(height) / 2,
-        width: width.min(area.width),
-        height: height.min(area.height),
-    }
-}
-
-fn truncate_display(value: &str, max_width: usize) -> String {
-    if value
-        .chars()
-        .map(|ch| ch.width().unwrap_or(0))
-        .sum::<usize>()
-        <= max_width
-    {
-        return value.to_string();
-    }
-    if max_width == 0 {
-        return String::new();
-    }
-    let mut rendered = String::new();
-    let mut width: usize = 0;
-    for ch in value.chars() {
-        let ch_width = ch.width().unwrap_or(0);
-        if width.saturating_add(ch_width).saturating_add(1) > max_width {
-            break;
-        }
-        rendered.push(ch);
-        width += ch_width;
-    }
-    rendered.push('…');
-    rendered
-}
-
-fn render_picker(frame: &mut Frame<'_>, picker: &PickerSurface, area: Rect, app: &App) {
-    let login_context = match picker.title.as_str() {
-        "Connect Estelle" => Some([
-            Line::from("Estelle grounds your coding agent in your real codebase."),
-            Line::from(
-                "It runs on the model plan or API key you already have — Estelle never bills you for model tokens.",
-            ),
-        ]),
-        "Choose how model tokens are paid" => Some([
-            Line::from("Estelle identity and model payment are separate."),
-            Line::from(
-                "Choose the account that pays for inference; Estelle never bills model tokens.",
-            ),
-        ]),
-        _ => None,
-    };
-    let context_height = login_context.as_ref().map_or(0, |lines| lines.len());
-    let height = u16::try_from(
-        picker
-            .rows
-            .len()
-            .saturating_add(context_height)
-            .saturating_add(3),
-    )
-    .unwrap_or(u16::MAX)
-    .min(area.height.max(3));
-    let modal = Rect {
-        x: area.x,
-        y: area.bottom().saturating_sub(height),
-        width: area.width,
-        height,
-    };
-    frame.render_widget(Clear, modal);
-    let inner_width = usize::from(modal.width.saturating_sub(3));
-    let label_width = (inner_width / 3).clamp(12, 24);
-    let detail_width = inner_width.saturating_sub(label_width.saturating_add(3));
-    let mut lines = login_context.into_iter().flatten().collect::<Vec<_>>();
-    lines.extend(
-        picker
-            .rows
-            .iter()
-            .enumerate()
-            .map(|(index, row)| {
-                let selected = index == picker.selected;
-                let badge = if index < 9 {
-                    (index + 1).to_string()
-                } else {
-                    " ".to_string()
-                };
-                Line::from(vec![
-                    Span::styled(
-                        format!(
-                            "{} {} {:<label_width$}  ",
-                            if selected { ">" } else { " " },
-                            badge,
-                            truncate_display(&row.label, label_width),
-                        ),
-                        if selected {
-                            Style::default()
-                                .fg(app.theme.primary())
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default().fg(Color::Gray)
-                        },
-                    ),
-                    Span::styled(
-                        truncate_display(&row.detail, detail_width),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                ])
-            })
-            .chain(std::iter::once(Line::styled(
-                "↑↓ navigate · 1-9 or Enter select · Esc close",
-                Style::default().fg(Color::DarkGray),
-            ))),
-    );
-    frame.render_widget(
-        Paragraph::new(lines)
-            .style(
-                Style::default()
-                    .fg(app.theme.primary())
-                    .bg(app.theme.background()),
-            )
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(app.theme.primary()))
-                    .title(format!(" {} ", picker.title.to_ascii_uppercase())),
-            ),
-        modal,
-    );
-}
-
-fn render_resume_picker(
-    frame: &mut Frame<'_>,
-    picker: &ExternalResumePicker,
-    area: Rect,
-    app: &App,
-) {
-    let height = picker.desired_height().min(area.height.max(4));
-    let modal = Rect {
-        x: area.x,
-        y: area.bottom().saturating_sub(height),
-        width: area.width,
-        height,
-    };
-    frame.render_widget(Clear, modal);
-    let mut lines = picker.lines(
-        modal.width.saturating_sub(2),
-        app.theme.primary(),
-        app.theme.ghost(),
-    );
-    lines.push(Line::styled(
-        if picker.is_empty() {
-            "Esc close · Enter cannot submit an empty result"
-        } else {
-            "↑↓ navigate · 1-9 or Enter resume · Esc close"
-        },
-        Style::default().fg(app.theme.ghost()),
-    ));
-    frame.render_widget(
-        Paragraph::new(lines)
-            .style(
-                Style::default()
-                    .fg(app.theme.primary())
-                    .bg(app.theme.background()),
-            )
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(app.theme.primary()))
-                    .title(" RESUME A PREVIOUS SESSION "),
-            ),
-        modal,
-    );
-}
-
-fn dither_glyph(x: usize, y: usize) -> &'static str {
-    let hash = x
-        .wrapping_mul(31)
-        .wrapping_add(y.wrapping_mul(17))
-        .wrapping_add(x.wrapping_mul(y));
-    if hash.is_multiple_of(5) { "∷" } else { "·" }
-}
-
-fn lily_coverage(x: f64, y: f64, bloom_x: f64, bloom_y: f64, radius: f64) -> f64 {
-    // Terminal cells are taller than they are wide, so unit-x is compressed before
-    // drawing the same shared spider-lily primitive used by the boot veil.
-    let dx = (x - bloom_x) * 2.10 / radius;
-    let dy = (y - bloom_y) / radius;
-    if dx.abs() > 1.35 || !(-1.35..=1.25).contains(&dy) {
-        return 0.0;
-    }
-    spider_lily_coverage(dx, dy)
-}
-
-fn red_lily_coverage(x: f64, y: f64) -> f64 {
-    lily_coverage(x, y, 0.78, 0.70, 0.14) * 0.96
-}
-
-fn red_lily_braille(x: usize, y: usize, width: usize, height: usize, opacity: f64) -> Option<char> {
-    const DOTS: [[u32; 4]; 2] = [[0, 1, 2, 6], [3, 4, 5, 7]];
-    let mut mask = 0_u32;
-    for (column, rows) in DOTS.iter().enumerate() {
-        for (row, bit) in rows.iter().enumerate() {
-            let unit_x = (x as f64 + (column as f64 + 0.5) / 2.0) / width.max(1) as f64;
-            let unit_y = (y as f64 + (row as f64 + 0.5) / 4.0) / height.max(1) as f64;
-            if red_lily_coverage(unit_x, unit_y) * opacity > 0.48 {
-                mask |= 1 << bit;
-            }
-        }
-    }
-    (mask != 0).then(|| char::from_u32(0x2800 + mask).unwrap_or(' '))
-}
-
-fn scene_coverage(x: usize, y: usize, width: usize, height: usize) -> f64 {
-    let u = x as f64 / width.max(1) as f64;
-    let v = y as f64 / height.max(1) as f64;
-    let mut coverage: f64 = 0.0;
-
-    let sun = ((u - 0.85) / 0.07).powi(2) + ((v - 0.13) / 0.07).powi(2);
-    if sun < 1.0 {
-        coverage = coverage.max(0.09);
-    }
-
-    for (cloud_x, cloud_y, cloud_width) in
-        [(0.15, 0.06, 0.18), (0.49, 0.11, 0.23), (0.77, 0.16, 0.28)]
-    {
-        let cloud = ((u - cloud_x) / cloud_width).powi(2) + ((v - cloud_y) / 0.016).powi(2);
-        if cloud < 1.0 {
-            coverage = coverage.max(0.05);
-        }
-    }
-
-    for (base, amplitude, ink, frequency_one, frequency_two, phase) in [
-        (0.60, 0.026, 0.10, 5.1, 11.7, 1.2),
-        (0.70, 0.038, 0.16, 3.9, 9.3, 4.0),
-        (0.80, 0.050, 0.24, 3.1, 7.9, 2.3),
-        (0.91, 0.058, 0.34, 2.4, 6.1, 5.4),
-    ] {
-        let ridge = base
-            + (u * frequency_one + phase).sin() * amplitude
-            + (u * frequency_two + phase * 2.7).sin() * amplitude * 0.4;
-        if v >= ridge {
-            coverage = coverage.max(ink);
-        }
-    }
-
-    for (bloom_x, bloom_y, radius, alpha) in [
-        (0.05, 0.70, 0.050, 0.32),
-        (0.20, 0.745, 0.055, 0.36),
-        (0.44, 0.68, 0.050, 0.32),
-        (0.60, 0.645, 0.042, 0.26),
-        (0.93, 0.66, 0.050, 0.34),
-        (0.33, 0.82, 0.075, 0.44),
-        (0.66, 0.80, 0.065, 0.40),
-        (0.88, 0.845, 0.080, 0.46),
-    ] {
-        coverage = coverage.max(lily_coverage(u, v, bloom_x, bloom_y, radius) * alpha);
-    }
-    coverage
-}
-
-#[derive(Debug)]
-struct SymbolGroundLayout {
-    cells: Vec<char>,
-    ink: Vec<u8>,
-}
-
-type SymbolGroundCache = Mutex<HashMap<(usize, usize), Arc<SymbolGroundLayout>>>;
-
-static SYMBOL_GROUND_CACHE: OnceLock<SymbolGroundCache> = OnceLock::new();
-
-// No `dimmed` variant: the scene's lifecycle owner is "has the first message been submitted",
-// not "is the composer empty". It renders full-strength until submission, then not at all.
-fn symbol_ground_layout(width: usize, height: usize) -> Arc<SymbolGroundLayout> {
-    let key = (width, height);
-    let cache = SYMBOL_GROUND_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let cached = cache
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(&key)
-        .cloned();
-    if let Some(layout) = cached {
-        return layout;
-    }
-
-    let opacity = 1.0;
-    let mut cells = vec![' '; width.saturating_mul(height)];
-    let mut ink = vec![0_u8; width.saturating_mul(height)];
-    for y in 0..height {
-        let mut x = 0;
-        while x < width {
-            let index = y * width + x;
-            let coverage = scene_coverage(x, y, width, height) * opacity;
-            let threshold = (f64::from(BAYER_8[y % 8][x % 8]) + 0.5) / 64.0;
-            if let Some(symbol) = red_lily_braille(x, y, width, height, opacity) {
-                cells[index] = symbol;
-                ink[index] = 2;
-                x += 1;
-                continue;
-            }
-            if coverage <= threshold {
-                x += 1;
-                continue;
-            }
-            let glyph = if coverage > 0.30 {
-                "∷"
-            } else {
-                dither_glyph(x, y)
-            };
-            for (offset, character) in glyph.chars().enumerate() {
-                if x + offset < width {
-                    cells[index + offset] = character;
-                    ink[index + offset] = u8::from(coverage > 0.24);
-                }
-            }
-            x += glyph.chars().count().saturating_add(1);
-        }
-    }
-
-    let layout = Arc::new(SymbolGroundLayout { cells, ink });
-    cache
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(key, Arc::clone(&layout));
-    layout
-}
-
-fn render_symbol_ground(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let width = usize::from(area.width);
-    let height = usize::from(area.height);
-    if width == 0 || height == 0 {
-        return;
-    }
-    let layout = symbol_ground_layout(width, height);
-    let mut rows = Vec::with_capacity(height);
-    for y in 0..height {
-        let row_start = y * width;
-        let cells = &layout.cells[row_start..row_start + width];
-        let ink = &layout.ink[row_start..row_start + width];
-        let mut spans = Vec::new();
-        let mut start = 0;
-        while start < width {
-            let ink_level = ink[start];
-            let mut end = start + 1;
-            while end < width && ink[end] == ink_level {
-                end += 1;
-            }
-            spans.push(Span::styled(
-                cells[start..end].iter().collect::<String>(),
-                match ink_level {
-                    2 => Style::default().fg(FATE_RED).add_modifier(Modifier::BOLD),
-                    1 => Style::default().fg(if app.theme == Theme::CreamInk {
-                        Color::Black
-                    } else {
-                        FATE_INK
-                    }),
-                    _ => Style::default()
-                        .fg(app.theme.ghost())
-                        .add_modifier(Modifier::DIM),
-                },
-            ));
-            start = end;
-        }
-        rows.push(Line::from(spans));
-    }
-    frame.render_widget(Paragraph::new(rows), area);
-
-    let composer_width = width.saturating_sub(4).max(1);
-    for (age, cursor) in app.dither_wake.iter().rev().skip(1).enumerate() {
-        let x = cursor % composer_width;
-        let y = height
-            .saturating_sub(1)
-            .saturating_sub(cursor / composer_width);
-        let glyph = if (cursor + age).is_multiple_of(3) {
-            "∷"
-        } else {
-            "·"
-        };
-        frame.render_widget(
-            Paragraph::new(glyph).style(Style::default().fg(FATE_RED)),
-            Rect::new(
-                area.x.saturating_add(u16::try_from(x).unwrap_or(u16::MAX)),
-                area.y.saturating_add(u16::try_from(y).unwrap_or(u16::MAX)),
-                u16::try_from(glyph.len()).unwrap_or(1),
-                1,
-            ),
-        );
-    }
-    let cursor = app.composer.cursor();
-    let x = cursor % composer_width;
-    let y = height
-        .saturating_sub(1)
-        .saturating_sub(cursor / composer_width);
-    frame.render_widget(
-        Paragraph::new("∷").style(Style::default().fg(app.theme.primary())),
-        Rect::new(
-            area.x.saturating_add(u16::try_from(x).unwrap_or(u16::MAX)),
-            area.y.saturating_add(u16::try_from(y).unwrap_or(u16::MAX)),
-            1,
-            1,
-        ),
-    );
-}
-
-fn session_handoff_lines(app: &App) -> Option<Vec<String>> {
-    let mut lines = Vec::new();
-    if let Some(context) = &app.session_context {
-        lines.extend(context.human_lines.iter().take(4).cloned());
-    }
-    if let Some(account) = &app.account {
-        let identity = match (account.email.as_deref(), account.plan.as_deref()) {
-            (Some(email), Some(plan)) => format!("Signed in · {email} · {plan}"),
-            (Some(email), None) => format!("Signed in · {email}"),
-            (None, Some(plan)) => format!("Account · {plan}"),
-            (None, None) => "Account connected".to_string(),
-        };
-        lines.push(identity);
-        if let Some(team) = &account.team {
-            let name = team.name.as_deref().unwrap_or(&team.id);
-            let role = team.role.as_deref().unwrap_or("role not returned");
-            lines.push(format!("Team · {name} · {role}"));
-        }
-    }
-    (!lines.is_empty()).then_some(lines)
-}
-
-fn render_empty_state(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let sweep = match app.header.indexed {
-        Some(true) => "Refresh this repo's index",
-        Some(false) => "Index this repo before asking grounded questions",
-        None => "Index or refresh this repo",
-    };
-    let mut lines = vec![Line::styled(
-        format!("Ask about {}", app.repo),
-        Style::default()
-            .fg(app.theme.primary())
-            .add_modifier(Modifier::BOLD),
-    )];
-    if let Some(context) = &app.session_context {
-        lines.push(Line::default());
-        lines.push(Line::styled(
-            "Since your last session",
-            Style::default()
-                .fg(app.theme.primary())
-                .add_modifier(Modifier::BOLD),
-        ));
-        lines.extend(
-            context
-                .human_lines
-                .iter()
-                .take(4)
-                .map(|line| Line::styled(line.clone(), Style::default().fg(Color::Gray))),
-        );
-    }
-    if let Some(account) = &app.account {
-        lines.push(Line::default());
-        let identity = match (account.email.as_deref(), account.plan.as_deref()) {
-            (Some(email), Some(plan)) => format!("Signed in · {email} · {plan}"),
-            (Some(email), None) => format!("Signed in · {email}"),
-            (None, Some(plan)) => format!("Account · {plan}"),
-            (None, None) => "Account connected".to_string(),
-        };
-        lines.push(Line::styled(identity, Style::default().fg(Color::Gray)));
-        if let Some(team) = &account.team {
-            let name = team.name.as_deref().unwrap_or(&team.id);
-            let role = team.role.as_deref().unwrap_or("role not returned");
-            lines.push(Line::styled(
-                format!("Team · {name} · {role}"),
-                Style::default().fg(Color::Gray),
-            ));
-        }
-    }
-    lines.extend([
-        Line::default(),
-        Line::from(vec![
-            Span::styled("/review  ", Style::default().fg(app.theme.primary())),
-            Span::styled("Read current changes", Style::default().fg(Color::Gray)),
-        ]),
-        Line::from(vec![
-            Span::styled("/sweep   ", Style::default().fg(app.theme.primary())),
-            Span::styled(sweep, Style::default().fg(Color::Gray)),
-        ]),
-        Line::from(vec![
-            Span::styled("?        ", Style::default().fg(app.theme.primary())),
-            Span::styled("Show shortcuts", Style::default().fg(Color::Gray)),
-        ]),
-    ]);
-    lines.truncate(usize::from(area.height));
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
-}
-
-fn render_gate_modal(frame: &mut Frame<'_>, modal: &GateModal, content_area: Rect, app: &App) {
-    let width = content_area.width.saturating_sub(4).min(86);
-    let height = content_area.height.saturating_sub(2).min(18);
-    let area = centered_rect(width, height, content_area);
-    frame.render_widget(Clear, area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(FATE_RED))
-        .title(" gate · deterministic · no model ");
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    if inner.height < 10 || inner.width < 48 {
-        let total_lines = modal
-            .files
-            .iter()
-            .map(|file| file.changed_lines)
-            .sum::<u64>();
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::styled(
-                    "EDIT REFUSED",
-                    Style::default().fg(FATE_RED).add_modifier(Modifier::BOLD),
-                ),
-                Line::raw("Gate protected this repository. Nothing was written."),
-                Line::raw(format!("Verdict  {}", modal.verdict)),
-                Line::raw(format!(
-                    "blast radius  {} files · {total_lines} changed lines",
-                    modal.files.len()
-                )),
-                Line::raw(modal.reasons.join(" | ")),
-                Line::styled(
-                    "Enter or Esc closes · Ask Estelle",
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ])
-            .wrap(Wrap { trim: false }),
-            inner,
-        );
-        return;
-    }
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(6),
-            Constraint::Min(1),
-            Constraint::Length(1),
-        ])
-        .split(inner);
-    frame.render_widget(
-        Paragraph::new("EDIT REFUSED")
-            .style(Style::default().fg(FATE_RED).add_modifier(Modifier::BOLD))
-            .alignment(Alignment::Center),
-        rows[0],
-    );
-    frame.render_widget(
-        Paragraph::new("Gate protected this repository. Nothing was written.")
-            .alignment(Alignment::Center),
-        rows[1],
-    );
-    frame.render_widget(
-        Paragraph::new(format!("Verdict  {}", modal.verdict))
-            .style(Style::default().fg(Color::Gray)),
-        rows[2],
-    );
-
-    let total_lines = modal
-        .files
-        .iter()
-        .map(|file| file.changed_lines)
-        .sum::<u64>();
-    let points = modal
-        .files
-        .iter()
-        .enumerate()
-        .map(|(index, file)| (index as f64, file.changed_lines as f64))
-        .collect::<Vec<_>>();
-    let max_lines = modal
-        .files
-        .iter()
-        .map(|file| file.changed_lines)
-        .max()
-        .unwrap_or(1)
-        .max(1) as f64;
-    let x_max = modal.files.len().saturating_sub(1).max(1) as f64;
-    let dataset = Dataset::default()
-        .name("changed lines")
-        .marker(Marker::Braille)
-        .graph_type(GraphType::Scatter)
-        .style(Style::default().fg(app.theme.primary()))
-        .data(&points);
-    frame.render_widget(
-        Chart::new(vec![dataset])
-            .block(Block::default().title(format!(
-                " blast radius · {} files · {total_lines} changed lines ",
-                modal.files.len()
-            )))
-            .x_axis(Axis::default().bounds([0.0, x_max]))
-            .y_axis(Axis::default().bounds([0.0, max_lines])),
-        rows[3],
-    );
-
-    let mut details = modal
-        .files
-        .iter()
-        .map(|file| Line::from(format!("{:>6}  {}", file.changed_lines, file.path)))
-        .collect::<Vec<_>>();
-    details.extend(
-        modal
-            .reasons
-            .iter()
-            .map(|reason| Line::from(format!("blocked  {reason}"))),
-    );
-    frame.render_widget(
-        Paragraph::new(details)
-            .style(Style::default().fg(Color::Gray))
-            .wrap(Wrap { trim: false }),
-        rows[4],
-    );
-    frame.render_widget(
-        Paragraph::new("Enter or Esc closes · Ask Estelle")
-            .style(Style::default().fg(Color::DarkGray))
-            .alignment(Alignment::Center),
-        rows[5],
-    );
-}
-
-fn render_context_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let mut lines = vec![
-        Line::styled(
-            "Repo graph · team's swept copy",
-            Style::default()
-                .fg(app.theme.primary())
-                .add_modifier(Modifier::BOLD),
-        ),
-        Line::from(format!(
-            "{} files indexed",
-            app.header
-                .files
-                .map(commas)
-                .unwrap_or_else(|| "count pending".to_string())
-        )),
-    ];
-    if app.citations.is_empty() {
-        lines.push(Line::styled(
-            "No grounded sources in the current answer.",
-            Style::default().fg(Color::DarkGray),
-        ));
-    } else {
-        for source in app.citations.iter().take(8) {
-            lines.push(Line::from(source_label(source)));
-            let symbol = source
-                .extra
-                .get("symbol")
-                .and_then(Value::as_str)
-                .filter(|symbol| !symbol.trim().is_empty())
-                .unwrap_or("symbol not disclosed");
-            lines.push(Line::styled(
-                format!("  symbol  {symbol}"),
-                Style::default().fg(Color::DarkGray),
-            ));
-        }
-    }
-    lines.push(Line::from(""));
-    lines.push(Line::styled(
-        "Working memory · local request context",
-        Style::default()
-            .fg(app.theme.primary())
-            .add_modifier(Modifier::BOLD),
-    ));
-    lines.push(Line::styled(
-        "Sent through the configured Estelle model path.",
-        Style::default().fg(Color::DarkGray),
-    ));
-    lines.push(Line::styled(
-        "Not added to the team's Repo graph.",
-        Style::default().fg(Color::DarkGray),
-    ));
-    if app.working_memory_paths.is_empty() {
-        lines.push(Line::styled(
-            "No eligible local files were attached to the last question.",
-            Style::default().fg(Color::DarkGray),
-        ));
-    } else {
-        lines.extend(
-            app.working_memory_paths
-                .iter()
-                .take(8)
-                .map(|path| Line::from(path.clone())),
-        );
-    }
-    lines.push(Line::from(""));
-    lines.push(Line::styled(
-        "Alt+M or /context closes",
-        Style::default().fg(Color::DarkGray),
-    ));
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(
-                        Style::default().fg(if app.focus == FocusSurface::Auxiliary {
-                            app.theme.primary()
-                        } else {
-                            app.theme.ghost()
-                        }),
-                    )
-                    .title(" CONTEXT  Alt+M · /context "),
-            )
-            .wrap(Wrap { trim: false }),
-        area,
-    );
-}
-
-#[cfg(test)]
-fn production_health_lines(
-    response: &estelle_client::MonitorIssuesResponse,
-    overview: Option<&estelle_client::MonitorOverviewResponse>,
-) -> Vec<String> {
-    let unresolved = response
-        .issues
-        .iter()
-        .filter(|issue| issue.status != "resolved")
-        .collect::<Vec<_>>();
-    if unresolved.is_empty() {
-        if let Some(resolved) = response.issues.first() {
-            return vec![
-                "prod · healthy".to_string(),
-                format!("resolved · {}", issue_title(resolved)),
-            ];
-        }
-        return vec!["prod · healthy".to_string()];
-    }
-
-    let mut lines = vec![format!(
-        "prod · {} unresolved issue{}",
-        unresolved.len(),
-        if unresolved.len() == 1 { "" } else { "s" }
-    )];
-    if let Some(overview) = overview {
-        let buckets = overview.error_buckets();
-        if !buckets.is_empty() {
-            lines.push(format!(
-                "error counts · {}",
-                error_count_sparkline(&buckets)
-            ));
-            let requests_available = overview.requests_source() != Some("unavailable")
-                && buckets.iter().all(|bucket| bucket.requests.is_some());
-            if requests_available {
-                let errors = buckets.iter().map(|bucket| bucket.errors).sum::<u64>();
-                let requests = buckets
-                    .iter()
-                    .filter_map(|bucket| bucket.requests)
-                    .sum::<u64>();
-                lines.push(format!("measured · {errors} errors / {requests} requests"));
-            } else {
-                lines.push("request denominator unavailable".to_string());
-            }
-            if let Some(p99_ms) = buckets
-                .iter()
-                .filter_map(|bucket| bucket.p99_ms)
-                .reduce(f64::max)
-            {
-                lines.push(format!("p99 · {p99_ms:.0} ms"));
-            }
-        }
-    }
-
-    for issue in unresolved.into_iter().take(3) {
-        lines.push(String::new());
-        if issue.effective_repair_status().contains("sandbox") {
-            let verdict = issue
-                .effective_gate_verdict()
-                .or(issue.gate_absent_reason.as_deref())
-                .unwrap_or("verdict unavailable");
-            lines.push(format!("sandbox · a clone, never production · {verdict}"));
-            continue;
-        }
-        lines.push(format!("caught · {}", issue_title(issue)));
-        let events = issue.event_count();
-        lines.push(format!("grouped · {events} events"));
-        if let Some(read) = issue
-            .extra
-            .get("read")
-            .and_then(Value::as_str)
-            .filter(|read| !read.trim().is_empty())
-        {
-            lines.push(format!("read · {read}"));
-        }
-        if let Some(range) = &issue.symbol_range {
-            lines.push(format!(
-                "traced to · {}:{}-{}",
-                range.file, range.line_start, range.line_end
-            ));
-        } else if let Some((file, line)) = issue.bound_location() {
-            lines.push(format!("traced to · {file}:{line}"));
-        } else if let Some(symbol) = issue
-            .bound
-            .as_ref()
-            .and_then(|bound| bound.symbol.as_deref())
-            .filter(|symbol| !symbol.trim().is_empty())
-        {
-            lines.push(format!("traced to · {symbol} · range unavailable"));
-        } else if !issue.symbol.is_empty() {
-            lines.push(format!("traced to · {} · range unavailable", issue.symbol));
-        } else if !issue.culprit.is_empty() {
-            lines.push(format!("traced to · {} · range unavailable", issue.culprit));
-        }
-        let bind_status = issue.effective_bind_status();
-        if bind_status.trim().is_empty() {
-            lines.push("bind · unbound · reason not recorded".to_string());
-        } else if bind_status != "bound" {
-            let bind_detail = issue.effective_bind_detail();
-            let detail = if bind_detail.trim().is_empty() {
-                "reason not recorded"
-            } else {
-                bind_detail
-            };
-            lines.push(format!("bind · {bind_status} · {detail}"));
-        }
-        let repair_pr = issue.effective_repair_pr();
-        let repair_status = issue.effective_repair_status();
-        if !repair_pr.is_empty() {
-            lines.push(format!("PR · {repair_pr}"));
-        } else if repair_status == "proposed" {
-            lines.push("drafted repair · awaiting human review".to_string());
-        } else if !repair_status.is_empty() && repair_status != "none" {
-            lines.push(format!("repair · {repair_status}"));
-        }
-        if let Some(verdict) = issue.effective_gate_verdict() {
-            lines.push(format!("gate · {verdict}"));
-        } else if let Some(reason) = issue
-            .gate_absent_reason
-            .as_deref()
-            .filter(|reason| !reason.trim().is_empty())
-        {
-            lines.push(format!("gate · {reason}"));
-        }
-    }
-    lines
-}
-
-fn production_workspace_lines(app: &App) -> Vec<Line<'static>> {
-    let heading = |text: String| {
-        Line::styled(
-            text,
-            Style::default()
-                .fg(app.theme.primary())
-                .add_modifier(Modifier::BOLD),
-        )
-    };
-    let dim = |text: String| Line::styled(text, Style::default().fg(app.theme.ghost()));
-    let repo = app
-        .prod_issues
-        .as_ref()
-        .and_then(|response| response.repo.as_deref())
-        .unwrap_or_else(|| app.repo.as_str());
-    let app_name = app.prod_overview.as_ref().and_then(|overview| {
-        ["app", "app_name", "service", "service_name"]
-            .into_iter()
-            .find_map(|key| overview.extra.get(key).and_then(Value::as_str))
-    });
-    let org = app.prod_overview.as_ref().and_then(|overview| {
-        ["org", "organization", "organization_name"]
-            .into_iter()
-            .find_map(|key| overview.extra.get(key).and_then(Value::as_str))
-    });
-    let identity = match (app_name, org) {
-        (Some(app_name), Some(org)) => format!("APP HEALTH · {org}/{app_name}"),
-        (Some(app_name), None) => format!("APP HEALTH · {app_name}"),
-        (None, _) => format!("APP HEALTH · repo {repo}"),
-    };
-    let mut lines = vec![heading(identity)];
-
-    if !app.auth_resolved {
-        lines.push(dim("Connecting to Estelle...".to_string()));
-    } else if app.client.is_none() {
-        lines.push(dim("Live Monitor unavailable.".to_string()));
-        lines.push(dim("Run /login here.".to_string()));
-    } else if let Some(error) = &app.prod_issue_error {
-        lines.push(Line::styled(
-            error.clone(),
-            Style::default().fg(app.theme.alert()),
-        ));
-        lines.push(dim("The client will retry in the background.".to_string()));
-    } else if let Some(overview) = &app.prod_overview {
-        let buckets = overview.error_buckets();
-        if buckets.is_empty() {
-            lines.push(dim("No measured error window was returned.".to_string()));
-        } else {
-            let errors = buckets.iter().map(|bucket| bucket.errors).sum::<u64>();
-            let requests = buckets
-                .iter()
-                .filter_map(|bucket| bucket.requests)
-                .sum::<u64>();
-            let has_denominator = overview.requests_source() != Some("unavailable")
-                && buckets.iter().all(|bucket| bucket.requests.is_some());
-            lines.push(Line::from(format!(
-                "error counts · {}  {errors}",
-                error_count_sparkline(&buckets)
-            )));
-            if has_denominator {
-                lines.push(Line::from(format!(
-                    "measured · {errors}/{requests} requests"
-                )));
-            } else {
-                lines.push(dim("request denominator unavailable".to_string()));
-            }
-        }
-        if overview.uptime.checks == 0 {
-            lines.push(dim(
-                "No uptime checks · add one with POST /monitor/uptime.".to_string()
-            ));
-        } else {
-            lines.push(Line::from(format!(
-                "uptime checks · {}/{} up",
-                overview.uptime.up, overview.uptime.checks
-            )));
-            if overview.uptime.down > 0 {
-                lines.push(Line::styled(
-                    format!("{} uptime check(s) down", overview.uptime.down),
-                    Style::default().fg(app.theme.alert()),
-                ));
-            }
-        }
-    } else {
-        lines.push(dim("Loading a real Monitor window...".to_string()));
-    }
-
-    lines.push(Line::from(""));
-    lines.push(heading("AGENT HEALTH".to_string()));
-    if let Some(error) = &app.prod_agent_health_error {
-        lines.push(Line::styled(
-            error.clone(),
-            Style::default().fg(app.theme.alert()),
-        ));
-        lines.push(dim("The client will retry in the background.".to_string()));
-    } else if let Some(health) = &app.prod_agent_health {
-        match health.enabled {
-            Some(false) => lines.push(dim(
-                "Agent telemetry not enabled · send POST /agent/events after enabling it."
-                    .to_string(),
-            )),
-            None => lines.push(dim(format!(
-                "Agent health unknown · {}",
-                health
-                    .enabled_absent_reason
-                    .as_deref()
-                    .filter(|reason| !reason.trim().is_empty())
-                    .unwrap_or("server returned no reason")
-            ))),
-            Some(true) => {
-                if let Some(counts) = &health.counts {
-                    let count = |value: Option<u64>, label: &str| match value {
-                        Some(value) => format!("{value} {label}"),
-                        None => format!("{label} unknown"),
-                    };
-                    lines.push(Line::from(format!(
-                        "{} · {} · {}",
-                        count(counts.reporting, "reporting"),
-                        count(counts.degraded, "degraded"),
-                        count(counts.silent, "silent")
-                    )));
-                } else {
-                    lines.push(dim(
-                        "Agent counts unavailable · server returned no measurement.".to_string(),
-                    ));
-                }
-                match (health.observed_at, health.stale_after_s) {
-                    (Some(observed_at), Some(stale_after_s)) => lines.push(dim(format!(
-                        "observed {observed_at:.0} · stale threshold {stale_after_s}s"
-                    ))),
-                    _ => lines.push(dim("Snapshot freshness unavailable.".to_string())),
-                }
-                for agent in health.agents.iter().take(3) {
-                    let state = match agent.state {
-                        estelle_client::AgentHealthState::Healthy => "healthy",
-                        estelle_client::AgentHealthState::Degraded => "degraded",
-                        estelle_client::AgentHealthState::Silent => "silent",
-                        estelle_client::AgentHealthState::Disabled => "disabled",
-                        estelle_client::AgentHealthState::Unknown => "unknown",
-                    };
-                    let events = agent
-                        .events
-                        .map(|events| format!("{events}ev"))
-                        .unwrap_or_else(|| "events?".to_string());
-                    let signal = agent
-                        .current_signal
-                        .as_deref()
-                        .filter(|signal| !signal.trim().is_empty())
-                        .or(agent.state_absent_reason.as_deref())
-                        .unwrap_or("signal unavailable");
-                    lines.push(Line::from(format!(
-                        "{state} {} · {events} · {signal}",
-                        agent.id
-                    )));
-                    if let Some(last_seen) = agent.last_seen {
-                        lines.push(dim(format!("       last seen {last_seen:.0}")));
-                    }
-                }
-                if health.agents.len() > 3 {
-                    lines.push(dim(format!("+{} more agents", health.agents.len() - 3)));
-                }
-            }
-        }
-    } else {
-        lines.push(dim(
-            "State unavailable · no read contract · send POST /agent/events.".to_string(),
-        ));
-    }
-
-    lines.push(Line::from(""));
-    lines.push(heading("ESTELLE STATUS".to_string()));
-    match app.prod_issues.as_ref() {
-        Some(response) => {
-            let unresolved = response
-                .issues
-                .iter()
-                .filter(|issue| issue.status != "resolved")
-                .collect::<Vec<_>>();
-            if !unresolved.is_empty() {
-                for issue in unresolved.iter().take(2) {
-                    let events = issue.event_count();
-                    let location = issue
-                        .bound_location()
-                        .map(|(file, line)| format!("{file}:{line}"))
-                        .unwrap_or_else(|| "unbound · reason not recorded".to_string());
-                    lines.push(Line::from(format!("caught · {}", issue_title(issue))));
-                    lines.push(dim(format!(
-                        "grouped · {events} event(s) · traced to · {location}"
-                    )));
-                    if let Some(range) = &issue.symbol_range
-                        && range.line_end > range.line_start
-                    {
-                        lines.push(dim(format!(
-                            "       range {}:{}-{}",
-                            range.file, range.line_start, range.line_end
-                        )));
-                    }
-                }
-                if unresolved.len() > 2 {
-                    lines.push(dim(format!(
-                        "+{} more · open /monitor issues",
-                        unresolved.len() - 2
-                    )));
-                }
-            } else {
-                lines.push(dim("No errors have reached Estelle yet.".to_string()));
-                lines.push(dim(
-                    "Point OTLP or Sentry at api.fatelabs.ca/monitor/ingest.".to_string(),
-                ));
-            }
-        }
-        None => lines.push(dim("Waiting for the live issue feed...".to_string())),
-    }
-
-    lines.push(Line::from(""));
-    lines.push(heading("ESTELLE QUEUE".to_string()));
-    let queued = app
-        .prod_issues
-        .as_ref()
-        .into_iter()
-        .flat_map(|response| response.issues.iter())
-        .filter(|issue| issue.status != "resolved")
-        .filter(|issue| {
-            !issue.effective_repair_status().trim().is_empty()
-                && issue.effective_repair_status() != "none"
-        })
-        .take(3)
-        .collect::<Vec<_>>();
-    if queued.is_empty() {
-        lines.push(dim("Queue empty · no repair work is reported.".to_string()));
-        lines.push(dim("Issue selection: /monitor issues".to_string()));
-    } else {
-        for issue in queued {
-            let repair_pr = issue.effective_repair_pr();
-            let repair_status = issue.effective_repair_status();
-            let destination = if repair_pr.trim().is_empty() {
-                "awaiting human review".to_string()
-            } else {
-                repair_pr.to_string()
-            };
-            let label = if repair_status == "proposed" {
-                "drafted repair"
-            } else {
-                repair_status
-            };
-            lines.push(Line::from(format!(
-                "{label} · {} · {destination}",
-                issue_title(issue)
-            )));
-            if let Some(verdict) = issue.effective_gate_verdict() {
-                lines.push(dim(format!("       gate · {verdict}")));
-            } else if let Some(reason) = issue
-                .gate_absent_reason
-                .as_deref()
-                .filter(|reason| !reason.trim().is_empty())
-            {
-                lines.push(dim(format!("       gate absent · {reason}")));
-            }
-            if let Some(patch) = issue.effective_repair_patch() {
-                let short_sha = patch.base_sha.chars().take(12).collect::<String>();
-                lines.push(dim(format!(
-                    "       patch · {} · base {short_sha}",
-                    patch.format
-                )));
-                lines.extend(github_diff_lines(&patch.text, 96, app));
-            } else {
-                let reason = issue
-                    .effective_patch_absent_reason()
-                    .unwrap_or("unavailable");
-                lines.push(dim(format!("       diff unavailable - {reason}")));
-            }
-        }
-    }
-
-    lines.push(Line::from(""));
-    lines.push(heading("GITHUB".to_string()));
-    if let Some(error) = &app.prod_github_status_error {
-        lines.push(Line::styled(
-            error.clone(),
-            Style::default().fg(app.theme.alert()),
-        ));
-    } else if let Some(status) = &app.prod_github_status {
-        match status.connected {
-            Some(true) => {
-                let identity = status
-                    .login
-                    .as_deref()
-                    .filter(|login| !login.trim().is_empty())
-                    .map(|login| format!(" · @{login}"))
-                    .unwrap_or_default();
-                lines.push(Line::from(format!("Connected{identity}")));
-                if let Some(observed_at) = status.observed_at {
-                    lines.push(dim(format!("binding observed {observed_at:.0}")));
-                }
-            }
-            Some(false) => {
-                lines.push(dim(
-                    "Not connected · run estelle github connect.".to_string()
-                ));
-                lines.push(dim(
-                    "Proposed PRs are not read without a measured App binding.".to_string(),
-                ));
-            }
-            None => {
-                let reason = status
-                    .absent_reason
-                    .as_deref()
-                    .filter(|reason| !reason.trim().is_empty())
-                    .unwrap_or("server returned no reason");
-                lines.push(dim(format!("Connection unknown · {reason}")));
-                lines.push(dim("Proposed PR state is not inferred.".to_string()));
-            }
-        }
-    } else {
-        lines.push(dim(
-            "Waiting for measured GitHub connection state...".to_string()
-        ));
-    }
-
-    if app
-        .prod_github_status
-        .as_ref()
-        .and_then(|status| status.connected)
-        == Some(true)
-    {
-        if let Some(error) = &app.prod_proposed_prs_error {
-            lines.push(Line::styled(
-                error.clone(),
-                Style::default().fg(app.theme.alert()),
-            ));
-        } else if let Some(response) = &app.prod_proposed_prs {
-            if response.prs.is_empty() {
-                lines.push(dim("No open Estelle-proposed PRs returned.".to_string()));
-            }
-            for pr in response.prs.iter().take(3) {
-                let title = if pr.title.trim().is_empty() {
-                    "untitled PR"
-                } else {
-                    pr.title.as_str()
-                };
-                lines.push(Line::from(format!("#{} · {title}", pr.number)));
-                lines.push(dim(format!("       {}", pr.url)));
-                if let Some(gate) = &pr.gate {
-                    let verified = if gate.verified { " · verified" } else { "" };
-                    lines.push(dim(format!(
-                        "       gate · {} · {} · {} blocker(s){verified}",
-                        gate.state, gate.verdict, gate.blockers
-                    )));
-                } else {
-                    let reason = pr
-                        .gate_absent_reason
-                        .as_deref()
-                        .filter(|reason| !reason.trim().is_empty())
-                        .unwrap_or("server returned no reason");
-                    lines.push(dim(format!("       gate absent · {reason}")));
-                }
-                if !pr.updated_at.trim().is_empty() {
-                    lines.push(dim(format!("       updated {}", pr.updated_at)));
-                }
-            }
-            if response.has_more {
-                lines.push(dim(
-                    "More open proposed PRs exist than this page shows.".to_string()
-                ));
-            }
-        } else {
-            lines.push(dim("Waiting for the proposed-PR feed...".to_string()));
-        }
-    }
-    lines
-}
-
-fn issue_title(issue: &estelle_client::MonitorIssue) -> &str {
-    issue.display_title()
-}
-
-fn error_count_sparkline(buckets: &[estelle_client::MonitorErrorBucket]) -> String {
-    const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-    let max = buckets
-        .iter()
-        .map(|bucket| bucket.errors)
-        .max()
-        .unwrap_or(0);
-    buckets
-        .iter()
-        .map(|bucket| {
-            let index = bucket
-                .errors
-                .saturating_mul(7)
-                .checked_div(max)
-                .and_then(|index| usize::try_from(index).ok())
-                .unwrap_or(0);
-            BARS[index.min(7)]
-        })
-        .collect()
-}
-
-fn render_prod_panel(frame: &mut Frame<'_>, area: Rect, app: &App, now: Instant) {
-    let lines = if let Some(graph) = &app.prod_graph {
-        let palette = match app.theme {
-            Theme::Dark => theme::ScreenTheme::Dark.palette(),
-            Theme::CreamInk => theme::ScreenTheme::Cream.palette(),
-        };
-        let tick = now
-            .saturating_duration_since(app.boot_started)
-            .as_millis()
-            .checked_div(50)
-            .and_then(|value| u64::try_from(value).ok())
-            .unwrap_or(0);
-        production_hud::lines(graph, &palette, tick, true)
-    } else {
-        let mut lines = production_workspace_lines(app);
-        if app.prod_graph_in_flight {
-            lines.push(Line::styled(
-                "Reading blast_radius · chokepoints · subsystems · core_files...",
-                Style::default().fg(app.theme.ghost()),
-            ));
-        } else if let Some(error) = &app.prod_graph_error {
-            lines.push(Line::styled(
-                error.clone(),
-                Style::default().fg(app.theme.alert()),
-            ));
-        }
-        lines
-    };
-    let has_unresolved = app.prod_issues.as_ref().is_some_and(|response| {
-        response
-            .issues
-            .iter()
-            .any(|issue| issue.status != "resolved")
-    });
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(
-                        Style::default().fg(if app.focus == FocusSurface::Auxiliary {
-                            app.theme.primary()
-                        } else {
-                            if has_unresolved {
-                                app.theme.alert()
-                            } else {
-                                app.theme.ghost()
-                            }
-                        }),
-                    )
-                    .title(" LIVE PRODUCTION "),
-            )
-            .wrap(Wrap { trim: false }),
-        area,
-    );
-}
-
-fn render_diff_panel(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let mut lines = vec![Line::styled(
-        "read-only · /apply submits this exact patch",
-        Style::default().fg(Color::DarkGray),
-    )];
-    if let Some(diff) = app.last_diff.as_deref() {
-        lines.extend(github_diff_lines(
-            diff,
-            usize::from(area.width.saturating_sub(2)),
-            app,
-        ));
-    }
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(
-                        Style::default().fg(if app.focus == FocusSurface::Auxiliary {
-                            app.theme.primary()
-                        } else {
-                            app.theme.ghost()
-                        }),
-                    )
-                    .title(" WORK DRAFT · /work · READ ONLY "),
-            )
-            .wrap(Wrap { trim: false }),
-        area,
-    );
-}
-
-fn hunk_line_numbers(header: &str) -> Option<(usize, usize)> {
-    let mut old = None;
-    let mut new = None;
-    for token in header.split_whitespace() {
-        if let Some(range) = token.strip_prefix('-') {
-            old = range.split(',').next().and_then(|value| value.parse().ok());
-        } else if let Some(range) = token.strip_prefix('+') {
-            new = range.split(',').next().and_then(|value| value.parse().ok());
-        }
-    }
-    old.zip(new)
-}
-
-fn github_diff_lines(diff: &str, width: usize, app: &App) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-    let mut old_line = 0_usize;
-    let mut new_line = 0_usize;
-    let number_width = 3_usize;
-    let content_width = width.saturating_sub(number_width * 2 + 5);
-
-    let (add_line_bg, add_gutter_bg, del_line_bg, del_gutter_bg) = match app.theme {
-        Theme::Dark => (
-            Color::from_u32(0x21_3A_2B),
-            Color::from_u32(0x16_2E_20),
-            Color::from_u32(0x4A_22_1D),
-            Color::from_u32(0x36_17_14),
-        ),
-        Theme::CreamInk => (
-            Color::from_u32(0xDA_FB_E1),
-            Color::from_u32(0xAC_EE_BB),
-            Color::from_u32(0xFF_EB_E9),
-            Color::from_u32(0xFF_CE_CB),
-        ),
-    };
-
-    for source in diff.lines() {
-        if let Some(path) = source.strip_prefix("diff --git a/") {
-            let path = path.split(" b/").next().unwrap_or(path);
-            if !lines.is_empty() {
-                lines.push(Line::from(""));
-            }
-            lines.push(Line::styled(
-                path.to_string(),
-                Style::default()
-                    .fg(app.theme.primary())
-                    .add_modifier(Modifier::BOLD),
-            ));
-            old_line = 0;
-            new_line = 0;
-            continue;
-        }
-        if source.starts_with("---")
-            || source.starts_with("+++")
-            || source.starts_with("index ")
-            || source.starts_with("new file mode ")
-            || source.starts_with("deleted file mode ")
-        {
-            continue;
-        }
-        if source.starts_with("@@") {
-            if let Some((old, new)) = hunk_line_numbers(source) {
-                old_line = old;
-                new_line = new;
-            }
-            lines.push(Line::styled(
-                truncate_display(source, width),
-                Style::default().fg(Color::Cyan),
-            ));
-            continue;
-        }
-
-        let (old, new, sign, content, line_bg, gutter_bg, foreground) =
-            if let Some(content) = source.strip_prefix('+') {
-                let row = (
-                    None,
-                    Some(new_line),
-                    '+',
-                    content,
-                    add_line_bg,
-                    add_gutter_bg,
-                    if app.theme == Theme::CreamInk {
-                        FATE_INK
-                    } else {
-                        Color::Green
-                    },
-                );
-                new_line = new_line.saturating_add(1);
-                row
-            } else if let Some(content) = source.strip_prefix('-') {
-                let row = (
-                    Some(old_line),
-                    None,
-                    '-',
-                    content,
-                    del_line_bg,
-                    del_gutter_bg,
-                    if app.theme == Theme::CreamInk {
-                        FATE_INK
-                    } else {
-                        FATE_BG
-                    },
-                );
-                old_line = old_line.saturating_add(1);
-                row
-            } else if let Some(content) = source.strip_prefix(' ') {
-                let row = (
-                    Some(old_line),
-                    Some(new_line),
-                    ' ',
-                    content,
-                    app.theme.background(),
-                    app.theme.background(),
-                    app.theme.ghost(),
-                );
-                old_line = old_line.saturating_add(1);
-                new_line = new_line.saturating_add(1);
-                row
-            } else {
-                lines.push(Line::styled(
-                    truncate_display(source, width),
-                    Style::default().fg(Color::DarkGray),
-                ));
-                continue;
-            };
-
-        let old = old.map_or_else(String::new, |value| value.to_string());
-        let new = new.map_or_else(String::new, |value| value.to_string());
-        let content = truncate_display(content, content_width);
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("{old:>number_width$} {new:>number_width$} {sign} "),
-                Style::default().fg(app.theme.ghost()).bg(gutter_bg),
-            ),
-            Span::styled(
-                format!("{content:<content_width$}"),
-                Style::default().fg(foreground).bg(line_bg),
-            ),
-        ]));
-    }
-    lines
-}
-
-fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
-    app.tool_click_targets.borrow_mut().clear();
-    let area = frame.area();
-    frame.render_widget(
-        Block::default().style(
-            Style::default()
-                .fg(app.theme.primary())
-                .bg(app.theme.background()),
-        ),
-        area,
-    );
-    let content_area = area;
-    let composer_height = app
-        .composer
-        .bottom_pane_desired_height(content_area.width)
-        .clamp(5, 14);
-    let modal_owns_input =
-        app.picker.is_some() || app.resume_picker.is_some() || app.gate_modal.is_some();
-    let composer_height = if modal_owns_input { 0 } else { composer_height };
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(2),
-            Constraint::Min(1),
-            Constraint::Length(composer_height),
-            Constraint::Length(1),
-        ])
-        .split(content_area);
-
-    frame.render_widget(
-        Paragraph::new(Text::from(vec![
-            header_line(app, area.width),
-            session_tabs_line(app),
-        ])),
-        rows[0],
-    );
-    let surface_rows = [rows[1]];
-
-    let diff_as_rail = app.diff_panel_visible && area.width >= 110;
-    let prod_as_rail = !app.diff_panel_visible
-        && app.prod_panel_visible
-        && area.width >= 110
-        && app.gate_modal.is_none()
-        && app.picker.is_none()
-        && app.resume_picker.is_none();
-    let show_diff_panel = app.diff_panel_visible && !diff_as_rail;
-    let show_prod_panel = app.prod_panel_visible && !prod_as_rail && !app.diff_panel_visible;
-    let show_context_panel = !app.diff_panel_visible && !prod_as_rail && app.context_panel_visible;
-    let show_citation_pane = !app.diff_panel_visible
-        && !prod_as_rail
-        && !show_context_panel
-        && area.width >= 100
-        && !app.citations.is_empty();
-    let show_auxiliary_pane =
-        diff_as_rail || prod_as_rail || show_context_panel || show_citation_pane;
-    let main_areas = if show_auxiliary_pane {
-        let pane_width = if diff_as_rail {
-            54.min(area.width.saturating_sub(54))
-        } else if prod_as_rail {
-            48.min(area.width.saturating_sub(54))
-        } else if show_citation_pane {
-            36
-        } else if area.width >= 90 {
-            42.min(area.width.saturating_sub(44))
-        } else {
-            area.width.saturating_sub(30).max(24)
-        };
-        let areas = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Min(30),
-                Constraint::Length(1),
-                Constraint::Length(pane_width),
-            ])
-            .split(surface_rows[0])
-            .to_vec();
-        vec![areas[0], areas[2]]
-    } else {
-        vec![surface_rows[0]]
-    };
-
-    if show_prod_panel {
-        render_prod_panel(frame, surface_rows[0], app, now);
-    } else if show_diff_panel {
-        render_diff_panel(frame, surface_rows[0], app);
-    } else {
-        let primary_title = if app.fleet.is_some() {
-            " ORCHESTRA  Ctrl+←/→ focus "
-        } else if app.todo_visible {
-            " TASKS  Ctrl+T expand · Ctrl+←/→ focus "
-        } else {
-            " CONVERSATION  Tab · Ctrl+←/→ focus "
-        };
-        let primary_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(
-                Style::default().fg(if app.focus == FocusSurface::Transcript {
-                    app.theme.primary()
-                } else {
-                    app.theme.ghost()
-                }),
-            )
-            .title(primary_title);
-        let primary_area = primary_block.inner(main_areas[0]);
-        frame.render_widget(primary_block, main_areas[0]);
-
-        let transcript_band = if let Some(fleet) = &app.fleet {
-            let raw_lines = commands::fleet_view_lines(fleet, primary_area.width);
-            let wanted = u16::try_from(raw_lines.len()).unwrap_or(u16::MAX);
-            let fleet_height = wanted.min(primary_area.height.saturating_sub(1));
-            let fleet_rows = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Length(fleet_height), Constraint::Min(1)])
-                .split(primary_area);
-            let last = raw_lines.len().saturating_sub(1);
-            let lines = raw_lines
-                .into_iter()
-                .enumerate()
-                .map(|(index, line)| {
-                    if index == last {
-                        styled_fleet_progress_line(line)
-                    } else {
-                        styled_fleet_agent_line(line)
-                    }
-                })
-                .collect::<Vec<_>>();
-            frame.render_widget(
-                Paragraph::new(lines).style(Style::default().fg(Color::Gray)),
-                fleet_rows[0],
-            );
-            fleet_rows[1]
-        } else {
-            primary_area
-        };
-        let transcript_band = if app.todo_visible {
-            if let Some(todo) = &app.todo {
-                let lines = commands::todo_view_lines(todo, app.todo_expanded);
-                let wanted = u16::try_from(lines.len()).unwrap_or(u16::MAX);
-                let height = wanted.min(transcript_band.height.saturating_sub(1));
-                let bands = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Length(height), Constraint::Min(1)])
-                    .split(transcript_band);
-                let rendered = lines
-                    .into_iter()
-                    .map(|line| {
-                        let style = if line.starts_with("✓ ") {
-                            Style::default()
-                                .fg(Color::Green)
-                                .add_modifier(Modifier::CROSSED_OUT)
-                        } else if line.starts_with("● ") {
-                            Style::default()
-                                .fg(Color::Cyan)
-                                .add_modifier(Modifier::BOLD)
-                        } else if line == "Todo" {
-                            Style::default()
-                                .fg(app.theme.primary())
-                                .add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default().fg(Color::Gray)
-                        };
-                        Line::styled(line, style)
-                    })
-                    .collect::<Vec<_>>();
-                frame.render_widget(Paragraph::new(rendered), bands[0]);
-                bands[1]
-            } else {
-                transcript_band
-            }
-        } else {
-            transcript_band
-        };
-        let transcript_root = if let Some(progress) = &app.work_progress {
-            let plan_lines = progress
-                .plan
-                .as_ref()
-                .map(|plan| work_plan::lines(plan, &app.theme.screen_palette()))
-                .unwrap_or_default();
-            let plan_height = u16::try_from(plan_lines.len()).unwrap_or(u16::MAX);
-            let work_rows = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(plan_height),
-                    Constraint::Length(1),
-                    Constraint::Length(1),
-                    Constraint::Min(1),
-                ])
-                .split(transcript_band);
-            if !plan_lines.is_empty() {
-                frame.render_widget(Paragraph::new(plan_lines), work_rows[0]);
-            }
-            frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled(
-                        "work  ",
-                        Style::default()
-                            .fg(app.theme.primary())
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(progress.line(now), Style::default().fg(Color::Gray)),
-                ])),
-                work_rows[1],
-            );
-            frame.render_widget(
-                Paragraph::new(progress.phase_track())
-                    .style(Style::default().fg(app.theme.ghost())),
-                work_rows[2],
-            );
-            work_rows[3]
-        } else if let Some(progress) = &app.sweep_progress {
-            let sweep_rows = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(1),
-                    Constraint::Length(1),
-                    Constraint::Min(1),
-                ])
-                .split(transcript_band);
-            frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled(
-                        "sweep  ",
-                        Style::default()
-                            .fg(app.theme.primary())
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(progress.line(), Style::default().fg(Color::Gray)),
-                ])),
-                sweep_rows[0],
-            );
-            frame.render_widget(
-                Gauge::default()
-                    .gauge_style(
-                        Style::default()
-                            .fg(app.theme.primary())
-                            .bg(app.theme.ghost()),
-                    )
-                    .ratio((progress.percent / 100.0).clamp(0.0, 1.0))
-                    .label(format!("{:.0}%", progress.percent)),
-                sweep_rows[1],
-            );
-            sweep_rows[2]
-        } else {
-            transcript_band
-        };
-        let transcript = render_transcript_with_citations(
-            &app.transcript,
-            !show_citation_pane,
-            app.theme,
-            transcript_root.width,
-        );
-        let paragraph = Paragraph::new(transcript.text).wrap(Wrap { trim: false });
-        let line_count = paragraph.line_count(transcript_root.width);
-        let visible = usize::from(transcript_root.height);
-        let bottom_scroll = line_count.saturating_sub(visible);
-        let scroll =
-            u16::try_from(bottom_scroll.saturating_sub(app.transcript_scroll.min(bottom_scroll)))
-                .unwrap_or(u16::MAX);
-        let targets =
-            transcript::visible_tool_targets(transcript.interactive_rows, transcript_root, scroll);
-        *app.tool_click_targets.borrow_mut() = targets;
-        let show_ground = !app.has_submitted_question
-            && app.transcript.is_empty()
-            && app.sweep_progress.is_none()
-            && app.work_progress.is_none()
-            && app.gate_modal.is_none()
-            && app.fleet.is_none()
-            && !app.todo_visible
-            && app.picker.is_none()
-            && app.resume_picker.is_none()
-            && !show_auxiliary_pane;
-        if show_ground {
-            render_symbol_ground(frame, transcript_root, app);
-        }
-        frame.render_widget(paragraph.scroll((scroll, 0)), transcript_root);
-        if show_ground {
-            render_empty_state(frame, transcript_root, app);
-        }
-    }
-    if let Some(citation_area) = main_areas.get(1).copied() {
-        if diff_as_rail {
-            render_diff_panel(frame, citation_area, app);
-        } else if prod_as_rail {
-            render_prod_panel(frame, citation_area, app, now);
-        } else if show_context_panel {
-            render_context_panel(frame, citation_area, app);
-        } else {
-            let lines = app
-                .citations
-                .iter()
-                .enumerate()
-                .map(|(index, source)| {
-                    Line::from(vec![
-                        Span::styled(
-                            format!("{:>2}  ", index + 1),
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                        Span::styled(
-                            source_label(source),
-                            Style::default().fg(app.theme.primary()),
-                        ),
-                    ])
-                })
-                .collect::<Vec<_>>();
-            frame.render_widget(
-                Paragraph::new(lines)
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(
-                                if app.focus == FocusSurface::Auxiliary {
-                                    app.theme.primary()
-                                } else {
-                                    Color::DarkGray
-                                },
-                            ))
-                            .title(" CITED EVIDENCE "),
-                    )
-                    .wrap(Wrap { trim: false }),
-                citation_area,
-            );
-        }
-    }
-    let composer_area = if modal_owns_input {
-        Rect::default()
-    } else {
-        app.composer.render_bottom_pane(
-            rows[2],
-            frame.buffer_mut(),
-            "ASK ESTELLE",
-            app.focus == FocusSurface::Composer,
-            ComposerPanePalette {
-                background: app.theme.background(),
-                focused_border: app.theme.primary(),
-                idle_border: app.theme.ghost(),
-            },
-        );
-        rows[2]
-    };
-    frame.render_widget(
-        Paragraph::new(footer_line(app, now, rows[3].width)),
-        rows[3],
-    );
-    if let Some(picker) = &app.resume_picker {
-        render_resume_picker(frame, picker, rows[1], app);
-    } else if let Some(picker) = &app.picker {
-        render_picker(frame, picker, rows[1], app);
-    } else if let Some(modal) = &app.gate_modal {
-        render_gate_modal(frame, modal, rows[1], app);
-    } else if !app.boot_active(now)
-        && app.focus == FocusSurface::Composer
-        && let Some(position) = app.composer.bottom_pane_cursor_pos(composer_area)
-    {
-        frame.set_cursor_position(position);
-    }
-    if let Some(boot) = &app.boot {
-        let elapsed_ms = app.boot_elapsed_ms(now);
-        if !boot.phase(elapsed_ms).is_finished() {
-            boot.render(
-                area,
-                frame.buffer_mut(),
-                elapsed_ms,
-                app.theme.boot_palette(),
-            );
-        }
-    }
-}
-
-fn styled_fleet_progress_line(line: String) -> Line<'static> {
-    let Some(open) = line.find('[') else {
-        return Line::from(line);
-    };
-    let Some(relative_close) = line[open..].find(']') else {
-        return Line::from(line);
-    };
-    let close = open + relative_close;
-    let prefix = line[..open].to_string();
-    let bar = &line[open + 1..close];
-    let boundary = bar.find('─').unwrap_or(bar.len());
-    let completed = bar[..boundary].to_string();
-    let remaining = bar[boundary..].to_string();
-    let suffix = line[close + 1..].to_string();
-    Line::from(vec![
-        Span::styled(prefix, Style::default().fg(Color::Cyan)),
-        Span::styled("[", Style::default().fg(Color::Gray)),
-        Span::styled(completed, Style::default().fg(Color::Green)),
-        Span::styled(remaining, Style::default().fg(Color::Blue)),
-        Span::styled(format!("]{suffix}"), Style::default().fg(Color::Gray)),
-    ])
-}
-
-fn styled_fleet_agent_line(line: String) -> Line<'static> {
-    let markers = [
-        ("✓ ", Color::Green),
-        ("× ", Color::Red),
-        ("◷ ", Color::Yellow),
-        ("■ ", Color::Magenta),
-        ("? ", Color::Cyan),
-    ];
-    let mut spans = Vec::new();
-    let mut remaining = line.as_str();
-    while let Some((offset, marker, colour)) = markers
-        .iter()
-        .filter_map(|(marker, colour)| {
-            remaining
-                .find(marker)
-                .map(|offset| (offset, *marker, *colour))
-        })
-        .min_by_key(|(offset, _, _)| *offset)
-    {
-        if offset > 0 {
-            spans.push(Span::styled(
-                remaining[..offset].to_string(),
-                Style::default().fg(Color::Gray),
-            ));
-        }
-        spans.push(Span::styled(
-            marker.to_string(),
-            Style::default().fg(colour).add_modifier(Modifier::BOLD),
-        ));
-        remaining = &remaining[offset + marker.len()..];
-    }
-    if !remaining.is_empty() {
-        spans.push(Span::styled(
-            remaining.to_string(),
-            Style::default().fg(Color::Gray),
-        ));
-    }
-    Line::from(spans)
-}
-
-fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &App) -> io::Result<()> {
-    let now = Instant::now();
-    terminal.draw(|frame| render_frame(frame, app, now))?;
-    Ok(())
-}
-
 fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>) -> bool {
     if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
         return false;
     }
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
         app.cancel_active();
+        // 🔴 `esc` drained the queue after cancelling and `ctrl+c` did not. That asymmetry left
+        // the in-flight slot empty with messages still behind it and nothing to start them —
+        // the mechanism by which an echoed turn waits forever.
+        app.start_next(tx);
         return true;
     }
     if let Some(picker) = app.resume_picker.as_mut() {
@@ -7458,13 +6253,39 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
     }
     if let Some(picker) = app.picker.as_mut() {
         match key.code {
-            KeyCode::Esc if !app.login_required => app.picker = None,
+            KeyCode::Esc if !app.login_required => {
+                app.picker = None;
+                app.clear_skill_filter();
+            }
             KeyCode::Esc => {}
             KeyCode::Down => {
                 picker.selected = (picker.selected + 1).min(picker.rows.len().saturating_sub(1));
             }
             KeyCode::Up => picker.selected = picker.selected.saturating_sub(1),
             KeyCode::Enter => app.activate_picker(tx),
+            // 🔴 **TYPE TO FILTER — 247 PLAYBOOKS ARE NOT NAVIGABLE BY ARROW KEY.**
+            //
+            // Only a filterable picker consumes letters, which is a fact about `skill_catalog`
+            // being loaded rather than a string comparison on the picker's title.
+            //
+            // ⚠️ DIGITS ARE DELIBERATELY NOT TAKEN. The picker's footer advertises `1-9 select`,
+            // and that footer is a fixed string this lane does not own — so stealing digits for
+            // the filter would turn an advertised affordance into a lie. The cost is that a
+            // playbook can only be narrowed by its letters and dashes; the digits in a name are
+            // still reachable, just not typeable into the filter.
+            KeyCode::Backspace if !app.skill_catalog.is_empty() => {
+                app.skill_filter.pop();
+                app.refilter_skills();
+            }
+            KeyCode::Char(c)
+                if !app.skill_catalog.is_empty()
+                    && (c.is_ascii_alphabetic() || c == '-')
+                    && !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                app.skill_filter.push(c.to_ascii_lowercase());
+                app.refilter_skills();
+            }
             // Number-key direct select, ported from Codex's ListSelectionView
             // (bottom_pane/list_selection_view.rs:1054): a digit picks that row and activates
             // it in one keypress — no arrow walk, no Enter.
@@ -7522,8 +6343,46 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
         app.focus = FocusSurface::Composer;
         return false;
     }
-    if key.code == KeyCode::Char('m') && key.modifiers.contains(KeyModifiers::ALT) {
+    // 🔴 **THIS WAS `alt+m` UNTIL 2026-09-02, DIRECTLY ABOVE THE COMMENT FORBIDDING IT.**
+    //
+    // The rule below names `alt+m → µ` as its own worked example, and the binding it forbids sat
+    // four lines above it for the life of the file. Nobody read them together, which is the whole
+    // lesson: a rule written next to its own violation is a rule that reads as being obeyed.
+    //
+    // The founder's instruction is the general form: *"Windows users don't have an option/command
+    // key. Mac users don't have an alt key. We both have control."* **`ctrl` is the only modifier
+    // both platforms share**, so this is `ctrl+g` on every platform and the hint row says the same
+    // thing everywhere — no per-platform label to keep in sync with a per-platform binding.
+    //
+    // ⚠️ **IT IS `ctrl+g` AND NOT `ctrl+m`, AND THE REASON IS NOT PREFERENCE.** `Ctrl+M` is ASCII
+    // carriage return. This binary never calls `PushKeyboardEnhancementFlags` — that lives in
+    // `tui/keyboard_modes.rs`, on the Codex path `main.rs` cannot reach — so input takes crossterm's
+    // legacy byte parser, where the `b'\r'` arm shadows the `\x01..=\x1A` control-char arm and
+    // emits `KeyCode::Enter` with NO modifier. A `ctrl+m` guard here would swallow every Enter
+    // before the composer ever submits, i.e. it would break sending a message. `ctrl+g` is free:
+    // `handle_key` binds only c/o/t/w/x/Tab, and the `open_external_editor: ctrl+g` default in
+    // `keymap.rs` is dispatched solely by `app/input.rs` on the private Codex path.
+    if key.code == KeyCode::Char('g') && key.modifiers.contains(KeyModifiers::CONTROL) {
         app.toggle_context_panel();
+        return false;
+    }
+    // 🔴 **NEVER BIND `alt+<letter>` IN THIS BINARY. macOS EATS IT BEFORE WE SEE IT.**
+    //
+    // This was `alt+s` for one commit and it was a real defect: on macOS, Option is a COMPOSE
+    // modifier, not a meta key. Terminal.app ships with "Use Option as Meta key" OFF, so Option+S
+    // produces the character `ß` and no modified key event is ever sent — the founder pressed it
+    // and the composer filled with `ßßßßßßß`. The binding was not wrong, the keystroke never
+    // arrived. Every letter is affected (alt+m → µ, alt+r → ®, alt+n → ˜, alt+e → ´), so checking
+    // "which chords do our two keymaps bind" is NOT a sufficient survey — the question is which
+    // chords reach the process at all.
+    //
+    // `ctrl+o` instead: Ctrl chords arrive as control characters and are never composed. Free
+    // three ways — `handle_key` binds only ctrl+c/t/w/x, `ChatComposer` never reads it (it
+    // consumes `EditorKeymap`/`ComposerKeymap`, while `copy: ctrl+o` lives in `AppKeymap`, which
+    // only the chatwidget consumes), and `the_selection_toggle_is_a_control_chord_and_reaches_it`
+    // goes red the day either of those stops being true.
+    if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        app.toggle_terminal_selection();
         return false;
     }
     if key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -7560,6 +6419,13 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
         app.start_next(tx);
         return false;
     }
+    // esc with nothing in flight but a queue behind it DROPS the queue. The hint row advertises
+    // `esc stop`, and "stop" that leaves sixteen messages primed to fire is not a stop. Cancel
+    // first, drop second, each with its own sentence, so the two are never confused.
+    if key.code == KeyCode::Esc && !app.queue.is_empty() {
+        app.drop_queue();
+        return false;
+    }
     if key.code == KeyCode::Char('?') && key.modifiers.is_empty() && app.composer.is_empty() {
         app.submit("/help".to_string(), tx);
         return false;
@@ -7570,6 +6436,31 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
     }
     if key.code == KeyCode::Tab && !app.composer.text().trim_start().starts_with('/') {
         app.move_focus(true);
+        return false;
+    }
+    // 🔴 UP RECALLS THE WAITING MESSAGES, BUT ONLY WHEN UP HAS NOTHING ELSE TO MEAN.
+    //
+    // The composer already owns `up` for draft history, and the transcript owns it for scrolling.
+    // Stealing the key outright would break both. It is claimed ONLY when the composer is empty
+    // (so there is no draft history walk in progress), the focus is the composer, and something
+    // is actually waiting — a conjunction in which `up` previously did nothing useful.
+    if key.code == KeyCode::Up
+        && key.modifiers.is_empty()
+        && app.focus == FocusSurface::Composer
+        && app.composer.is_empty()
+        && !app.queue.is_empty()
+    {
+        app.recall_queue_into_composer();
+        return false;
+    }
+    // ctrl+x drops the most recently queued message. `esc` already drops the WHOLE queue, so this
+    // is the granular half the founder asked for: "you can just delete that message from the
+    // queue". Verified unbound elsewhere in this handler before taking it.
+    if key.code == KeyCode::Char('x')
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+        && !app.queue.is_empty()
+    {
+        app.drop_last_queued();
         return false;
     }
     if app.focus == FocusSurface::Transcript {
@@ -7920,22 +6811,22 @@ fn failure_advice(error: &str) -> Vec<String> {
     match http_status(error) {
         Some(409) => two(
             "Estelle is already ingesting for this account.",
-            "Nothing is wrong here — let the run in flight finish, then retry.",
+            "A run is already in flight. Retry when it finishes.",
         ),
         Some(401 | 403) => two(
-            "The stored credential was refused.",
+            "The credential was refused.",
             "Run `estelle login` to store a working key, then retry.",
         ),
         Some(402) => two(
             "This account is over its allowance for that operation.",
-            "Raise the plan or wait for the next period; the command itself is fine.",
+            "Raise the plan or wait for the next period. The command is not the problem.",
         ),
         Some(429 | 503) => two(
             "Estelle asked to be retried later, and the client already waited the interval it advertised.",
-            "Retry shortly. Nothing needs changing here.",
+            "Retry shortly. No change is needed.",
         ),
         Some(status) if status >= 500 => two(
-            "Estelle failed on its side, not on yours.",
+            "The failure was server-side.",
             "Retry; if it persists, report the message above.",
         ),
         _ => two(
@@ -7945,9 +6836,304 @@ fn failure_advice(error: &str) -> Vec<String> {
     }
 }
 
+/// `estelle demo --list` — every book screen and the contract it still needs, as plain rows.
+///
+/// ⚠️ **NO FIXTURE DATA CROSSES THIS FUNCTION.** A listing is names and contracts; it is safe with
+/// the gate shut, which is why it is the one demo path that does not consult it.
+fn demo_listing(fixtures: bool) -> String {
+    const SPEC: &[cols::Col] = &[cols::Col::l(24), cols::Col::l(8), cols::Col::l(72)];
+    let mut out = vec![cols::row(
+        SPEC,
+        &[
+            cols::Cell("screen", Color::Reset),
+            cols::Cell("size", Color::Reset),
+            cols::Cell("needs", Color::Reset),
+        ],
+        0,
+    )]
+    .into_iter()
+    .map(|line| {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
+    })
+    .collect::<Vec<_>>();
+    for screen in design_book::SCREENS {
+        let size = format!("{}x{}", screen.width, screen.height);
+        let line = cols::row(
+            SPEC,
+            &[
+                cols::Cell(screen.name, Color::Reset),
+                cols::Cell(&size, Color::Reset),
+                cols::Cell(screen.contract, Color::Reset),
+            ],
+            0,
+        );
+        out.push(
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+                .trim_end()
+                .to_string(),
+        );
+    }
+    out.push(String::new());
+    out.push(format!(
+        "{} screens · fixtures {}",
+        design_book::SCREENS.len(),
+        if fixtures {
+            "ON — the numbers on these screens are NOT measured"
+        } else {
+            "off — each screen renders its empty state"
+        }
+    ));
+    out.join("\n")
+}
+
+/// Page through the design book in the real terminal, with the real renderer.
+///
+/// 🔴 **THE FIXTURE BANNER IS DRAWN BY THIS FUNCTION, NOT BY THE SCREENS.** A per-screen footnote
+/// is a thing a screen can forget; the founder's constraint is that a fixture must be unmistakable
+/// in the product. So the viewer's own chrome carries it, once, above every screen, and the screens
+/// keep their own specific disclosures underneath.
+async fn run_demo(name: Option<&str>, list: bool, demo: bool, cream: bool) -> ExitCode {
+    let fixtures = design_book::fixtures_allowed(demo);
+    if list {
+        let mut stdout = tokio::io::stdout();
+        let ok = stdout
+            .write_all(format!("{}\n", demo_listing(fixtures)).as_bytes())
+            .await
+            .is_ok();
+        return if ok {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
+    let mut index = 0usize;
+    if let Some(name) = name {
+        match design_book::SCREENS
+            .iter()
+            .position(|screen| screen.name == name)
+        {
+            Some(found) => index = found,
+            None => {
+                let mut stdout = tokio::io::stdout();
+                let _ = stdout
+                    .write_all(
+                        format!("no screen named {name:?}\n\n{}\n", demo_listing(fixtures))
+                            .as_bytes(),
+                    )
+                    .await;
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    let mut theme = if cream { Theme::CreamInk } else { Theme::Dark };
+    let session = match TerminalSession::enter() {
+        Ok(session) => session,
+        Err(error) => return demo_failure(&error).await,
+    };
+    let mut terminal = match Terminal::new(CrosstermBackend::new(io::stdout())) {
+        Ok(terminal) => terminal,
+        Err(error) => {
+            drop(session);
+            return demo_failure(&error).await;
+        }
+    };
+    let mut events = EventStream::new();
+    let mut ticker = tokio::time::interval(FRAME_INTERVAL);
+    let mut tick = 0u64;
+    loop {
+        let screen = &design_book::SCREENS[index];
+        let palette = theme.screen_palette();
+        let mut lines = demo_chrome(screen, index, fixtures, &palette);
+        lines.extend(design_book::render(screen, &palette, tick, true, fixtures));
+        if terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    Paragraph::new(lines).style(Style::default().bg(theme.background())),
+                    frame.area(),
+                );
+            })
+            .is_err()
+        {
+            break;
+        }
+        tokio::select! {
+            _ = ticker.tick() => tick = tick.wrapping_add(1),
+            event = events.next() => match event {
+                Some(Ok(Event::Key(key))) if key.kind != KeyEventKind::Release => {
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => break,
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
+                        KeyCode::Right | KeyCode::Down | KeyCode::Char('n' | 'j') => {
+                            index = (index + 1) % design_book::SCREENS.len();
+                        }
+                        KeyCode::Left | KeyCode::Up | KeyCode::Char('p' | 'k') => {
+                            index = (index + design_book::SCREENS.len() - 1)
+                                % design_book::SCREENS.len();
+                        }
+                        KeyCode::Char('t') => {
+                            theme = match theme {
+                                Theme::Dark => Theme::CreamInk,
+                                Theme::CreamInk => Theme::Dark,
+                            };
+                        }
+                        _ => {}
+                    }
+                }
+                Some(Ok(_)) => {}
+                Some(Err(_)) | None => break,
+            },
+        }
+    }
+    drop(session);
+    ExitCode::SUCCESS
+}
+
+/// The viewer's own two rows: which screen, and whether anything on it was measured.
+fn demo_chrome(
+    screen: &design_book::BookScreen,
+    index: usize,
+    fixtures: bool,
+    palette: &theme::Palette,
+) -> Vec<Line<'static>> {
+    let total = design_book::SCREENS.len();
+    let position = format!("{} of {total}", index + 1);
+    let head = cols::rule(
+        screen.name,
+        &position,
+        usize::from(screen.width).min(140),
+        palette.dim,
+        palette.mid,
+        palette.cite,
+    );
+    let head = Line::from(
+        head.spans
+            .into_iter()
+            .map(|span| Span::styled(span.content.into_owned(), span.style))
+            .collect::<Vec<_>>(),
+    );
+    // 🔴 The banner says WHAT IS NOT MEASURED, in the same words on every screen. Never a badge
+    // that only a reader who knows the convention can decode.
+    let banner = if fixtures {
+        Span::styled(
+            "  design fixture · the numbers on this screen were NOT measured".to_string(),
+            Style::default().fg(palette.warn),
+        )
+    } else {
+        Span::styled(
+            format!("  needs {}", screen.contract),
+            Style::default().fg(palette.dim),
+        )
+    };
+    vec![
+        head,
+        Line::from(banner),
+        Line::from(Span::styled(
+            "  ←/→ screens · t theme · q quit".to_string(),
+            Style::default().fg(palette.dim),
+        )),
+        Line::from(""),
+    ]
+}
+
+/// 🎬 `estelle demo --session N` — play one film, unattended, and come back with the terminal
+/// exactly as it was found.
+///
+/// ⚠️ **THE TERMINAL IS CLAIMED AND RELEASED HERE, NOT IN THE PLAYER.** `TerminalSession` restores
+/// raw mode and leaves the alternate screen on `Drop`, and it is dropped on EVERY path out of this
+/// function including the error ones. The founder had to Ctrl-C repeatedly out of an earlier
+/// attempt at this; a player that owned the session could return an error before its own cleanup
+/// and leave him in raw mode with no cursor.
+async fn run_session(film: u8, speed: f32, demo: bool, cream: bool, list: bool) -> ExitCode {
+    let fixtures = design_book::fixtures_allowed(demo);
+    // `--session 0` is the listing. It draws no fixture data — a film's NAME and RUNTIME are safe
+    // with the gate shut, the same reason `--list` is the one demo path that does not consult it.
+    if film == 0 {
+        let mut stdout = tokio::io::stdout();
+        let ok = stdout
+            .write_all(format!("{}\n", demo_session::listing()).as_bytes())
+            .await
+            .is_ok();
+        return if ok {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
+    if let (Some(found), true) = (design_book::script::film(film), list) {
+        let mut stdout = tokio::io::stdout();
+        let ok = stdout
+            .write_all(format!("{}\n", demo_session::timeline(found)).as_bytes())
+            .await
+            .is_ok();
+        return if ok {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
+    if design_book::script::film(film).is_none() {
+        // 🔴 A FILM THAT IS NOT WRITTEN SAYS SO. It does not play a shortened stand-in, and it does
+        // not play film 1 under another number: footage that silently substitutes a different story
+        // is exactly the class of quiet wrong answer this product exists to refuse.
+        let mut stdout = tokio::io::stdout();
+        let _ = stdout
+            .write_all(
+                format!(
+                    "no film {film}. written today:\n\n{}\n",
+                    demo_session::listing()
+                )
+                .as_bytes(),
+            )
+            .await;
+        return ExitCode::FAILURE;
+    }
+
+    let theme = if cream { Theme::CreamInk } else { Theme::Dark };
+    let session = match TerminalSession::enter() {
+        Ok(session) => session,
+        Err(error) => return demo_failure(&error).await,
+    };
+    let outcome = demo_session::run(film, speed, fixtures, theme).await;
+    drop(session);
+    match outcome {
+        Ok(code) => code,
+        Err(error) => demo_failure(&error).await,
+    }
+}
+
+async fn demo_failure(error: &impl std::fmt::Display) -> ExitCode {
+    let mut stdout = tokio::io::stdout();
+    let _ = stdout
+        .write_all(format!("estelle demo could not claim the terminal: {error}\n").as_bytes())
+        .await;
+    ExitCode::FAILURE
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let args = Args::parse();
+    // `leaked` is the offline self-audit: it must run before ANYTHING that can touch the
+    // network (the upgrade check, the version notice) — no network, no account, ever.
+    if matches!(args.command, Some(Command::Leaked)) {
+        return leaked::run();
+    }
+    if matches!(args.command, Some(Command::Version)) {
+        // REASON for the expect: the crate-level `deny` exists so nothing writes over the TUI's
+        // alternate screen. `estelle version` runs before any terminal is claimed and printing the
+        // version to stdout is the entire command — a scripted `estelle version | ...` depends on it.
+        #[expect(clippy::print_stdout, reason = "`estelle version` IS a stdout command")]
+        {
+            println!("estelle {}", env!("CARGO_PKG_VERSION"));
+        }
+        return ExitCode::SUCCESS;
+    }
     if let Some(Command::Upgrade { check }) = args.command {
         return run_upgrade(check).await;
     }
@@ -7982,6 +7168,20 @@ async fn main() -> ExitCode {
             Err(error) => login_failure(&error).await,
             Ok(_) => ExitCode::SUCCESS,
         };
+    }
+    if let Some(Command::Demo {
+        screen,
+        list,
+        demo,
+        cream,
+        session,
+        speed,
+    }) = &args.command
+    {
+        if let Some(film) = session {
+            return run_session(*film, *speed, *demo, *cream, *list).await;
+        }
+        return run_demo(screen.as_deref(), *list, *demo, *cream).await;
     }
     if matches!(args.command, Some(Command::Doctor)) {
         // ⚠️ `lines_with_binding`, not `lines`: the latter cannot fail, so `doctor` used to exit 0
@@ -8071,6 +7271,24 @@ async fn main() -> ExitCode {
         };
     }
     if matches!(args.command, Some(Command::Acp)) {
+        // 🔴 THIS LOOKED LIKE A HANG AND IT IS NOT ONE, WHICH IS ITS OWN DEFECT.
+        // `acp` speaks the Agent Client Protocol over stdio. Piped a valid `initialize` it replies
+        // and exits 0; given a terminal it correctly waits for a client that will never type. To the
+        // person who just ran it, silence and a hang are the same observation — so say which it is.
+        // stderr, not stdout: stdout is the protocol channel and must stay clean.
+        // REASON for the expect: same deny, same exemption. This runs before any terminal is
+        // claimed, and stderr is deliberate — stdout is the ACP protocol channel and must stay clean.
+        #[expect(
+            clippy::print_stderr,
+            reason = "the ACP notice must not enter the stdout protocol"
+        )]
+        if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            eprintln!(
+                "estelle acp is a protocol server, not an interactive command. It is now waiting for \
+                 an ACP client to speak JSON-RPC on stdin, so nothing will appear here. Point your \
+                 editor's ACP agent setting at `estelle acp`; press Ctrl-C to stop."
+            );
+        }
         let result = async {
             let store = CredentialStore::default_location()?;
             let credential = store.resolve()?;
@@ -8239,12 +7457,25 @@ mod tests {
     use wiremock::matchers::method;
     use wiremock::matchers::path;
 
+    /// 🔴 **THE BRANCH NAME IS PINNED, AND THAT IS WHY EIGHT SNAPSHOTS WERE PERMANENTLY RED.**
+    ///
+    /// `App::new` calls `read_branch(&root)`, which shells out to `git rev-parse --abbrev-ref
+    /// HEAD` against the LIVE worktree. Every snapshot in this file carries that answer on frame
+    /// line 4, so eight of them were green only on `coach/r11-cli-integration` — the branch they
+    /// happened to be recorded on — and red on every branch since, including this one.
+    ///
+    /// ⚠️ **A TEST THAT CANNOT BE GREEN ON YOUR BRANCH IS WORSE THAN A MISSING TEST.** It teaches
+    /// the reader to scroll past a red snapshot, and the next red one will be a real regression in
+    /// the frame these eight exist to protect. The fix is not to re-record them on this branch —
+    /// that just moves the problem to the next lane — it is to stop the fixture reading the
+    /// environment at all. `read_branch` itself is untouched and still exercised by its own tests.
     fn test_app() -> App {
         let mut app = App::new(Args {
             command: None,
             repo: Some("uqeu/estelle".to_string()),
         });
         app.boot = None;
+        app.branch = Some("main".to_string());
         app
     }
 
@@ -8296,7 +7527,7 @@ mod tests {
             started: now - Duration::from_secs(35),
             cancel: CancellationToken::new(),
         });
-        let status = format!("{:?}", status_line(&app, now));
+        let status = format!("{:?}", status_bar_line(&app, now, 120));
         assert!(status.contains("local shell · timeout 45s"));
         assert!(status.contains("local command has not exited"));
     }
@@ -8386,7 +7617,7 @@ mod tests {
             .expect("render frame");
         let frame = format!("{}", terminal.backend());
 
-        assert!(frame.contains("THE PLAN"));
+        assert!(frame.contains("── plan · revision "), "{frame}");
         assert!(frame.contains("Prove parser behavior"));
         assert!(frame.contains("— unevidenced"));
         assert!(frame.contains("▲") && frame.contains("scripts/deploy.sh"));
@@ -8577,12 +7808,15 @@ mod tests {
             &tx,
         );
 
-        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 30);
-        assert!(rendered.contains("where does charge fail?"));
+        // Taller than it was: the demo's input bar is five rows plus a blank and the session
+        // column now carries a repo/branch line, so a 30-row frame no longer holds this whole
+        // replayed session. The claim under test is the REPLAY, not how much fits at 30 rows.
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 38);
+        assert!(rendered.contains("where does charge fail?"), "{rendered}");
         assert!(rendered.contains("The retry loop has no ceiling."));
         assert!(rendered.contains("api/charge.ts:52"));
         assert!(rendered.contains("verify the retry fix"));
-        assert!(rendered.contains("SESSIONS"));
+        assert!(rendered.contains("sessions"), "{rendered}");
         assert!(rendered.contains("main"));
         assert!(rendered.contains("retries"));
         assert!(rendered.contains("Alt+Left/Right switch"));
@@ -8775,6 +8009,16 @@ mod tests {
         assert!(provider_catalog::login_route("made-up-provider", None).is_err());
     }
 
+    /// Every corner and tee that makes a box. **NO EXEMPTIONS** — not even the `└─ core` tree
+    /// connector inside `production_hud`, which had one until the founder's rule was quoted back
+    /// verbatim: *there are no boxes in Estelle*. An assertion with a carve-out is an assertion
+    /// nobody can trust later, because the carve-out is where the next one hides.
+    ///
+    /// `│` (U+2502) is deliberately NOT here: it is the divider BETWEEN panes
+    /// (`session_view::divider`) and the sub-line marker inside the refusal block, never a border
+    /// around anything. Corners are what make a box, and corners are what must be zero.
+    const BOX_CORNERS: [&str; 9] = ["┌", "┐", "└", "┘", "├", "┤", "┬", "┴", "┼"];
+
     fn rendered_frame(app: &App, now: Instant) -> String {
         rendered_frame_at_size(app, now, 80, 24)
     }
@@ -8786,6 +8030,27 @@ mod tests {
             .draw(|frame| render_frame(frame, app, now))
             .expect("render frame");
         format!("{}", terminal.backend())
+    }
+
+    /// The rendered buffer AND where the frame put the caret.
+    ///
+    /// ⚠️ The caret is the half a text dump cannot see, and it is the half the founder's
+    /// "glitch where you can't see where you're typing" lives in. Read back off the backend
+    /// rather than recomputed, so it is the position the terminal would actually receive.
+    fn rendered_buffer_and_cursor(
+        app: &App,
+        now: Instant,
+        width: u16,
+        height: u16,
+    ) -> (ratatui::buffer::Buffer, ratatui::layout::Position) {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| render_frame(frame, app, now))
+            .expect("render frame");
+        let cursor = ratatui::backend::Backend::get_cursor_position(terminal.backend_mut())
+            .expect("a caret position");
+        (terminal.backend().buffer().clone(), cursor)
     }
 
     fn rendered_buffer_at_size(
@@ -8814,6 +8079,7 @@ mod tests {
         });
         let now = Instant::now();
         let mut names = Vec::new();
+        let mut boxed_frames: Vec<&'static str> = Vec::new();
         let mut capture = |name: &'static str, app: &App, width: u16, height: u16, needle: &str| {
             let buffer = rendered_buffer_at_size(app, now, width, height);
             let text = test_gallery::buffer_text(&buffer);
@@ -8821,6 +8087,14 @@ mod tests {
                 text.contains(needle),
                 "{name} did not render expected text {needle:?}\n{text}"
             );
+            // 🔴 NO BOX REACHES A LIVE FRAME. The catalog draws zero corners and the live renderer
+            // drew them on eight of these eighteen surfaces — one row carried both languages at
+            // once: `── session · uqeu/estelle ───  │  ┌ CONTEXT  Alt+M · /context ────┐`. The
+            // guard runs over every state this gallery already builds, so it costs nothing and it
+            // is the only thing that stops the boxes coming back a third time.
+            if BOX_CORNERS.iter().any(|corner| text.contains(*corner)) {
+                boxed_frames.push(name);
+            }
             if let Some(output) = output.as_deref() {
                 test_gallery::write_frame(output, name, &buffer);
             }
@@ -8889,7 +8163,7 @@ mod tests {
             serde_json::from_value(json!({"issues": [], "has_more": false}))
                 .expect("gallery empty issues"),
         );
-        capture("01-startup-home", &home, 160, 38, "ASK ESTELLE");
+        capture("01-startup-home", &home, 160, 38, "── ask · ");
 
         let mut waiting = test_app();
         waiting.auth_resolved = true;
@@ -8925,6 +8199,17 @@ mod tests {
             "Ask about uqeu/estelle",
         );
 
+        // 🔴 THE FIXTURE USED TO DATE EVERY WORKER IN THE YEAR 2100, SO THE `last seen` COLUMN SAID
+        // `clock ahead` ON ALL EIGHT ROWS AND THE FOUNDER READ A COLUMN OF ONE REPEATED WORD.
+        //
+        // The far-future constant was there for determinism — a real timestamp would redraw the
+        // frame differently every day. Deriving the observation times FROM the clock keeps that
+        // (the rendered text is `41s` on every run) while showing what the column is actually for.
+        // ⚠️ One worker is left dated ahead on purpose: `clock ahead` is a real state a reader will
+        // meet, and a gallery that never draws it is a gallery that cannot teach it.
+        let observed = |seconds_ago: f64| live_renderer::epoch_seconds() - seconds_ago;
+        let skewed = live_renderer::epoch_seconds() + 600.0;
+
         let mut orchestra = test_app();
         orchestra.prod_panel_visible = false;
         orchestra.context_panel_visible = true;
@@ -8958,14 +8243,14 @@ mod tests {
                     "evidence": "observed"
                 },
                 "agents": [
-                    {"index": 1, "status": "completed", "state_observed_at": 4102444800.0, "current_action": "Bound checkout_timeout to billing/charge.rs:82", "progress": {"completed": 3, "total": 3}},
-                    {"index": 2, "status": "running", "state_observed_at": 4102444800.0, "current_action": "Reading the retry gate", "progress": {"completed": 2, "total": 4}},
-                    {"index": 3, "status": "running", "state_observed_at": 4102444800.0, "current_action": "Grouping deploy-correlated events", "progress": {"completed": 1, "total": 3}},
-                    {"index": 4, "status": "queued", "state_observed_at": 4102444800.0, "current_action": null, "progress": {"completed": 0, "total": 2}},
-                    {"index": 5, "status": "completed", "state_observed_at": 4102444800.0, "current_action": "Verified the symbol range", "progress": {"completed": 4, "total": 4}},
-                    {"index": 6, "status": "running", "state_observed_at": 4102444800.0, "current_action": "Comparing the proposed patch", "progress": {"completed": 1, "total": 3}},
-                    {"index": 7, "status": "unknown", "state_observed_at": 4102444800.0, "unknown_reason": "worker state not reported", "current_action": null},
-                    {"index": 8, "status": "running", "state_observed_at": 4102444800.0, "current_action": "Checking the regression suite", "progress": {"completed": 0, "total": 2}}
+                    {"index": 1, "status": "completed", "state_observed_at": observed(41.0), "current_action": "Bound checkout_timeout to billing/charge.rs:82", "progress": {"completed": 3, "total": 3}},
+                    {"index": 2, "status": "running", "state_observed_at": observed(12.0), "current_action": "Reading the retry gate", "progress": {"completed": 2, "total": 4}},
+                    {"index": 3, "status": "running", "state_observed_at": observed(8.0), "current_action": "Grouping deploy-correlated events", "progress": {"completed": 1, "total": 3}},
+                    {"index": 4, "status": "queued", "state_observed_at": observed(150.0), "current_action": null, "progress": {"completed": 0, "total": 2}},
+                    {"index": 5, "status": "completed", "state_observed_at": observed(96.0), "current_action": "Verified the symbol range", "progress": {"completed": 4, "total": 4}},
+                    {"index": 6, "status": "running", "state_observed_at": observed(31.0), "current_action": "Comparing the proposed patch", "progress": {"completed": 1, "total": 3}},
+                    {"index": 7, "status": "unknown", "state_observed_at": skewed, "unknown_reason": "worker state not reported", "current_action": null},
+                    {"index": 8, "status": "running", "state_observed_at": observed(4.0), "current_action": "Checking the regression suite", "progress": {"completed": 0, "total": 2}}
                 ]
             }))
             .expect("active orchestra"),
@@ -8975,7 +8260,7 @@ mod tests {
             &orchestra,
             180,
             34,
-            "Estelle Orchestra",
+            "Task(Trace checkout failures · 24 workers)",
         );
 
         let mut completed = test_app();
@@ -8998,19 +8283,25 @@ mod tests {
                 "attempt": "first",
                 "narrator": {"text": "All 8 agents reported terminal outcomes", "evidence": "measured"},
                 "agents": [
-                    {"index": 1, "status": "completed", "state_observed_at": 4102444800.0, "current_action": "Bound checkout_timeout", "progress": {"completed": 3, "total": 3}},
-                    {"index": 2, "status": "completed", "state_observed_at": 4102444800.0, "current_action": "Verified the retry gate", "progress": {"completed": 4, "total": 4}},
-                    {"index": 3, "status": "completed", "state_observed_at": 4102444800.0, "current_action": "Grouped the production events", "progress": {"completed": 3, "total": 3}},
-                    {"index": 4, "status": "completed", "state_observed_at": 4102444800.0, "current_action": "Checked the proposed repair", "progress": {"completed": 2, "total": 2}},
-                    {"index": 5, "status": "completed", "state_observed_at": 4102444800.0, "current_action": "Resolved the symbol range", "progress": {"completed": 4, "total": 4}},
-                    {"index": 6, "status": "completed", "state_observed_at": 4102444800.0, "current_action": "Compared the proposed patch", "progress": {"completed": 3, "total": 3}},
-                    {"index": 7, "status": "completed", "state_observed_at": 4102444800.0, "current_action": "Verified the worker result", "progress": {"completed": 2, "total": 2}},
-                    {"index": 8, "status": "completed", "state_observed_at": 4102444800.0, "current_action": "Checked the regression suite", "progress": {"completed": 2, "total": 2}}
+                    {"index": 1, "status": "completed", "state_observed_at": observed(340.0), "current_action": "Bound checkout_timeout", "progress": {"completed": 3, "total": 3}},
+                    {"index": 2, "status": "completed", "state_observed_at": observed(300.0), "current_action": "Verified the retry gate", "progress": {"completed": 4, "total": 4}},
+                    {"index": 3, "status": "completed", "state_observed_at": observed(265.0), "current_action": "Grouped the production events", "progress": {"completed": 3, "total": 3}},
+                    {"index": 4, "status": "completed", "state_observed_at": observed(210.0), "current_action": "Checked the proposed repair", "progress": {"completed": 2, "total": 2}},
+                    {"index": 5, "status": "completed", "state_observed_at": observed(180.0), "current_action": "Resolved the symbol range", "progress": {"completed": 4, "total": 4}},
+                    {"index": 6, "status": "completed", "state_observed_at": observed(120.0), "current_action": "Compared the proposed patch", "progress": {"completed": 3, "total": 3}},
+                    {"index": 7, "status": "completed", "state_observed_at": observed(75.0), "current_action": "Verified the worker result", "progress": {"completed": 2, "total": 2}},
+                    {"index": 8, "status": "completed", "state_observed_at": observed(22.0), "current_action": "Checked the regression suite", "progress": {"completed": 2, "total": 2}}
                 ]
             }))
             .expect("completed orchestra"),
         );
-        capture("03-orchestra-completed", &completed, 180, 30, "Completed");
+        capture(
+            "03-orchestra-completed",
+            &completed,
+            180,
+            30,
+            "Task(Trace checkout failures",
+        );
 
         let mut issues = home;
         issues.prod_panel_visible = true;
@@ -9044,7 +8335,13 @@ mod tests {
             "diff --git a/billing/charge.rs b/billing/charge.rs\n@@ -82 +82 @@\n-old()\n+retry_after()\n"
                 .to_string(),
         );
-        capture("05-proposed-diff", &diff, 150, 34, "WORK DRAFT");
+        capture(
+            "05-proposed-diff",
+            &diff,
+            150,
+            34,
+            "── work draft · /work · read only ─",
+        );
 
         let mut slash = test_app();
         slash.prod_panel_visible = false;
@@ -9122,14 +8419,14 @@ mod tests {
             &models,
             130,
             34,
-            "MODEL POOL · ACCOUNT-WIDE",
+            "── model pool · account-wide ─",
         );
 
         let mut cream = test_app();
         cream.prod_panel_visible = false;
         cream.header.indexed = Some(true);
         cream.theme = Theme::CreamInk;
-        capture("13-cream-ink", &cream, 120, 34, "ASK ESTELLE");
+        capture("13-cream-ink", &cream, 120, 34, "── ask · ");
 
         let mut autonomy = test_app();
         autonomy.prod_panel_visible = false;
@@ -9147,8 +8444,9 @@ mod tests {
         .expect("gallery skills");
         let mut skills = test_app();
         skills.prod_panel_visible = false;
-        skills.picker = Some(PickerSurface::skills(&skills_reply));
-        capture("12-skills", &skills, 130, 34, "SKILLS");
+        skills.skill_catalog = PickerSurface::skill_catalog(&skills_reply);
+        skills.refilter_skills();
+        capture("12-skills", &skills, 130, 34, "── skills · 3 of 3");
 
         let todo: estelle_client::TodoSnapshot = serde_json::from_value(json!({
             "observed_at": 4102444800.0,
@@ -9214,6 +8512,17 @@ mod tests {
                             "gate": 0.2
                         },
                         "elapsed_s": 1.2
+                    },
+                    "plan": {
+                        "revision": 4,
+                        "steps": [
+                            {"id": "1", "step": "read the failing test", "status": "complete", "evidence": "gate ok · 2 cites"},
+                            {"id": "2", "step": "locate every parse_header call", "status": "complete", "evidence": "12 refs · graph"},
+                            {"id": "3", "step": "rewrite for the folded shape", "status": "complete", "evidence": "headers.rs:288"},
+                            {"id": "4", "step": "update the 12 call sites", "status": "complete", "evidence": "blast radius 12"},
+                            {"id": "5", "step": "run the suite + the mutant", "status": "active", "evidence": ""},
+                            {"id": "6", "step": "deploy the checkout worker", "status": "protected", "evidence": "human-gated"}
+                        ]
                     }
                 }))
                 .expect("gallery work progress"),
@@ -9228,8 +8537,431 @@ mod tests {
             "Checking every claim against your code",
         );
 
+        // 🔴 EVERY SCREEN IN THE BOOK, RENDERED BY THE REAL RENDERER.
+        //
+        // The founder read `CLI-DESIGN-BOOK.html` screen by screen and asked one thing of the next
+        // pass: *"I want you to render all of this now in Rust, so that it's easier for you to port
+        // these over."* Twenty-five of the forty-one screens already came out of `render_frame`
+        // above. The rest were HTML somebody drew, which means their columns were **hand-counted
+        // spaces** — a layout claim no test can falsify and no port can trust.
+        //
+        // These screens have no live App state to drive them (there is no `/doctor` failure to
+        // stage, no stale index to induce), so they render from typed fixtures through the SAME
+        // buffer, the SAME palette and the SAME `cols` column math as everything above. The
+        // fixtures are the data; the LAYOUT is the renderer's.
+        //
+        // ⚠️ They go through the identical box guard and the identical needle assertion, so a book
+        // screen cannot regress in a way a live screen could not.
+        for screen in design_book::SCREENS {
+            let palette = theme::ScreenTheme::Dark.palette();
+            let backend = TestBackend::new(screen.width, screen.height);
+            let mut terminal = Terminal::new(backend).expect("book screen terminal");
+            terminal
+                .draw(|frame| {
+                    frame.render_widget(
+                        Paragraph::new((screen.render)(&palette, 0, true))
+                            .style(Style::default().bg(palette.ground)),
+                        frame.area(),
+                    );
+                })
+                .expect("render book screen");
+            let buffer = terminal.backend().buffer().clone();
+            let text = test_gallery::buffer_text(&buffer);
+            assert!(
+                text.contains(screen.needle),
+                "{} did not render expected text {:?}\n{text}",
+                screen.name,
+                screen.needle
+            );
+            if BOX_CORNERS.iter().any(|corner| text.contains(*corner)) {
+                boxed_frames.push(screen.name);
+            }
+            if let Some(output) = output.as_deref() {
+                test_gallery::write_frame(output, screen.name, &buffer);
+            }
+            names.push(screen.name);
+        }
+
+        // 🔴 THE GALLERY IS THE ACCEPTANCE TEST, SO ITS SIZE IS PART OF THE CONTRACT.
+        //
+        // The founder must be able to SEE every screen. A frame silently dropped from this list is
+        // a screen that stops being reviewed, and nothing else in the suite would notice — the
+        // per-frame assertions all pass on a shorter list. The number is written down so removing a
+        // screen is a decision somebody makes on purpose.
+        assert_eq!(
+            names.len(),
+            18 + design_book::SCREENS.len(),
+            "the gallery changed size: {names:?}"
+        );
+
+        assert!(
+            boxed_frames.is_empty(),
+            "these live frames still draw a boxed panel: {boxed_frames:?}"
+        );
+
         if let Some(output) = output.as_deref() {
             test_gallery::write_index(output, &names);
+        }
+    }
+
+    /// 🔴 THE POSITIVE CONTROL FOR THE GUARD ABOVE.
+    ///
+    /// `boxed_frames.is_empty()` is exactly the shape of assertion that passes forever on a
+    /// detector that cannot fire. This renders a `Borders::ALL` block through the same buffer
+    /// dump the gallery uses and asserts the corner set DOES catch it — so the green above is a
+    /// claim about the frames, not about the check.
+    /// THE INPUT BAR, PINNED ROW BY ROW ON THE RENDERED FRAME.
+    ///
+    /// This bar has drifted three times and the founder has called it out three times. Every
+    /// assertion below failed against the previous commit — all eight of them — which is the only
+    /// reason to trust the green: a bar test that has never been red is decoration.
+    ///
+    /// ⚠️ **UPDATED DELIBERATELY, TWICE OVER, AFTER THE FOUNDER RAN THE BINARY.** Three clauses
+    /// changed and each records a defect he SAW rather than a preference:
+    /// * the status row is no longer required to carry a mark — `● Ready` is gone (clause 1);
+    /// * the hint row is the FRAME'S LAST ROW, not the row under the prompt (clause 7);
+    /// * the prompt is U+276F, not U+3009, which Terminal.app rendered as `)` (clause 3).
+    /// The clauses themselves are all still enforced; only their expected values moved.
+    #[test]
+    fn the_input_bar_is_the_demo_frames_five_rows_and_nothing_else() {
+        let mut app = test_app();
+        app.prod_panel_visible = false;
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
+        let rows = rendered
+            .lines()
+            .map(|row| row.trim_matches('"').trim_end().to_string())
+            .collect::<Vec<_>>();
+
+        let rule_at = rows
+            .iter()
+            .position(|row| row.starts_with("\u{2500}\u{2500} ask \u{b7} "))
+            .expect("the ask rule");
+
+        // 1. The status row's PLACE is above the rule and it is EMPTY while idle. The founder
+        // asked for `● Ready` gone; what must not happen is the row vanishing from the layout
+        // and taking the rule with it, so the slot is asserted to exist and to be blank.
+        let status = &rows[rule_at - 2];
+        assert_eq!(
+            status, "",
+            "the idle status row is not empty — `Ready` or a mark came back: {status:?}"
+        );
+        // 2. Exactly one blank row between the status row and the rule.
+        assert_eq!(
+            rows[rule_at - 1],
+            "",
+            "the status row is clumped against the rule"
+        );
+        // 3. The prompt glyph is the heavy angle ornament, not the small angle quote and not
+        // the CJK bracket that Terminal.app substituted a `)` for.
+        let prompt = rows
+            .iter()
+            .find(|row| row.contains(live_renderer::PROMPT_GLYPH))
+            .expect("the bare prompt");
+        assert!(
+            !prompt.contains('\u{203a}'),
+            "the small angle quote survived: {prompt:?}"
+        );
+        assert!(
+            !rendered.contains('\u{3009}'),
+            "the CJK bracket survived — Terminal.app draws it as a closing parenthesis"
+        );
+        // 4. No placeholder inside the input line.
+        assert!(!rendered.contains("Ask Estelle"), "{rendered}");
+        // 5 + 6. No pushed-down hint and no second competing hint line.
+        assert!(!rendered.contains("? for shortcuts"), "{rendered}");
+        // 7. One hint line, the demo's wording, on the FRAME'S LAST ROW. It used to be asserted
+        // at `prompt_at + 1`, which is the row the caret needs; that adjacency is exactly what
+        // the founder photographed as a cursor sitting on the `e` of "enter send".
+        let prompt_at = rows
+            .iter()
+            .position(|row| row.contains(live_renderer::PROMPT_GLYPH))
+            .expect("prompt row");
+        let hint = rows.last().expect("a last row");
+        assert!(
+            rows.len() - 1 > prompt_at + 1,
+            "the hint row is still adjacent to the prompt — there is no room to type"
+        );
+        for (key, label) in ASK_HINTS {
+            assert!(
+                hint.contains(&format!("{key} {label}")),
+                "hint row {hint:?}"
+            );
+        }
+        assert!(!rendered.contains("shift+tab autonomy"), "{rendered}");
+        assert!(!rendered.contains("routing auto"), "{rendered}");
+        // 8. The rule is solid: the dashed glyph the product shipped until today is gone, and
+        // the solid one is present. Asserting only the absence would pass on a frame with no
+        // rule at all.
+        assert!(!rendered.contains('\u{254c}'), "a dashed rule survived");
+        assert!(rendered.contains('\u{2500}'), "the solid rule is missing");
+    }
+
+    /// The three keys the demo's hint row advertises that this binary does not handle yet.
+    ///
+    /// This is a DEBT LEDGER, not an excuse. The founder picked that hint line off the demo three
+    /// times, so it ships as he picked it rather than being quietly rewritten to keys that happen
+    /// to work — but the lie is written down here, and the day someone binds `ctrl+s` this test
+    /// goes red and makes them delete the entry. An unadvertised gap is the one that never gets
+    /// closed.
+    #[test]
+    fn the_advertised_keys_that_are_not_yet_bound_are_exactly_these() {
+        assert_eq!(ASK_HINTS_NOT_BOUND, ["tab", "ctrl+s"]);
+        for key in ASK_HINTS_NOT_BOUND {
+            assert!(
+                ASK_HINTS.iter().any(|(hint, _)| hint == key),
+                "{key} is listed as unbound but is not advertised"
+            );
+        }
+        // `enter` and `esc` are NOT on the list because they really are handled.
+        assert!(!ASK_HINTS_NOT_BOUND.contains(&"enter"));
+        assert!(!ASK_HINTS_NOT_BOUND.contains(&"esc"));
+
+        // 🔴 **`ctrl+m` IS OFF THE ROW, AND IT MAY NOT COME BACK BY EITHER DOOR.**
+        //
+        // It was the fourth pair until 2026-09-02 and it is carriage return in this binary's input
+        // path, so it could never have been bound: a `ctrl+m` arm in `handle_key` swallows every
+        // Enter and sending a message stops working. The founder's rule settled which half moved —
+        // the hint and the binding must agree, and when they cannot both be right the WORKING
+        // binding wins.
+        //
+        // ⚠️ **BOTH DOORS ARE SHUT, AND THAT IS THE POINT.** Advertising it again is one assertion;
+        // binding it is the other, and a guard on only the first would pass over a `ctrl+m` arm
+        // that broke Enter for every user while the hint row looked clean.
+        assert!(
+            !ASK_HINTS.iter().any(|(key, _)| *key == "ctrl+m"),
+            "ctrl+m is carriage return here — it cannot be advertised on the hint row"
+        );
+        assert!(
+            !include_str!("main.rs")
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("//"))
+                .any(|line| line.contains("KeyCode::Char('m')")
+                    && line.contains("KeyModifiers::CONTROL")),
+            "something bound ctrl+m: it is carriage return here, so that arm eats every Enter"
+        );
+
+        // ⚠️ THE OTHER HALF: the pair that replaced it must be a chord that actually reaches the
+        // toggle. A hint row swapped onto a second dead key would satisfy every check above.
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        let before = app.context_panel_visible;
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
+            &tx,
+        );
+        assert_ne!(
+            app.context_panel_visible, before,
+            "the hint row advertises ctrl+g and nothing handles it"
+        );
+        assert!(
+            ASK_HINTS
+                .iter()
+                .any(|(key, label)| *key == "ctrl+g" && *label == "context"),
+            "ctrl+g reaches the toggle but the row does not say so"
+        );
+    }
+
+    /// 🔴 RED FOR DELETIONS, GREEN FOR ADDITIONS — IN BOTH THEMES.
+    ///
+    /// The founder read the proposed-diff screen and said it was *"neither"*. He was half right,
+    /// which is why nobody had noticed: additions really were green, and deletions were `FATE_BG`,
+    /// the same bone every ordinary line of text uses. So the half of a diff that says *this goes
+    /// away* was rendered in the colour of *this is fine*.
+    ///
+    /// ⚠️ Both themes are asserted and the two signs are asserted to DIFFER. A version that painted
+    /// both signs one colour — which is what cream did — passes any check that only looks at one
+    /// of them.
+    #[test]
+    fn a_deletion_is_red_and_an_addition_is_green_in_both_themes() {
+        for theme in [Theme::Dark, Theme::CreamInk] {
+            let mut app = test_app();
+            app.theme = theme;
+            let lines = live_renderer::github_diff_lines(
+                "diff --git a/billing/charge.rs b/billing/charge.rs\n\
+                 @@ -82,1 +82,1 @@\n\
+                 -    let response = charge(card)?;\n\
+                 +    let response = charge_with_retry(card, RETRY_BUDGET)?;\n",
+                100,
+                &app,
+            );
+            let palette = theme.screen_palette();
+            let coloured = |needle: &str| {
+                lines
+                    .iter()
+                    .flat_map(|line| line.spans.iter())
+                    .find(|span| span.content.contains(needle))
+                    .and_then(|span| span.style.fg)
+            };
+            assert_eq!(
+                coloured("charge_with_retry"),
+                Some(palette.green),
+                "{theme:?}: the addition is not green"
+            );
+            assert_eq!(
+                coloured("let response = charge(card)"),
+                Some(palette.red),
+                "{theme:?}: the deletion is not red"
+            );
+            // ⚠️ THE CONTROL. Two signs sharing one colour is the defect cream shipped, and it
+            // passes both assertions above if `red` and `green` are ever set to the same value.
+            assert_ne!(palette.red, palette.green);
+        }
+    }
+
+    /// 🔴 THE POPUP'S SELECTED ROW IS PAINTED IN ESTELLE'S ACCENT, NOT THE TERMINAL'S IDEA OF CYAN.
+    ///
+    /// `style::accent_style_for` is the single owner of the selected-row colour across the slash
+    /// palette, the model picker, the settings list, the hooks browser and the keymap picker. It
+    /// returned ANSI `Color::Cyan`, which means whatever the host theme decides — so the one row
+    /// the user is looking at was the one row we did not choose the colour of. Same cross-crate
+    /// arrangement as the boot palette above, and the same reason for the test.
+    #[test]
+    fn the_popup_accent_is_the_products_cite_token() {
+        assert_eq!(
+            estelle_tui::style_accent_dark(),
+            theme::ScreenTheme::Dark.palette().cite,
+            "the dark popup accent drifted off the cite token"
+        );
+        assert_eq!(
+            estelle_tui::style_accent_cream(),
+            theme::ScreenTheme::Cream.palette().cite,
+            "the cream popup accent drifted off the cite token"
+        );
+    }
+
+    /// 🔴 THE BOOT SCREEN IS PAINTED IN THE PRODUCT'S OWN COLOURS, AND THIS IS THE ONLY PLACE
+    /// THAT CAN SAY SO.
+    ///
+    /// `boot_scene` is in the `estelle_tui` library and `theme` is in this binary, so neither can
+    /// import the other and the four boot colours are necessarily written down twice. That is a
+    /// two-owners situation, and the rule for those is that ONE test has to be able to see both.
+    /// This is it.
+    ///
+    /// ⚠️ Every clause is asserted separately rather than as one tuple compare, because the
+    /// failure message has to name WHICH colour drifted — a single `assert_eq!` on four values
+    /// tells the next reader that something moved and not what.
+    /// 🔴 A TEAM-SCOPED SETTING SHOWS WHAT THE SERVER SAVED, NOT WHAT THE SCHEMA DEFAULTS TO.
+    ///
+    /// This is the founder's `Data retention (days)` row, pinned. The wire says 45 and the schema
+    /// says 30; the screen said 30 for as long as anyone can remember, because
+    /// `CommandReply::me_team` silently ate the `/settings` payload's `team` key.
+    ///
+    /// ⚠️ Both scopes are asserted, and they must DISAGREE with their defaults in opposite ways —
+    /// the personal row was always correct, so a test that only checked personal would have passed
+    /// throughout the bug, and a test that only checked team would not prove the fix left personal
+    /// alone.
+    #[test]
+    fn a_saved_team_setting_beats_the_schema_default() {
+        let settings: CommandReply = serde_json::from_value(json!({
+            "schema": {
+                "monitor": [{
+                    "key": "retention_days", "scope": "team", "type": "int",
+                    "default": 30, "label": "Data retention (days)", "reader": "server"
+                }],
+                "global": [{
+                    "key": "theme", "scope": "personal", "type": "enum",
+                    "default": "dark", "label": "Theme", "options": ["dark", "cream"],
+                    "reader": "server"
+                }]
+            },
+            "team": {"monitor": {"retention_days": 45}},
+            "personal": {"global": {"theme": "cream"}}
+        }))
+        .expect("settings reply");
+
+        let retention_spec = json!({"key": "retention_days", "default": 30});
+        assert_eq!(
+            resolved_setting_value(
+                &settings,
+                "monitor",
+                "retention_days",
+                "team",
+                &retention_spec
+            ),
+            json!(45),
+            "the team-scoped value lost to the schema default again"
+        );
+
+        let theme_spec = json!({"key": "theme", "default": "dark"});
+        assert_eq!(
+            resolved_setting_value(&settings, "global", "theme", "personal", &theme_spec),
+            json!("cream"),
+            "the personal path regressed while the team path was being fixed"
+        );
+
+        // ⚠️ THE NEGATIVE CONTROL. With nothing saved, BOTH scopes must fall back to the schema
+        // default — otherwise the two assertions above could be passing on a lookup that ignores
+        // the schema entirely and happens to find the right value some other way.
+        let bare: CommandReply = serde_json::from_value(json!({"schema": {}})).expect("bare reply");
+        assert_eq!(
+            resolved_setting_value(&bare, "monitor", "retention_days", "team", &retention_spec),
+            json!(30)
+        );
+        assert_eq!(
+            resolved_setting_value(&bare, "global", "theme", "personal", &theme_spec),
+            json!("dark")
+        );
+    }
+
+    #[test]
+    fn the_boot_screen_paints_in_the_products_own_tokens() {
+        let dark = theme::ScreenTheme::Dark.palette();
+        let cream = theme::ScreenTheme::Cream.palette();
+
+        assert_eq!(BootPalette::Dark.bone(), dark.ground, "dark boot ground");
+        assert_eq!(BootPalette::Dark.ghost(), dark.dim, "dark boot dither");
+        assert_eq!(BootPalette::Dark.ink(), dark.bright, "dark boot wordmark");
+        assert_eq!(BootPalette::Dark.lily(), dark.red, "dark higanbana");
+
+        assert_eq!(BootPalette::Light.bone(), cream.ground, "light boot ground");
+        assert_eq!(BootPalette::Light.ghost(), cream.dim, "light boot dither");
+        assert_eq!(
+            BootPalette::Light.ink(),
+            cream.bright,
+            "light boot wordmark"
+        );
+        assert_eq!(BootPalette::Light.lily(), cream.red, "light higanbana");
+
+        // ⚠️ THE NEGATIVE CONTROL. Eight `assert_eq!`s between two constant tables pass forever if
+        // the tables are the same table. These prove they are not: the two themes really do
+        // differ, so the eight assertions above are comparing two independently-written sets.
+        assert_ne!(BootPalette::Dark.bone(), BootPalette::Light.bone());
+        assert_ne!(BootPalette::Dark.ink(), BootPalette::Light.ink());
+    }
+
+    #[test]
+    fn the_box_guard_fires_on_a_frame_that_actually_draws_one() {
+        let backend = TestBackend::new(40, 6);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    ratatui::widgets::Block::default()
+                        .borders(ratatui::widgets::Borders::ALL)
+                        .title(" SETTINGS "),
+                    frame.area(),
+                );
+            })
+            .expect("render a boxed panel");
+        let text = test_gallery::buffer_text(terminal.backend().buffer());
+
+        // A plain `Borders::ALL` panel draws the four corners; the tees appear when panels are
+        // joined. Both halves are asserted: the guard catches THIS frame, and no glyph in the set
+        // is dead weight that could never fire.
+        assert!(
+            BOX_CORNERS.iter().any(|corner| text.contains(*corner)),
+            "the guard did not catch a boxed frame\n{text}"
+        );
+        for corner in ["┌", "┐", "└", "┘"] {
+            assert!(text.contains(corner), "the box lacked {corner:?}\n{text}");
+        }
+        for corner in BOX_CORNERS {
+            let synthetic = format!("a{corner}b");
+            assert!(
+                BOX_CORNERS.iter().any(|probe| synthetic.contains(*probe)),
+                "{corner:?} is in the guard set but the guard cannot see it"
+            );
         }
     }
 
@@ -9247,7 +8979,7 @@ mod tests {
 
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
 
-        assert!(rendered.contains("Ask Estelle"));
+        assert!(rendered.contains(live_renderer::PROMPT_GLYPH), "{rendered}");
         assert!(rendered.contains("Ask about uqeu/estelle"));
         assert!(rendered.contains("/sweep"));
         assert!(rendered.contains("/review"));
@@ -9279,37 +9011,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn fleet_progress_colour_boundary_encodes_the_completed_fraction() {
-        let line = styled_fleet_progress_line("◐ Working... [━━━━────] 2/4".to_string());
-        assert!(
-            line.spans
-                .iter()
-                .any(|span| span.style.fg == Some(Color::Green) && span.content.contains("━━━━"))
-        );
-        assert!(
-            line.spans
-                .iter()
-                .any(|span| span.style.fg == Some(Color::Blue) && span.content.contains("────"))
-        );
-    }
-
-    #[test]
-    fn fleet_terminal_glyphs_have_distinct_colours_as_well_as_shapes() {
-        let line = styled_fleet_agent_line(
-            "001 ✓ Completed  002 × Failed  003 ◷ Timed out  004 ■ Killed  005 ? Lost".to_string(),
-        );
-        let colours = line
-            .spans
-            .iter()
-            .filter_map(|span| span.style.fg)
-            .collect::<std::collections::HashSet<_>>();
-        assert!(colours.contains(&Color::Green));
-        assert!(colours.contains(&Color::Red));
-        assert!(colours.contains(&Color::Yellow));
-        assert!(colours.contains(&Color::Magenta));
-        assert!(colours.contains(&Color::Cyan));
-    }
+    // ⚠️ `fleet_progress_colour_boundary_encodes_the_completed_fraction` and
+    // `fleet_terminal_glyphs_have_distinct_colours_as_well_as_shapes` moved to
+    // `orchestra_view::tests` with the renderer they guarded. They asserted properties of the
+    // deleted keyword-colouring helpers, which searched a rendered STRING for `✓`/`━` and coloured
+    // what they found; the same two properties are now asserted against the worker table, where
+    // the colour comes from the worker's state rather than from the text.
 
     #[test]
     fn question_mark_opens_real_shortcuts_without_enter() {
@@ -9365,7 +9072,7 @@ mod tests {
 
         app.submit("/settings".to_string(), &tx);
         let opened = rendered_frame_at_size(&app, Instant::now(), 120, 32);
-        assert!(opened.contains("SETTINGS"));
+        assert!(opened.contains("── settings ─"), "{opened}");
         assert!(opened.contains("> 1 Mode"));
         assert!(opened.contains("server enforced"));
         assert!(opened.contains("client display"));
@@ -9655,9 +9362,15 @@ mod tests {
         );
 
         assert_eq!(app.theme, Theme::CreamInk);
+        let cream = theme::ScreenTheme::Cream.palette();
         let buffer = rendered_buffer_at_size(&app, Instant::now(), 100, 28);
-        assert!(buffer.content.iter().any(|cell| cell.bg == FATE_BG));
-        assert!(buffer.content.iter().any(|cell| cell.fg == Color::Black));
+        assert!(buffer.content.iter().any(|cell| cell.bg == cream.ground));
+        // ⚠️ Was `Color::Black`. ANSI 0 is whatever the terminal decides; cream ink is `#1F1C17`.
+        assert!(buffer.content.iter().any(|cell| cell.fg == cream.bright));
+        assert!(
+            buffer.content.iter().all(|cell| cell.fg != Color::Black),
+            "cream ink is a palette value, never ANSI 0"
+        );
     }
 
     #[test]
@@ -9764,7 +9477,7 @@ mod tests {
         );
 
         let model = rendered_frame_at_size(&app, Instant::now(), 120, 32);
-        assert!(model.contains("MODEL POOL · ACCOUNT-WIDE"));
+        assert!(model.contains("── model pool · account-wide ─"), "{model}");
         assert!(model.contains("> 1 claude-opus"));
         assert!(model.contains("current"));
         assert!(model.contains("gpt-5.5"));
@@ -9796,7 +9509,10 @@ mod tests {
         );
 
         let skills = rendered_frame_at_size(&app, Instant::now(), 120, 32);
-        assert!(skills.contains("SKILLS"));
+        // ⚠️ The title now carries the counts and the filter affordance, because the picker's
+        // footer is a fixed string this lane does not own. Asserting the bare old rule would pin a
+        // title that can no longer tell the user 247 playbooks exist.
+        assert!(skills.contains("── skills · 2 of 2"), "{skills}");
         assert!(skills.contains("> 1 review"));
         assert!(skills.contains("trace"));
         handle_key(
@@ -9804,61 +9520,25 @@ mod tests {
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
             &tx,
         );
+        // 🔴 CHANGED DELIBERATELY: this used to assert that enter SUBMITTED `/skill:review`, which
+        // fired a run with an empty task — the shape that comes back having done nothing. Choosing
+        // a playbook now loads the composer so the task can be typed.
+        assert_eq!(app.composer.text(), "/skill:review ");
         assert!(
-            app.transcript.iter().any(
+            !app.transcript.iter().any(
                 |entry| matches!(entry, TranscriptEntry::User(text) if text == "/skill:review")
-            )
+            ),
+            "a playbook must not run before it has a task"
         );
     }
 
-    #[test]
-    fn status_line_names_only_a_server_observed_model_and_marks_staleness() {
-        let mut app = test_app();
-        let observed = Instant::now();
-        app.active_model = Some("claude-opus".to_string());
-        app.active_model_observed_at = Some(observed);
-
-        let fresh = format!("{:?}", status_line(&app, observed));
-        assert!(fresh.contains("model claude-opus"));
-        assert!(fresh.contains("observed"));
-        assert!(!fresh.contains("model auto"));
-
-        let stale = format!(
-            "{:?}",
-            status_line(&app, observed + Duration::from_secs(301))
-        );
-        assert!(stale.contains("stale"));
-    }
-
-    #[test]
-    fn status_line_omits_unresolved_memory_and_connection_noise() {
-        let app = test_app();
-        let rendered = format!("{:?}", status_line(&app, Instant::now()));
-
-        assert!(rendered.contains("plan"));
-        assert!(rendered.contains("routing auto"));
-        assert!(!rendered.contains("unavailable"));
-        assert!(!rendered.contains("connecting"));
-        assert!(!rendered.contains("    "));
-    }
-
-    #[test]
-    fn long_running_request_reports_observed_wait_without_cache_speculation() {
-        let mut app = test_app();
-        let now = Instant::now();
-        app.active = Some(ActiveRequest {
-            id: 83,
-            label: "thinking".to_string(),
-            started: now - Duration::from_secs(83),
-            cancel: CancellationToken::new(),
-        });
-
-        let rendered = format!("{:?}", status_line(&app, now));
-        assert!(rendered.contains("still waiting for Estelle"));
-        assert!(rendered.contains("1m 23s"));
-        assert!(rendered.contains("no response received yet"));
-        assert!(!rendered.contains("cache"));
-    }
+    // status_line_names_only_a_server_observed_model_and_marks_staleness and
+    // status_line_omits_unresolved_memory_and_connection_noise were deleted with their SUBJECT.
+    // They guarded the `mode · model · memory · connected` tail that used to share the footer row
+    // with the key hints; the demo frame has no such cells, so there is no longer a model name on
+    // the frame to be dishonest about. What survived the move is asserted above instead: the
+    // active request's own label, its elapsed clock and the 30-second "no response received yet"
+    // escalation, all now on `status_bar_line`.
 
     #[test]
     fn connected_session_keeps_the_gate_phase_and_elapsed_visible() {
@@ -9880,7 +9560,10 @@ mod tests {
             &tx,
         );
 
-        let rendered = format!("{:?}", status_line(&app, started + Duration::from_secs(13)));
+        let rendered = format!(
+            "{:?}",
+            status_bar_line(&app, started + Duration::from_secs(13), 120)
+        );
         assert!(
             rendered.contains("/gate · waiting for server verdict"),
             "{rendered}"
@@ -9938,11 +9621,15 @@ mod tests {
 
         let rendered = rendered_frame_at_size(&app, Instant::now(), 180, 30);
 
-        assert!(rendered.contains("Estelle Orchestra · Mutation lane detection ×5"));
-        assert!(rendered.contains("Participants · K3"));
-        assert!(rendered.contains("001"));
-        assert!(rendered.contains("005"));
-        assert!(rendered.contains("Working..."));
+        // The band is the design's worker table now: `w1`..`w5` rows, not `001`..`005` cells.
+        assert!(
+            rendered.contains("Task(Mutation lane detection · 5 workers)"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("models · K3"), "{rendered}");
+        assert!(rendered.contains("w1"), "{rendered}");
+        assert!(rendered.contains("w5"), "{rendered}");
+        assert!(rendered.contains("Working..."), "{rendered}");
     }
 
     #[test]
@@ -9966,7 +9653,10 @@ mod tests {
 
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 30);
 
-        assert!(rendered.contains("CONTEXT"));
+        assert!(
+            rendered.contains("── context · alt+m · /context"),
+            "{rendered}"
+        );
         assert!(rendered.contains("Repo graph"));
         assert!(rendered.contains("billing.py:88"));
         assert!(rendered.contains("charge_card"));
@@ -9974,23 +9664,39 @@ mod tests {
         assert!(rendered.contains("/context"));
     }
 
+    /// 🔴 THE CONTRACT CHANGED, AND THIS TEST IS WHERE IT IS WRITTEN DOWN.
+    ///
+    /// Production used to be OPT-IN behind `/prod`, and the R9 finding named that as the
+    /// reason the redesign never reached the customer: the founder's demo has production on
+    /// the right of every frame, and a rail you must remember to open is, from the user's
+    /// seat, a rail that is not there. It is PERMANENT now — dropped only when the terminal
+    /// is too narrow to hold both of the design's columns.
     #[test]
-    fn production_home_is_opt_in_and_every_empty_section_has_an_action() {
+    fn production_is_a_permanent_rail_and_every_empty_section_has_an_action() {
         let mut app = test_app();
         app.auth_resolved = true;
 
-        let calm = rendered_frame_at_size(&app, Instant::now(), 140, 36);
-        assert!(!calm.contains("LIVE PRODUCTION"));
-
-        app.prod_panel_visible = true;
+        // ⚠️ THE CONTROL. Below the design's own minimum the rail is dropped, not squeezed,
+        // so the assertion above cannot be passing merely because the string is everywhere.
+        let narrow = rendered_frame_at_size(&app, Instant::now(), 70, 36);
+        assert!(!narrow.contains("── production · "), "{narrow}");
 
         let rendered = rendered_frame_at_size(&app, Instant::now(), 140, 36);
 
-        assert!(rendered.contains("LIVE PRODUCTION"));
-        assert!(rendered.contains("APP HEALTH"));
-        assert!(rendered.contains("AGENT HEALTH"));
-        assert!(rendered.contains("ESTELLE STATUS"));
-        assert!(rendered.contains("ESTELLE QUEUE"));
+        assert!(
+            rendered.contains("── production · uqeu/estelle"),
+            "{rendered}"
+        );
+        // Every band opens on the design's rule now, not a shouted `APP HEALTH` heading.
+        for band in [
+            "── app · ",
+            "── agents · ",
+            "── estelle · ",
+            "── queue · ",
+            "── github · ",
+        ] {
+            assert!(rendered.contains(band), "missing {band:?}\n{rendered}");
+        }
         assert!(rendered.contains("Run /login"));
         assert!(!rendered.contains("0 errors"));
         assert!(!rendered.contains("healthy"));
@@ -10040,7 +9746,7 @@ mod tests {
             }))
             .expect("disabled health"),
         );
-        let disabled = production_workspace_lines(&app)
+        let disabled = production_workspace_lines(&app, 80)
             .into_iter()
             .flat_map(|line| line.spans)
             .map(|span| span.content.into_owned())
@@ -10057,7 +9763,7 @@ mod tests {
             }))
             .expect("unknown health"),
         );
-        let unknown = production_workspace_lines(&app)
+        let unknown = production_workspace_lines(&app, 80)
             .into_iter()
             .flat_map(|line| line.spans)
             .map(|span| span.content.into_owned())
@@ -10102,7 +9808,7 @@ mod tests {
             .expect("proposed PRs"),
         );
 
-        let rendered = production_workspace_lines(&app)
+        let rendered = production_workspace_lines(&app, 80)
             .into_iter()
             .flat_map(|line| line.spans)
             .map(|span| span.content.into_owned())
@@ -10137,7 +9843,7 @@ mod tests {
             .expect("unknown github status"),
         );
 
-        let rendered = production_workspace_lines(&app)
+        let rendered = production_workspace_lines(&app, 80)
             .into_iter()
             .flat_map(|line| line.spans)
             .map(|span| span.content.into_owned())
@@ -10153,11 +9859,10 @@ mod tests {
     fn production_and_review_are_auxiliary_rails_that_preserve_the_work_surface() {
         let mut production = test_app();
         production.auth_resolved = true;
-        production.prod_panel_visible = true;
         let rendered = rendered_frame_at_size(&production, Instant::now(), 120, 32);
-        assert!(rendered.contains(" LIVE PRODUCTION "));
-        assert!(rendered.contains(" CONVERSATION "));
-        assert!(rendered.contains(" ASK ESTELLE "));
+        assert!(rendered.contains("── production · "), "{rendered}");
+        assert!(rendered.contains("── session · "), "{rendered}");
+        assert!(rendered.contains("── ask · "), "{rendered}");
 
         let mut review = test_app();
         review.prod_panel_visible = false;
@@ -10167,9 +9872,181 @@ mod tests {
                 .to_string(),
         );
         let rendered = rendered_frame_at_size(&review, Instant::now(), 120, 32);
-        assert!(rendered.contains(" WORK DRAFT · /work · READ ONLY "));
-        assert!(rendered.contains(" CONVERSATION "));
-        assert!(rendered.contains(" ASK ESTELLE "));
+        assert!(
+            rendered.contains("── work draft · /work · read only ─"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("── session · "), "{rendered}");
+        assert!(rendered.contains("── ask · "), "{rendered}");
+        // ⚠️ The review rail displaces production; only one rail can own the column.
+        assert!(!rendered.contains("── production · "), "{rendered}");
+    }
+
+    /// 🔴 A HINT THE KEY DOES NOT HONOUR IS A HALLUCINATED AFFORDANCE.
+    ///
+    /// The catalog's screen-9 footer advertised `tab repo · ctrl+s spend · ctrl+m models`, and
+    /// **none of those three bindings existed in this binary**. A fixture screen may print an
+    /// unbuilt binding; the live footer may not. This pins every advertised key to the effect
+    /// the label claims for it.
+    ///
+    /// ⚠️ `ctrl+m` is off both rows as of 2026-09-02: it is carriage return here, so it was not an
+    /// unbuilt binding but an impossible one. `ctrl+g context` took the slot and IS bound, which
+    /// is why this test now presses it rather than listing it as a promise.
+    ///
+    /// ⚠️ The footer this guarded is gone - the demo puts the hints under the prompt - but the
+    /// BINDINGS are still real and this still presses them. Read it beside
+    /// `the_advertised_keys_that_are_not_yet_bound_are_exactly_these`: together they say exactly
+    /// which keys work and which the demo's hint row promises before they do.
+    ///
+    /// Limit: it proves each key CHANGES the state the label names. It does not prove the
+    /// label is the best word for that state.
+    #[test]
+    fn every_advertised_key_is_a_binding_the_live_tui_actually_handles() {
+        let hints = "tab focus · shift+tab autonomy · ctrl+t tasks · ctrl+g context · / commands";
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        assert!(hints.contains("tab focus"), "{hints}");
+        let mut app = test_app();
+        assert_eq!(app.focus, FocusSurface::Composer);
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            &tx,
+        );
+        assert_ne!(app.focus, FocusSurface::Composer, "tab did not move focus");
+
+        assert!(hints.contains("shift+tab autonomy"), "{hints}");
+        let mut app = test_app();
+        assert!(app.picker.is_none());
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+            &tx,
+        );
+        assert!(
+            app.picker.is_some(),
+            "shift+tab did not open the autonomy picker"
+        );
+
+        assert!(hints.contains("ctrl+t tasks"), "{hints}");
+        let mut app = test_app();
+        assert!(!app.todo_visible);
+        app.todo = Some(
+            serde_json::from_value(json!({
+                "observed_at": 1.0,
+                "items": [{"title": "ship the wire", "status": "pending"}]
+            }))
+            .expect("todo snapshot"),
+        );
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
+            &tx,
+        );
+        assert!(app.todo_visible, "ctrl+t did not open tasks");
+
+        assert!(hints.contains("ctrl+g context"), "{hints}");
+        let mut app = test_app();
+        let before = app.context_panel_visible;
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
+            &tx,
+        );
+        assert_ne!(
+            app.context_panel_visible, before,
+            "ctrl+g did not toggle the context panel"
+        );
+
+        assert!(hints.contains("/ commands"), "{hints}");
+        assert!(
+            !commands::composer_commands().is_empty(),
+            "/ advertises a command palette that has no commands"
+        );
+
+        // ⚠️ THE CONTROL. The catalog's own footer must NOT be what the live frame prints,
+        // because these three keys do nothing here.
+        assert!(!hints.contains("ctrl+s spend"), "{hints}");
+        assert!(!hints.contains("ctrl+m models"), "{hints}");
+        // ⚠️ AND THE CHORD ITSELF, not just the pair. `ctrl+m` is carriage return in this binary;
+        // a live row carrying it under ANY label is advertising a key that eats Enter.
+        assert!(!hints.contains("ctrl+m"), "{hints}");
+        assert!(!hints.contains("tab repo"), "{hints}");
+    }
+
+    /// 🔴 THE WIRE THE REDESIGN NEVER HAD.
+    ///
+    /// `screens.rs` has carried the two-column design since 45495f9d8, and until this test the
+    /// live TUI referenced `cols` — the column engine that design is built on — ZERO times. So
+    /// the catalog shipped one design language and the customer's terminal drew another. This
+    /// asserts the frame `estelle` actually draws when you type is the restored design.
+    ///
+    /// Limit: this is a TestBackend buffer, not a customer terminal. It proves the composition,
+    /// not the rendering of these glyphs by any particular terminal emulator.
+    #[test]
+    fn the_live_frame_is_the_two_column_session_design_not_the_boxed_one() {
+        let mut app = test_app();
+        app.auth_resolved = true;
+
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 140, 40);
+
+        assert!(
+            rendered.contains("\u{2500}\u{2500} session \u{b7} uqeu/estelle"),
+            "the left column must open on the design's session rule\n{rendered}"
+        );
+        assert!(
+            rendered.contains("\u{2500}\u{2500} production \u{b7} uqeu/estelle"),
+            "the right column must open on the design's production rule\n{rendered}"
+        );
+        assert!(
+            rendered.contains("\u{2500}\u{2500} ask \u{b7} uqeu/estelle"),
+            "the composer must be framed by the design's ask rule\n{rendered}"
+        );
+        // The footer key-hint row was replaced by the demo's hint line under the prompt.
+        assert!(
+            rendered.contains(&ask_hints_line_with(/*selection_on*/ false)),
+            "the ask bar must carry the demo's hint row\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("\u{250c} CONVERSATION"),
+            "the boxed language must be gone\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("\u{250c} ASK ESTELLE"),
+            "the boxed composer must be gone\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("\u{250c} LIVE PRODUCTION"),
+            "the boxed production rail must be gone\n{rendered}"
+        );
+    }
+
+    /// The design writes a tool call as `\u{23fa} Task(...)` with an `\u{23bf}` continuation, not as the
+    /// disclosure triangle the old renderer used.
+    #[test]
+    fn a_tool_call_renders_the_designs_transcript_glyphs() {
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.transcript.push(TranscriptEntry::Tool {
+            label: "Task(gate cluster \u{b7} 4 workers)".to_string(),
+            lines: vec!["\u{2713} w1 opus-4-8   41s  $0.212".to_string()],
+            expanded: true,
+        });
+
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 140, 40);
+
+        assert!(
+            rendered.contains("\u{23fa} Task(gate cluster"),
+            "the design opens a tool call with \u{23fa}\n{rendered}"
+        );
+        assert!(
+            rendered.contains("\u{23bf}"),
+            "the design continues a tool call with \u{23bf}\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("\u{25be} Task(gate cluster"),
+            "the disclosure triangle is the old language\n{rendered}"
+        );
     }
 
     #[test]
@@ -10201,34 +10078,37 @@ mod tests {
     #[test]
     fn bottom_dock_owns_one_separator_and_closes_each_visible_edge() {
         let mut app = test_app();
-        app.prod_panel_visible = false;
         app.composer.set_text("/m");
         let buffer = rendered_buffer_at_size(&app, Instant::now(), 100, 30);
         let rendered = test_gallery::buffer_text(&buffer);
 
-        let has_adjacent_rules = rendered
+        // The design frames the dock with ONE rule and nothing else. What this test has always
+        // guarded is that the dock does not stack a second frame on top of the first; with the
+        // box gone, the honest form of that claim is that the dock draws no box at all.
+        let dock = rendered
             .lines()
-            .collect::<Vec<_>>()
-            .windows(2)
-            .any(|rows| rows[0].contains("└──") && rows[1].contains("┌ COMMANDS"));
-        assert!(!has_adjacent_rules, "{rendered}");
-        let command_rule = rendered
-            .lines()
-            .find(|line| line.contains(" ASK ESTELLE "))
-            .expect("command dock rule");
-        assert!(command_rule.ends_with('┐'), "{rendered}");
-        assert!(
+            .position(|line| line.contains("── ask · "))
+            .expect("the design's ask rule opens the dock");
+        assert_eq!(
             rendered
                 .lines()
-                .any(|line| line.starts_with('└') && line.ends_with('┘')),
-            "{rendered}"
+                .filter(|line| line.contains("── ask · "))
+                .count(),
+            1,
+            "the dock must own exactly one separator\n{rendered}"
         );
+        for line in rendered.lines().skip(dock) {
+            assert!(
+                !line.contains('┌')
+                    && !line.contains('┐')
+                    && !line.contains('└')
+                    && !line.contains('┘'),
+                "the dock drew a box under its rule:\n{rendered}"
+            );
+        }
         assert!(
-            rendered
-                .lines()
-                .filter(|line| line.contains('│'))
-                .all(|line| line.ends_with('│')),
-            "right edges must share one terminal column:\n{rendered}"
+            rendered.lines().skip(dock).any(|line| line.contains("/me")),
+            "the command palette did not reach the dock\n{rendered}"
         );
     }
 
@@ -10243,14 +10123,23 @@ mod tests {
         let rendered = test_gallery::buffer_text(&buffer);
         let settings_rule = rendered
             .lines()
-            .find(|line| line.contains(" SETTINGS "))
+            .find(|line| line.contains("── settings ─"))
             .expect("settings rule");
 
-        assert!(settings_rule.ends_with('┐'), "{rendered}");
+        // The dock is closed by a RULE that runs to the right edge, not by a box corner.
+        assert!(settings_rule.ends_with('─'), "{rendered}");
+        // ⚠️ This used to assert a `└────┘` bottom edge. The dock is not boxed any more, so the
+        // claim it was really making — ONE surface, not a window nested inside the frame — is
+        // asserted directly: no corner anywhere, and the picker's own hint row is the last thing
+        // on the dock.
+        for corner in BOX_CORNERS {
+            assert!(
+                !rendered.contains(corner),
+                "a boxed dock survived\n{rendered}"
+            );
+        }
         assert!(
-            rendered
-                .lines()
-                .any(|line| line.starts_with('└') && line.ends_with('┘')),
+            rendered.lines().any(|line| line.contains("↑↓ navigate")),
             "{rendered}"
         );
         assert!(!rendered.contains(" ASK ESTELLE "), "{rendered}");
@@ -10353,7 +10242,7 @@ mod tests {
             .expect("issues"),
         );
 
-        let rendered = production_workspace_lines(&app)
+        let rendered = production_workspace_lines(&app, 80)
             .iter()
             .map(|line| {
                 line.spans
@@ -10394,8 +10283,8 @@ mod tests {
             120,
             34,
         );
-        assert!(finished.contains("ASK ESTELLE"));
-        assert!(finished.contains("shift+tab"));
+        assert!(finished.contains("── ask · "));
+        assert!(finished.contains("enter send"), "{finished}");
         assert!(!finished.contains("enter ask"));
         assert!(!finished.contains("shift+enter newline"));
     }
@@ -10436,7 +10325,10 @@ mod tests {
         app.submit("/diff".to_string(), &tx);
 
         let rendered = rendered_frame_at_size(&app, Instant::now(), 140, 34);
-        assert!(rendered.contains("WORK DRAFT"));
+        assert!(
+            rendered.contains("── work draft · /work · read only ─"),
+            "{rendered}"
+        );
         assert!(rendered.contains("src/charge.rs"));
         assert!(
             rendered
@@ -10537,15 +10429,33 @@ mod tests {
             app.handle_ui_event(event, &tx);
         }
 
-        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 34);
-        assert!(rendered.contains("caught · TimeoutError in charge_card"));
-        assert!(rendered.contains("billing.py:82"));
-        assert!(rendered.contains("drafted repair"), "{rendered}");
-        assert!(rendered.contains("awaiting human review"), "{rendered}");
-        assert!(rendered.contains("error counts"));
-        assert!(rendered.contains("request denominator unavailable"));
-        assert!(rendered.contains("checkout-agent"), "{rendered}");
-        assert!(rendered.contains("tool timeout"), "{rendered}");
+        // What this test is for is the FETCH, so the fetched fields are asserted on the panel
+        // MODEL, where a phrase cannot be split by the rail's word wrap. The frame assertion
+        // below is the separate claim that the rail reaches the customer at all.
+        let panel = production_workspace_lines(&app, 80)
+            .into_iter()
+            .flat_map(|line| line.spans)
+            .map(|span| span.content.into_owned())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            panel.contains("caught · TimeoutError in charge_card"),
+            "{panel}"
+        );
+        assert!(panel.contains("billing.py:82"), "{panel}");
+        assert!(panel.contains("drafted repair"), "{panel}");
+        assert!(panel.contains("awaiting human review"), "{panel}");
+        assert!(panel.contains("error counts"), "{panel}");
+        assert!(panel.contains("request denominator unavailable"), "{panel}");
+        assert!(panel.contains("checkout-agent"), "{panel}");
+        assert!(panel.contains("tool timeout"), "{panel}");
+
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 160, 34);
+        assert!(
+            rendered.contains("── production · uqeu/estelle"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("billing.py:82"), "{rendered}");
         assert!(app.active.is_none());
     }
 
@@ -10731,7 +10641,7 @@ mod tests {
 
         let rendered = rendered_frame(&app, started + Duration::from_secs(6));
 
-        assert!(rendered.contains("thinking  6s"));
+        assert!(rendered.contains("thinking \u{b7} 6s"), "{rendered}");
         assert!(!rendered.contains("cache"));
     }
 
@@ -10907,6 +10817,476 @@ mod tests {
         assert!(rendered.contains("/blorp"));
     }
 
+    /// One frame's drawing budget.
+    ///
+    /// A frame is redrawn on every tick and every keystroke. If drawing costs more than this the
+    /// terminal stops feeling live; if the cost SCALES with scrollback it eventually stops
+    /// responding at all — which is what put a macOS Force Quit dialog in front of the founder.
+    /// Named, per Power of Ten rule 2, so the bound is stated rather than implied.
+    const FRAME_BUDGET: std::time::Duration = std::time::Duration::from_millis(50);
+
+    /// A transcript shaped like the one that froze him: a `/skills` dump of multi-line playbook
+    /// descriptions interleaved with ordinary turns.
+    fn transcript_of_size(lines: usize) -> Vec<TranscriptEntry> {
+        let mut entries = Vec::new();
+        while entries.len() * 3 < lines {
+            let index = entries.len();
+            entries.push(TranscriptEntry::User(format!("question number {index}")));
+            entries.push(TranscriptEntry::Command {
+                name: "skills".to_string(),
+                lines: vec![format!(
+                    "playbook-{index:04}  |  A description long enough to wrap at any sensible \
+                     terminal width, of the kind the registry actually returns for every one of \
+                     the two hundred and forty-seven playbooks it lists."
+                )],
+            });
+            entries.push(TranscriptEntry::Answer {
+                text: format!("answer number {index} with some prose attached to it"),
+                grounded: Some(true),
+                degraded: false,
+                sources: Vec::new(),
+            });
+        }
+        entries
+    }
+
+    fn time_one_frame(app: &App) -> std::time::Duration {
+        let now = Instant::now();
+        // Draw twice and keep the second, so one-off lazy initialisation is not charged here.
+        let _ = rendered_frame_at_size(app, now, 120, 40);
+        let started = std::time::Instant::now();
+        let _ = rendered_frame_at_size(app, now, 120, 40);
+        started.elapsed()
+    }
+
+    /// 🔴 **THE CLI FROZE HARD ENOUGH THAT THE FOUNDER HAD TO FORCE QUIT TERMINAL.**
+    ///
+    /// He dumped 247 playbooks into the transcript with `/skills`, then ran a skill. The spinner
+    /// kept ticking at `thinking · 6s` — so the event loop was alive — while the terminal became
+    /// unusable. That points at DRAWING, not at blocking, and the draw path confirms it: every
+    /// frame, `render_transcript_with_citations` rebuilds the entire transcript into a freshly
+    /// allocated styled `Text`, `Paragraph::line_count` re-wraps that whole text to find the scroll
+    /// offset, and the paragraph is wrapped AGAIN to render. Nothing is cached and nothing is
+    /// clipped to the viewport, so per-frame cost is O(total scrollback) with an allocation-heavy
+    /// constant — to paint forty visible lines.
+    ///
+    /// Measured on this machine, release build, at ~2.9µs per line of scrollback:
+    ///   ~30 lines → 0.41ms · ~1,000 lines → 3.3ms · ~20,000 lines → 57.5ms
+    ///
+    /// ⚠️ **LIMIT, AND IT POINTS THE SAFE WAY.** A `TestBackend` draw excludes the write to the
+    /// tty, which is the other half of the real cost, so this UNDER-states what the founder's
+    /// terminal actually paid. Anything this calls too slow is certainly too slow. It is also a
+    /// wall-clock assertion, so it is machine-dependent — the number to read is the SCALING across
+    /// the three sizes, not the absolute.
+    /// 🔴 **STANDING RED ON PURPOSE. THIS IS NOT A FLAKE AND MUST NOT BE WEAKENED.**
+    ///
+    /// The transcript renderer is unbounded: every frame it rebuilds the WHOLE transcript into a
+    /// freshly allocated styled `Text`, re-wraps it once via `Paragraph::line_count` to find the
+    /// scroll offset and again to paint, and clips none of it to the viewport. Per-frame cost is
+    /// therefore O(total scrollback) — to paint the forty lines a terminal actually shows.
+    ///
+    /// That is what froze the founder's Terminal badly enough to need Force Quit. The spinner kept
+    /// ticking at `thinking · 6s`, so the event loop was alive and `esc` was live
+    /// (`esc_is_answered_while_a_request_is_in_flight` proves it); the cost was all in drawing.
+    ///
+    /// Measured, linear in scrollback: ~0.4ms at ~30 lines, ~2.6ms at ~1,000, ~47ms at ~20,000 in
+    /// a RELEASE build — and roughly ten times that in a debug build, where the same case has been
+    /// measured at ~540ms.
+    ///
+    /// 🔬 **THE FIX IS NOT IN THIS LANE.** It is viewport-clipped layout in `live_renderer.rs`,
+    /// which another lane owns. `MAX_TRANSCRIPT_ENTRIES` mitigates the reachable damage and
+    /// `a_runaway_transcript_is_capped_and_the_frame_stays_in_budget` guards that mitigation — but
+    /// a cap on the STORE is not the same property as a render whose cost is independent of
+    /// scrollback, and collapsing the two would retire this signal without earning it.
+    ///
+    /// ⚠️ **DELETE THIS TEST WHEN THE RENDER IS BOUNDED, NEVER BEFORE, AND NEVER BY RAISING
+    /// `FRAME_BUDGET`.** Raising the budget changes the number and not the behaviour.
+    #[test]
+    #[should_panic(expected = "over the")]
+    fn the_unclipped_transcript_render_still_scales_with_scrollback() {
+        let mut app = test_app();
+        app.transcript = transcript_of_size(20_000);
+        let elapsed = time_one_frame(&app);
+        println!("unclipped frame over ~20,000 lines: {elapsed:?}");
+        assert!(
+            elapsed <= FRAME_BUDGET,
+            "a frame over ~20,000 lines of scrollback took {elapsed:?}, over the \
+             {FRAME_BUDGET:?} budget"
+        );
+    }
+
+    #[test]
+    fn a_runaway_transcript_is_capped_and_the_frame_stays_in_budget() {
+        // The raw scaling first, as evidence rather than as an assertion: this is the defect.
+        let mut measurements = Vec::new();
+        for lines in [30_usize, 1_000, 20_000] {
+            let mut app = test_app();
+            app.transcript = transcript_of_size(lines);
+            let elapsed = time_one_frame(&app);
+            measurements.push((lines, app.transcript.len(), elapsed));
+        }
+        let report = measurements
+            .iter()
+            .map(|(lines, entries, elapsed)| {
+                format!("~{lines} lines ({entries} entries): {elapsed:?}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n  ");
+        println!("UNCAPPED frame cost by scrollback:\n  {report}");
+
+        // 🔴 THE ASSERTION. Push far more than any session should hold THROUGH the capping path,
+        // and the frame must still be inside budget. This is the property the cap buys.
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.transcript = transcript_of_size(20_000);
+        let before = app.transcript.len();
+        app.submit("anything at all".to_string(), &tx);
+
+        assert!(
+            app.transcript.len() <= MAX_TRANSCRIPT_ENTRIES + 2,
+            "the transcript was not capped: {} entries",
+            app.transcript.len()
+        );
+        // ⚠️ Eviction must never be silent, or the scrollback lies about the session.
+        let rendered = format!("{:?}", render_transcript(&app.transcript));
+        assert!(
+            rendered.contains("earlier entries were dropped"),
+            "history vanished with no notice"
+        );
+        assert!(
+            before > app.transcript.len(),
+            "nothing was actually dropped"
+        );
+
+        let capped = time_one_frame(&app);
+        println!(
+            "CAPPED frame cost: {capped:?} ({} entries)",
+            app.transcript.len()
+        );
+        assert!(
+            capped <= FRAME_BUDGET,
+            "even capped, a frame took {capped:?}, over the {FRAME_BUDGET:?} budget"
+        );
+
+        // ⚠️ CONTROL. A short transcript must be left completely alone — no cap notice, no loss.
+        let mut small = test_app();
+        small.transcript = transcript_of_size(30);
+        let kept = small.transcript.len();
+        small.trim_transcript();
+        assert_eq!(
+            small.transcript.len(),
+            kept,
+            "a short transcript was trimmed"
+        );
+    }
+
+    /// 🔴 **ESC MUST BE ANSWERED WHILE A REQUEST IS IN FLIGHT.**
+    ///
+    /// It is the escape hatch that would have spared him the Force Quit: whatever the server is
+    /// doing, the key that stops waiting has to stay live. Driven against a huge transcript,
+    /// because that is the state in which it matters.
+    #[test]
+    fn esc_is_answered_while_a_request_is_in_flight() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        let cancel = CancellationToken::new();
+        app.active = Some(ActiveRequest {
+            id: 7,
+            label: "/skill:api-compat-diff-gate".to_string(),
+            started: Instant::now(),
+            cancel: cancel.clone(),
+        });
+        app.transcript = transcript_of_size(20_000);
+
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &tx,
+        );
+
+        assert!(
+            cancel.is_cancelled() || app.active.is_none(),
+            "esc did not reach the in-flight request; the only way out is Force Quit"
+        );
+    }
+
+    /// 🔴 **EVERY SUBMIT PRODUCES A SEND, A QUEUED ITEM, OR WORDS. NEVER SILENCE.**
+    ///
+    /// The founder typed `/skills:agent-injection-eval`, pressed enter, and got **absolutely
+    /// nothing** — no send, no error, no hint. Silence is the worst possible outcome because it is
+    /// indistinguishable from a keypress the terminal dropped, so the user's next move is to press
+    /// enter again rather than to read a refusal and fix the input.
+    ///
+    /// This asserts the property CLASS-WIDE over a corpus of shapes rather than one input, because
+    /// a single-input test proves only that one string was handled. For every input, the transcript
+    /// must GROW beyond the echoed user line, or the request queue must grow.
+    ///
+    /// ⚠️ **LIMIT, AND IT IS THE IMPORTANT HALF.** This drives `submit` directly, so it proves the
+    /// DISPATCHER is never silent. It does **not** prove the dispatcher is REACHED, and the
+    /// founder's silence was entirely in that gap: `ChatComposer::validate_submission` refused the
+    /// draft before `submit` ran and returned no submission at all, and the refusal it emitted was
+    /// discarded by `ComposerInput::drain_app_events`. This arm already refused correctly before
+    /// any of this work; it was simply never called. `pressing_enter_on_a_slash_draft_is_never_swallowed`
+    /// is the test that could see that, and it is the one that was red.
+    #[test]
+    fn no_submitted_input_is_ever_answered_with_silence() {
+        let corpus = [
+            "/skills:agent-injection-eval",
+            "/skill:agent-injection-eval",
+            "/blorp",
+            "/skills:",
+            "/skill:",
+            "/",
+            "/logout",
+            "/pet",
+            "/zzzzzzzzzz extra words",
+            "!",
+            "ordinary question",
+        ];
+        for input in corpus {
+            let mut app = test_app();
+            let (tx, _rx) = mpsc::unbounded_channel();
+
+            app.submit(input.to_string(), &tx);
+
+            // The echoed user line is not an answer — it is the input played back. An answer is a
+            // queued request or at least one transcript entry BEYOND that echo.
+            let answered = !app.queue.is_empty() || app.transcript.len() > 1;
+            assert!(
+                answered,
+                "{input:?} produced neither a queued request nor a visible line: \
+                 queue={} transcript={:?}",
+                app.queue.len(),
+                render_transcript(&app.transcript)
+            );
+        }
+    }
+
+    /// 🔴 **247 PLAYBOOKS FILLED THE SCREEN AND THE PICKER COULD NOT REACH MOST OF THEM.**
+    ///
+    /// The founder typed `/skills` and got every playbook, each with its full multi-line
+    /// description, scrolling for pages. `render_picker` sizes its modal from `rows.len()`, clamps
+    /// that to the screen, and paints with **no scroll offset** — so handing it 247 rows does not
+    /// make a long list, it makes one whose tail no keypress can reach.
+    ///
+    /// The bound therefore belongs where the surface is BUILT. This drives a catalog larger than
+    /// any terminal and asserts the renderer is never handed more than it can paint.
+    #[test]
+    fn the_skills_picker_is_bounded_and_filterable_however_large_the_registry_is() {
+        let names = (0..247)
+            .map(|index| {
+                json!({
+                    "name": format!("playbook-{index:03}"),
+                    // Multi-line prose, exactly as the server sends it. One row must stay one row.
+                    "summary": format!("Line one for {index}.\nLine two.\nLine three, and it keeps going well past any sensible width for a single picker row."),
+                })
+            })
+            .collect::<Vec<_>>();
+        let reply: CommandReply =
+            serde_json::from_value(json!({ "skills": names })).expect("skills reply");
+        let catalog = PickerSurface::skill_catalog(&reply);
+        assert_eq!(catalog.len(), 247, "the catalog itself is not truncated");
+
+        let unfiltered = PickerSurface::skills_filtered(&catalog, "");
+        assert!(
+            unfiltered.rows.len() <= MAX_SKILL_PICKER_ROWS,
+            "the renderer was handed {} rows it cannot paint",
+            unfiltered.rows.len()
+        );
+        assert!(
+            unfiltered.title.contains("247"),
+            "the title must still name the true total, or the bound reads as the whole registry: {}",
+            unfiltered.title
+        );
+        // A multi-line summary must have become ONE line, or one row silently becomes three.
+        assert!(
+            unfiltered
+                .rows
+                .iter()
+                .all(|row| !row.detail.contains('\n') && !row.label.contains('\n')),
+            "a newline survived into a picker row"
+        );
+
+        // Filtering narrows to something a person can actually choose from.
+        let narrowed = PickerSurface::skills_filtered(&catalog, "playbook-1");
+        assert!(
+            narrowed.rows.len() <= MAX_SKILL_PICKER_ROWS,
+            "the filtered view is bounded too"
+        );
+        assert!(
+            narrowed
+                .rows
+                .iter()
+                .all(|row| row.label.starts_with("playbook-1")),
+            "the filter admitted a non-match"
+        );
+
+        // ⚠️ CONTROL. A filter that matches nothing must SAY so, not render an empty modal that
+        // looks identical to a hung request.
+        let empty = PickerSurface::skills_filtered(&catalog, "zzzzz-no-such-playbook");
+        assert_eq!(empty.rows.len(), 1);
+        assert!(
+            empty.rows[0].label.contains("No playbook matches"),
+            "an empty result must name itself: {:?}",
+            empty.rows[0].label
+        );
+        assert!(matches!(empty.rows[0].action, PickerAction::None));
+    }
+
+    /// Typing narrows the open picker, and closing it stops the picker eating letters.
+    #[test]
+    fn typing_filters_the_open_skills_picker_and_closing_it_releases_the_keys() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        let reply: CommandReply = serde_json::from_value(json!({
+            "skills": [
+                {"name": "api-call-ground", "summary": "ground an API call"},
+                {"name": "adr-forge", "summary": "capture a decision"},
+                {"name": "zebra-audit", "summary": "unrelated"},
+            ]
+        }))
+        .expect("skills reply");
+        app.skill_catalog = PickerSurface::skill_catalog(&reply);
+        app.refilter_skills();
+        assert_eq!(app.picker.as_ref().expect("picker").rows.len(), 3);
+
+        for c in "zeb".chars() {
+            handle_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+                &tx,
+            );
+        }
+        let rows = &app.picker.as_ref().expect("picker").rows;
+        assert_eq!(rows.len(), 1, "typing did not narrow the list");
+        assert_eq!(rows[0].label, "zebra-audit");
+
+        // Backspace widens again.
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+            &tx,
+        );
+        assert_eq!(app.skill_filter, "ze");
+
+        // Esc closes AND releases the catalog, so the next picker does not swallow letters.
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &tx,
+        );
+        assert!(app.picker.is_none());
+        assert!(
+            app.skill_catalog.is_empty() && app.skill_filter.is_empty(),
+            "the filter outlived its picker and will eat the next surface's keys"
+        );
+    }
+
+    /// Choosing a playbook loads the composer instead of firing an empty-task run.
+    #[test]
+    fn choosing_a_playbook_loads_the_composer_rather_than_running_it_with_no_task() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.skill_catalog = vec![PickerRow {
+            label: "api-call-ground".to_string(),
+            detail: "ground an API call".to_string(),
+            action: PickerAction::InvokeSkill("api-call-ground".to_string()),
+        }];
+        app.refilter_skills();
+
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &tx,
+        );
+
+        assert_eq!(
+            app.composer.text(),
+            "/skill:api-call-ground ",
+            "the composer must be loaded with a trailing space, ready for the task"
+        );
+        assert!(
+            app.queue.is_empty(),
+            "selecting a playbook must not fire a run with an empty task"
+        );
+        assert!(app.picker.is_none());
+        assert!(app.skill_catalog.is_empty());
+    }
+
+    /// 🔴 **THE KEYBOARD IS THE ONLY ORACLE THAT SAW THE FOUNDER'S BUG.**
+    ///
+    /// `no_submitted_input_is_ever_answered_with_silence` drives `submit` directly and passes — it
+    /// always passed, before any of this work. The founder's silence lives one layer ABOVE it, in
+    /// the path a real keypress takes: `handle_key` hands `enter` to the composer, and the composer
+    /// decides whether a submission happens at all. So this test presses the key.
+    ///
+    /// The property: for a `/`-prefixed draft, pressing enter must leave the user with SOMETHING —
+    /// a queued request, or a line to read. A draft that is silently swallowed, leaving the
+    /// composer holding text and the transcript empty, is the defect.
+    #[test]
+    fn pressing_enter_on_a_slash_draft_is_never_swallowed() {
+        for draft in [
+            "/skill:agent-injection-eval",
+            "/skills:agent-injection-eval",
+            "/blorp",
+            "/help",
+        ] {
+            let mut app = test_app();
+            let (tx, _rx) = mpsc::unbounded_channel();
+            app.composer.set_text(draft);
+
+            handle_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                &tx,
+            );
+
+            let answered = !app.queue.is_empty() || !app.transcript.is_empty();
+            assert!(
+                answered,
+                "enter on {draft:?} was swallowed: the composer still holds {:?}, \
+                 the queue is empty and the transcript is empty",
+                app.composer.text()
+            );
+        }
+    }
+
+    /// The plural spelling reaches the same route as the singular, end to end through `submit`.
+    ///
+    /// `commands::both_spellings_of_the_skill_namespace_reach_one_route` pins the PARSE; this pins
+    /// what the app does with it, because a parser that returns the right shape into a dispatcher
+    /// that drops it is still a dead end.
+    #[test]
+    fn the_plural_skill_spelling_queues_the_same_request_as_the_singular() {
+        let queued = |input: &str| {
+            let mut app = test_app();
+            let (tx, _rx) = mpsc::unbounded_channel();
+            app.submit(input.to_string(), &tx);
+            app.queue
+                .iter()
+                .filter_map(|request| match request {
+                    QueuedRequest::Command(command) => {
+                        Some((command.name, command.argument.clone()))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let singular = queued("/skill:agent-injection-eval");
+        let plural = queued("/skills:agent-injection-eval");
+
+        assert_eq!(
+            singular,
+            vec![("skill:", "agent-injection-eval".to_string())],
+            "the singular spelling must queue the skill route"
+        );
+        assert_eq!(
+            plural, singular,
+            "the plural must queue the identical route"
+        );
+    }
+
     #[test]
     fn login_asks_who_you_are_before_asking_who_pays() {
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -11009,9 +11389,15 @@ mod tests {
             Some("Connect Estelle")
         );
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 30);
-        assert!(rendered.contains("CONNECT ESTELLE"));
-        assert!(rendered.contains("grounds your coding agent in your real codebase"));
-        assert!(rendered.contains("never bills you for model tokens"));
+        assert!(rendered.contains("── connect estelle ─"), "{rendered}");
+        // ⚠️ Both sentences lost their second person in the AI-speak pass, and a test that
+        // still pinned the old wording would have made that pass look like a regression.
+        assert!(rendered.contains("grounds the coding agent in the real codebase"));
+        assert!(rendered.contains("never bills model tokens"));
+        assert!(
+            !rendered.contains("your real codebase"),
+            "the second person came back: {rendered}"
+        );
         assert!(!rendered.contains("Claude subscription"));
         assert!(!rendered.contains("ChatGPT plan"));
         assert!(!rendered.contains("ASK ESTELLE"));
@@ -11257,7 +11643,7 @@ mod tests {
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 30);
 
         assert!(rendered.contains("api/charge.ts:52"));
-        assert!(rendered.contains("Ask Estelle"));
+        assert!(rendered.contains(live_renderer::PROMPT_GLYPH), "{rendered}");
     }
 
     #[tokio::test]
@@ -11357,6 +11743,247 @@ mod tests {
         let requests = server.received_requests().await.expect("request recording");
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].url.path(), "/turn/route");
+    }
+
+    /// Mount `/turn/route` returning one arbitrary decision, so a test can drive any action the
+    /// server's closed set can emit — including the ones it emits only from an OLDER deployed build.
+    async fn mount_dispatch_action(server: &MockServer, prompt: &str, suite: &str, action: &str) {
+        Mock::given(method("POST"))
+            .and(path("/turn/route"))
+            .and(body_json(json!({"prompt": prompt})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "dispatch": {
+                    "suite": suite,
+                    "action": action,
+                    "confidence": 1.0,
+                    "reason": "matched a test signal"
+                }
+            })))
+            .expect(1)
+            .mount(server)
+            .await;
+    }
+
+    fn dispatch_test_client(server: &MockServer) -> Client {
+        Client::new(
+            &format!("{}/", server.uri()),
+            estelle_client::ApiKey::new("test-key").expect("key"),
+            Duration::from_secs(120),
+        )
+        .expect("client")
+    }
+
+    /// The defect this guards is a MEASURED one: routing "how much memory do i have left" to
+    /// `memory.search` put 26,259 characters of repository source and scraped marketing copy into
+    /// the answer slot, because `POST /search` answers with `recall` — the raw retrieved text —
+    /// and `render_structural_search`'s first act is to extend the rendered lines with it.
+    ///
+    /// The server stopped emitting the action, and that fix is NOT deployed, so a shipped binary
+    /// talking to production can still be handed it. The refusal therefore has to be here.
+    ///
+    /// The sentinel appears only in the SERVER's reply — never in the prompt — so this asserts the
+    /// absence of a string the caller could not have echoed back into the answer itself.
+    #[tokio::test]
+    async fn an_evidence_action_is_refused_rather_than_printed_as_the_answer() {
+        let server = MockServer::start().await;
+        let prompt = "how much memory do i have left in my account";
+        mount_dispatch_action(&server, prompt, "memory", "memory.search").await;
+        // Mounted on purpose: an UNMOUNTED /search would fail the call and pass this test for the
+        // wrong reason. Mounted, a client that still calls it renders the sentinel and goes red.
+        Mock::given(method("POST"))
+            .and(path("/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "recall": "SENTINEL_RAW_REPOSITORY_TEXT def held_tokens(account): ..."
+            })))
+            .mount(&server)
+            .await;
+
+        let reply = answer_question(
+            dispatch_test_client(&server),
+            Repo::new("fatelabs/estelle").expect("repo"),
+            tempfile::tempdir()
+                .expect("working tree")
+                .path()
+                .to_path_buf(),
+            prompt.to_string(),
+            None,
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("a refusal is still an answer");
+
+        assert!(
+            !reply.text.contains("SENTINEL_RAW_REPOSITORY_TEXT"),
+            "retrieval evidence reached the answer slot: {}",
+            reply.text
+        );
+        assert!(
+            reply.text.contains("memory.search"),
+            "the refusal names the action it refused: {}",
+            reply.text
+        );
+        let requests = server.received_requests().await.expect("request recording");
+        assert_eq!(
+            requests
+                .iter()
+                .map(|request| request.url.path())
+                .collect::<Vec<_>>(),
+            ["/turn/route"],
+            "the dispatch read is the only request the turn may make"
+        );
+    }
+
+    /// A sentence must not spend autonomy. No shipped server emits a `work.*` action yet, so this
+    /// drives the shape classifier through the family rule rather than through a name the server
+    /// would have to invent first — the same reason the server tests call
+    /// `reject_evidence_passthrough` directly.
+    #[tokio::test]
+    async fn a_write_shaped_action_is_withheld_and_named_rather_than_executed() {
+        let server = MockServer::start().await;
+        let prompt = "fix the login bug";
+        mount_dispatch_action(&server, prompt, "work", "work.start").await;
+
+        let reply = answer_question(
+            dispatch_test_client(&server),
+            Repo::new("fatelabs/estelle").expect("repo"),
+            tempfile::tempdir()
+                .expect("working tree")
+                .path()
+                .to_path_buf(),
+            prompt.to_string(),
+            None,
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("a refusal is still an answer");
+
+        assert!(
+            reply.text.contains("work.start"),
+            "the withheld reply names the action: {}",
+            reply.text
+        );
+        assert!(
+            reply.text.contains("/work"),
+            "a withheld EDIT says how to start it deliberately, and is not reported as unsupported: {}",
+            reply.text
+        );
+        assert!(reply.degraded, "nothing ran, so the turn is degraded");
+        let requests = server.received_requests().await.expect("request recording");
+        assert_eq!(
+            requests
+                .iter()
+                .map(|request| request.url.path())
+                .collect::<Vec<_>>(),
+            ["/turn/route"],
+            "a write-shaped action must reach no endpoint at all"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unbound_action_is_named_back_to_the_caller() {
+        let server = MockServer::start().await;
+        let prompt = "do the thing";
+        mount_dispatch_action(&server, prompt, "future", "future.unheard_of").await;
+
+        let reply = answer_question(
+            dispatch_test_client(&server),
+            Repo::new("fatelabs/estelle").expect("repo"),
+            tempfile::tempdir()
+                .expect("working tree")
+                .path()
+                .to_path_buf(),
+            prompt.to_string(),
+            None,
+            &CancellationToken::new(),
+        )
+        .await
+        .expect("a refusal is still an answer");
+
+        assert!(
+            reply.text.contains("future.unheard_of"),
+            "an unknown action is named, never silently dropped: {}",
+            reply.text
+        );
+        assert!(reply.degraded);
+    }
+
+    /// The clause-by-clause check. `suite_dispatch.py::_action` owns the closed set of actions;
+    /// this list is WRITTEN OUT rather than derived, so an action losing its handler is a red test
+    /// instead of a silently shorter loop. Every row asserts the turn reached that action's OWN
+    /// surface — not merely that some request was made.
+    #[tokio::test]
+    async fn every_read_shaped_action_reaches_its_own_surface() {
+        // (action, suite, the endpoint only that action should reach)
+        let contract = [
+            ("research.ask", "research", "/deep-search"),
+            ("review.diff", "review", "/gate"),
+            ("guardian.verify_diff", "guardian", "/verify"),
+            ("affinity.route", "affinity", "/route"),
+            ("monitor.logs", "monitor", "/monitor/logs"),
+            ("monitor.uptime", "monitor", "/monitor/uptime"),
+            ("memory.list", "memory", "/memories"),
+        ];
+        // Every read-shaped row of the shipped table is covered, so this cannot pass by testing a
+        // subset of the contract while reading as a verdict on all of it.
+        let covered = contract
+            .iter()
+            .map(|(action, _, _)| *action)
+            .collect::<std::collections::BTreeSet<_>>();
+        let read_shaped = DISPATCH_ACTION_SHAPES
+            .iter()
+            .filter(|(_, shape)| *shape == ActionShape::Read)
+            .map(|(action, _)| *action)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            covered, read_shaped,
+            "every read-shaped action is exercised"
+        );
+
+        for (action, suite, endpoint) in contract {
+            let server = MockServer::start().await;
+            let prompt = format!("plain sentence for {action}");
+            mount_dispatch_action(&server, &prompt, suite, action).await;
+            // Both verbs, because the table mixes GET reads with POST calls and this test asserts
+            // the PATH, never the method.
+            for verb in ["GET", "POST"] {
+                Mock::given(method(verb))
+                    .and(path(endpoint))
+                    .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+                    .mount(&server)
+                    .await;
+            }
+            // The diff-reading suites refuse early on a clean tree, so give them a real change.
+            let root = dirty_working_tree();
+
+            let reply = answer_question(
+                dispatch_test_client(&server),
+                Repo::new("fatelabs/estelle").expect("repo"),
+                root.path().to_path_buf(),
+                prompt.clone(),
+                None,
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap_or_else(|error| panic!("{action} did not answer: {error}"));
+
+            let paths = server
+                .received_requests()
+                .await
+                .expect("request recording")
+                .iter()
+                .map(|request| request.url.path().to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                paths,
+                vec!["/turn/route".to_string(), endpoint.to_string()],
+                "{action} must reach {endpoint} and nothing else"
+            );
+            assert!(
+                !reply.text.contains("no handler"),
+                "{action} fell through to a refusal: {}",
+                reply.text
+            );
+        }
     }
 
     fn dirty_working_tree() -> tempfile::TempDir {
@@ -11850,11 +12477,18 @@ mod tests {
         }
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
 
-        assert!(rendered.contains("EDIT REFUSED"));
+        // ⚠️ `EDIT REFUSED` was this modal's own headline and the catalog's was `Gate refused`.
+        // One block, one wording: the modal now renders `gate_refusal::lines`, so the headline
+        // here is the catalog's. The sentence naming what happened to the edit is kept.
+        assert!(rendered.contains("── gate · refused"), "{rendered}");
+        assert!(rendered.contains("Gate refused"), "{rendered}");
+        assert!(rendered.contains("verdict blocked"), "{rendered}");
         assert!(rendered.contains("Gate protected this repository"));
         assert!(rendered.contains("blast radius"));
         assert!(rendered.contains("2 files"));
         assert!(rendered.contains("6 changed lines"));
+        // The modal owns the input while it is open, so this is the MODAL's footer, not the
+        // composer prompt - the earlier sweep of "Ask Estelle" must not have touched it.
         assert!(rendered.contains("Ask Estelle"));
     }
 
@@ -11933,7 +12567,7 @@ mod tests {
             ]
         );
         let now = app.active.as_ref().expect("gate still active").started + Duration::from_secs(13);
-        let rendered = format!("{:?}", status_line(&app, now));
+        let rendered = format!("{:?}", status_bar_line(&app, now, 120));
 
         assert!(
             rendered.contains("/gate · waiting for server verdict"),
@@ -11942,9 +12576,10 @@ mod tests {
         assert!(rendered.contains("13s"), "{rendered}");
         let cold = format!(
             "{:?}",
-            status_line(
+            status_bar_line(
                 &app,
                 app.active.as_ref().expect("gate still active").started + Duration::from_secs(93),
+                120,
             )
         );
         assert!(
@@ -11986,13 +12621,19 @@ mod tests {
                 .next()
                 .is_some_and(|character| ('\u{2801}'..='\u{28ff}').contains(&character));
             if is_braille {
+                // ⚠️ **THE PROPERTY IS UNCHANGED; ONLY THE INK MOVED.** Braille material still
+                // belongs to the spider lily alone — that is what this clause is for. It is no
+                // longer RED: the founder saw `FATE_RED` on an idle startup frame and read it as
+                // a fault, and red is reserved for refusal (`■`) and break (`▲`) in this
+                // interface. See `the_idle_startup_frame_paints_no_red_anywhere`.
                 assert_eq!(
-                    cell.fg, FATE_RED,
-                    "only the earned red spider lily may use Braille material"
+                    cell.fg,
+                    app.theme.screen_palette().mid,
+                    "only the spider lily may use Braille material, and never in red"
                 );
             }
         }
-        assert!(first.contains("Ask Estelle"));
+        assert!(first.contains(live_renderer::PROMPT_GLYPH), "{first}");
     }
 
     #[test]
@@ -12098,7 +12739,7 @@ mod tests {
     #[test]
     fn terminal_session_requests_mouse_events_instead_of_wheel_to_arrow_translation() {
         let mut enter = Vec::new();
-        enter_terminal_screen(&mut enter).expect("enter commands");
+        enter_terminal_screen(&mut enter, /*capture_mouse*/ true).expect("enter commands");
         let enter = String::from_utf8(enter).expect("ANSI enter sequence");
         assert!(
             enter.contains("\u{1b}[?1000h"),
@@ -12119,6 +12760,209 @@ mod tests {
         assert!(
             leave.contains("\u{1b}[?1006l"),
             "SGR mouse mode was not disabled"
+        );
+    }
+    /// 🔴 **THE CONTROL FOR THE TOGGLE: BOTH DIRECTIONS, ON THE REAL WRITER.**
+    ///
+    /// A one-way assertion here would pass on a "toggle" that only ever enables.
+    #[test]
+    fn mouse_capture_can_be_released_to_the_terminal_and_taken_back() {
+        let mut released = Vec::new();
+        write_mouse_capture(&mut released, /*captured*/ false).expect("release the mouse");
+        let released = String::from_utf8(released).expect("ANSI release sequence");
+        assert!(
+            released.contains("\u{1b}[?1000l") && released.contains("\u{1b}[?1006l"),
+            "the mouse was not handed back to the terminal: {released:?}"
+        );
+
+        let mut taken = Vec::new();
+        write_mouse_capture(&mut taken, /*captured*/ true).expect("take the mouse");
+        let taken = String::from_utf8(taken).expect("ANSI capture sequence");
+        assert!(
+            taken.contains("\u{1b}[?1000h") && taken.contains("\u{1b}[?1006h"),
+            "the mouse was not taken back: {taken:?}"
+        );
+    }
+
+    /// 🔴 **THE REGRESSION THIS FIXES, ASSERTED DIRECTLY.**
+    ///
+    /// `enter_terminal_screen` used to execute `EnableMouseCapture` unconditionally, so every
+    /// re-entry — and `resume` re-enters after every inline login — repossessed the mouse behind
+    /// the user's back. This test could not have passed before that became a parameter, and it is
+    /// the half that a "does entering enable the mouse?" test can never cover.
+    #[test]
+    fn re_entering_the_screen_does_not_repossess_a_mouse_the_user_handed_back() {
+        let mut entered = Vec::new();
+        enter_terminal_screen(&mut entered, /*capture_mouse*/ false).expect("enter commands");
+        let entered = String::from_utf8(entered).expect("ANSI enter sequence");
+        assert!(
+            !entered.contains("\u{1b}[?1000h"),
+            "re-entry took the mouse back from the terminal: {entered:?}"
+        );
+        assert!(
+            entered.contains("\u{1b}[?1000l"),
+            "re-entry must positively release the mouse, not merely omit the request: {entered:?}"
+        );
+        // Bracketed paste is NOT part of the trade: it is re-armed either way.
+        assert!(
+            entered.contains("\u{1b}[?2004h"),
+            "bracketed paste was dropped along with the mouse: {entered:?}"
+        );
+    }
+
+    /// The hint row says which mode is in force, and the demo's five pairs survive both.
+    #[test]
+    fn the_hint_row_says_which_mouse_mode_is_in_force() {
+        let captured = ask_hints_line_with(/*selection_on*/ false);
+        let suspended = ask_hints_line_with(/*selection_on*/ true);
+
+        // Advertised in BOTH states — that is what makes it findable — but only one of them
+        // claims the mode is on. Asserting the "on" wording alone would pass on a row that says
+        // "selection on" permanently, which would be a lie half the time.
+        assert!(captured.ends_with("ctrl+o selection"), "{captured}");
+        assert!(suspended.ends_with("ctrl+o selection on"), "{suspended}");
+        // ⚠️ `ends_with("on")` would be TRUE for "selection" itself — the space is load-bearing.
+        assert!(
+            !captured.ends_with(" on"),
+            "the idle row claims selection is on: {captured}"
+        );
+        assert_eq!(
+            suspended.to_lowercase(),
+            suspended,
+            "the surface is lowercase: {suspended}"
+        );
+        for (key, label) in ASK_HINTS {
+            let pair = format!("{key} {label}");
+            assert!(captured.contains(&pair), "{captured}");
+            assert!(
+                suspended.contains(&pair),
+                "the suspended row dropped a demo hint: {suspended}"
+            );
+        }
+    }
+
+    /// 🔴 **THE TOGGLE IS A CONTROL CHORD, AND THAT IS THE WHOLE POINT OF THIS TEST.**
+    ///
+    /// `alt+s` shipped for one commit and never fired on macOS: Option is a COMPOSE modifier
+    /// there, so Option+S produces `ß` and no modified key event is sent at all. This asserts the
+    /// binding is CONTROL rather than ALT — a regression to any `alt+<letter>` fails here — and
+    /// that it actually reaches the toggle through the real `handle_key`. It also proves the
+    /// composer does not swallow `ctrl+o` first, which is the collision that would appear if
+    /// `AppKeymap::copy` were ever wired into this binary.
+    ///
+    /// ⚠️ What it CANNOT assert: whether a given terminal delivers `ctrl+o` at all. That is a
+    /// property of the emulator, and it is exactly the gap that let the `alt+s` bug ship.
+    #[test]
+    fn the_selection_toggle_is_a_control_chord_and_reaches_it() {
+        let before = mouse_is_captured();
+        let mut app = test_app();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let transcript_before = app.transcript.len();
+
+        let chord = KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL);
+        assert!(
+            chord.modifiers.contains(KeyModifiers::CONTROL)
+                && !chord.modifiers.contains(KeyModifiers::ALT),
+            "macOS composes alt+<letter> into a character and sends no key event: never bind ALT"
+        );
+
+        assert!(!handle_key(&mut app, chord, &tx));
+        assert_eq!(
+            mouse_is_captured(),
+            !before,
+            "ctrl+o did not reach the toggle"
+        );
+        assert_eq!(
+            app.transcript.len(),
+            transcript_before + 1,
+            "the toggle said nothing to the user"
+        );
+        assert!(
+            app.composer.is_empty(),
+            "the composer swallowed ctrl+o and typed it: {:?}",
+            app.composer.text()
+        );
+
+        // Back, so this process-global does not outlive the test and change what
+        // `ask_hints_line` answers for whatever runs next.
+        assert!(!handle_key(&mut app, chord, &tx));
+        assert_eq!(
+            mouse_is_captured(),
+            before,
+            "the round trip did not restore the terminal"
+        );
+    }
+
+    /// `/select` is the door that still works if a terminal eats the chord too.
+    #[test]
+    fn slash_select_toggles_the_mouse_without_a_chord_at_all() {
+        let before = mouse_is_captured();
+        let mut app = test_app();
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        app.submit("/select".to_string(), &tx);
+        assert_eq!(
+            mouse_is_captured(),
+            !before,
+            "/select did not reach the toggle"
+        );
+        app.submit("/mouse".to_string(), &tx);
+        assert_eq!(
+            mouse_is_captured(),
+            before,
+            "/mouse did not reach the toggle"
+        );
+
+        // It is a local command: it must not have been sent anywhere.
+        assert!(
+            app.active.is_none() && app.queue.is_empty(),
+            "/select was dispatched to the server instead of being handled in the client"
+        );
+    }
+
+    /// 🔴 **A KEY YOU ONLY LEARN BY PRESSING IT IS NOT DISCOVERABLE.**
+    ///
+    /// The founder learned this feature existed from a message, not from the product, because the
+    /// first version advertised it only once it was already on. The chord must be on the frame
+    /// BEFORE it is used.
+    #[test]
+    fn the_hint_row_advertises_the_selection_chord_before_it_is_pressed() {
+        let idle = ask_hints_line_with(/*selection_on*/ false);
+        assert!(
+            idle.contains("ctrl+o selection"),
+            "the toggle is not advertised until it is used: {idle}"
+        );
+        assert!(
+            !idle.contains("alt+"),
+            "the hint row advertises an alt chord macOS will eat: {idle}"
+        );
+
+        let mut app = test_app();
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
+        assert!(
+            rendered.contains("ctrl+o selection"),
+            "the frame never shows the chord\n{rendered}"
+        );
+        let _ = &mut app;
+    }
+
+    /// A multi-line paste arrives as ONE bracketed-paste event and stays one draft.
+    ///
+    /// ⚠️ Limit, stated: this proves the in-process half — the loop routes `Event::Paste(String)`
+    /// to `App::handle_paste`, and newlines survive into the composer instead of submitting the
+    /// turn. It does NOT prove the terminal emulator actually sends `ESC[200~`; only a real
+    /// terminal does that, and this cannot assert it.
+    #[test]
+    fn a_multi_line_paste_stays_one_draft_instead_of_submitting_each_line() {
+        let mut app = test_app();
+        app.handle_paste("first line\nsecond line\nthird line".to_string());
+
+        let text = app.composer.text();
+        assert!(text.contains("first line"), "{text:?}");
+        assert!(text.contains("third line"), "{text:?}");
+        assert!(
+            app.active.is_none() && app.queue.is_empty(),
+            "a pasted newline submitted the turn instead of staying in the draft"
         );
     }
 
@@ -12248,18 +13092,27 @@ mod tests {
         assert!(scene_coverage(50, 95, 100, 100) > 0.30);
     }
 
+    /// ⚠️ **UPDATED DELIBERATELY, AND IT RETIRES A DESIGNED FEATURE'S COLOUR.** This asserted the
+    /// "earned RED lily" painted in `FATE_RED` at a wide terminal. The founder saw it in a real
+    /// terminal and called it *"a random red… kinda broken, the flower got cut off"*. Red is a
+    /// MEANING in this interface — `■` refusal, `▲` break — and decoration must not borrow it.
+    ///
+    /// The lily itself is KEPT: it matches the website's scene anchors and deleting it would be
+    /// throwing away the design rather than fixing the defect. What changed is its ink (`mid`, not
+    /// red) and that it is confined to a box of its own proportions. Measured off the LAYOUT
+    /// rather than the buffer's colour, because `mid` is used all over the frame and a colour
+    /// search would no longer isolate the motif.
     #[test]
     fn persistent_lily_stays_subtle_at_a_wide_terminal_size() {
-        let app = test_app();
-        let buffer = rendered_buffer_at_size(&app, Instant::now(), 190, 50);
-        let points = buffer
-            .content
+        let layout = live_renderer::symbol_ground_layout(190, 12);
+        let points = layout
+            .ink
             .iter()
             .enumerate()
-            .filter(|(_, cell)| cell.fg == FATE_RED && !cell.symbol().trim().is_empty())
+            .filter(|(_, level)| **level == 2)
             .map(|(index, _)| (index % 190, index / 190))
             .collect::<Vec<_>>();
-        assert!(!points.is_empty(), "the earned red lily did not paint");
+        assert!(!points.is_empty(), "the lily did not paint");
         let min_x = points.iter().map(|(x, _)| *x).min().unwrap_or(0);
         let max_x = points.iter().map(|(x, _)| *x).max().unwrap_or(0);
         let min_y = points.iter().map(|(_, y)| *y).min().unwrap_or(0);
@@ -12276,12 +13129,19 @@ mod tests {
         );
     }
 
+    /// ⚠️ **UPDATED DELIBERATELY: `auth_resolved` IS NOW LOAD-BEARING HERE.** A submitted message
+    /// no longer echoes into the transcript at submit time — it enters the record when it is
+    /// SENT. With auth still resolving, `handle_missing_client` PARKS the request at the front of
+    /// the queue, so it has not been sent and correctly has no row. Resolving auth lets it settle
+    /// (refused, for want of a credential), which is when the `you` row appears. The property
+    /// under test is unchanged: the handoff and the user's turn coexist, handoff first.
     #[test]
     fn first_question_keeps_the_session_handoff_in_the_transcript() {
         let mut app = test_app();
+        app.auth_resolved = true;
         app.session_context = Some(session_gap::SessionContext {
             human_lines: vec![
-                "Welcome back. You were away about 5 hours.".to_string(),
+                "Away about 5 hours.".to_string(),
                 "Elsewhere while you were away: 48 committed file changes.".to_string(),
             ],
             model_context: "session context".to_string(),
@@ -12291,9 +13151,20 @@ mod tests {
         app.submit("what changed?".to_string(), &tx);
 
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
-        assert!(rendered.contains("Since your last session"));
-        assert!(rendered.contains("Welcome back. You were away about 5 hours."));
-        assert!(rendered.contains("│you"));
+        assert!(rendered.contains("Since the last session"));
+        assert!(rendered.contains("Away about 5 hours."));
+        // 🔴 **THE `you` LABEL IS GONE AND ITS ABSENCE IS PART OF THE CONTRACT NOW.**
+        // The founder: *"Delete the word 'you'. I don't want to see that 'you' any more."* What
+        // the label was standing in for — this turn is MINE — is the highlight band, asserted in
+        // `the_users_own_turn_is_a_band_not_a_label` where the background can actually be read.
+        // A text dump cannot see a background, so asserting the absence here and the presence
+        // there is the only honest split.
+        assert!(
+            !rendered
+                .lines()
+                .any(|line| line.trim_start_matches('"').trim_end() == "you"),
+            "the `you` label came back\n{rendered}"
+        );
         assert!(rendered.contains("› what changed?"));
     }
 
@@ -12308,7 +13179,7 @@ mod tests {
                 .next()
                 .is_some_and(|line| !line.contains("..."))
         );
-        assert!(!format!("{:?}", status_line(&app, Instant::now())).contains("..."));
+        assert!(!format!("{:?}", status_bar_line(&app, Instant::now(), 120)).contains("..."));
     }
 
     #[test]
@@ -12316,14 +13187,17 @@ mod tests {
         let app = test_app();
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
         let lines = rendered.lines().collect::<Vec<_>>();
+        // The design opens the input on `── ask · <repo> ──`; the box is the old language.
+        // The BOUND is what this test is for and it is unchanged: the input still owns only
+        // the bottom of the frame.
         let composer = lines
             .iter()
-            .position(|line| line.contains("ASK ESTELLE"))
-            .expect("bounded composer title");
+            .position(|line| line.contains("── ask · "))
+            .expect("the design's ask rule opens the input surface");
 
-        assert!(composer >= lines.len().saturating_sub(7));
-        assert!(lines[composer].contains('┌'));
-        assert!(rendered.contains("› Ask Estelle"));
+        assert!(composer >= lines.len().saturating_sub(10));
+        assert!(!lines[composer].contains('┌'));
+        assert!(rendered.contains(live_renderer::PROMPT_GLYPH), "{rendered}");
     }
 
     #[test]
@@ -12337,7 +13211,7 @@ mod tests {
                 row.iter()
                     .map(ratatui::buffer::Cell::symbol)
                     .collect::<String>()
-                    .contains("› Ask Estelle")
+                    .contains(live_renderer::PROMPT_GLYPH)
             })
             .expect("composer placeholder row");
 
@@ -12355,7 +13229,20 @@ mod tests {
         // sheet. Color::Reset inherits the terminal's own background. Cream Ink is the
         // deliberate painted surface and stays painted.
         assert_eq!(Theme::Dark.background(), Color::Reset);
-        assert_eq!(Theme::CreamInk.background(), FATE_BG);
+        // 🔴 THE CREAM GROUND IS THE PALETTE'S, NOT A SECOND COPY OF IT. This line used to read
+        // `FATE_BG` (`#E9E6DC`) and stayed green through the day the founder's "5% too bright"
+        // instruction was implemented — because the instruction was implemented in `theme.rs` and
+        // this owner was never told. Asserting the PALETTE rather than a literal is what makes the
+        // next move of that value impossible to land in one place only.
+        assert_eq!(
+            Theme::CreamInk.background(),
+            theme::ScreenTheme::Cream.palette().ground
+        );
+        assert_ne!(
+            Theme::CreamInk.background(),
+            FATE_BG,
+            "the old cream is back"
+        );
 
         let app = test_app();
         let buffer = rendered_buffer_at_size(&app, Instant::now(), 120, 32);
@@ -12471,6 +13358,1599 @@ mod tests {
         );
     }
 
+    /// 🔴 THE USER'S OWN MESSAGE SITS ON A BAND THAT REACHES THE RIGHT EDGE, AND WRAPS WITH IT.
+    ///
+    /// The band itself already shipped; what did not was any guard over the two properties a
+    /// SINGLE-LINE message cannot demonstrate — that the band follows a wrap onto every row it
+    /// produces, and that it reaches the right edge rather than stopping at the last word.
+    /// `user_turns_render_as_filled_blocks_ported_from_codex_history_cell` above is the PARTIAL
+    /// species: `filled >= text.len()` is satisfied by a highlighter on the WORDS, and it renders
+    /// one short line, so neither property was covered. Measured before this test was written:
+    /// the band stopped at **column 71 of 80**.
+    ///
+    /// Asserted on the BUFFER — a `.txt` frame cannot see a background — at every column, with the
+    /// rows above and below as negative controls. Same shape as
+    /// `work_plan::only_the_active_step_is_lifted_and_the_band_spans_the_full_row`.
+    ///
+    /// ⚠️ Drives CREAM INK on purpose. See [`user_turn_background`]: Dark blends against the
+    /// background the terminal reports, which is `None` in any test, so a Dark fixture would
+    /// assert nothing. That is a real coverage hole in the shipped implementation and it is named
+    /// there rather than papered over here.
+    #[test]
+    fn the_user_turn_band_spans_the_full_transcript_width_and_survives_wrapping() {
+        const WIDTH: u16 = 80;
+        // ⚠️ Sized so the frame does NOT split off the production rail — otherwise "full width"
+        // would mean the session column and this test would be measuring a different geometry
+        // than it claims. Asserted, not assumed.
+        assert!(
+            session_view::split(WIDTH).is_none(),
+            "this test's premise is a single-column frame"
+        );
+        let mut app = test_app();
+        app.theme = Theme::CreamInk;
+        let tint = user_turn_background(app.theme).expect("cream ink has a known band colour");
+        // Long enough to wrap to more than one row at 80 columns: the band must follow the text
+        // onto every row it wraps to, not band the first row and abandon the rest.
+        let question = "What changed while I was away, and which of those changes touched the \
+             checkout retry path that we bound last week in billing/charge.rs?"
+            .to_string();
+        app.transcript.push(TranscriptEntry::User(question));
+        app.transcript.push(TranscriptEntry::Answer {
+            text: "The retry gate moved.".to_string(),
+            grounded: Some(true),
+            degraded: false,
+            sources: Vec::new(),
+        });
+
+        let buffer = rendered_buffer_at_size(&app, Instant::now(), WIDTH, 32);
+        let banded = (0..buffer.area.height)
+            .filter(|y| buffer[(0, *y)].bg == tint)
+            .collect::<Vec<_>>();
+        assert!(
+            banded.len() >= 2,
+            "a wrapped user turn produced {} banded rows — the band did not follow the wrap",
+            banded.len()
+        );
+        assert!(
+            banded.windows(2).all(|pair| pair[1] == pair[0] + 1),
+            "the banded rows are not contiguous: {banded:?}"
+        );
+        for row in &banded {
+            for x in 0..buffer.area.width {
+                assert_eq!(
+                    buffer[(x, *row)].bg,
+                    tint,
+                    "the band stopped at column {x} of {} on row {row}",
+                    buffer.area.width
+                );
+            }
+        }
+        // The negative controls, in both directions: the row above the band and the row below it
+        // are NOT lifted, so the loop above is not simply reading a tint painted over the pane.
+        let first = *banded.first().expect("a banded row");
+        let last = *banded.last().expect("a banded row");
+        assert_ne!(
+            buffer[(0, first - 1)].bg,
+            tint,
+            "the row above is lifted too"
+        );
+        assert_ne!(
+            buffer[(0, last + 1)].bg,
+            tint,
+            "the row below is lifted too"
+        );
+    }
+
+    /// 🔴 THE CARET IS ALWAYS ON A ROW THE FRAME ACTUALLY DREW. This is the founder's "glitch
+    /// where you can't see where you're typing when you enter a bunch of stuff", stated as a
+    /// property: whatever the draft's length, the row carrying the caret is inside the typing
+    /// area — below the ask rule, above the hint row. Nothing guarded this before; the composer
+    /// was given a height clamped to a magic `14` and the caret was computed against a DIFFERENT
+    /// rectangle than the one the composer was rendered into.
+    ///
+    /// ⚠️ 200 lines is far past `COMPOSER_MAX_ROWS`, which is the point: past the cap the
+    /// composer must SCROLL, and a scrolled composer that leaves the caret off its own area is
+    /// the same defect wearing a bound.
+    #[test]
+    fn the_caret_stays_inside_the_typing_area_at_every_draft_length() {
+        const WIDTH: u16 = 100;
+        const HEIGHT: u16 = 34;
+        // ⚠️ 0 IS THE CASE THE FOUNDER PHOTOGRAPHED. He had typed nothing at all and the block
+        // cursor was sitting on the `e` of "enter send". An empty draft is not an edge case here,
+        // it is the state every session opens in.
+        for lines in [0usize, 1, 5, 20, 200] {
+            let mut app = test_app();
+            app.composer.set_text(
+                (0..lines)
+                    .map(|index| format!("line {index}"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
+
+            let (buffer, cursor) = rendered_buffer_and_cursor(&app, Instant::now(), WIDTH, HEIGHT);
+            let row_text = |y: u16| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            };
+            let find = |needle: &str| {
+                (0..buffer.area.height)
+                    .find(|y| row_text(*y).contains(needle))
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "no row carrying {needle:?} at {lines} lines\n{}",
+                            (0..buffer.area.height)
+                                .map(row_text)
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        )
+                    })
+            };
+            // Both landmarks are read off the BUFFER, so a layout change moves the expectation
+            // with the frame instead of leaving this test asserting yesterday's geometry.
+            let rule = find("── ask ·");
+            let hint = find(&ask_hints_line());
+
+            assert!(
+                cursor.y > rule,
+                "at {lines} lines the caret landed on or above the ask rule (caret row \
+                 {}, rule row {rule})",
+                cursor.y
+            );
+            assert!(
+                cursor.y < hint,
+                "at {lines} lines the caret landed on or below the hint row (caret row \
+                 {}, hint row {hint}) — this is the glitch: you cannot see where you are typing",
+                cursor.y
+            );
+            assert!(
+                cursor.y < buffer.area.height && cursor.x < buffer.area.width,
+                "at {lines} lines the caret left the frame entirely: {cursor:?}"
+            );
+            // 🔴 THE STRONG FORM, WHERE IT IS EXPRESSIBLE. A draft of at most one line puts the
+            // caret on the PROMPT'S OWN ROW, to the right of the glyph. "Inside the typing area"
+            // would still pass on a caret one row off; this is the assertion that pins the
+            // founder's photograph, where an empty draft put the caret on the hint row instead.
+            // Past one line the caret follows the text down, so the row is no longer fixed and
+            // the containment invariant above is the whole contract.
+            let prompt = (0..buffer.area.height)
+                .find_map(|y| {
+                    (0..buffer.area.width)
+                        .find(|x| buffer[(*x, y)].symbol() == live_renderer::PROMPT_GLYPH)
+                        .map(|x| (y, x))
+                })
+                .expect("a prompt glyph on screen");
+            if lines <= 1 {
+                assert_eq!(
+                    cursor.y, prompt.0,
+                    "at {lines} lines the caret is not on the prompt's own row (caret \
+                     {cursor:?}, prompt row {})",
+                    prompt.0
+                );
+                assert!(
+                    cursor.x > prompt.1,
+                    "at {lines} lines the caret is left of the prompt glyph: {cursor:?}"
+                );
+            }
+        }
+    }
+
+    /// 🔴 THE PROMPT IS ONE COLUMN, AND THE COMPOSER'S GUTTER IS TWO.
+    ///
+    /// The glyph this replaced was East Asian WIDE, and the argument for it was that its two cells
+    /// matched `LIVE_PREFIX_COLS`. That argument was about columns and said nothing about fonts;
+    /// Terminal.app rendered it as `)`. The replacement is narrow, which INVERTS the gutter
+    /// arithmetic — glyph in column 0, the space before the text in column 1 — so this asserts the
+    /// measured width rather than restating the old conclusion.
+    ///
+    /// ⚠️ **THIS CANNOT PROVE THE GLYPH RENDERS.** Font coverage is not observable from a test;
+    /// a buffer holds the codepoint the renderer wrote, never the shape a terminal draws for it.
+    /// What is asserted here is only that it occupies the cell budget the composer reserved.
+    #[test]
+    fn the_prompt_glyph_is_one_column_and_fits_the_composer_gutter() {
+        let width = unicode_width::UnicodeWidthStr::width(live_renderer::PROMPT_GLYPH);
+        assert_eq!(
+            width, 1,
+            "the prompt glyph is {width} columns; the narrow-glyph gutter arithmetic in \
+             collapse_composer_tail assumes exactly one"
+        );
+        // `LIVE_PREFIX_COLS` is 2 (`tui/src/ui_consts.rs`) — the columns the composer insets its
+        // text area by. One of them is the glyph; this asserts the other survives as the gap.
+        assert!(
+            width < 2,
+            "the glyph must leave at least one column of gap before the typed text"
+        );
+        // It reaches the rendered frame, in the prompt's own column.
+        let app = test_app();
+        let buffer = rendered_buffer_at_size(&app, Instant::now(), 100, 34);
+        assert!(
+            (0..buffer.area.height).any(|y| (0..buffer.area.width)
+                .any(|x| buffer[(x, y)].symbol() == live_renderer::PROMPT_GLYPH)),
+            "no cell in the frame carries the prompt glyph"
+        );
+    }
+
+    /// 🔴 THE INVARIANT WHOSE ABSENCE LET THREE MESSAGES VANISH.
+    ///
+    /// The founder typed four messages during one in-flight request. The first reported
+    /// "Request cancelled."; the second and third produced **nothing at all** — no reply, no
+    /// error, no notice — while sitting in the transcript as `you › hi`. A message that leaves
+    /// its own echo on screen and never resolves is the worst shape a failure can take: the user
+    /// has visual proof they asked, and none that anything happened.
+    ///
+    /// Stated as a property rather than four cases: **every user turn echoed into the transcript
+    /// is either in flight, still queued, or has reached a terminal state.** A turn that is none
+    /// of those three has been dropped.
+    #[test]
+    fn every_echoed_user_turn_is_in_flight_queued_or_resolved() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        // ⚠️ `auth_resolved` MATTERS AND THE TEST WOULD BE VACUOUS WITHOUT IT. While auth is
+        // still resolving, `handle_missing_client` deliberately parks each request at the FRONT
+        // of the queue, so every message is trivially "still queued" and the invariant below
+        // passes without testing anything. Resolved-with-no-credential is the state that
+        // actually drives requests to a terminal outcome.
+        app.auth_resolved = true;
+
+        for message in ["first", "second", "third", "fourth"] {
+            app.submit(message.to_string(), &tx);
+        }
+
+        let echoed = app
+            .transcript
+            .iter()
+            .filter(|entry| matches!(entry, TranscriptEntry::User(_)))
+            .count();
+        assert_eq!(echoed, 4, "not every message reached the transcript");
+
+        // Accounted for = the one in flight, plus everything still queued, plus everything that
+        // has already resolved into a reply, a system note or a failure.
+        let resolved = app
+            .transcript
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry,
+                    TranscriptEntry::Answer { .. }
+                        | TranscriptEntry::System(_)
+                        | TranscriptEntry::Failure(_)
+                        | TranscriptEntry::Command { .. }
+                )
+            })
+            .count();
+        let accounted = usize::from(app.active.is_some()) + app.queue.len() + resolved;
+        assert!(
+            accounted >= echoed,
+            "{} user turns are echoed but only {accounted} are accounted for \
+             (in flight: {}, queued: {}, resolved: {resolved}) — the rest were dropped",
+            echoed,
+            usize::from(app.active.is_some()),
+            app.queue.len()
+        );
+    }
+
+    /// 🔴 THE QUEUE IS BOUNDED, AND THE BOUND REFUSES OUT LOUD.
+    ///
+    /// Power of Ten rule 2: the growth has a stated bound and the bound is a named constant. An
+    /// unbounded queue fed by a held-down Enter is a memory leak with a UI. At the cap the send
+    /// is REFUSED with a message — never silently dropped, which is the defect this whole item
+    /// exists to remove.
+    #[test]
+    fn the_queue_is_bounded_and_the_cap_refuses_visibly_instead_of_dropping() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+
+        // One request goes in flight; the rest queue behind it.
+        for index in 0..MAX_QUEUED_REQUESTS + 8 {
+            app.submit(format!("message {index}"), &tx);
+        }
+
+        assert!(
+            app.queue.len() <= MAX_QUEUED_REQUESTS,
+            "the queue grew to {} past its cap of {MAX_QUEUED_REQUESTS}",
+            app.queue.len()
+        );
+        let rendered = format!("{:?}", render_transcript(&app.transcript));
+        assert!(
+            rendered.contains("queue is full"),
+            "the cap dropped a message without saying so\n{rendered}"
+        );
+
+        // The refusal must not itself be a drop: the queue length is unchanged by a refused send.
+        let before = app.queue.len();
+        app.submit("one more".to_string(), &tx);
+        assert_eq!(
+            app.queue.len(),
+            before,
+            "a refused send still changed the queue"
+        );
+    }
+
+    /// 🔴 A CANCELLED REQUEST MUST NOT STRAND THE QUEUE.
+    ///
+    /// `esc` called `start_next` after cancelling and `ctrl+c` did not, so a ctrl+c left the
+    /// in-flight slot empty with messages still queued behind it and nothing to drain them. That
+    /// asymmetry is the mechanism by which an echoed turn can wait forever.
+    ///
+    /// ⚠️ **THE FIRST VERSION OF THIS TEST WAS INERT AND A MUTANT CAUGHT IT.** It called `submit`
+    /// twice and assumed that left something in flight. With no client it does not: each submit
+    /// resolves straight to a failure, so the queue was already empty at `ctrl+c` and the
+    /// assertion passed on a fixture that never had a queue to strand. The in-flight request is
+    /// planted EXPLICITLY here, and removing `start_next` from the ctrl+c arm now fails.
+    #[test]
+    fn cancelling_the_in_flight_request_does_not_strand_the_queue() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.active = Some(ActiveRequest {
+            id: 7,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        app.submit("first".to_string(), &tx);
+        app.submit("second".to_string(), &tx);
+        assert_eq!(
+            app.queue.len(),
+            2,
+            "the premise is two messages waiting behind one in flight"
+        );
+
+        // ctrl+c, the path that used to leave the queue with no driver.
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+            &tx,
+        );
+
+        assert!(
+            app.active.is_some() || app.queue.is_empty(),
+            "the queue still holds {} message(s) with nothing in flight to drain them",
+            app.queue.len()
+        );
+    }
+
+    /// The queue's depth is visible WHILE something is in flight, which is the only time it can
+    /// be non-empty. `run_state` returned the working line and never reached the queue branch, so
+    /// "3 queued" was reachable only in a state where the queue is necessarily empty.
+    ///
+    /// ⚠️ **ALSO INERT IN ITS FIRST VERSION, ALSO CAUGHT BY A MUTANT.** Without an in-flight
+    /// request `run_state` falls through to its IDLE queue branch, which already said `{n}
+    /// queued` — so the test passed while asserting nothing about the working row. The request
+    /// is planted explicitly, which is the only state where the founder's three waiting messages
+    /// could exist and the only branch that was hiding them.
+    #[test]
+    fn the_queue_depth_is_visible_while_a_request_is_in_flight() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.active = Some(ActiveRequest {
+            id: 11,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        for index in 0..3 {
+            app.submit(format!("message {index}"), &tx);
+        }
+        assert_eq!(app.queue.len(), 3, "the premise is three waiting messages");
+
+        let status = format!("{:?}", status_bar_line(&app, Instant::now(), 120));
+        assert!(
+            status.contains("Working"),
+            "this must be the IN-FLIGHT branch, not the idle one\n{status}"
+        );
+        assert!(
+            status.contains("3 queued"),
+            "the status row hides the queue exactly when it is non-empty\n{status}"
+        );
+    }
+
+    /// 🔴 OUTSIDE A REPOSITORY THE FRAME SAYS SO, RATHER THAN NAMING THE DIRECTORY.
+    ///
+    /// The founder ran the binary from `~` and every surface labelled itself with his home
+    /// directory's name: `session · khai`, `production · khai`, `ask · khai`, `Ask about khai`.
+    /// There is no repository called `khai`. Taking `basename($PWD)` as an identity is the same
+    /// defect family as every fabricated number this repo has had to retract — a confident label
+    /// derived from something that does not carry the fact.
+    ///
+    /// ⚠️ Two DIFFERENT questions, and the fix must not conflate them: "is there a git repository
+    /// here or above" and "has Estelle swept it". This asserts only the first, which is the one
+    /// the rules are naming.
+    #[test]
+    fn outside_a_repository_the_rules_say_no_repo_and_never_the_directory_name() {
+        let mut app = test_app();
+        app.repo = Repo::default();
+
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
+        assert!(
+            rendered.contains("\u{2500}\u{2500} session \u{b7} no repo"),
+            "the session rule does not name the absent repository\n{rendered}"
+        );
+        assert!(
+            rendered.contains("\u{2500}\u{2500} ask \u{b7} no repo"),
+            "the ask rule does not name the absent repository\n{rendered}"
+        );
+        // The placeholder identity must not leak onto the frame either — `unknown/repo` reads as
+        // a repository called "repo" owned by "unknown".
+        assert!(
+            !rendered.contains("unknown/repo"),
+            "the placeholder repo identity reached the frame\n{rendered}"
+        );
+        // The empty state must not invite a question about a repository that does not exist,
+        // and its advice must name a door that works from OUTSIDE a repository.
+        assert!(
+            rendered.contains("No repository here"),
+            "the empty state does not name the absence\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("estelle init"),
+            "the empty state advertises `init`, which is documented as configuring the CURRENT \
+             repository and cannot help when there is none\n{rendered}"
+        );
+
+        // The negative control: a real repo still names itself, so the assertions above are not
+        // simply passing on a frame that names nothing.
+        let real = test_app();
+        let rendered = rendered_frame_at_size(&real, Instant::now(), 120, 32);
+        assert!(
+            rendered.contains("\u{2500}\u{2500} session \u{b7} uqeu/estelle"),
+            "a resolved repository stopped naming itself\n{rendered}"
+        );
+    }
+
+    /// A directory that is not a git repository resolves to NO repository, not to its own name.
+    ///
+    /// Pinned at the resolver rather than the frame, because there were TWO basename fallbacks —
+    /// one in `repo_for` and a second in `App::new` re-deriving the same fact — and a frame test
+    /// alone would not have said which of them fabricated the name.
+    #[test]
+    fn a_directory_that_is_not_a_repository_resolves_to_nothing() {
+        let temporary =
+            std::env::temp_dir().join(format!("estelle-no-repo-{}", std::process::id()));
+        std::fs::create_dir_all(&temporary).expect("a scratch directory");
+        assert!(
+            !estelle_client::is_repository(&temporary),
+            "a plain directory was reported as a repository"
+        );
+        // ⚠️ The RESOLVER still names it, on purpose: that lenient answer is pinned against the
+        // live Python `repo_name_for` hook by
+        // `top_level::rust_repo_name_matches_the_python_hook_contract`. This is the negative
+        // control for the split — if the two functions ever agree, one of them has drifted into
+        // answering the other's question.
+        assert_eq!(
+            estelle_client::RepoResolver::new(None, &temporary)
+                .resolve()
+                .map(|repo| repo.as_str().to_string()),
+            temporary.canonicalize().ok().and_then(|path| path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_string())),
+            "the name-computing function stopped computing a name"
+        );
+        let _ = std::fs::remove_dir_all(&temporary);
+    }
+
+    /// 🔴 A QUEUED MESSAGE MUST LOOK DIFFERENT FROM A SENT ONE.
+    ///
+    /// The founder sent five messages, watched all five echo as identical `you › …` rows, and
+    /// said "queue doesn't work lol". It did work — nothing was lost, which is the hard half —
+    /// but **nothing on screen distinguished a sent message from a waiting one**, so from his
+    /// seat it was indistinguishable from the old behaviour where messages vanished. A queue the
+    /// user cannot see is a queue the user does not have.
+    ///
+    /// The waiting messages get their own band, drawn from `app.queue` itself, marked with `○`
+    /// — "queued · idle" in the mark vocabulary the founder picked.
+    #[test]
+    fn waiting_messages_are_drawn_in_their_own_band_with_the_queued_mark() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.active = Some(ActiveRequest {
+            id: 3,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        app.submit("hellow".to_string(), &tx);
+        app.submit("how are ou".to_string(), &tx);
+        assert_eq!(app.queue.len(), 2, "the premise is two waiting messages");
+
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 34);
+        assert!(
+            rendered.contains("\u{25cb} hellow"),
+            "the first waiting message is not marked queued\n{rendered}"
+        );
+        assert!(
+            rendered.contains("\u{25cb} how are ou"),
+            "the second waiting message is not marked queued\n{rendered}"
+        );
+
+        // The negative control: with nothing waiting, the band is absent entirely rather than
+        // drawn empty — otherwise the assertions above would pass on a permanent decoration.
+        let mut quiet = test_app();
+        quiet.auth_resolved = true;
+        let rendered = rendered_frame_at_size(&quiet, Instant::now(), 120, 34);
+        assert!(
+            !rendered.contains("waiting"),
+            "the queue band is drawn when nothing is queued\n{rendered}"
+        );
+    }
+
+    /// 🔴 UP RECALLS EVERY WAITING MESSAGE INTO ONE EDITABLE DRAFT.
+    ///
+    /// The founder's own words: *"you can press the up arrow to combine all of them and then you
+    /// can edit all of them, or you can just delete that message from the queue"*. Recall
+    /// COMBINES — one draft carrying every waiting message, not a walk backwards through them.
+    ///
+    /// ⚠️ Up must not fight the composer's existing draft history. The recall only fires when the
+    /// composer is EMPTY and something is actually waiting; with a draft in progress, up keeps
+    /// its history meaning.
+    #[test]
+    fn up_recalls_every_waiting_message_into_one_draft_and_leaves_history_alone() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.active = Some(ActiveRequest {
+            id: 5,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        for message in ["hi", "hellow", "how are ou"] {
+            app.submit(message.to_string(), &tx);
+        }
+        assert_eq!(app.queue.len(), 3);
+
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+            &tx,
+        );
+
+        assert_eq!(
+            app.composer.text(),
+            "hi\nhellow\nhow are ou",
+            "up did not combine the waiting messages into one draft"
+        );
+        assert!(
+            app.queue.is_empty(),
+            "recalled messages are still queued — they would send twice"
+        );
+        // The transcript must SAY they were recalled. Their echoes are already on screen, and
+        // leaving them with no explanation is the same silence this whole item is about.
+        let rendered = format!("{:?}", render_transcript(&app.transcript));
+        assert!(
+            rendered.contains("Recalled 3"),
+            "the recall was silent\n{rendered}"
+        );
+
+        // With a draft in progress, up belongs to the composer's history, not to the queue.
+        let mut typing = test_app();
+        typing.auth_resolved = true;
+        typing.active = Some(ActiveRequest {
+            id: 6,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        typing.submit("waiting".to_string(), &tx);
+        typing.composer.set_text("half typed");
+        handle_key(
+            &mut typing,
+            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+            &tx,
+        );
+        assert_eq!(
+            typing.queue.len(),
+            1,
+            "up stole the queue while a draft was in progress"
+        );
+    }
+
+    /// One waiting message can be dropped without disturbing the rest, and the order survives.
+    #[test]
+    fn dropping_one_waiting_message_leaves_the_others_in_order() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.active = Some(ActiveRequest {
+            id: 9,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        for message in ["first", "second", "third"] {
+            app.submit(message.to_string(), &tx);
+        }
+
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+            &tx,
+        );
+
+        assert_eq!(
+            app.queue
+                .iter()
+                .map(QueuedRequest::label)
+                .collect::<Vec<_>>(),
+            vec!["first".to_string(), "second".to_string()],
+            "dropping the last waiting message disturbed the others"
+        );
+        let rendered = format!("{:?}", render_transcript(&app.transcript));
+        assert!(
+            rendered.contains("third"),
+            "the dropped message was not named\n{rendered}"
+        );
+    }
+
+    /// 🔴 "WHERE'S THE PINK? I DON'T SEE ANY PINK. THE SKILLS AREN'T EVEN PINK."
+    ///
+    /// `palette.skill` (`#d48fb0` dark / `#b06a8c` cream) is a role the palette has carried all
+    /// along. Measured before this test: **7 uses in `screens.rs` — the catalog — and 0 anywhere
+    /// the customer can reach.** Another design element that made it to the mockup and never to
+    /// the product, the same family as the boxes, the shouted headings and the bullets.
+    ///
+    /// The design's own vocabulary for it is `screens.rs:932`: `» ` in `p.skill` ahead of a skill
+    /// name also in `p.skill`. This asserts the skill NAME is drawn in that role on the live
+    /// picker, on the BUFFER — a text dump cannot see a colour, which is exactly why the gap
+    /// survived this long.
+    #[test]
+    fn skill_names_are_drawn_in_the_skill_role_on_the_live_picker() {
+        let reply: CommandReply = serde_json::from_value(json!({
+            "skills": [
+                {"name": "review", "summary": "Review the current change against evidence"},
+                {"name": "trace", "summary": "Trace an issue to a bound repository symbol"}
+            ]
+        }))
+        .expect("skills reply");
+        let mut app = test_app();
+        app.prod_panel_visible = false;
+        app.skill_catalog = PickerSurface::skill_catalog(&reply);
+        app.picker = Some(PickerSurface::skills_filtered(&app.skill_catalog, ""));
+
+        let buffer = rendered_buffer_at_size(&app, Instant::now(), 130, 34);
+        let skill = app.theme.screen_palette().skill;
+        let row_of = |needle: &str| {
+            (0..buffer.area.height)
+                .find(|y| {
+                    (0..buffer.area.width)
+                        .map(|x| buffer[(x, *y)].symbol())
+                        .collect::<String>()
+                        .contains(needle)
+                })
+                .unwrap_or_else(|| panic!("no row carrying {needle:?}"))
+        };
+        let row = row_of("review");
+        let painted = (0..buffer.area.width)
+            .filter(|x| buffer[(*x, row)].fg == skill)
+            .count();
+        assert!(
+            painted >= "review".len(),
+            "the skill name is not drawn in palette.skill — {painted} cells carry the role"
+        );
+
+        // The negative control: the row's SUMMARY must not borrow the role, or "the skill colour
+        // is present somewhere on the row" would pass on a row painted entirely pink.
+        assert!(
+            painted < usize::from(buffer.area.width),
+            "the whole row is painted in the skill role, so the assertion above proves nothing"
+        );
+    }
+
+    /// 🔴 THE AFFORDANCE THAT MAKES THE QUEUE DISCOVERABLE, AND IT IS ONE STRING.
+    ///
+    /// Claude Code puts `Press up to edit queued messages` in the composer's placeholder position
+    /// the moment anything is queued, and removes it when the queue empties. That single line is
+    /// why its users know the queue exists without being told — and its absence is why the
+    /// founder concluded ours was broken while it was working.
+    ///
+    /// ⚠️ The affordance is a PLACEHOLDER: it may only appear where the user's own draft would
+    /// otherwise be, so it must never show while there is text in the composer.
+    #[test]
+    fn the_recall_affordance_appears_only_while_something_is_queued() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let in_flight = |app: &mut App| {
+            app.auth_resolved = true;
+            app.active = Some(ActiveRequest {
+                id: 21,
+                label: "thinking".to_string(),
+                started: Instant::now(),
+                cancel: CancellationToken::new(),
+            });
+        };
+
+        // Nothing queued: no affordance.
+        let mut quiet = test_app();
+        in_flight(&mut quiet);
+        let rendered = rendered_frame_at_size(&quiet, Instant::now(), 120, 34);
+        assert!(
+            !rendered.contains("press up to edit"),
+            "the affordance is shown with an empty queue\n{rendered}"
+        );
+
+        // One queued: the affordance, singular.
+        let mut one = test_app();
+        in_flight(&mut one);
+        one.submit("hi".to_string(), &tx);
+        let rendered = rendered_frame_at_size(&one, Instant::now(), 120, 34);
+        assert!(
+            rendered.contains("press up to edit 1 queued message"),
+            "no recall affordance with one message queued\n{rendered}"
+        );
+
+        // Several queued: the affordance carries the COUNT.
+        let mut many = test_app();
+        in_flight(&mut many);
+        for message in ["hi", "hellow", "how are ou"] {
+            many.submit(message.to_string(), &tx);
+        }
+        let rendered = rendered_frame_at_size(&many, Instant::now(), 120, 34);
+        assert!(
+            rendered.contains("press up to edit 3 queued messages"),
+            "the affordance does not carry the count\n{rendered}"
+        );
+
+        // A draft in progress owns the placeholder position; the affordance stands down.
+        many.composer.set_text("half typed");
+        let rendered = rendered_frame_at_size(&many, Instant::now(), 120, 34);
+        assert!(
+            rendered.contains("half typed"),
+            "the draft is not on screen\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("press up to edit"),
+            "the affordance overwrote the user's own draft\n{rendered}"
+        );
+    }
+
+    /// 🔴 ONE KEY, TWO MEANINGS, AND BOTH BRANCHES ARE ASSERTED.
+    ///
+    /// `up` recalls the queue when something is waiting and walks draft history otherwise. Testing
+    /// only the recall branch would ship a silent regression in the behaviour that was already
+    /// there — the composer's own history — which is the more used of the two.
+    #[test]
+    fn up_walks_draft_history_when_nothing_is_queued() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+        // ⚠️ Submitted through a real ENTER, not `App::submit`. Draft history belongs to the
+        // COMPOSER and is recorded when the composer itself submits; calling `App::submit`
+        // directly bypasses it, and a fixture built that way would assert on an empty history
+        // and call the result a regression.
+        app.composer.set_text("the first thing i asked");
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &tx,
+        );
+        assert!(app.queue.is_empty(), "the premise is an EMPTY queue");
+        assert!(app.composer.is_empty());
+
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+            &tx,
+        );
+
+        assert_eq!(
+            app.composer.text(),
+            "the first thing i asked",
+            "up stopped walking draft history when the queue was empty"
+        );
+    }
+
+    /// 🔴 THE CARET LANDS RIGHT AFTER THE TYPED TEXT — ROW **AND** COLUMN, READ BACK OFF THE
+    /// BACKEND AFTER THE WHOLE FRAME IS DRAWN.
+    ///
+    /// The distinction matters and it is the whole point of this test. A caret assertion against
+    /// the position the composer *requests* can pass while some later widget moves where the
+    /// terminal actually ends up. `rendered_buffer_and_cursor` calls
+    /// `Backend::get_cursor_position` AFTER `Terminal::draw` has returned, so what is asserted is
+    /// the position the terminal receives — including everything drawn after the composer, the
+    /// hint row on the frame's last row among them.
+    ///
+    /// The fixture is the founder's screenshot exactly: `hi` typed, nothing else.
+    #[test]
+    fn the_caret_follows_the_typed_text_and_no_later_widget_moves_it() {
+        let mut app = test_app();
+        // ⚠️ `set_text_content` leaves the caret at offset 0, so a fixture that only sets the
+        // text asserts the caret sits ON the first character and would call a correct renderer
+        // wrong. `End` puts it where a person who just typed `hi` would have left it.
+        let (tx, _rx) = mpsc::unbounded_channel();
+        app.composer.set_text("hi");
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::End, KeyModifiers::NONE),
+            &tx,
+        );
+        assert_eq!(app.composer.text(), "hi", "the draft was not set");
+
+        let (buffer, cursor) = rendered_buffer_and_cursor(&app, Instant::now(), 120, 32);
+        let row_text = |y: u16| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        };
+        let prompt = (0..buffer.area.height)
+            .find_map(|y| {
+                (0..buffer.area.width)
+                    .find(|x| buffer[(*x, y)].symbol() == live_renderer::PROMPT_GLYPH)
+                    .map(|x| (y, x))
+            })
+            .expect("a prompt glyph");
+
+        assert_eq!(
+            cursor.y,
+            prompt.0,
+            "the caret is not on the prompt row. prompt row {}: {:?}   caret row {}: {:?}",
+            prompt.0,
+            row_text(prompt.0),
+            cursor.y,
+            row_text(cursor.y)
+        );
+        // Immediately past `hi`: the glyph, its one-column gap, then two characters.
+        assert_eq!(
+            cursor.x,
+            prompt.1 + 2 + 2,
+            "the caret is not sitting after the typed text on {:?}",
+            row_text(cursor.y)
+        );
+        // And explicitly NOT on the hint row, which is the row it was photographed on.
+        let hint = (0..buffer.area.height)
+            .find(|y| row_text(*y).contains(&ask_hints_line()))
+            .expect("a hint row");
+        assert_ne!(
+            cursor.y, hint,
+            "the caret is on the hint row — a later widget moved it"
+        );
+    }
+
+    /// The idle flourish is GROUND, not debris: flush to the pane's bottom edge and the full
+    /// width of it.
+    ///
+    /// The founder saw the previous version — 44 columns anchored bottom-right — as "a scatter of
+    /// dots low in the pane, roughly two-thirds across… debris rather than a flourish". At 190
+    /// columns the session pane's right edge IS about two-thirds across the terminal, so a
+    /// corner-anchored patch with empty space on two sides read as an artifact. Spanning the
+    /// width and touching the bottom is what makes it read as a surface instead.
+    #[test]
+    fn the_idle_flourish_is_a_full_width_horizon_on_the_panes_bottom_edge() {
+        let pane = ratatui::layout::Rect::new(0, 4, 120, 24);
+        let flourish = live_renderer::flourish_area(pane).expect("a flourish at this size");
+
+        assert_eq!(flourish.x, pane.x, "the flourish is inset from the left");
+        assert_eq!(
+            flourish.width, pane.width,
+            "the flourish does not span the pane — a patch with space on both sides is the \
+             thing that read as debris"
+        );
+        assert_eq!(
+            flourish.bottom(),
+            pane.bottom(),
+            "the flourish is floating above the pane's bottom edge"
+        );
+        assert!(
+            flourish.height <= 6 && flourish.height >= 2,
+            "the flourish is {} rows — it is a horizon, not a field",
+            flourish.height
+        );
+        // It must never reach the empty state's text, which reads from the top-left.
+        assert!(
+            flourish.y > pane.y,
+            "the flourish starts at the top of the pane and will sit under the empty state"
+        );
+
+        // A pane too narrow to spare the room drops the art rather than cramming it.
+        assert!(
+            live_renderer::flourish_area(ratatui::layout::Rect::new(0, 0, 20, 24)).is_none(),
+            "a narrow pane still drew the flourish"
+        );
+    }
+
+    /// 🔴 A QUEUED MESSAGE IS AN INTENTION. THE TRANSCRIPT IS A RECORD OF WHAT HAPPENED.
+    ///
+    /// The founder queued seven messages behind one in-flight request and every one of them ALSO
+    /// rendered as a `you › …` band in the transcript, filling the session pane and duplicating
+    /// the waiting list below it. His words: *"it shows up in the chat still, it's not supposed to
+    /// show up in chat, it's supposed to show up in the queue."*
+    ///
+    /// ⚠️ **I SHIPPED THIS AND FLAGGED IT AS A DELIBERATE DIVERGENCE.** The previous commit said
+    /// recalled messages keep their echoes because removing them "needs a transcript-row-to-queue
+    /// correlation this client cannot soundly derive". That reasoning accepted the wrong premise:
+    /// the fix is not to correlate two lists, it is to **never create the second list**. A message
+    /// enters the transcript at the moment it is SENT — which is also the moment it becomes true.
+    #[test]
+    fn a_queued_message_is_absent_from_the_transcript_until_it_is_actually_sent() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.active = Some(ActiveRequest {
+            id: 41,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+
+        let queued = ["dbleh", "d", "1", "2", "3"];
+        for message in queued {
+            app.submit(message.to_string(), &tx);
+        }
+        assert_eq!(app.queue.len(), queued.len(), "the premise is a full queue");
+
+        let user_rows = |app: &App| {
+            app.transcript
+                .iter()
+                .filter_map(|entry| match entry {
+                    TranscriptEntry::User(text) => Some(text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            user_rows(&app).is_empty(),
+            "waiting messages are in the transcript before they were sent: {:?}",
+            user_rows(&app)
+        );
+
+        // Release the in-flight slot and let the queue drain. With auth resolved and no
+        // credential, each request settles synchronously into a failure and drives the next.
+        app.active = None;
+        app.start_next(&tx);
+
+        assert!(app.queue.is_empty(), "the queue did not drain");
+        assert_eq!(
+            user_rows(&app),
+            queued.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
+            "a sent message must appear exactly once, in the order it was sent"
+        );
+    }
+
+    /// 🔴 ONE TURN IN FLIGHT AT A TIME, AND THE REPLY IS IN THE RECORD BEFORE THE NEXT GOES OUT.
+    ///
+    /// The report was that the queue dispatches CONCURRENTLY, so each request carries a stale
+    /// conversation tail and two turns answer the same question from different histories. Ordering
+    /// the SENDS is not the same as serialising the TURNS, and no test distinguished them.
+    ///
+    /// This asserts the distinction directly rather than inferring it from order:
+    ///   1. while a request is in flight, `start_next` dispatches NOTHING, however often it runs;
+    ///   2. one settled reply releases EXACTLY ONE queued message, never two;
+    ///   3. the reply is in the transcript BEFORE the next message's own row — which is the
+    ///      property `chat_continuity` depends on, since it reads the tail server-side.
+    #[test]
+    fn only_one_turn_is_ever_in_flight_and_its_reply_lands_before_the_next_is_sent() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.active = Some(ActiveRequest {
+            id: 77,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        for message in ["where do i live", "second", "third"] {
+            app.submit(message.to_string(), &tx);
+        }
+        assert_eq!(app.queue.len(), 3);
+
+        // 1. Nothing dispatches while a turn is in flight, no matter how often the pump runs.
+        for _ in 0..10 {
+            app.start_next(&tx);
+        }
+        assert_eq!(
+            app.queue.len(),
+            3,
+            "a queued message was dispatched while another turn was in flight"
+        );
+        assert_eq!(app.active.as_ref().map(|active| active.id), Some(77));
+
+        // 2. One settled reply releases exactly one message.
+        app.handle_ui_event(
+            UiEvent::Answer {
+                id: 77,
+                result: Ok(AnswerReply {
+                    text: "You live in Toronto.".to_string(),
+                    grounded: None,
+                    degraded: false,
+                    sources: Vec::new(),
+                    working_paths: Vec::new(),
+                    code_currency: None,
+                }),
+            },
+            &tx,
+        );
+
+        // 3. The reply is recorded BEFORE the next message's row. Positions, not presence:
+        //    presence would pass on any interleaving.
+        let position = |needle: &str| {
+            app.transcript
+                .iter()
+                .position(|entry| match entry {
+                    TranscriptEntry::User(text) => text.contains(needle),
+                    TranscriptEntry::Answer { text, .. } => text.contains(needle),
+                    _ => false,
+                })
+                .unwrap_or_else(|| panic!("no transcript entry for {needle:?}"))
+        };
+        assert!(
+            position("You live in Toronto") < position("second"),
+            "the next message was sent before the previous reply was recorded — its \
+             conversation tail is stale by construction"
+        );
+    }
+
+    /// 🔴 EVERY PATH THAT RELEASES THE IN-FLIGHT SLOT MUST HAND THE QUEUE ON — THIRD SITE.
+    ///
+    /// `ctrl+c` and `handle_missing_client` were both found releasing `active` without calling
+    /// `start_next`, stranding every message behind them. A SERVER-side cancel was the third and
+    /// was never checked: `ServerMessage::Cancelled` emptied the slot and returned, so a turn the
+    /// server cancelled left the queue with nothing to start it, forever.
+    #[test]
+    fn a_server_cancelled_turn_hands_the_queue_on() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.active = Some(ActiveRequest {
+            id: 12,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        app.submit("still waiting".to_string(), &tx);
+        assert_eq!(app.queue.len(), 1, "the premise is one message waiting");
+
+        app.handle_session_message(session_server::ServerMessage::Cancelled { id: 12 }, &tx);
+
+        assert!(
+            app.active.is_some() || app.queue.is_empty(),
+            "the server cancelled a turn and left {} message(s) with nothing to start them",
+            app.queue.len()
+        );
+    }
+
+    /// 🔴 `○` MEANT TWO THINGS AT ONCE, AND THE FOUNDER READ THE SCREEN WRONG BECAUSE OF IT.
+    ///
+    /// The waiting band marks a queued message `○` (`Mark::Queued` — "queued · idle"), and the
+    /// previous commit ALSO gave `○` to an ungrounded reply. His screenshot then showed a single
+    /// column mixing `○ It looks like you sent "d."` (a reply) with `○ d` (a message not yet
+    /// sent), indistinguishable, which is what made the queue look like it was answering itself
+    /// out of order. Power of Ten rule 8: one meaning per name.
+    ///
+    /// `○` stays with the queue, which is its literal meaning. A reply is always `●` — it LANDED —
+    /// and grounding is carried by the colour plus the citations in the evidence gutter, which is
+    /// a structural difference rather than a second glyph.
+    #[test]
+    fn the_queued_mark_and_the_reply_mark_are_never_the_same_glyph() {
+        let mut app = test_app();
+        app.prod_panel_visible = false;
+        app.transcript.push(TranscriptEntry::Answer {
+            text: "answered from the model".to_string(),
+            grounded: None,
+            degraded: false,
+            sources: Vec::new(),
+        });
+        app.transcript.push(TranscriptEntry::Answer {
+            text: "answered from your code".to_string(),
+            grounded: Some(true),
+            degraded: false,
+            sources: Vec::new(),
+        });
+
+        let buffer = rendered_buffer_at_size(&app, Instant::now(), 120, 34);
+        let palette = app.theme.screen_palette();
+        let opener = |needle: &str| {
+            (0..buffer.area.height)
+                .find_map(|y| {
+                    let text = (0..buffer.area.width)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>();
+                    text.contains(needle).then(|| {
+                        (0..buffer.area.width)
+                            .find(|x| buffer[(*x, y)].symbol().trim() != "")
+                            .map(|x| buffer[(x, y)].clone())
+                            .expect("a painted cell")
+                    })
+                })
+                .unwrap_or_else(|| panic!("no row for {needle:?}"))
+        };
+
+        let ungrounded = opener("answered from the model");
+        let grounded = opener("answered from your code");
+        // Neither reply may wear the QUEUED mark — that glyph belongs to the waiting band.
+        assert_ne!(
+            ungrounded.symbol(),
+            marks::Mark::Queued.glyph(),
+            "an ungrounded reply is wearing the queued mark"
+        );
+        assert_ne!(grounded.symbol(), marks::Mark::Queued.glyph());
+        // Both replies landed, so both carry the landed glyph; grounding is the COLOUR.
+        assert_eq!(grounded.symbol(), marks::Mark::Landed.glyph());
+        assert_eq!(ungrounded.symbol(), marks::Mark::Landed.glyph());
+        assert_eq!(grounded.fg, palette.green);
+        assert_eq!(ungrounded.fg, palette.dim);
+        assert_ne!(
+            grounded.fg, ungrounded.fg,
+            "grounded and ungrounded replies are indistinguishable"
+        );
+    }
+
+    /// 🔴 RECALL MUST NOT MERGE N MESSAGES INTO ONE. TWO THINGS SAID ARE TWO TURNS.
+    ///
+    /// I built the combining behaviour on instruction, citing Claude Code. The founder has now
+    /// used it and rejected it: *"it makes it get appended to it instead of keeping the nature of
+    /// the send where 3 is under 2 since they are two different things said."* He recalled four
+    /// messages, pressed enter, and Estelle answered *"I don't have enough context to determine
+    /// what '2' and '3' refer to"* — because it received ONE turn carrying newlines, not four.
+    ///
+    /// ⚠️ **THE BOUNDARIES ARE CARRIED AS DATA AND NEVER RE-DERIVED FROM THE TEXT.** Splitting the
+    /// draft on `\n` at send time is the same defect wearing a different hat: a single message may
+    /// itself contain newlines, and a split cannot tell that apart from two messages. `recalled`
+    /// holds the exact items, so an unedited draft sends exactly what was queued.
+    #[test]
+    fn recall_then_send_preserves_message_boundaries_and_a_newline_is_not_one() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let in_flight = |app: &mut App| {
+            app.auth_resolved = true;
+            app.active = Some(ActiveRequest {
+                id: 31,
+                label: "thinking".to_string(),
+                started: Instant::now(),
+                cancel: CancellationToken::new(),
+            });
+        };
+        let labels = |app: &App| {
+            app.queue
+                .iter()
+                .map(QueuedRequest::label)
+                .collect::<Vec<_>>()
+        };
+
+        // Two separate messages, recalled and sent untouched, stay two.
+        let mut app = test_app();
+        in_flight(&mut app);
+        app.submit("2".to_string(), &tx);
+        app.submit("3".to_string(), &tx);
+        app.recall_queue_into_composer();
+        assert!(app.queue.is_empty(), "recall did not take the queue");
+        let draft = app.composer.text();
+        assert_eq!(
+            draft, "2\n3",
+            "the editable view should show them on their own lines"
+        );
+        app.submit(draft, &tx);
+        assert_eq!(
+            labels(&app),
+            vec!["2".to_string(), "3".to_string()],
+            "recall merged two separately-sent messages into one turn"
+        );
+
+        // 🔴 THE CONTROL THAT MAKES THE ABOVE MEAN SOMETHING: one message that CONTAINS a newline
+        // must stay one. A `split('\n')` implementation passes the first assertion and fails
+        // this one, which is exactly the bug being avoided.
+        let mut pasted = test_app();
+        in_flight(&mut pasted);
+        pasted.submit("line one\nline two".to_string(), &tx);
+        assert_eq!(pasted.queue.len(), 1);
+        pasted.recall_queue_into_composer();
+        let draft = pasted.composer.text();
+        pasted.submit(draft, &tx);
+        assert_eq!(
+            labels(&pasted),
+            vec!["line one\nline two".to_string()],
+            "a single pasted message was split into two turns at its own newline"
+        );
+    }
+
+    /// 🔴 A MULTI-LINE QUEUED ENTRY MUST NOT RENDER AS A DIFFERENT VALUE.
+    ///
+    /// The waiting list showed `○ 23` for a queued message whose two lines were `2` and `3`.
+    /// Newlines were dropped with nothing put in their place, so two lines became the number
+    /// twenty-three — a value that reads as a DIFFERENT value, which is worse than truncation.
+    #[test]
+    fn a_multi_line_queued_entry_never_renders_as_its_lines_concatenated() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.auth_resolved = true;
+        app.active = Some(ActiveRequest {
+            id: 33,
+            label: "thinking".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        app.submit("2\n3".to_string(), &tx);
+        assert_eq!(app.queue.len(), 1, "the premise is ONE two-line message");
+
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 34);
+        // ⚠️ Anchored to the `N waiting` header, NOT to the queued glyph: the production rail
+        // marks its unread rows `○` too, and a bare glyph search finds `○ agents` in the right
+        // column instead. A test that reads the wrong row proves nothing about the right one.
+        let rows = rendered.lines().collect::<Vec<_>>();
+        let header = rows
+            .iter()
+            .position(|line| line.contains("1 waiting"))
+            .expect("the waiting header");
+        let band = rows[header + 1].to_string();
+        assert!(
+            !band.contains("23"),
+            "two lines rendered as the number twenty-three: {band:?}"
+        );
+        // The boundary must be recoverable by eye: the first line, and a sign that more follows.
+        assert!(band.contains('2'), "the first line is missing: {band:?}");
+        assert!(
+            band.contains("+1 more") || band.contains('\u{23ce}'),
+            "no indication that the entry continues: {band:?}"
+        );
+    }
+
+    /// 🔴 THE IDLE FLOURISH PAINTS NO RED, AND IS NOT CLIPPED.
+    ///
+    /// The founder: *"there's a random red and it's kinda broken, the flower got cut off too."*
+    /// Two faults, one cause. `symbol_ground_layout` draws a RED LILY — a brand motif — at
+    /// `ink == 2`, coloured `FATE_RED`, in NORMALISED unit space (`x / width`, `y / height`). So it
+    /// always "fits" arithmetically and never fits visually: when I made the flourish a full-width
+    /// 6-row horizon, a shape that wants a roughly square box was stretched about 26:1 into a dense
+    /// red smear two-thirds across. That is exactly what he photographed.
+    ///
+    /// ⚠️ **RED IS A MEANING IN THIS INTERFACE, NOT A HUE.** `■` red is a refusal and `▲` warn is a
+    /// break; a decorative texture borrowing that ink says "something is wrong" on an idle startup
+    /// frame. The empty frame is asserted to contain NO red cell at all — the strongest form,
+    /// because on an idle frame there is nothing that legitimately warrants it.
+    #[test]
+    fn the_idle_startup_frame_paints_no_red_anywhere() {
+        let app = test_app();
+        let buffer = rendered_buffer_at_size(&app, Instant::now(), 130, 34);
+        let palette = app.theme.screen_palette();
+
+        let reds = (0..buffer.area.height)
+            .flat_map(|y| (0..buffer.area.width).map(move |x| (x, y)))
+            .filter(|(x, y)| {
+                let fg = buffer[(*x, *y)].fg;
+                fg == palette.red || fg == FATE_RED || fg == FATE_RED_SOFT
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            reds.is_empty(),
+            "the idle frame paints {} red cell(s), first at {:?} — red means refusal here",
+            reds.len(),
+            reds.first()
+        );
+
+        // 🔴 **THE ASSERTION ABOVE WAS A PARTIAL GUARD AND A MUTANT PROVED IT.** Restoring
+        // `FATE_RED` on the motif left it GREEN, because the aspect gate stops the lily being
+        // drawn on a wide short horizon at all — so the frame test was covering the GATE and was
+        // silent about the INK. This half renders the ground into a box the lily DOES fit, which
+        // is the only place `ink == 2` is reachable, and asserts the colour there.
+        let square = TestBackend::new(48, 40);
+        let mut terminal = Terminal::new(square).expect("test terminal");
+        terminal
+            .draw(|frame| render_symbol_ground(frame, frame.area(), &app))
+            .expect("render ground");
+        let buffer = terminal.backend().buffer().clone();
+        let layout = live_renderer::symbol_ground_layout(48, 40);
+        assert!(
+            layout.ink.iter().any(|level| *level == 2),
+            "this fixture must actually DRAW the motif, or it asserts nothing about its colour"
+        );
+        let reds = (0..buffer.area.height)
+            .flat_map(|y| (0..buffer.area.width).map(move |x| (x, y)))
+            .filter(|(x, y)| {
+                let fg = buffer[(*x, *y)].fg;
+                fg == palette.red || fg == FATE_RED || fg == FATE_RED_SOFT
+            })
+            .count();
+        assert_eq!(
+            reds, 0,
+            "the motif paints red where it DOES fit — decoration must never borrow the \
+             refusal ink"
+        );
+    }
+
+    /// 🔴 A THREE-LEVEL TEXTURE WHOSE LEVELS DO NOT DESCEND IS NOT A TEXTURE.
+    ///
+    /// The dither's ladder was `mid` → `#46433B`/`bright` → `ghost` + `Modifier::DIM`. On the dark
+    /// theme the FAINTEST level carried the BRIGHTEST base colour (`#C8C2B3` against `mid`'s
+    /// `#948E81`) and leaned on `DIM` — a modifier plenty of terminals drop for a truecolor
+    /// foreground — to look faint. On cream, level 1 was `bright`: the middle step painted at
+    /// maximum contrast. Two themes, two orderings, neither monotonic, and nothing red.
+    ///
+    /// ⚠️ **THE ASSERTION IS ON CONTRAST AGAINST THE GROUND, NOT ON LUMINANCE.** Dark descends by
+    /// getting darker and cream descends by getting lighter; a luminance test would have to be
+    /// written twice with opposite signs, and the second one is the one that rots. Distance from
+    /// the ground is the same sentence in both themes.
+    #[test]
+    fn the_dither_ink_levels_descend_toward_the_ground_in_both_themes() {
+        fn rgb(color: Color) -> (f32, f32, f32) {
+            match color {
+                Color::Rgb(r, g, b) => (f32::from(r), f32::from(g), f32::from(b)),
+                other => panic!("the dither ladder must be truecolor, got {other:?}"),
+            }
+        }
+        fn apart(ink: Color, ground: (f32, f32, f32)) -> f32 {
+            let (r, g, b) = rgb(ink);
+            ((r - ground.0).powi(2) + (g - ground.1).powi(2) + (b - ground.2).powi(2)).sqrt()
+        }
+
+        for theme in [Theme::Dark, Theme::CreamInk] {
+            let palette = theme.screen_palette();
+            let ground = rgb(palette.ground);
+            // The three levels, brightest-ink-first, exactly as `render_symbol_ground` matches.
+            let ladder = [palette.mid, palette.dim, palette.tint];
+            let distances = ladder.map(|ink| apart(ink, ground)).to_vec();
+            assert!(
+                distances[0] > distances[1] && distances[1] > distances[2],
+                "{theme:?} dither ladder does not descend: {distances:?}"
+            );
+            // ⚠️ A ladder of three identical values would also "descend" under `>=`. It does not
+            // here, and a floor says so rather than leaving it to the operator above.
+            assert!(
+                distances[0] - distances[2] > 5.0,
+                "{theme:?} dither has no visible range: {distances:?}"
+            );
+        }
+    }
+
+    /// The flourish fits the rect it is given, in both axes.
+    ///
+    /// "The flower got cut off" is a clipping report, and clipping is what happens when a motif
+    /// with an intrinsic shape is drawn into a box that cannot hold it. The layout is asserted to
+    /// produce exactly the requested cell count — no row or column beyond the rect — and the lily
+    /// is asserted ABSENT from a band too short to hold it rather than drawn squashed.
+    #[test]
+    fn the_flourish_fits_its_rect_and_drops_the_lily_when_it_cannot_fit() {
+        // A wide, short horizon — the shape `flourish_area` actually produces.
+        let wide = live_renderer::symbol_ground_layout(130, 5);
+        assert_eq!(
+            wide.cells.len(),
+            130 * 5,
+            "the layout produced a different number of cells than the rect has"
+        );
+        assert_eq!(wide.ink.len(), 130 * 5);
+
+        // The motif is DRAWN — it is a brand element and deleting it is not the fix — but it is
+        // confined to a box of its own proportions instead of stretched across the whole horizon.
+        let columns = wide
+            .ink
+            .iter()
+            .enumerate()
+            .filter(|(_, level)| **level == 2)
+            .map(|(index, _)| index % 130)
+            .collect::<Vec<_>>();
+        assert!(!columns.is_empty(), "the lily vanished from the flourish");
+        let span = columns.iter().max().unwrap_or(&0) - columns.iter().min().unwrap_or(&0);
+        assert!(
+            span <= 5 * 3,
+            "the lily spans {span} columns of a 5-row band — it is stretched, which is what \
+             rendered as a smear"
+        );
+
+        // Given a box with room, it may use all of it; what must never happen is a squashed one.
+        let tall = live_renderer::symbol_ground_layout(60, 30);
+        assert_eq!(tall.cells.len(), 60 * 30);
+        assert!(tall.ink.iter().any(|level| *level == 2));
+    }
+
+    /// 🔴 A REPLY OPENS WITH A MARK, NOT WITH THE WORD "ESTELLE".
+    ///
+    /// The founder: *"Claude does not say Claude, Claude just writes a dot. Why is Estelle
+    /// writing 'estelle'? No one cares, we already know we're in Estelle."* Both halves of the old
+    /// prefix were noise — `estelle` named the program you launched, and `conversation` was an
+    /// internal routing label.
+    ///
+    /// ⚠️ **THE `conversation` LABEL WAS LOAD-BEARING AND ITS MEANING MUST SURVIVE.** It rendered
+    /// only when `grounded is None`, and the sole producer of that is `conversational_reply` — so
+    /// it was the one thing separating *answered from the model* from *answered from your code,
+    /// with citations*. That distinction is the product. It is carried by the MARK now: `●` green
+    /// for grounded, `○` dim for ungrounded.
+    ///
+    /// Asserted on the BUFFER in TWO channels — glyph and colour — so a terminal that flattens
+    /// colour still tells them apart, the same standard
+    /// `orchestra_view::terminal_outcomes_have_distinct_glyphs_as_well_as_colours` holds.
+    #[test]
+    fn a_reply_opens_with_a_mark_and_grounding_survives_as_the_glyph_and_the_colour() {
+        let mut app = test_app();
+        app.prod_panel_visible = false;
+        app.transcript.push(TranscriptEntry::Answer {
+            text: "The retry gate moved to charge.rs.".to_string(),
+            grounded: Some(true),
+            degraded: false,
+            sources: Vec::new(),
+        });
+        app.transcript.push(TranscriptEntry::Answer {
+            text: "I am doing well, thanks! How are you?".to_string(),
+            grounded: None,
+            degraded: false,
+            sources: Vec::new(),
+        });
+
+        let buffer = rendered_buffer_at_size(&app, Instant::now(), 120, 34);
+        let palette = app.theme.screen_palette();
+        // The first painted cell of the row carrying `needle`, whatever column it starts in.
+        let opener = |needle: &str| {
+            (0..buffer.area.height)
+                .find_map(|y| {
+                    let text = (0..buffer.area.width)
+                        .map(|x| buffer[(x, y)].symbol())
+                        .collect::<String>();
+                    text.contains(needle).then(|| {
+                        (0..buffer.area.width)
+                            .find(|x| buffer[(*x, y)].symbol().trim() != "")
+                            .map(|x| buffer[(x, y)].clone())
+                            .expect("a painted cell on the row")
+                    })
+                })
+                .unwrap_or_else(|| panic!("no rendered row for {needle:?}"))
+        };
+
+        let grounded = opener("retry gate moved");
+        let ungrounded = opener("I am doing well");
+
+        // ⚠️ **UPDATED: THE GLYPH IS NO LONGER THE CHANNEL, AND THAT IS A CORRECTION.** This
+        // first asserted `●` grounded / `○` ungrounded — but `○` is the WAITING BAND's mark for a
+        // message that has not been sent, so the two collided on screen and the founder read a
+        // column of replies and unsent messages as one list. See
+        // `the_queued_mark_and_the_reply_mark_are_never_the_same_glyph`. Both replies landed, so
+        // both are `●`; grounding is the colour, and the structural second channel is the `cited`
+        // lines a grounded answer carries in the evidence gutter.
+        assert_eq!(
+            grounded.symbol(),
+            "\u{25cf}",
+            "a grounded reply must open with ●"
+        );
+        assert_eq!(
+            ungrounded.symbol(),
+            "\u{25cf}",
+            "an ungrounded reply must open with ● too — it landed"
+        );
+        assert_ne!(
+            grounded.fg, ungrounded.fg,
+            "grounded and ungrounded replies are indistinguishable by colour"
+        );
+        assert_eq!(grounded.fg, palette.green);
+        assert_eq!(ungrounded.fg, palette.dim);
+
+        // And the words are gone. ⚠️ Asserted at the START OF A LINE, not anywhere on the frame:
+        // the repo is `uqeu/estelle` and the header reads `ESTELLE · uqeu/estelle`, so a bare
+        // `contains("estelle")` fires on the product's own name and proves nothing about the
+        // prefix. What the founder objected to is the word OPENING a reply.
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 34);
+        let opens_with = |word: &str| {
+            rendered
+                .lines()
+                .any(|line| line.trim_matches('"').trim_start().starts_with(word))
+        };
+        assert!(
+            !opens_with("estelle"),
+            "a line still opens with the program's own name\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("conversation"),
+            "the internal routing label still reaches the frame\n{rendered}"
+        );
+    }
+
+    /// The two states that are NOT ordinary keep a word, because a bare warn mark cannot say
+    /// which of them it is. "No news is good news": a healthy reply carries no text at all.
+    #[test]
+    fn a_degraded_or_ungrounded_answer_still_names_what_is_wrong() {
+        let mut app = test_app();
+        app.prod_panel_visible = false;
+        app.transcript.push(TranscriptEntry::Answer {
+            text: "Partial sweep only.".to_string(),
+            grounded: Some(true),
+            degraded: true,
+            sources: Vec::new(),
+        });
+        app.transcript.push(TranscriptEntry::Answer {
+            text: "I could not check that.".to_string(),
+            grounded: Some(false),
+            degraded: false,
+            sources: Vec::new(),
+        });
+
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 34);
+        assert!(rendered.contains("degraded"), "{rendered}");
+        assert!(rendered.contains("not grounded"), "{rendered}");
+        assert!(
+            !rendered
+                .lines()
+                .any(|line| line.trim_matches('"').trim_start().starts_with("estelle")),
+            "{rendered}"
+        );
+    }
+
+    /// 🔴 IDLE SAYS NOTHING, AND SAYING NOTHING DOES NOT MOVE THE INPUT BAR.
+    ///
+    /// `● Ready` announced the default state of every CLI ever written; the founder asked for it
+    /// gone by name. The trap is the obvious fix: dropping the row from the layout shortens the
+    /// composer block, which moves the ask rule while idle and snaps it back the instant work
+    /// starts — a jumping input bar bought with a removed word. So the row keeps its place and
+    /// loses its content, and the rule's row index is asserted IDENTICAL across both states.
+    ///
+    /// The working half is the negative control: without it, "no Ready" would pass on a frame
+    /// that had lost its status row entirely.
+    #[test]
+    fn the_idle_frame_says_nothing_and_does_not_move_the_ask_rule() {
+        let rule_row = |app: &App| {
+            let rendered = rendered_frame_at_size(app, Instant::now(), 120, 32);
+            let row = rendered
+                .lines()
+                .position(|line| {
+                    line.trim_matches('"')
+                        .starts_with("\u{2500}\u{2500} ask \u{b7} ")
+                })
+                .expect("an ask rule");
+            (row, rendered)
+        };
+
+        let idle = test_app();
+        let (idle_rule, idle_frame) = rule_row(&idle);
+        assert!(
+            !idle_frame.contains("Ready"),
+            "the idle frame still announces Ready\n{idle_frame}"
+        );
+
+        let mut working = test_app();
+        working.active = Some(ActiveRequest {
+            id: 1,
+            label: "/work".to_string(),
+            started: Instant::now(),
+            cancel: CancellationToken::new(),
+        });
+        let (working_rule, working_frame) = rule_row(&working);
+        assert!(
+            working_frame.contains("Working"),
+            "the working frame lost its status row — the assertion above would then pass \
+             for the wrong reason\n{working_frame}"
+        );
+
+        assert_eq!(
+            idle_rule, working_rule,
+            "the ask rule moved between idle and working: the input bar jumps when work starts"
+        );
+    }
+
+    /// The hint row is the LAST row of the frame, and the typing area sits above it.
+    ///
+    /// ⚠️ The negative control is the ask rule: if the hint row were merely *present* somewhere
+    /// low, an assertion that it exists would pass on the old layout too, where it sat directly
+    /// under the prompt with blank rows beneath it.
+    #[test]
+    fn the_hints_are_the_bottom_row_and_the_composer_reserves_room_above_them() {
+        let app = test_app();
+        let buffer = rendered_buffer_at_size(&app, Instant::now(), 100, 34);
+        let row_text = |y: u16| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        };
+
+        let bottom = buffer.area.height - 1;
+        assert!(
+            row_text(bottom).contains(&ask_hints_line()),
+            "the hints are not on the frame's last row\n{}",
+            row_text(bottom)
+        );
+        assert_eq!(
+            (0..buffer.area.height)
+                .filter(|y| row_text(*y).contains(&ask_hints_line()))
+                .count(),
+            1,
+            "the hint row is drawn more than once"
+        );
+
+        // ROOM TO TYPE: the demo's box should read as somewhere to type, so the rule and the
+        // hints are separated by at least the reserved rows plus the prompt's own row.
+        let rule = (0..buffer.area.height)
+            .find(|y| row_text(*y).contains("── ask ·"))
+            .expect("an ask rule");
+        assert!(
+            bottom - rule > COMPOSER_MIN_ROWS,
+            "only {} rows between the ask rule and the hints — the composer reserves \
+             {COMPOSER_MIN_ROWS}",
+            bottom - rule
+        );
+    }
+
     #[tokio::test]
     async fn a_pasted_image_never_reaches_the_server_because_no_image_path_exists() {
         // PROBE, not a read. Part one: the inherited lib's image chord (Ctrl+V runs
@@ -12547,6 +15027,51 @@ mod tests {
         assert_eq!(reply.text, "IMAGE PROBE SENTINEL");
     }
 
+    /// 🔴 THE HALF THE TEXT DUMP CANNOT SEE: THE USER'S OWN TURN IS LIFTED ONTO A BAND.
+    ///
+    /// The founder asked for two things about the same rows — delete the word `you`, and highlight
+    /// an arriving message the way ChatGPT and Codex highlight yours. Deleting the label alone
+    /// would have been a regression, because `user_turn_background` returned `None` on every
+    /// terminal that does not answer an OSC background query, so on those terminals the turn had
+    /// NO marker at all once the word was gone.
+    ///
+    /// ⚠️ **THIS IS ASSERTED ON THE BUFFER, NOT ON A TEXT DUMP.** A background is not a character.
+    /// Every existing test of these rows read `format!("{}", backend)`, which is exactly why the
+    /// band could return `None` for months without a single red test.
+    #[test]
+    fn the_users_own_turn_is_a_band_not_a_label() {
+        for theme in [Theme::Dark, Theme::CreamInk] {
+            let mut app = test_app();
+            app.theme = theme;
+            app.transcript
+                .push(TranscriptEntry::User("where does charge fail?".to_string()));
+            let buffer = rendered_buffer_at_size(&app, Instant::now(), 120, 32);
+
+            let banded = (0..buffer.area.height)
+                .filter(|y| {
+                    (0..buffer.area.width).any(|x| {
+                        let cell = &buffer[(x, *y)];
+                        cell.symbol().starts_with('w') && cell.bg != Color::Reset
+                    })
+                })
+                .count();
+            assert!(
+                banded >= 1,
+                "{theme:?}: the user's turn has no background band at all"
+            );
+
+            // ⚠️ THE CONTROL. A frame that painted EVERY row would satisfy the clause above and
+            // mean nothing — the band has to distinguish this turn from the rest of the screen.
+            let painted_rows = (0..buffer.area.height)
+                .filter(|y| (0..buffer.area.width).all(|x| buffer[(x, *y)].bg != Color::Reset))
+                .count();
+            assert!(
+                painted_rows < usize::from(buffer.area.height),
+                "{theme:?}: every row is painted, so the band marks nothing"
+            );
+        }
+    }
+
     #[test]
     fn transcript_turns_carry_distinguishable_speaker_labels() {
         let mut app = test_app();
@@ -12565,19 +15090,37 @@ mod tests {
                 .filter(|line| line.contains(needle))
                 .count()
         };
-        assert_eq!(
-            row_count("│you"),
-            1,
-            "exactly one user-labelled turn\n{rendered}"
+        // 🔴 **THE USER'S TURN IS A BAND, NOT A WORD.**
+        //
+        // It used to be labelled `you` on its own row and this test counted that row. The founder
+        // deleted the word and asked for the highlight instead — *"the way ChatGPT and Codex
+        // highlight yours. Same treatment, our palette."* So the assertion moved from the text
+        // dump to the BUFFER, because a background is not a character and a text dump cannot see
+        // one. `the_users_own_turn_is_a_band_not_a_label` below carries that half; here we assert
+        // only that the label did not survive.
+        assert!(
+            !rendered
+                .lines()
+                .any(|line| line.trim_start_matches('"').trim_end() == "you"),
+            "the `you` label came back\n{rendered}"
         );
+        // ⚠️ **UPDATED DELIBERATELY.** The assistant turn used to be labelled `estelle  grounded`
+        // on its own line. The founder: *"Claude does not say Claude, Claude just writes a dot.
+        // No one cares, we already know we're in Estelle."* The turn now opens with the grounded
+        // MARK. The property under test is unchanged — exactly one assistant turn, and the two
+        // speakers are distinguishable at a glance — only its spelling moved.
+        let _ = row_count;
         assert_eq!(
-            row_count("estelle  grounded"),
+            rendered
+                .lines()
+                .filter(|line| line.trim_matches('"').trim_start().starts_with('\u{25cf}'))
+                .count(),
             1,
-            "exactly one assistant-labelled turn\n{rendered}"
+            "exactly one assistant-marked turn\n{rendered}"
         );
 
         // The labels must be distinguishable in the rendered buffer, not merely present in
-        // the model: different ink, and only the assistant label is bold.
+        // the model: different ink.
         let buffer = rendered_buffer_at_size(&app, Instant::now(), 120, 32);
         let label_cell = |needle: &str| {
             buffer
@@ -12588,18 +15131,46 @@ mod tests {
                         .iter()
                         .map(ratatui::buffer::Cell::symbol)
                         .collect::<String>();
-                    text.contains(needle).then(|| row[1].clone())
+                    text.contains(needle).then(|| {
+                        // The design has no left border, so the label's first cell is the
+                        // first non-blank one rather than a fixed column behind a `│`.
+                        row.iter()
+                            .find(|cell| cell.symbol() != " ")
+                            .cloned()
+                            .unwrap_or_else(|| row[0].clone())
+                    })
                 })
                 .unwrap_or_else(|| panic!("no rendered row for {needle:?}"))
         };
-        let user_label = label_cell("│you");
-        let estelle_label = label_cell("estelle  grounded");
+        // ⚠️ The user's row is found by its own TEXT now, not by a `you` label that no longer
+        // exists. The property being asserted is unchanged and is the one that matters: at a
+        // glance, the two speakers are different ink.
+        let user_label = label_cell("where does charge fail?");
+        let estelle_label = label_cell("at the retry loop");
         assert_ne!(
             user_label.fg, estelle_label.fg,
-            "speaker labels share ink and are not glanceable"
+            "the two speakers share ink and are not glanceable"
         );
-        assert!(!user_label.modifier.contains(Modifier::BOLD));
-        assert!(estelle_label.modifier.contains(Modifier::BOLD));
+        assert_eq!(
+            estelle_label.symbol(),
+            "\u{25cf}",
+            "the assistant turn does not open with the grounded mark"
+        );
+        // ⚠️ **THIS CLAUSE WAS REPLACED, NOT DELETED.** It used to read
+        // `assert!(!user_label.modifier.contains(Modifier::BOLD))` — "the `you` label is not
+        // shouted" — and that label no longer exists, so the clause had no subject. Dropping it
+        // would have quietly narrowed what this test covers. The property that took its place is
+        // the channel that took the label's place: the user's row is BANDED and the assistant's
+        // row is not.
+        assert_ne!(
+            user_label.bg, estelle_label.bg,
+            "the user's turn and Estelle's sit on the same ground — the band marks nothing"
+        );
+        assert_eq!(
+            estelle_label.bg,
+            Color::Reset,
+            "Estelle's own turn picked up the user's highlight band"
+        );
     }
 
     #[test]
@@ -12638,8 +15209,8 @@ mod tests {
         let lines = rendered.lines().collect::<Vec<_>>();
         let picker = lines
             .iter()
-            .position(|line| line.contains("SETTINGS"))
-            .expect("settings picker title");
+            .position(|line| line.contains("── settings ─"))
+            .expect("settings picker rule");
         assert!(!rendered.contains("ASK ESTELLE"));
         assert!(
             picker >= lines.len().saturating_sub(20),
@@ -12675,7 +15246,21 @@ mod tests {
         );
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
 
-        assert!(rendered.contains("Estelle Orchestra"));
+        // The design's worker table, drawn by `orchestra_view` — the same function screen 9 of
+        // the catalog draws. `Estelle Orchestra · <batch> ×N` was the plain-string grid's header
+        // and is now the `/orchestra` REPLY's wording only; the live panel opens on the task line.
+        assert!(
+            rendered.contains("Task(Trace checkout failures · 1 workers)"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("models · GPT-5.5"), "{rendered}");
+        assert!(rendered.contains("state"), "{rendered}");
+        assert!(rendered.contains("cost"), "{rendered}");
+        // 🔴 The cost column is empty AND the frame says which contract is missing.
+        assert!(
+            rendered.contains("per-worker model + cost · no server contract"),
+            "{rendered}"
+        );
         assert!(!rendered.contains("Ask about"));
         assert!(!rendered.contains("/sweep another repo"));
     }
@@ -12750,7 +15335,14 @@ mod failure_advice_tests {
     #[test]
     fn a_server_side_failure_does_not_blame_the_caller() {
         let advice = failure_advice("Estelle returned HTTP 500 Internal Server Error: boom");
-        assert!(advice.iter().any(|line| line.contains("not on yours")));
+        // ⚠️ THE SENTENCE MOVED AND THIS LINE IS PART OF THAT CHANGE. It read
+        // "Estelle failed on its side, not on yours" — an apology-shaped reassurance where a
+        // fact belongs. What the caller needs is which side failed, which is what is asserted.
+        assert!(advice.iter().any(|line| line.contains("server-side")));
+        assert!(
+            !advice.iter().any(|line| line.contains("not on yours")),
+            "the reassurance came back"
+        );
     }
 
     /// ⚠️ THE CONTROL. An unrecognised failure must keep the original wording rather than invent

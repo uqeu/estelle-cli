@@ -64,7 +64,7 @@ async fn app_server_model_verification_renders_warning() {
     assert_eq!(cells.len(), 1);
     let rendered = lines_to_single_string(&cells[0]);
     assert!(rendered.contains("multiple flags for possible cybersecurity risk"));
-    assert!(rendered.contains("extra safety checks are on"));
+    assert!(rendered.contains("extra safety checks run"));
     assert!(rendered.contains("Trusted Access for Cyber"));
     assert!(rendered.contains("https://chatgpt.com/cyber"));
 }
@@ -435,18 +435,10 @@ async fn rate_limit_warnings_emit_thresholds() {
     assert_eq!(
         warnings,
         vec![
-            String::from(
-                "Heads up, you have less than 25% of your 5h limit left. Run /status for a breakdown."
-            ),
-            String::from(
-                "Heads up, you have less than 25% of your weekly limit left. Run /status for a breakdown.",
-            ),
-            String::from(
-                "Heads up, you have less than 5% of your 5h limit left. Run /status for a breakdown."
-            ),
-            String::from(
-                "Heads up, you have less than 5% of your weekly limit left. Run /status for a breakdown.",
-            ),
+            String::from("Less than 25% of the 5h limit is left. Run /status for a breakdown."),
+            String::from("Less than 25% of the weekly limit is left. Run /status for a breakdown.",),
+            String::from("Less than 5% of the 5h limit is left. Run /status for a breakdown."),
+            String::from("Less than 5% of the weekly limit is left. Run /status for a breakdown.",),
         ],
         "expected one warning per limit for the highest crossed threshold"
     );
@@ -466,7 +458,7 @@ async fn test_rate_limit_warnings_monthly() {
     assert_eq!(
         warnings,
         vec![String::from(
-            "Heads up, you have less than 25% of your monthly limit left. Run /status for a breakdown.",
+            "Less than 25% of the monthly limit is left. Run /status for a breakdown.",
         ),],
         "expected one warning per limit for the highest crossed threshold"
     );
@@ -495,11 +487,9 @@ async fn test_rate_limit_warnings_use_generic_fallback_labels() {
         ),
         vec![
             String::from(
-                "Heads up, you have less than 25% of your secondary usage limit left. Run /status for a breakdown.",
+                "Less than 25% of the secondary usage limit is left. Run /status for a breakdown.",
             ),
-            String::from(
-                "Heads up, you have less than 25% of your usage limit left. Run /status for a breakdown.",
-            ),
+            String::from("Less than 25% of the usage limit is left. Run /status for a breakdown.",),
         ],
     );
 }
@@ -516,7 +506,7 @@ async fn test_rate_limit_warnings_use_secondary_fallback_for_unsupported_window(
             /*primary_window_minutes*/ None,
         ),
         vec![String::from(
-            "Heads up, you have less than 25% of your secondary usage limit left. Run /status for a breakdown.",
+            "Less than 25% of the secondary usage limit is left. Run /status for a breakdown.",
         )],
     );
 }
@@ -1321,7 +1311,7 @@ async fn rate_limit_usage_warnings_keep_newly_reached_workspace_limit() {
             "Usage limit reached.".to_string(),
         );
         let popup = render_bottom_popup(&chat, /*width*/ 100);
-        assert!(popup.contains("Request a limit increase from your owner"));
+        assert!(popup.contains("limit increase from the workspace owner"));
     }
 }
 
@@ -1424,7 +1414,7 @@ async fn rolling_credits_preserve_depleted_workspace_error_routing() {
     );
     let popup = render_bottom_popup(&chat, /*width*/ 100);
     assert!(
-        popup.contains("Ask your workspace owner to add more"),
+        popup.contains("The workspace owner can add more"),
         "popup: {popup}"
     );
 }
@@ -1625,7 +1615,7 @@ async fn sparse_rate_limit_snapshot_preserves_member_limit_type_for_error_prompt
     );
     let popup = render_bottom_popup(&chat, /*width*/ 100);
     assert!(
-        popup.contains("Request a limit increase from your owner"),
+        popup.contains("limit increase from the workspace owner"),
         "popup: {popup}"
     );
 
@@ -1647,7 +1637,7 @@ async fn usage_limit_error_remaps_stale_member_credits_state_to_usage_limit_prom
     );
     let popup = render_bottom_popup(&chat, /*width*/ 100);
     assert!(
-        popup.contains("Request a limit increase from your owner"),
+        popup.contains("limit increase from the workspace owner"),
         "popup: {popup}"
     );
 
@@ -1690,12 +1680,12 @@ async fn workspace_owner_limit_states_render_state_specific_messages() {
         (
             RateLimitReachedType::WorkspaceOwnerCreditsDepleted,
             RateLimitErrorKind::Generic,
-            "You're out of credits. Your workspace is out of credits. Add credits to continue using Codex.",
+            "Out of credits. The workspace is out of credits. Add credits to continue.",
         ),
         (
             RateLimitReachedType::WorkspaceOwnerUsageLimitReached,
             RateLimitErrorKind::UsageLimit,
-            "Usage limit reached. You've reached your usage limit. Increase your limits to continue using codex.",
+            "Usage limit reached. Raise the limit to continue.",
         ),
     ];
 
@@ -1771,7 +1761,7 @@ async fn workspace_owner_nudge_reappears_after_dismissing_no() {
     );
     let popup = render_bottom_popup(&chat, /*width*/ 100);
     assert!(
-        popup.contains("Request a limit increase from your owner"),
+        popup.contains("limit increase from the workspace owner"),
         "popup: {popup}"
     );
 }
@@ -1789,7 +1779,7 @@ async fn workspace_owner_credits_nudge_completion_renders_feedback() {
         ),
         (
             Err("request failed".to_string()),
-            "Could not notify your workspace owner. Please try again.",
+            "Could not notify the workspace owner. Run it again.",
         ),
     ];
 
@@ -1825,7 +1815,7 @@ async fn workspace_owner_usage_limit_nudge_completion_renders_feedback() {
         ),
         (
             Err("request failed".to_string()),
-            "Could not request a limit increase. Please try again.",
+            "Could not request a limit increase. Run it again.",
         ),
     ];
 

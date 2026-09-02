@@ -40,7 +40,7 @@ fn tool_output_stays_collapsed_until_its_exact_row_is_clicked() {
     });
 
     let collapsed = rendered_frame_at_size(&app, Instant::now(), 100, 24);
-    assert!(collapsed.contains("▸ !cargo test"));
+    assert!(collapsed.contains("⏺ !cargo test"));
     assert!(!collapsed.contains("hidden tool body"));
     let target = app.tool_click_targets.borrow()[0];
 
@@ -71,16 +71,25 @@ fn tool_output_stays_collapsed_until_its_exact_row_is_clicked() {
         },
     );
     let expanded = rendered_frame_at_size(&app, Instant::now(), 100, 24);
-    assert!(expanded.contains("▾ !cargo test"));
+    assert!(expanded.contains("⏺ !cargo test"));
     assert!(expanded.contains("hidden tool body"));
 }
 
+/// 🔴 THIS TEST USED TO PIN THE DEFECT.
+///
+/// It asserted `Theme::Dark.semantic() == #65A8FF` — a value whose own comment called it
+/// *"Claude-like semantic blue"*, in no palette this product ships, painting the file paths that
+/// lead back to the user's own code. A test that pins a hardcoded colour is a test that makes the
+/// colour permanent; the gallery counted it at 17 cells on `01b-waiting-answer` and nothing was
+/// going to go red about it, because this was green.
+///
+/// It asserts the RELATIONSHIP now: whatever `cite` is, `semantic` is that. The next person to
+/// retune the citation blue changes one value and this stays green, which is what a test about an
+/// owner should do.
 #[test]
-fn semantic_blue_is_applied_in_both_supported_themes() {
-    for (theme, expected) in [
-        (Theme::Dark, Color::from_u32(0x65_A8_FF)),
-        (Theme::CreamInk, Color::from_u32(0x1F_5A_A6)),
-    ] {
+fn the_semantic_role_is_the_palettes_own_cite_token() {
+    for theme in [Theme::Dark, Theme::CreamInk] {
+        let expected = theme.screen_palette().cite;
         assert_eq!(theme.semantic(), expected);
         let rendered = render_transcript_with_citations(
             &[TranscriptEntry::System(

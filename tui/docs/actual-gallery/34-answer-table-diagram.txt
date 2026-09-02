@@ -1,0 +1,36 @@
+── answer · grounded ───────────────────────────────────────────────────────────────
+
+⏺ Five call sites touch a charge. Only one writes the receipt before it settles.
+  It is reached from the retry branch as well as the settled branch, so a charge that
+  gave up still gets a receipt.
+
+  markdown · table
+
+  call site               file:line               retries  writes receipt
+  ──────────────────────  ──────────────────────  ───────  ──────────────────
+  charge_card             billing/charge.rs:82          3  after settle
+  retry_gate              billing/retry.rs:41           3  never
+  settle_charge           billing/settle.rs:113         0  never
+  receipt_writer          billing/receipt.rs:17         0  before settle
+  refund_card             billing/refund.rs:64          2  after settle
+
+  mermaid · flowchart LR
+
+  ●   charge_card     ──▸    retry_gate      ──▸    settled         ──▸    receipt_writer
+                             │
+                             ╰──▸ gave_up    ──▸    alert_oncall    ──▸    receipt_writer
+
+  ✗ the second edge is the bug: a receipt for a charge that never settled.
+
+  mermaid · flowchart, sequenceDiagram and stateDiagram are DRAWN here.
+  classDiagram, gantt, erDiagram and pie print their fenced source unchanged —
+  a terminal cannot lay those out honestly, and a wrong picture beats no source.
+  the table is markdown, not mermaid. every file:line in it clicks like one in prose.
+
+
+
+
+
+
+
+

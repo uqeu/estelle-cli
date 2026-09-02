@@ -1,0 +1,26 @@
+── context · will not fit ──────────────────────────────────────────────────────────────────────────────────
+
+▲ This turn cannot be compacted  ·  latest_turn_exceeds_usable_window
+
+  one message is 214,000 tokens and the window holds 200,000 — it cannot be compacted, only split.
+
+  compaction summarises turns. There is one turn here, so there is nothing to summarise against.
+
+     part          what it carries                        tokens
+  │  part 1 of 3   src/api/routes.py, deps.py             78,400
+     part 2 of 3   src/serve/gate.py, graph.py            71,200
+     part 3 of 3   tests/test_gate.py, conftest.py        64,400
+
+── split · 3 parts ─────────────────────────────────────────────────────────────────────────────────────────
+
+✓  measured        nothing was dropped
+▶  split           at the file boundary
+□  send            part 1 of 3, then 2 and 3
+
+  nothing was summarised away to make room.
+
+
+
+
+
+

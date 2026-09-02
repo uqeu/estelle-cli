@@ -6,6 +6,7 @@
 
 use std::path::Path;
 
+use crate::marks;
 use crossterm::event::MouseButton;
 use crossterm::event::MouseEvent;
 use crossterm::event::MouseEventKind;
@@ -37,6 +38,15 @@ pub(crate) enum TranscriptEntry {
         degraded: bool,
         sources: Vec<Source>,
     },
+    /// The server's refusal to certify the answer that follows, in the server's own words.
+    ///
+    /// 🔴 **ITS OWN ENTRY, NOT A FIELD ON [`TranscriptEntry::Answer`].** The disclosure has to
+    /// lead — it is what tells the reader the citations below it may point into code that has
+    /// moved — and an entry can be pushed ahead of the answer without touching the twelve places
+    /// that build one. ⚠️ It is emitted ONLY when the server sends the block, which it does only
+    /// when the index is behind AND the answer leans on the code; a current index produces no
+    /// entry at all, so this can never read as "no data".
+    Stale(estelle_client::CodeCurrency),
     System(String),
     Command {
         name: String,
@@ -50,12 +60,44 @@ pub(crate) enum TranscriptEntry {
     Failure([String; 3]),
 }
 
+/// 🔴 **THIS STRUCT IS THREE ROLES SHORT OF THE FRAME IT PAINTS, AND THE GAP IS WHERE THE BRAND
+/// LEAKED OUT.** Every colour the transcript needs that is NOT here fell back to a named ANSI
+/// variant — `Color::Yellow` for the degraded/not-grounded badge, `Color::Red` for the failure
+/// banner, `Color::DarkGray` for the citation label — which renders as whatever the *host
+/// terminal* thinks yellow is, not Estelle's `#c9a227`. The clippy ban that stopped `Color::Rgb`
+/// could not see those (`tui/src/style.rs`, `brand_palette_guard`), so nothing complained
+/// for months.
+///
+/// The four secondary-text sites were fixable in place because [`Self::ghost`] already exists and
+/// [`TranscriptEntry::System`] already used it for the same slot. The remaining three need roles
+/// this struct does not carry:
+///
+/// | site | today | wants | `theme::Palette` role |
+/// |---|---|---|---|
+/// | degraded / not-grounded badge | `Color::Yellow` | caution | `warn` |
+/// | `cited` label | `Color::DarkGray` | citation | `cite` |
+/// | failure banner | `Color::Red` | failure | `red` |
+///
+/// ⚠️ **The fix is three fields here and ONE line at the only construction site**, which is
+/// `live_renderer::render_transcript_with_citations` — it already holds a `Theme`, and
+/// `Theme::screen_palette()` already returns the 13-role [`crate::theme::Palette`]. That file was
+/// owned by another lane while this was written, so the change is named rather than made; making
+/// it here would have meant editing a file someone else had open.
 #[derive(Clone, Copy)]
 pub(crate) struct TranscriptPalette {
     pub(crate) primary: Color,
     pub(crate) ghost: Color,
     pub(crate) semantic: Color,
     pub(crate) user_background: Option<Color>,
+    /// ✅ THE THREE ROLES THE DOCSTRING ABOVE NAMED AS MISSING, PLUS THE TWO THE REPLY MARK NEEDS.
+    /// Every one of these previously fell back to a named ANSI variant, which renders as whatever
+    /// the HOST TERMINAL thinks that colour is rather than Estelle's. They come from
+    /// `theme::Palette` by MEANING now, wired at the single construction site.
+    pub(crate) warn: Color,
+    pub(crate) cite: Color,
+    pub(crate) failure: Color,
+    pub(crate) grounded: Color,
+    pub(crate) ungrounded: Color,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -121,6 +163,74 @@ pub(crate) fn handle_mouse(
     }
 }
 
+/// The staleness verdict, drawn the way screen 10 of the design book draws it.
+///
+/// 🔴 **THE SERVER'S SENTENCE, NOT A SECOND ONE.** `detail` comes from `GraphHealth.describe()`,
+/// which is also what the navigation tools refuse with — so the CLI cannot date a repo differently
+/// from the tool that declined a lookup one second earlier. The two SHAs are pulled out onto their
+/// own line because that is the fact a reader acts on, and they are shortened by the client's
+/// `CodeCurrency::short`, which returns the WHOLE head rather than a clipped one when it is short.
+///
+/// ⚠️ **`detail` MAY BE EMPTY AND THAT IS A REAL STATE**, not a bug: `_describe` falls back to an
+/// empty string when the health record cannot render itself. An empty sentence draws no row rather
+/// than a row saying nothing.
+fn stale_lines(
+    currency: &estelle_client::CodeCurrency,
+    palette: TranscriptPalette,
+) -> Vec<Line<'static>> {
+    use estelle_client::CodeCurrency;
+
+    let headline = if currency.is_stale() {
+        "Index is behind your tree"
+    } else {
+        "Index currency is unknown"
+    };
+    let mut lines = vec![Line::from(vec![
+        Span::styled(
+            format!("{} ", marks::Mark::Blocked.glyph()),
+            Style::default().fg(palette.warn),
+        ),
+        Span::styled(
+            headline.to_string(),
+            Style::default()
+                .fg(palette.warn)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])];
+    if !currency.indexed_head.is_empty() && !currency.current_head.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled(
+                currency.status.to_uppercase(),
+                Style::default().fg(palette.warn),
+            ),
+            Span::styled(
+                " — indexed at ".to_string(),
+                Style::default().fg(palette.ghost),
+            ),
+            Span::styled(
+                CodeCurrency::short(&currency.indexed_head).to_string(),
+                Style::default().fg(palette.warn),
+            ),
+            Span::styled(
+                ", repo is now ".to_string(),
+                Style::default().fg(palette.ghost),
+            ),
+            Span::styled(
+                CodeCurrency::short(&currency.current_head).to_string(),
+                Style::default().fg(palette.cite),
+            ),
+        ]));
+    }
+    if !currency.detail.trim().is_empty() {
+        lines.push(semantic_line(
+            &mask_secret(currency.detail.trim()),
+            palette.semantic,
+            Some(palette.ghost),
+        ));
+    }
+    lines
+}
+
 pub(crate) fn render(
     entries: &[TranscriptEntry],
     include_citations: bool,
@@ -133,18 +243,32 @@ pub(crate) fn render(
         match entry {
             TranscriptEntry::SessionHandoff(lines) => {
                 let mut rendered = vec![Line::styled(
-                    "Since your last session",
+                    "Since the last session",
                     Style::default()
                         .fg(palette.primary)
                         .add_modifier(Modifier::BOLD),
                 )];
                 rendered.extend(lines.iter().map(|line| {
-                    semantic_line(&mask_secret(line), palette.semantic, Some(Color::Gray))
+                    semantic_line(&mask_secret(line), palette.semantic, Some(palette.ghost))
                 }));
                 items.push(HistoryTranscriptItem::Lines(rendered));
             }
+            // 🔴 **THE WORD `you` IS GONE, AND THE BAND IS WHAT SAYS IT NOW.**
+            //
+            // The founder, reading the waiting screen: *"Delete the word 'you'. I don't want to
+            // see that 'you' any more."* — and on the next screen: *"When a message arrives it
+            // should be visually highlighted the way ChatGPT and Codex highlight yours. Same
+            // treatment, our palette."* Those are one instruction, not two: the label was standing
+            // in for a highlight that was not reliably drawn.
+            //
+            // ⚠️ Deleting the label alone would have been a REGRESSION, because
+            // `user_turn_background` returned `None` on any terminal that does not answer an OSC
+            // background query — so on those terminals the turn would have lost its only marker
+            // and become indistinguishable from Estelle's own output. The label could only go once
+            // the band was made unconditional; see `user_turn_background` in `main.rs` for the
+            // fallback that made this safe.
             TranscriptEntry::User(message) => items.push(HistoryTranscriptItem::User {
-                heading: vec![Line::styled("you", Style::default().fg(Color::Gray))],
+                heading: Vec::new(),
                 message: mask_secret(message),
                 background: palette.user_background,
                 semantic_color: Some(palette.semantic),
@@ -155,31 +279,56 @@ pub(crate) fn render(
                 degraded,
                 sources,
             } => {
-                let (label, color) = if *degraded {
-                    ("degraded", Color::Yellow)
-                } else if *grounded == Some(true) {
-                    ("grounded", palette.semantic)
+                // 🔴 THE REPLY OPENS WITH A MARK. The old heading was `estelle  <label>` on its
+                // own line: `estelle` named the program the user had just launched, and the
+                // label was an internal routing word. Both are gone.
+                //
+                // ⚠️ **`conversation` WAS LOAD-BEARING AND ITS MEANING IS PRESERVED, NOT
+                // DELETED.** It rendered only when `grounded is None`, and the sole producer of
+                // that is `conversational_reply` — so it was the one thing distinguishing
+                // *answered from the model* from *answered from your code, with citations*, which
+                // is the entire claim this product makes. The MARK carries it now, in two
+                // channels so a colour-flattening terminal keeps the distinction:
+                //
+                //   `●` green  answered from your code
+                //   `○` dim    answered from the model
+                //   `▲` warn   degraded, or explicitly not grounded
+                //
+                // A word survives ONLY on the two states a warn mark cannot disambiguate between.
+                // A healthy reply says nothing, which is the point.
+                // 🔴 **`○` BELONGS TO THE QUEUE AND MUST NOT ALSO MEAN "UNGROUNDED".** The first
+                // version of this gave an ungrounded reply `Mark::Queued`, which is the SAME glyph
+                // the waiting band puts on a message that has not been sent. The founder's screen
+                // then showed one column mixing `○ It looks like you sent "d."` (a reply) with
+                // `○ d` (a message not yet sent) — indistinguishable, and it is why the queue
+                // looked like it was answering itself out of order. One meaning per name.
+                //
+                // A reply always LANDED, so a reply is always `●`. Grounding is the COLOUR, and
+                // the second channel is structural rather than chromatic: a grounded answer
+                // carries `cited …` lines in the evidence gutter and an ungrounded one does not.
+                let (mark, ink, qualifier) = if *degraded {
+                    (marks::Mark::Blocked, palette.warn, Some("degraded"))
                 } else if *grounded == Some(false) {
-                    ("not grounded", Color::Yellow)
+                    (marks::Mark::Blocked, palette.warn, Some("not grounded"))
+                } else if *grounded == Some(true) {
+                    (marks::Mark::Landed, palette.grounded, None)
                 } else {
-                    ("conversation", Color::Gray)
+                    (marks::Mark::Landed, palette.ungrounded, None)
                 };
-                let heading = vec![Line::from(vec![
-                    Span::styled(
-                        "estelle",
-                        Style::default()
-                            .fg(palette.primary)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw("  "),
-                    Span::styled(label, Style::default().fg(color)),
-                ])];
+                let heading = qualifier
+                    .map(|word| {
+                        vec![Line::from(vec![Span::styled(
+                            word.to_string(),
+                            Style::default().fg(palette.warn),
+                        )])]
+                    })
+                    .unwrap_or_default();
                 let trailing = if include_citations {
                     sources
                         .iter()
                         .map(|source| {
                             Line::from(vec![
-                                Span::styled("cited  ", Style::default().fg(Color::DarkGray)),
+                                Span::styled("cited  ", Style::default().fg(palette.cite)),
                                 Span::styled(
                                     source_label(source),
                                     Style::default().fg(palette.semantic),
@@ -195,7 +344,14 @@ pub(crate) fn render(
                     source: mask_secret(text),
                     trailing,
                     semantic_color: Some(palette.semantic),
+                    // ⚠️ The GLYPH comes from `marks::Mark` so the five-mark vocabulary keeps one
+                    // owner; the COLOUR is chosen above, because two different groundings now
+                    // share one glyph and a `match` on the mark could no longer tell them apart.
+                    mark: Some((mark.glyph().to_string(), ink)),
                 });
+            }
+            TranscriptEntry::Stale(currency) => {
+                items.push(HistoryTranscriptItem::Lines(stale_lines(currency, palette)))
             }
             TranscriptEntry::System(message) => {
                 items.push(HistoryTranscriptItem::Lines(vec![semantic_line(
@@ -205,14 +361,13 @@ pub(crate) fn render(
                 )]))
             }
             TranscriptEntry::Command { name, lines } => {
+                // `● /model` rather than `estelle  /model`. The command's OWN name is the
+                // informative half and it stays; the program's name was the noise.
                 let mut rendered = vec![Line::from(vec![
                     Span::styled(
-                        "estelle",
-                        Style::default()
-                            .fg(palette.primary)
-                            .add_modifier(Modifier::BOLD),
+                        format!("{} ", marks::Mark::Landed.glyph()),
+                        Style::default().fg(palette.grounded),
                     ),
-                    Span::raw("  "),
                     Span::styled(
                         format!("/{}", mask_secret(name)),
                         Style::default().fg(palette.semantic),
@@ -238,17 +393,26 @@ pub(crate) fn render(
                 lines: lines
                     .iter()
                     .map(|line| {
-                        semantic_line(&mask_secret(line), palette.semantic, Some(Color::Gray))
+                        semantic_line(&mask_secret(line), palette.semantic, Some(palette.ghost))
                     })
                     .collect(),
                 expanded: *expanded,
                 semantic_color: palette.semantic,
             }),
             TranscriptEntry::Failure(lines) => {
-                let mut rendered = vec![Line::styled(
-                    "estelle  failed",
-                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                )];
+                // The refusal mark, `■`, in place of the words `estelle  failed`.
+                let mut rendered = vec![Line::from(vec![
+                    Span::styled(
+                        format!("{} ", marks::Mark::Refused.glyph()),
+                        Style::default().fg(palette.failure),
+                    ),
+                    Span::styled(
+                        "failed",
+                        Style::default()
+                            .fg(palette.failure)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ])];
                 rendered.extend(
                     lines
                         .iter()
@@ -283,6 +447,7 @@ pub(crate) fn compaction_messages(entries: &[TranscriptEntry]) -> Vec<Value> {
             TranscriptEntry::SessionHandoff(lines) => message("system", lines.join("\n")),
             TranscriptEntry::User(text) => message("user", text.clone()),
             TranscriptEntry::Answer { text, .. } => message("assistant", text.clone()),
+            TranscriptEntry::Stale(currency) => message("system", currency.detail.clone()),
             TranscriptEntry::System(text) => message("system", text.clone()),
             TranscriptEntry::Command { name, lines } => {
                 message("assistant", format!("/{name}\n{}", lines.join("\n")))

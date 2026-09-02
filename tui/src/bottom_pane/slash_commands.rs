@@ -178,6 +178,33 @@ pub(crate) fn has_external_command_prefix(name: &str, commands: &[ExternalComman
     commands
         .iter()
         .any(|command| fuzzy_match(&command.name, name).is_some())
+        || find_external_namespace(name, commands).is_some()
+}
+
+/// The namespace entry that owns `name`, when a catalog entry ends in `:`.
+///
+/// 🔴 **THE COMPOSER WAS A SECOND DISPATCH TABLE, AND IT DISAGREED WITH THE FIRST.**
+/// [`ExternalCommand`]'s own doc two dozen lines up states the contract: *"The composer owns
+/// discovery and completion; the embedding application owns dispatch."* `find_external_command`
+/// is exact-equality, so `validate_submission` refused every `/skill:<name>` — a whole namespace
+/// whose members the composer cannot know, because they live on the server — and returned
+/// `UnknownCommand`. The embedding application never got to decide, and its refusal text never
+/// rendered: the wrapper drains the composer's app events. Typing `/skill:anything` and pressing
+/// enter did **nothing at all**.
+///
+/// A trailing `:` marks an entry as a namespace whose members are resolved elsewhere. The composer
+/// stops adjudicating them and hands the draft to the owner that can actually answer.
+///
+/// ⚠️ This deliberately does NOT claim the skill exists — an unknown skill still has to be refused,
+/// by the dispatcher that can tell. It only stops the composer from refusing the whole namespace.
+pub(crate) fn find_external_namespace<'a>(
+    name: &str,
+    commands: &'a [ExternalCommand],
+) -> Option<&'a ExternalCommand> {
+    commands
+        .iter()
+        .filter(|command| command.name.ends_with(':'))
+        .find(|command| name.len() > command.name.len() && name.starts_with(&command.name))
 }
 
 #[cfg(test)]

@@ -1,38 +1,38 @@
 ESTELLE  ·  uqeu/estelle  ·  Fate Labs · owner
 
-┌ CONVERSATION  Tab · Ctrl+←/→ focus ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│Since your last session                                                                                                                                       │
-│Welcome back - you were last here about 3 hours ago.                                                                                                          │
-│Code you touched has changed since:                                                                                                                           │
-│- billing/charge.rs - by Dana, about 2 hours ago - bound retry telemetry                                                                                      │
-│Signed in · khai@fatelabs.ca · team                                                                                                                           │
-│Team · Fate Labs · owner                                                                                                                                      │
-│                                                                                                                                                              │
-│you  What changed while I was away?                                                                                                                           │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ ASK ESTELLE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                                                                                                                                              │
-│› Ask Estelle                                                                                                                                                 │
-│                                                                                                                                                              │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-still waiting for Estelle  83s  |  Esc cancels  |  no response received yet
+── session · uqeu/estelle ──────────────────────────────────────────────────────────────────────  │  ── production · uqeu/estelle ──────────────────────────────
+   uqeu/estelle · main                                                                            │  ── app · repo uqeu/estelle ────────────────────────────────
+Since the last session                                                                            │  GET /monitor/overview has not returned yet.
+Welcome back - you were last here about 3 hours ago.                                              │
+Code you touched has changed since:                                                               │  ── agents · unread ────────────────────────────────────────
+- billing/charge.rs - by Dana, about 2 hours ago - bound retry telemetry                          │  ○   agents            no read yet · GET /agent/health
+Signed in · khai@fatelabs.ca · team                                                               │
+Team · Fate Labs · owner                                                                          │  ── estelle · unread ───────────────────────────────────────
+                                                                                                  │  ○   issues            no read yet · GET /issues
+                                                                                                  │
+› What changed while I was away?                                                                  │  ── queue · 0 repair(s) ────────────────────────────────────
+                                                                                                  │  ○   repairs           none reported
+                                                                                                  │  ○   select            /monitor issues
+                                                                                                  │
+                                                                                                  │  ── github · unknown ───────────────────────────────────────
+                                                                                                  │  ○   connection        no read yet · GET /github/status
+                                                                                                  │
+                                                                                                  │
+                                                                                                  │
+                                                                                                  │
+                                                                                                  │
+                                                                                                  │
+                                                                                                  │
+                                                                                                  │
+                                                                                                  │
+                                                                                                  │
+◐ Working · thinking · 1m 23s · still waiting for Estelle · no response received yet
+
+── ask · uqeu/estelle ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+
+
+
+
+
+  enter send · tab repo · ctrl+s spend · ctrl+g context · esc stop · ctrl+o selection

@@ -1516,7 +1516,7 @@ impl BottomPane {
                     description: None,
                     instructions: match suggestion_type {
                         AppLinkSuggestionType::Install => {
-                            "Install this app in your browser, then return here.".to_string()
+                            "Install this app in the browser, then return here.".to_string()
                         }
                         AppLinkSuggestionType::Enable => {
                             "Enable this app to use it for the current request.".to_string()

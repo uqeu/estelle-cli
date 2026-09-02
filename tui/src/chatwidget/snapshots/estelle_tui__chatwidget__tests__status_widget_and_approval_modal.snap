@@ -4,7 +4,7 @@ expression: normalized_backend_snapshot(terminal.backend())
 ---
 "                                                                                                    "
 "                                                                                                    "
-"  Would you like to run the following command?                                                      "
+"  Run the following command?                                                                        "
 "                                                                                                    "
 "  Reason: this is a test reason such as one that would be produced by the model                     "
 "                                                                                                    "

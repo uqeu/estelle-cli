@@ -1,0 +1,34 @@
+── skills · 238 · 189 on ─────────────────────────────────────────────────────
+  / search · space toggle · enter run
+
+         skill                                tok
+  › on   improve-codebase-architecture       ~640
+    on   systematic-debugging                ~520
+    off  whitepaper-draft                    ~641
+    on   bug-hunt                            ~310
+    on   verification-before-completion      ~380
+    off  refactor-cleaner                    ~410
+    on   test-driven-development             ~470
+    off  orca-port-review                    ~590
+
+  3 max compose · 1,800 tok budget
+
+  off is a permission, not a filter: a skill that is off, Estelle may neither recommend nor auto-use.
+  space changes that permission · enter fires the row under the cursor · the two are different keys
+  the cost column is what the skill body spends before you have asked a single question
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
