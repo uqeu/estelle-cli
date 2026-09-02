@@ -543,7 +543,11 @@ mod tests {
         );
 
         // ⚠️ BOUND. The fuzzy tier is capped by a named constant, not left to match everything.
-        assert!(MAX_FUZZY_MATCHES > 0 && MAX_FUZZY_MATCHES <= 64);
+        // A CONST BLOCK, SO IT IS A COMPILE ERROR RATHER THAN A RUNTIME ONE. Both operands are
+        // constants, so this could never fire at runtime on a build that had already started -
+        // clippy calls that out as an assertion with a constant value. In a const block the same
+        // sentence refuses to BUILD, which is the only way a bound on a constant can bite.
+        const { assert!(MAX_FUZZY_MATCHES > 0 && MAX_FUZZY_MATCHES <= 64) };
     }
 
     #[test]

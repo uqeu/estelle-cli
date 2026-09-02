@@ -230,7 +230,7 @@ pub(crate) fn help_lines() -> Vec<String> {
             } else {
                 format!("/{name}")
             };
-            format!("{surface:<width$}{description}", width = HELP_NAME_COLUMN)
+            format!("{surface:<HELP_NAME_COLUMN$}{description}")
         })
         .collect()
 }
@@ -4983,8 +4983,7 @@ mod tests {
             .expect("the help list is not empty");
         assert!(
             HELP_NAME_COLUMN >= longest + 2,
-            "HELP_NAME_COLUMN is {HELP_NAME_COLUMN} but the longest command needs {} plus a gutter",
-            longest
+            "HELP_NAME_COLUMN is {HELP_NAME_COLUMN} but the longest command needs {longest} plus a gutter"
         );
 
         // And the rendered rows really do carry it — the constant being right is not the same

@@ -141,7 +141,7 @@ impl BootPalette {
     /// four chances to change it in one place and silently break a test's subject.
     pub fn lily(self) -> Color {
         match self {
-            Self::Dark => Color::from_u32(0xC5_24_16),
+            Self::Dark => Color::from_u32(0x00C5_2416),
             Self::Light => Color::from_u32(0xB0_21_0F),
         }
     }

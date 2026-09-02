@@ -4035,6 +4035,7 @@ impl App {
         )));
     }
 
+    #[allow(dead_code, reason = "the affinity MODELS surface has no key or command to reach it. Its only door was `ctrl+m`, which is carriage return in this binary and was removed rather than moved, because choosing its replacement is a founder ruling open on design-book screen 10. The code is kept, not deleted, so the ruling is one binding away")]
     fn open_affinity_models(&mut self, tx: &mpsc::UnboundedSender<UiEvent>) {
         self.affinity_surface = Some(affinity_cli::Surface::models_loading());
         self.picker = None;
@@ -7223,6 +7224,10 @@ async fn run_demo(name: Option<&str>, list: bool, demo: bool, cream: bool) -> Ex
 }
 
 /// The viewer's own two rows: which screen, and whether anything on it was measured.
+// A PERF TEST REPORTS ITS MEASURED TIME. The crate denies printing because the PRODUCT
+// must not write to a terminal it does not own; a benchmark whose number nobody can
+// read is a benchmark nobody can check, so the deny is lifted here and nowhere else.
+#[allow(clippy::print_stdout)]
 fn demo_chrome(
     screen: &design_book::BookScreen,
     index: usize,
@@ -11465,6 +11470,10 @@ mod tests {
     /// `FRAME_BUDGET`.** Raising the budget changes the number and not the behaviour.
     #[test]
     #[should_panic(expected = "over the")]
+    // A PERF TEST REPORTS ITS MEASURED TIME. The crate denies printing because the PRODUCT
+    // must not write to a terminal it does not own; a benchmark whose number nobody can
+    // read is a benchmark nobody can check, so the deny is lifted here and nowhere else.
+    #[allow(clippy::print_stdout)]
     fn the_unclipped_transcript_render_still_scales_with_scrollback() {
         let mut app = test_app();
         app.transcript = transcript_of_size(20_000);
@@ -11478,6 +11487,10 @@ mod tests {
     }
 
     #[test]
+    // A PERF TEST REPORTS ITS MEASURED TIME. The crate denies printing because the PRODUCT
+    // must not write to a terminal it does not own; a benchmark whose number nobody can
+    // read is a benchmark nobody can check, so the deny is lifted here and nowhere else.
+    #[allow(clippy::print_stdout)]
     fn a_runaway_transcript_is_capped_and_the_frame_stays_in_budget() {
         // The raw scaling first, as evidence rather than as an assertion: this is the defect.
         let mut measurements = Vec::new();
@@ -14107,7 +14120,7 @@ mod tests {
             question.chars().count() < usize::from(WIDTH) - 4,
             "the premise is a message that does not wrap"
         );
-        app.transcript.push(TranscriptEntry::User(question.clone()));
+        app.transcript.push(TranscriptEntry::User(question));
 
         let buffer = rendered_buffer_at_size(&app, Instant::now(), WIDTH, 32);
         let banded = (0..buffer.area.height)
@@ -14991,7 +15004,7 @@ mod tests {
         assert!(app.queue.is_empty(), "the queue did not drain");
         assert_eq!(
             user_rows(&app),
-            queued.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
+            queued.iter().map(ToString::to_string).collect::<Vec<_>>(),
             "a sent message must appear exactly once, in the order it was sent"
         );
     }
