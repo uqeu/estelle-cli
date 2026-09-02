@@ -474,7 +474,9 @@ pub(crate) fn memory_correct(palette: &Palette, _tick: u64, _pulse: bool) -> Vec
         })
     };
     foot("an edit SUPERSEDES, it does not overwrite. retracted is not deleted.");
-    foot("the superseded claim stays readable, dated and cited — you see what was believed when.");
+    foot(
+        "the superseded claim stays readable, dated and cited — what was believed when, on the record.",
+    );
     foot("");
     foot("enter reads · e edits · d retracts · c shows citations");
     foot("measured came off an instrument · observed was seen once · asserted is somebody's word.");

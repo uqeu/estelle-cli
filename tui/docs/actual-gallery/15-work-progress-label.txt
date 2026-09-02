@@ -1,8 +1,8 @@
 ESTELLE  ·  uqeu/estelle
 
 ── session · uqeu/estelle ───────────────────────────────────────────────────  │  ── production · uqeu/estelle ───────────────────
-   uqeu/estelle · cli/design-book-rust-20260902                                │  ── app · repo uqeu/estelle ─────────────────────
-── plan · revision 4 ────────────────────────────────────────────────────────  │  Connecting to Estelle...
+   uqeu/estelle · main                                                         │  ── app · repo uqeu/estelle ─────────────────────
+── plan · revision 4 ────────────────────────────────────────────────────────  │  connecting · api.fatelabs.ca
           step                                evidence                         │
   ✓    1  read the failing test               gate ok · 2 cites                │  ── agents · unread ─────────────────────────────
   ✓    2  locate every parse_header call      12 refs · graph                  │  ○   agents            no read yet · GET /agent/…

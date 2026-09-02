@@ -1,8 +1,8 @@
 ESTELLE  ·  uqeu/estelle  ·  Fate Labs · owner
 
 ── session · uqeu/estelle ──────────────────────────────────────────────────────────────────────  │  ── production · uqeu/estelle ──────────────────────────────
-   uqeu/estelle · cli/design-book-rust-20260902                                                   │  ── app · repo uqeu/estelle ────────────────────────────────
-Since your last session                                                                           │  GET /monitor/overview has not returned yet.
+   uqeu/estelle · main                                                                            │  ── app · repo uqeu/estelle ────────────────────────────────
+Since the last session                                                                            │  GET /monitor/overview has not returned yet.
 Welcome back - you were last here about 3 hours ago.                                              │
 Code you touched has changed since:                                                               │  ── agents · unread ────────────────────────────────────────
 - billing/charge.rs - by Dana, about 2 hours ago - bound retry telemetry                          │  ○   agents            no read yet · GET /agent/health

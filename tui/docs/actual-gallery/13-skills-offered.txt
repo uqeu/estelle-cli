@@ -2,14 +2,14 @@
 
   ❯ i want to organise this codebase better
 
-  » This looks like improve-codebase-architecture.
+  » matches improve-codebase-architecture.
     matched on symbol overlap, then 238 pre-embedded descriptions · ~640 tok if you take it
 
   enter  send as typed
   tab    send with the skill
   esc    dismiss · the draft stays exactly as you wrote it
 
-  It offers, never auto-runs. A skill that fires without you asking is an agent choosing for you.
+  It offers; it never auto-runs. A skill that fires unasked is the agent deciding.
 
   the offer fires on send, before the message leaves · not after the answer comes back
   a skill that is off in browse is never offered here · the toggle is the permission

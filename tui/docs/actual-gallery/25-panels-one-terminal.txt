@@ -1,4 +1,4 @@
-agents     ● scope         ◐ implement        ○ review        ○ gate       + new
+agents       ● scope        ◐ implement        ○ review        ○ gate       + new
 
 ── agents · 4 in this terminal ───────────────────────────  │  ── production · fernpost/checkout-api ──────────────────────────────────────────────────────
 ❯ add retry to the http client                              │  ●   api           071b1aa6 · 16/246

@@ -1,0 +1,48 @@
+── run · 3h02m · 6 laps · $4.71 ──────────────────────────────────────────────────────────────────────────────────────────────
+
+            rate       what it counts
+      32.1  tg/s       tokens generated per second, over the whole run
+     1,204  pp/s       prompt tokens processed per second
+         6  laps       turns that reached a tool call and came back
+    30m20s  avg/lap    wall clock divided by laps, not a per-lap median
+
+── time · where the 3h02m went ───────────────────────────────────────────────────────────────────────────────────────────────
+  phase          duration   of wall  share of the run
+  wall clock        3h02m      100%  ████████████████████████████████████████
+  generation        1h57m     64.3%  ▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆▆
+  reasoning         1h00m     33.0%  ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+  prefill          21m02s     11.5%  ▂▂▂▂▂▂▂▂▂▂
+  tools             1m18s      0.7%  ▁▁▁▁▁
+  first token        4.1s      0.0%
+  startup            0.9s      0.0%
+  compaction         0.0s   not run
+  reasoning is INSIDE generation and is counted in both. wall clock is the only total; the rows do not sum to it.
+
+── tokens · 25.7M · what each kind costs ─────────────────────────────────────────────────────────────────────────────────────
+  kind                tokens     share  priced at
+  prompt cached        24.7M     96.1%  0.10x input · read back, not recomputed
+  prompt computed       768k      3.0%  1.00x input
+  completion            202k      0.8%  output
+  reasoning              67k      0.3%  output · billed as completion
+  tool results           64k      0.2%  1.00x input · fed back next lap
+
+── activity · one row per tool, across the run ───────────────────────────────────────────────────────────────────────────────
+                              n  wall clock
+  lap                         6  │         │         │         │         │         │
+  assistant · prefill         6  █████▂▂▂▂▂▁▁▁▁▁▁▁▁▁▁▂▂▂▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▂▂▂▂▂▁▁▁▁▁▁▁▁▁▁
+  assistant · reasoning       6  ▃▃▃▃▃▆▆▆▆▆▇▇▇▇▇▅▅▅▅▅▆▆▆▆▆▇▇▇▇▇▆▆▆▆▆▅▅▅▅▅▄▄▄▄▄▆▆▆▆▆▃▃▃▃▃▁▁▁▁▁
+  assistant · generation      6  ▂▂▂▂▂▅▅▅▅▅█████▆▆▆▆▆▇▇▇▇▇█████▇▇▇▇▇▆▆▆▆▆▅▅▅▅▅▇▇▇▇▇▄▄▄▄▄▂▂▂▂▂
+  bash                      143  ▁▁▁▁▁▄▄▄▄▄▆▆▆▆▆▃▃▃▃▃▅▅▅▅▅▇▇▇▇▇▄▄▄▄▄▆▆▆▆▆▃▃▃▃▃▅▅▅▅▅▂▂▂▂▂▁▁▁▁▁
+  jina_search_web            34       ▂▂▂▂▂▃▃▃▃▃▁▁▁▁▁     ▄▄▄▄▄▂▂▂▂▂▁▁▁▁▁▃▃▃▃▃▂▂▂▂▂
+  edit                       25            ▂▂▂▂▂▁▁▁▁▁▃▃▃▃▃▁▁▁▁▁▂▂▂▂▂▃▃▃▃▃▁▁▁▁▁▂▂▂▂▂▄▄▄▄▄▁▁▁▁▁
+  read                       12  ▂▂▂▂▂▁▁▁▁▁     ▁▁▁▁▁     ▁▁▁▁▁     ▂▂▂▂▂▁▁▁▁▁     ▁▁▁▁▁
+  write                       1                                                    ▁▁▁▁▁
+  compaction                  0
+
+● 24.7M of 25.5M prompt tokens were read from cache  ·  computing them again would have cost 32x
+
+  orchestra · per-worker model + cost · no server contract
+  measured   the cache split — token_usage::TokenUsage::cached_input_tokens, on every reply
+  NOT measured   the per-phase clock: no timer wraps prefill, generation, reasoning or tools
+  NOT measured   the per-tool counts: tool calls are rendered, never tallied for a run
+  NOT on the wire   per-worker model and cost — see the line above, quoted from orchestra_view

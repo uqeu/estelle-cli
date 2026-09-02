@@ -225,7 +225,10 @@ fn open_with_mark(lines: &mut [Line<'static>], glyph: &str, colour: Color) {
     let Some(first) = lines.first_mut() else {
         return;
     };
-    let marker = ratatui::text::Span::styled(format!("{glyph} "), ratatui::style::Style::default().fg(colour));
+    let marker = ratatui::text::Span::styled(
+        format!("{glyph} "),
+        ratatui::style::Style::default().fg(colour),
+    );
     match first.spans.first() {
         Some(span) if span.content.trim() == "\u{2022}" => first.spans[0] = marker,
         _ => first.spans.insert(0, marker),

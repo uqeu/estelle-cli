@@ -1,4 +1,4 @@
-sessions     ● checkout-api      ◐ payments-worker      ○ infra-terraform      ○ design-book     + new
+sessions       ● checkout-api        ◐ payments-worker        ○ infra-terraform        ○ design-book       + new
 
 ── sessions · 4 open · 1 in flight ───────────────────────────────────────────────────────────────────────────────────────────────────────
   session             repo                        state         last activity        spend

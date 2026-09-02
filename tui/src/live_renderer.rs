@@ -399,7 +399,10 @@ fn queue_entry_summary(label: &str, width: usize) -> String {
     let suffix = format!(" \u{23ce} +{remaining} more");
     // Measured the same way `truncate_display` measures, so the reservation and the truncation
     // cannot disagree about how wide the suffix is.
-    let reserved = suffix.chars().map(|ch| ch.width().unwrap_or(0)).sum::<usize>();
+    let reserved = suffix
+        .chars()
+        .map(|ch| ch.width().unwrap_or(0))
+        .sum::<usize>();
     let room = width.saturating_sub(reserved);
     format!("{}{suffix}", truncate_display(first, room))
 }
@@ -442,9 +445,9 @@ pub(super) fn truncate_display(value: &str, max_width: usize) -> String {
 pub(super) fn render_picker(frame: &mut Frame<'_>, picker: &PickerSurface, area: Rect, app: &App) {
     let login_context = match picker.title.as_str() {
         "Connect Estelle" => Some([
-            Line::from("Estelle grounds your coding agent in your real codebase."),
+            Line::from("Estelle grounds the coding agent in the real codebase."),
             Line::from(
-                "It runs on the model plan or API key you already have — Estelle never bills you for model tokens.",
+                "Runs on an existing model plan or API key. Estelle never bills model tokens.",
             ),
         ]),
         "Choose how model tokens are paid" => Some([
@@ -766,8 +769,7 @@ pub(super) fn symbol_ground_layout(width: usize, height: usize) -> Arc<SymbolGro
             // not visual fit. The lily is drawn only where the box can hold its proportions;
             // elsewhere the flourish is pure dither, which is the graceful degradation.
             if x >= lily_x0
-                && let Some(symbol) =
-                    red_lily_braille(x - lily_x0, y, lily_width, height, opacity)
+                && let Some(symbol) = red_lily_braille(x - lily_x0, y, lily_width, height, opacity)
             {
                 cells[index] = symbol;
                 ink[index] = 2;
@@ -862,22 +864,28 @@ pub(super) fn render_symbol_ground(frame: &mut Frame<'_>, area: Rect, app: &App)
             }
             spans.push(Span::styled(
                 cells[start..end].iter().collect::<String>(),
+                // 🔴 **THREE LEVELS THAT DID NOT DESCEND.** The dither's ladder was
+                // `mid` → `#46433B`/`bright` → `ghost` + `Modifier::DIM`, and on the dark theme
+                // its FAINTEST level had the BRIGHTEST base colour (`#C8C2B3` against `mid`'s
+                // `#948E81`) — visible only on a terminal that honours `DIM` for a truecolor
+                // foreground, which many do not. On cream, level 1 was `bright`: the middle step
+                // of a texture painted at maximum contrast. Two themes, two different orderings,
+                // neither of them monotonic.
+                //
+                // It is one ladder now, out of the palette, descending in both themes:
+                // `mid` (nearest the ink) → `dim` → `tint` (nearest the ground). No modifier does
+                // the work, so the texture reads the same on a terminal that drops `DIM`.
+                //
+                // ⚠️ **NOT RED.** Red is a MEANING in this interface — `■` refusal, `▲` break —
+                // and a decorative texture wearing it says "something is wrong" on an idle
+                // startup frame. The motif keeps its shape and gives up the brand ink; the
+                // frame is asserted to contain no red cell at all while idle.
                 match ink_level {
-                    // ⚠️ **NOT RED.** Red is a MEANING in this interface — `■` refusal, `▲` break —
-                    // and a decorative texture wearing it says "something is wrong" on an idle
-                    // startup frame. The motif keeps its shape and gives up the brand ink; the
-                    // frame is asserted to contain no red cell at all while idle.
                     2 => Style::default()
                         .fg(palette.mid)
                         .add_modifier(Modifier::BOLD),
-                    1 => Style::default().fg(if app.theme == Theme::CreamInk {
-                        palette.bright
-                    } else {
-                        FATE_INK
-                    }),
-                    _ => Style::default()
-                        .fg(app.theme.ghost())
-                        .add_modifier(Modifier::DIM),
+                    1 => Style::default().fg(palette.dim),
+                    _ => Style::default().fg(palette.tint),
                 },
             ));
             start = end;
@@ -985,7 +993,7 @@ pub(super) fn render_empty_state(frame: &mut Frame<'_>, area: Rect, app: &App) {
     if let Some(context) = &app.session_context {
         lines.push(Line::default());
         lines.push(Line::styled(
-            "Since your last session",
+            "Since the last session",
             Style::default()
                 .fg(app.theme.primary())
                 .add_modifier(Modifier::BOLD),
@@ -1475,7 +1483,10 @@ fn app_health_lines(app: &App, palette: &theme::Palette, width: usize) -> Vec<Li
     )];
 
     if !app.auth_resolved {
-        lines.push(dim_line("Connecting to Estelle...".to_string(), palette));
+        lines.push(dim_line(
+            "connecting · api.fatelabs.ca".to_string(),
+            palette,
+        ));
         return lines;
     }
     if app.client.is_none() {
@@ -2152,29 +2163,20 @@ pub(super) fn github_diff_lines(diff: &str, width: usize, app: &App) -> Vec<Line
     let number_width = 3_usize;
     let content_width = width.saturating_sub(number_width * 2 + 5);
 
-    // 🔴 **THE LINE GROUNDS ARE THE PALETTE'S OWN `diff_add` / `diff_del`.**
+    // 🔴 **ALL FOUR GROUNDS ARE THE PALETTE'S NOW, INCLUDING THE GUTTERS.**
     //
-    // They used to be four literals here, and two of them were near misses of tokens `theme.rs`
-    // already ships (`#361714` beside `diff_del`'s `#361A18`) — a second owner for a colour that
-    // has one. The GUTTER grounds stay literal below and stay stronger than the line ground on
-    // purpose: the gutter is the narrow strip carrying the line NUMBER, and it has to separate
-    // itself from the row it labels or the row reads as one block.
-    let palette_add = palette.diff_add;
-    let palette_del = palette.diff_del;
-    let (add_line_bg, add_gutter_bg, del_line_bg, del_gutter_bg) = match app.theme {
-        Theme::Dark => (
-            palette_add,
-            Color::from_u32(0x16_2E_20),
-            palette_del,
-            Color::from_u32(0x4A_22_1D),
-        ),
-        Theme::CreamInk => (
-            palette_add,
-            Color::from_u32(0xAC_EE_BB),
-            palette_del,
-            Color::from_u32(0xFF_CE_CB),
-        ),
-    };
+    // The line grounds moved to `diff_add`/`diff_del` in the previous pass, and the four GUTTER
+    // literals stayed here with a written reason — the gutter carries the line NUMBER and has to
+    // separate itself from the row it labels. The reason was right and the LOCATION was wrong: a
+    // documented literal inside a render function is still a second owner of a product colour, and
+    // the design book's colour read-back counted them at **20 untokened cells** on
+    // `05-proposed-diff`. The values did not change; the owner did.
+    let (add_line_bg, add_gutter_bg, del_line_bg, del_gutter_bg) = (
+        palette.diff_add,
+        palette.diff_add_gutter,
+        palette.diff_del,
+        palette.diff_del_gutter,
+    );
 
     for source in diff.lines() {
         if let Some(path) = source.strip_prefix("diff --git a/") {

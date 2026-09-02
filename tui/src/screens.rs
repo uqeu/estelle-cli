@@ -930,7 +930,7 @@ fn skill(p: &Palette) -> Vec<Line<'static>> {
     v.push(blank());
     v.push(Line::from(vec![
         Span::styled("» ".to_string(), Style::default().fg(p.skill)),
-        Span::styled("This looks like ".to_string(), Style::default().fg(p.mid)),
+        Span::styled("matches ".to_string(), Style::default().fg(p.mid)),
         Span::styled(
             "improve-codebase-architecture".to_string(),
             Style::default().fg(p.skill),

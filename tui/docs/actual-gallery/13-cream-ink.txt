@@ -1,8 +1,8 @@
 ESTELLE  ·  uqeu/estelle  ·  repo graph current
 
 ── session · uqeu/estelle ─────────────────────────────────────────────  │  ── production · uqeu/estelle ───────────────
-   uqeu/estelle · cli/design-book-rust-20260902                          │  ── app · repo uqeu/estelle ─────────────────
-Ask about uqeu/estelle                                                   │  Connecting to Estelle...
+   uqeu/estelle · main                                                   │  ── app · repo uqeu/estelle ─────────────────
+Ask about uqeu/estelle                                                   │  connecting · api.fatelabs.ca
                                                                          │
 /review  Read current changes                                            │  ── agents · unread ─────────────────────────
 /sweep   Refresh this repo's index                                       │  ○   agents            no read yet · GET /ag…

@@ -34,6 +34,20 @@ pub struct Palette {
     pub tint: Color,
     pub diff_add: Color,
     pub diff_del: Color,
+    /// 🔴 **THE DIFF GUTTER, DECLARED RATHER THAN TYPED AT THE CALL SITE.**
+    ///
+    /// The narrow strip carrying the line NUMBER is deliberately stronger than the line ground it
+    /// labels — without that separation a hunk reads as one block. That decision is sound and it
+    /// was written down; what was wrong is WHERE. Four `Color::from_u32` literals sat inside
+    /// `live_renderer::github_diff_lines`, which made the diff pane a second owner of a product
+    /// colour, and the design book's colour read-back counted them: **20 cells matching no token**
+    /// on `05-proposed-diff`.
+    ///
+    /// ⚠️ The values are UNCHANGED. This is a move, not a redesign: the role existed in the
+    /// product and had never been declared, which is a different defect from a near-miss of a role
+    /// that had. A near-miss gets snapped to the token it missed; a missing role gets named.
+    pub diff_add_gutter: Color,
+    pub diff_del_gutter: Color,
 }
 
 impl ScreenTheme {
@@ -53,6 +67,8 @@ impl ScreenTheme {
                 tint: Color::Rgb(0x24, 0x1f, 0x19),
                 diff_add: Color::Rgb(0x1b, 0x2e, 0x1d),
                 diff_del: Color::Rgb(0x36, 0x1a, 0x18),
+                diff_add_gutter: Color::Rgb(0x16, 0x2e, 0x20),
+                diff_del_gutter: Color::Rgb(0x4a, 0x22, 0x1d),
             },
             Self::Cream => Palette {
                 // 🔴 **FIVE PERCENT DARKER THAN THE WEB CREAM, ON THE FOUNDER'S OWN REPORT.**
@@ -87,6 +103,8 @@ impl ScreenTheme {
                 tint: Color::Rgb(0xd1, 0xcc, 0xbe),
                 diff_add: Color::Rgb(0xd2, 0xdf, 0xcc),
                 diff_del: Color::Rgb(0xeb, 0xd3, 0xcf),
+                diff_add_gutter: Color::Rgb(0xac, 0xee, 0xbb),
+                diff_del_gutter: Color::Rgb(0xff, 0xce, 0xcb),
             },
         }
     }

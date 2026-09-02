@@ -173,7 +173,7 @@ pub(crate) fn offered(palette: &Palette, _tick: u64, _pulse: bool) -> Vec<Line<'
         blank(),
         Line::from(vec![
             tinted("  » ", palette.skill),
-            tinted("This looks like ", palette.mid),
+            tinted("matches ", palette.mid),
             tinted(MATCHED, palette.skill),
             tinted(".", palette.mid),
         ]),
@@ -205,7 +205,7 @@ pub(crate) fn offered(palette: &Palette, _tick: u64, _pulse: bool) -> Vec<Line<'
     lines.push(blank());
     lines.push(note(
         palette,
-        "It offers, never auto-runs. A skill that fires without you asking is an agent choosing for you.",
+        "It offers; it never auto-runs. A skill that fires unasked is the agent deciding.",
     ));
     lines.push(blank());
     for footnote in [
@@ -353,7 +353,7 @@ mod tests {
         let palette = ScreenTheme::Dark.palette();
         let screen = join(offered(&palette, 0, true));
         assert!(
-            screen.contains("offers, never auto-runs"),
+            screen.contains("offers; it never auto-runs"),
             "the principle line is missing:\n{screen}"
         );
         assert!(

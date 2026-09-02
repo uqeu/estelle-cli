@@ -56,7 +56,10 @@ impl Tone {
 
 /// The rendered text of a `cols`-built line, so an aligned table can be placed INSIDE a pane cell.
 fn flatten(line: &Line<'_>) -> String {
-    line.spans.iter().map(|span| span.content.as_ref()).collect()
+    line.spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect()
 }
 
 /// A rule's SHAPE without its colours, for the same reason. The texture still has one owner
@@ -93,10 +96,25 @@ const PANE: [Col; 3] = [Col::l(PANE_LEFT), Col::l(1), Col::l(PANE_RIGHT)];
 /// A production line in the right rail: mark, service, detail.
 const SERVICE: [Col; 3] = [Col::l(2), Col::l(12), Col::l(40)];
 /// 🔴 The founder's seven columns, spelled out. `age` is not among them by design.
-const FLEET_HEAD: [&str; 8] =
-    ["", "wkr", "model", "task", "state", "tokens", "price", "last seen"];
+const FLEET_HEAD: [&str; 8] = [
+    "",
+    "wkr",
+    "model",
+    "task",
+    "state",
+    "tokens",
+    "price",
+    "last seen",
+];
 const FLEET: [Col; 8] = [
-    Col::l(2), Col::l(3), Col::l(11), Col::l(24), Col::l(10), Col::r(7), Col::r(7), Col::r(9),
+    Col::l(2),
+    Col::l(3),
+    Col::l(11),
+    Col::l(24),
+    Col::l(10),
+    Col::r(7),
+    Col::r(7),
+    Col::r(9),
 ];
 /// ⚠️ `✓ ◐ ·` is `orchestra_view`'s status vocabulary, not `marks::Mark`'s. A worker row in the
 /// book must read the same as a worker row in the terminal, and those are the terminal's glyphs.
@@ -111,16 +129,29 @@ const WORKERS: [([&str; 8], Tone); 3] = [
 ];
 /// mark · service · detail · tone. The last row is the error sparkline, which has no mark.
 const SERVICES: [([&str; 3], Tone); 4] = [
-    ([Mark::Landed.glyph(), "api", "071b1aa6 · 16/246"], Tone::Green),
-    ([Mark::Landed.glyph(), "postgres", "17/60 · 47% disk"], Tone::Green),
-    ([Mark::Blocked.glyph(), "postgrest", "restarting · 4m"], Tone::Warn),
+    (
+        [Mark::Landed.glyph(), "api", "071b1aa6 · 16/246"],
+        Tone::Green,
+    ),
+    (
+        [Mark::Landed.glyph(), "postgres", "17/60 · 47% disk"],
+        Tone::Green,
+    ),
+    (
+        [Mark::Blocked.glyph(), "postgrest", "restarting · 4m"],
+        Tone::Warn,
+    ),
     (["", "errors 1h", "▁▁▂█▂  47"], Tone::Dim),
 ];
 /// text · tone · indent. The indent is an argument to `cols::row`, never a padded string.
 const CONVERSATION: [(&str, Tone, usize); 11] = [
     ("❯ add retry to the http client", Tone::Cite, 0),
     ("", Tone::Dim, 0),
-    ("• Three attempts, exponential backoff, jitter.", Tone::Mid, 0),
+    (
+        "• Three attempts, exponential backoff, jitter.",
+        Tone::Mid,
+        0,
+    ),
     ("• The 429 path keeps the Retry-After header.", Tone::Mid, 0),
     ("", Tone::Dim, 0),
     ("⏺ Edit(src/client.rs)", Tone::Green, 0),
@@ -130,10 +161,6 @@ const CONVERSATION: [(&str, Tone, usize); 11] = [
     ("", Tone::Dim, 0),
     ("", Tone::Dim, 0),
 ];
-/// The tab strip. Each chip carries its own padding INSIDE the cell so the tint band reads as a
-/// chip rather than stopping at the last letter; `cols` still owns where the next chip starts.
-const TABS: [Col; 6] =
-    [Col::l(8), Col::l(14), Col::l(17), Col::l(14), Col::l(12), Col::l(7)];
 const AGENT_TABS: [(&str, Mark); 4] = [
     ("scope", Mark::Landed),
     ("implement", Mark::InFlight),
@@ -143,20 +170,40 @@ const AGENT_TABS: [(&str, Mark); 4] = [
 /// Which tab is live. One index, so the strip cannot show two actives or none.
 const ACTIVE_AGENT: usize = 1;
 
+/// The one gutter between a chip and the next thing on the strip. Named, because the founder
+/// pointed at this row and the previous version had four different answers to the same question.
+const CHIP_GUTTER: usize = 6;
+/// The trailing affordance. Its own constant so the column below cannot be sized off a stale copy.
+const NEW_CHIP: &str = "+ new";
+
 /// A strip of chips: a leading label, one chip per entry, and `+ new`. The active chip is lifted
 /// onto `palette.tint`; every other carries only its mark's colour.
-fn strip(columns: &[Col], label: &str, tabs: &[(&str, Mark)], active: usize, palette: &Palette)
--> Line<'static> {
+///
+/// 🔴 **THE FOUNDER POINTED AT THIS ROW AND HE WAS RIGHT.** The column spec was six widths typed
+/// by hand — `[8, 14, 17, 14, 12, 7]` — against chips whose rendered lengths are `9, 13, 10, 8`.
+/// A `Col::l` pads to its width and then adds its gap, so the visible gutter is
+/// `width − length + gap`, which came out **7, 6, 6, 6**: the space after `● scope` was one column
+/// wider than every other space on the strip. That is a hand-counted layout wearing a `cols` call,
+/// and it is exactly what this module exists to stop. The screen-35 strip next door happened to be
+/// consistent (`18−16, 21−19, 21−19, 17−15`), which is why nothing looked wrong twice.
+///
+/// ⚠️ **THE FIX IS THAT NOBODY TYPES A WIDTH.** Each column is sized to the cell that goes in it,
+/// so the padding is always zero and the gutter is always [`CHIP_GUTTER`]. There is no number left
+/// to get wrong, and the assertion below is on the RENDERED gaps rather than on the spec, because
+/// a spec can be self-consistent and still draw an uneven row.
+fn strip(label: &str, tabs: &[(&str, Mark)], active: usize, palette: &Palette) -> Line<'static> {
     assert!(active < tabs.len(), "the active tab must exist");
-    assert_eq!(
-        columns.len(),
-        tabs.len() + 2,
-        "a chip strip is one label column, one column per chip, and `+ new`"
-    );
     let chips = tabs
         .iter()
         .map(|(name, mark)| format!(" {} {name} ", mark.glyph()))
         .collect::<Vec<_>>();
+    let mut columns = vec![Col::l(label.chars().count()).gap(CHIP_GUTTER)];
+    columns.extend(
+        chips
+            .iter()
+            .map(|chip| Col::l(chip.chars().count()).gap(CHIP_GUTTER)),
+    );
+    columns.push(Col::l(NEW_CHIP.chars().count()).gap(CHIP_GUTTER));
     let mut cells = vec![Cell(label, palette.dim)];
     cells.extend(
         chips
@@ -164,8 +211,23 @@ fn strip(columns: &[Col], label: &str, tabs: &[(&str, Mark)], active: usize, pal
             .zip(tabs)
             .map(|(chip, (_, mark))| Cell(chip.as_str(), mark.colour(palette))),
     );
-    cells.push(Cell("+ new", palette.dim));
-    lift(owned(row(columns, &cells, 0)), &chips[active], palette)
+    cells.push(Cell(NEW_CHIP, palette.dim));
+    let line = owned(row(&columns, &cells, 0));
+    // 🔴 Assert the thing a reader would notice, not the thing the code just did. Every column is
+    // exactly as wide as its cell, so every gap between two cells is one run of `CHIP_GUTTER`
+    // spaces — and a chip that ever gets truncated or padded fires this rather than shipping.
+    assert!(
+        line.spans
+            .iter()
+            .filter(|span| span.content.trim().is_empty())
+            .all(|span| span.content.chars().count() == CHIP_GUTTER),
+        "a chip strip drew an uneven gutter: {:?}",
+        line.spans
+            .iter()
+            .map(|span| span.content.chars().count())
+            .collect::<Vec<_>>()
+    );
+    lift(line, &chips[active], palette)
 }
 
 /// One row of the split: left content, the divider column, right content — all placed by [`PANE`].
@@ -220,15 +282,22 @@ pub(crate) fn panels(palette: &Palette, tick: u64, pulse: bool) -> Vec<Line<'sta
     assert_eq!(PANE[1].w, 1, "the divider is exactly one column wide");
 
     let mut out = vec![
-        strip(&TABS, "agents", &AGENT_TABS, ACTIVE_AGENT, palette),
+        strip("agents", &AGENT_TABS, ACTIVE_AGENT, palette),
         blank(),
         split_row(
             palette,
-            (&rule_text("agents", "4 in this terminal", PANE_LEFT), palette.dim),
-            (&rule_text("production", "fernpost/checkout-api", PANE_RIGHT), palette.dim),
+            (
+                &rule_text("agents", "4 in this terminal", PANE_LEFT),
+                palette.dim,
+            ),
+            (
+                &rule_text("production", "fernpost/checkout-api", PANE_RIGHT),
+                palette.dim,
+            ),
         ),
     ];
-    for ((text, tone, indent), (right_text, right_colour)) in CONVERSATION.iter().zip(right.iter()) {
+    for ((text, tone, indent), (right_text, right_colour)) in CONVERSATION.iter().zip(right.iter())
+    {
         let left = indented(text, *indent, PANE_LEFT - indent);
         out.push(split_row(
             palette,
@@ -243,7 +312,14 @@ pub(crate) fn panels(palette: &Palette, tick: u64, pulse: bool) -> Vec<Line<'sta
     ));
     out.push(blank());
     let alert = "postgrest has been restarting for 4m";
-    out.push(headline(Mark::Blocked, alert, "the monitor opened a repair", palette, tick, pulse));
+    out.push(headline(
+        Mark::Blocked,
+        alert,
+        "the monitor opened a repair",
+        palette,
+        tick,
+        pulse,
+    ));
     out.push(blank());
     out.push(note(palette, &format!(
         "orchestra · {MISSING_PER_WORKER_SPEND} — the model, tokens and price cells above are FIXTURE"
@@ -262,18 +338,44 @@ pub(crate) fn panels(palette: &Palette, tick: u64, pulse: bool) -> Vec<Line<'sta
 /// ⚠️ The SHIPPED strip (`live_renderer::session_tabs_line`) marks the active tab with `+` and
 /// every other with `·`. The book draws the product's own mark vocabulary instead; the key hint
 /// below is copied from that function verbatim so the two cannot disagree about the binding.
-const SESSION_TABS: [Col; 6] =
-    [Col::l(10), Col::l(18), Col::l(21), Col::l(21), Col::l(17), Col::l(7)];
 const SESSION_ROWS: [Col; 5] = [Col::l(18), Col::l(26), Col::l(12), Col::l(16), Col::r(8)];
 const SESSION_HEAD: [&str; 5] = ["session", "repo", "state", "last activity", "spend"];
 /// 🔴 ONE OWNER FOR THE SESSION LIST. The chip strip and the table below are both derived from
 /// this, so a session cannot appear on the strip and be missing from the table.
 /// session · repo · state · last activity · spend · mark
 const SESSIONS: [(&str, &str, &str, &str, &str, Mark); 4] = [
-    ("checkout-api", "fernpost/checkout-api", "landed", "2m ago", "$0.41", Mark::Landed),
-    ("payments-worker", "fernpost/payments", "in flight", "4s ago", "$1.07", Mark::InFlight),
-    ("infra-terraform", "fernpost/infra", "queued", "18m ago", "$0.00", Mark::Queued),
-    ("design-book", "uqeu/estelle", "queued", "1h ago", "$0.12", Mark::Queued),
+    (
+        "checkout-api",
+        "fernpost/checkout-api",
+        "landed",
+        "2m ago",
+        "$0.41",
+        Mark::Landed,
+    ),
+    (
+        "payments-worker",
+        "fernpost/payments",
+        "in flight",
+        "4s ago",
+        "$1.07",
+        Mark::InFlight,
+    ),
+    (
+        "infra-terraform",
+        "fernpost/infra",
+        "queued",
+        "18m ago",
+        "$0.00",
+        Mark::Queued,
+    ),
+    (
+        "design-book",
+        "uqeu/estelle",
+        "queued",
+        "1h ago",
+        "$0.12",
+        Mark::Queued,
+    ),
 ];
 const ACTIVE_SESSION: usize = 1;
 
@@ -282,9 +384,16 @@ pub(crate) fn session_tabs(palette: &Palette, tick: u64, pulse: bool) -> Vec<Lin
     assert!(ACTIVE_SESSION < SESSIONS.len(), "the active session exists");
     let tabs = SESSIONS.map(|(name, _, _, _, _, mark)| (name, mark));
     let mut out = vec![
-        strip(&SESSION_TABS, "sessions", &tabs, ACTIVE_SESSION, palette),
+        strip("sessions", &tabs, ACTIVE_SESSION, palette),
         blank(),
-        owned(rule("sessions", "4 open · 1 in flight", 138, palette.dim, palette.mid, palette.cite)),
+        owned(rule(
+            "sessions",
+            "4 open · 1 in flight",
+            138,
+            palette.dim,
+            palette.mid,
+            palette.cite,
+        )),
         owned(head(&SESSION_ROWS, &SESSION_HEAD, palette.dim, 2)),
     ];
     for (index, (session, repo, state, seen, spend, mark)) in SESSIONS.iter().enumerate() {
@@ -307,7 +416,14 @@ pub(crate) fn session_tabs(palette: &Palette, tick: u64, pulse: bool) -> Vec<Lin
     }
     out.push(blank());
     let repair = "payments-worker is mid-repair";
-    out.push(headline(Mark::InFlight, repair, "round 2 of 3 · $1.07 so far", palette, tick, pulse));
+    out.push(headline(
+        Mark::InFlight,
+        repair,
+        "round 2 of 3 · $1.07 so far",
+        palette,
+        tick,
+        pulse,
+    ));
     out.push(blank());
     // ⚠️ Verbatim from `live_renderer::session_tabs_line`. If that string moves, this one is wrong.
     for line in [
@@ -326,10 +442,22 @@ pub(crate) fn session_tabs(palette: &Palette, tick: u64, pulse: bool) -> Vec<Lin
 /// ⚠️ 35 then 30 is not a typo and not a regression: they are two transports and exactly one of
 /// them runs. The screen says so out loud rather than quietly sorting the ladder.
 const SWEEP_STEPS: [(&str, u16, &str); 5] = [
-    ("files collected safely", 10, "1,993 files · 24.1 MB · 61 skipped"),
-    ("checking account capacity", 20, "POST /sweep/estimate · its answer is below"),
+    (
+        "files collected safely",
+        10,
+        "1,993 files · 24.1 MB · 61 skipped",
+    ),
+    (
+        "checking account capacity",
+        20,
+        "POST /sweep/estimate · its answer is below",
+    ),
     ("sending source set", 35, "sync transport · under 400 files"),
-    ("starting background ingest", 30, "background transport · 400 files or more"),
+    (
+        "starting background ingest",
+        30,
+        "background transport · 400 files or more",
+    ),
     ("repo swept", 100, "the graph is current for this commit"),
 ];
 const ACTIVE_STEP: usize = 1;
@@ -342,10 +470,30 @@ const SWEEPING: &str = "Sweeping fernpost/checkout-api";
 /// 🔴 The estimate's OWN field names and OWN values — `estimated_tokens`, `held_tokens`, `cap`,
 /// `remaining_tokens`. Nothing here is derived, so nothing here can be derived wrongly.
 const CAPACITY_ROWS: [(&str, &str, &str, Tone); 4] = [
-    ("estimated_tokens", "11.5M", "what this sweep would add", Tone::Mid),
-    ("held_tokens", "103M", "already held across 6 repos", Tone::Mid),
-    ("cap", "250M", "the plan's ceiling on tokens held", Tone::Mid),
-    ("remaining_tokens", "147M", "free after this sweep lands", Tone::Green),
+    (
+        "estimated_tokens",
+        "11.5M",
+        "what this sweep would add",
+        Tone::Mid,
+    ),
+    (
+        "held_tokens",
+        "103M",
+        "already held across 6 repos",
+        Tone::Mid,
+    ),
+    (
+        "cap",
+        "250M",
+        "the plan's ceiling on tokens held",
+        Tone::Mid,
+    ),
+    (
+        "remaining_tokens",
+        "147M",
+        "free after this sweep lands",
+        Tone::Green,
+    ),
 ];
 
 pub(crate) fn sweep_running(palette: &Palette, tick: u64, pulse: bool) -> Vec<Line<'static>> {
@@ -356,9 +504,23 @@ pub(crate) fn sweep_running(palette: &Palette, tick: u64, pulse: bool) -> Vec<Li
     );
 
     let mut out = vec![
-        headline(Mark::InFlight, SWEEPING, "step 2 of 5 · 20%", palette, tick, pulse),
+        headline(
+            Mark::InFlight,
+            SWEEPING,
+            "step 2 of 5 · 20%",
+            palette,
+            tick,
+            pulse,
+        ),
         blank(),
-        owned(rule("sweep", ACTIVE, 118, palette.dim, palette.mid, palette.cite)),
+        owned(rule(
+            "sweep",
+            ACTIVE,
+            118,
+            palette.dim,
+            palette.mid,
+            palette.cite,
+        )),
     ];
     for (index, (state, percent, detail)) in SWEEP_STEPS.iter().enumerate() {
         let mark = match index.cmp(&ACTIVE_STEP) {
@@ -384,8 +546,18 @@ pub(crate) fn sweep_running(palette: &Palette, tick: u64, pulse: bool) -> Vec<Li
     }
     out.push(blank());
     let estimate = "POST /sweep/estimate";
-    out.push(owned(rule("account capacity", estimate, 118, palette.dim, palette.mid, palette.green)));
-    out.push(note(palette, "1,993 files · 11.5M tokens · 103M of 250M held · 147M free"));
+    out.push(owned(rule(
+        "account capacity",
+        estimate,
+        118,
+        palette.dim,
+        palette.mid,
+        palette.green,
+    )));
+    out.push(note(
+        palette,
+        "1,993 files · 11.5M tokens · 103M of 250M held · 147M free",
+    ));
     out.push(owned(head(&CAPACITY, &CAPACITY_HEAD, palette.dim, 2)));
     for (field, value, meaning, tone) in CAPACITY_ROWS {
         out.push(owned(row(
@@ -460,11 +632,20 @@ mod tests {
         let panels_text = screen_text(&panels(&palette, 7, true));
         for (name, text) in [
             ("panels", panels_text.clone()),
-            ("session_tabs", screen_text(&session_tabs(&palette, 7, true))),
-            ("sweep_running", screen_text(&sweep_running(&palette, 7, true))),
+            (
+                "session_tabs",
+                screen_text(&session_tabs(&palette, 7, true)),
+            ),
+            (
+                "sweep_running",
+                screen_text(&sweep_running(&palette, 7, true)),
+            ),
         ] {
             for corner in CORNERS {
-                assert!(!text.contains(corner), "{name} drew a box corner {corner:?}");
+                assert!(
+                    !text.contains(corner),
+                    "{name} drew a box corner {corner:?}"
+                );
             }
         }
         assert!(panels_text.contains('│'), "the divider vanished");
@@ -483,7 +664,15 @@ mod tests {
             .map(flatten)
             .find(|text| text.contains("wkr"))
             .expect("the fleet header row");
-        for label in ["wkr", "model", "task", "state", "tokens", "price", "last seen"] {
+        for label in [
+            "wkr",
+            "model",
+            "task",
+            "state",
+            "tokens",
+            "price",
+            "last seen",
+        ] {
             assert!(header.contains(label), "{label:?} missing from {header:?}");
         }
         assert!(
@@ -504,7 +693,13 @@ mod tests {
         let rendered = sweep_running(&palette, 0, true);
         let text = screen_text(&rendered);
         assert!(text.contains("checking account capacity"), "{text}");
-        for figure in ["1,993 files", "11.5M", "103M of 250M held", "147M free", "250M"] {
+        for figure in [
+            "1,993 files",
+            "11.5M",
+            "103M of 250M held",
+            "147M free",
+            "250M",
+        ] {
             assert!(text.contains(figure), "{figure:?} missing from {text}");
         }
         assert!(text.contains("remaining_tokens"), "{text}");
@@ -580,7 +775,11 @@ mod tests {
     #[test]
     fn each_pane_screen_renders_the_needle_its_book_entry_promises() {
         let palette = ScreenTheme::Dark.palette();
-        for name in ["25-panels-one-terminal", "35-session-tabs", "38-sweep-running"] {
+        for name in [
+            "25-panels-one-terminal",
+            "35-session-tabs",
+            "38-sweep-running",
+        ] {
             let screen = crate::design_book::SCREENS
                 .iter()
                 .find(|screen| screen.name == name)
@@ -594,4 +793,3 @@ mod tests {
         }
     }
 }
-

@@ -1,0 +1,1561 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Estelle CLI Design Book</title>
+<style>
+:root{
+  /* PAGE CHROME - sampled from the founder's own mock pages (skill.png / skill 2.png) */
+  --page:#0A0908; --card:#15130F; --edge:#231F1A; --head:#E9E6DD;
+  --label:#737373; --note:#B53525;
+  /* TERMINAL PALETTE - DARK. cli-rs/tui/src/theme.rs ScreenTheme::Dark */
+  --t-ground:#16130F; --t-tint:#241F19; --t-dim:#6F6A5E; --t-mid:#948E81;
+  --t-bright:#E9E6DC; --t-red:#C52416; --t-green:#5F9E6E; --t-warn:#C9A227;
+  --t-cite:#7FB3C8; --t-plan:#9FC4E0; --t-skill:#CA92AF;
+  --t-add:#1B2E1D; --t-del:#361A18;
+  /* TERMINAL PALETTE - CREAM. same file, ScreenTheme::Cream */
+  --c-ground:#E9E6DC; --c-tint:#DCD7C9; --c-dim:#8B8578; --c-mid:#575043;
+  --c-bright:#1F1C17; --c-red:#B0210F; --c-green:#3D7550; --c-warn:#96751A;
+  --c-cite:#38708C; --c-plan:#356A8C; --c-skill:#B06A8C;
+  /* DEFECTS - raw ANSI, no token. test_gallery.rs:126,128 */
+  --x-blue:#65A8FF; --x-cyan:#70C6CC;
+  --mono:ui-monospace,"SF Mono","SFMono-Regular",Menlo,Monaco,Consolas,"Liberation Mono",monospace;
+  --ui:-apple-system,BlinkMacSystemFont,"Segoe UI","SF Pro Text",system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--head);font-family:var(--ui);
+  font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+a{color:inherit}
+.wrap{max-width:1360px;margin:0 auto;padding:56px 28px 140px}
+h1{font-size:34px;letter-spacing:-.02em;margin:0 0 6px;font-weight:700}
+h2.sec{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--label);
+  font-weight:600;margin:64px 0 18px;padding-bottom:9px;border-bottom:1px solid var(--edge)}
+.lede{color:#8d887d;max-width:74ch;margin:0 0 8px}
+.lede code,.mono{font-family:var(--mono);font-size:.92em}
+
+/* CONTENTS */
+.toc{border:1px solid var(--edge);background:var(--card);border-radius:10px;padding:20px 22px;margin:30px 0 10px}
+.toc h3{margin:0 0 14px;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--label)}
+.toc ol{margin:0;padding:0;list-style:none;column-width:330px;column-gap:34px}
+.toc li{break-inside:avoid;padding:2px 0;font-size:13.5px;display:flex;gap:9px;align-items:baseline}
+.toc .n{font-family:var(--mono);color:var(--label);min-width:2.4em;text-align:right;font-size:12px}
+.toc .t{flex:1;color:#c8c2b3;text-decoration:none}
+.toc .t:hover{color:var(--head)}
+
+/* BADGES */
+.badge{font-family:var(--mono);font-size:10px;letter-spacing:.09em;padding:2px 7px;
+  border-radius:3px;font-weight:600;white-space:nowrap;text-transform:uppercase}
+.b-ship{background:#1B2E1D;color:#8FD4A2;border:1px solid #2c4a30}
+.b-spec{background:#2a2119;color:#D8B36A;border:1px solid #4a3b26}
+.b-prop{background:#241d24;color:var(--t-skill);border:1px solid #40303a}
+.b-def{background:#2a1512;color:#E8776A;border:1px solid #4d221d}
+
+/* SCREEN */
+.screen{margin:0 0 46px;scroll-margin-top:20px}
+.sh{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:0 0 4px}
+.sh .num{font-family:var(--mono);font-size:13px;color:var(--label);font-weight:600}
+.sh .name{font-size:19px;font-weight:650;letter-spacing:-.01em}
+.sh .src{font-family:var(--mono);font-size:11px;color:#5b564c;margin-left:auto}
+.purpose{color:#8d887d;font-size:13.5px;max-width:96ch;margin:0 0 12px}
+.purpose b{color:#b6b0a2;font-weight:600}
+.frame{background:var(--t-ground);border:1px solid var(--edge);border-radius:8px;
+  padding:16px 18px;overflow-x:auto;margin:0 0 10px}
+.frame.cream{background:var(--c-ground);border-color:#cfcabb}
+pre{margin:0;font-family:var(--mono);font-size:11.5px;line-height:1.45;
+  white-space:pre;color:var(--t-mid);tab-size:8}
+.cream pre{color:var(--c-mid)}
+/* dark roles */
+.d{color:var(--t-dim)}.m{color:var(--t-mid)}.b{color:var(--t-bright)}
+.r{color:var(--t-red)}.g{color:var(--t-green)}.w{color:var(--t-warn)}
+.c{color:var(--t-cite)}.pl{color:var(--t-plan)}.sk{color:var(--t-skill)}
+.sel{background:var(--t-tint);color:var(--t-bright)}
+.add{background:var(--t-add);color:#9ecfa6}.del{background:var(--t-del);color:#e0968c}
+.bad{color:var(--x-blue);outline:1px dotted var(--x-blue);outline-offset:1px}
+.badc{color:var(--x-cyan);outline:1px dotted var(--x-cyan);outline-offset:1px}
+/* cream roles */
+.cream .d{color:var(--c-dim)}.cream .m{color:var(--c-mid)}.cream .b{color:var(--c-bright)}
+.cream .r{color:var(--c-red)}.cream .g{color:var(--c-green)}.cream .w{color:var(--c-warn)}
+.cream .c{color:var(--c-cite)}.cream .pl{color:var(--c-plan)}.cream .sk{color:var(--c-skill)}
+.cream .sel{background:var(--c-tint);color:var(--c-bright)}
+
+/* KEYS + NOTES */
+.keys{font-family:var(--mono);font-size:11.5px;color:#7d786d;margin:0 0 10px}
+.keys kbd{background:#1e1b16;border:1px solid #2e2a23;border-radius:3px;padding:1px 5px;
+  color:#b6b0a2;font-family:var(--mono);font-size:11px}
+.rule{margin:12px 0 0;padding:11px 14px;border-left:2px solid var(--note);background:#170f0e;
+  font-size:12.5px;color:#c7a49e;border-radius:0 5px 5px 0}
+.rule b{color:#e9b3aa}
+.ask{margin:12px 0 0;padding:11px 14px;border-left:2px solid var(--t-skill);background:#161014;
+  font-size:12.5px;color:#c3a8b4;border-radius:0 5px 5px 0}
+.ask b{color:var(--t-skill)}
+.ok{margin:12px 0 0;padding:11px 14px;border-left:2px solid #3c5c40;background:#111510;
+  font-size:12.5px;color:#9db69f;border-radius:0 5px 5px 0}
+.rule code,.ask code,.ok code,.purpose code{font-family:var(--mono);font-size:.93em;
+  background:rgba(255,255,255,.045);padding:1px 4px;border-radius:3px}
+
+/* TABLES */
+table{border-collapse:collapse;width:100%;font-size:12.5px;margin:14px 0 0}
+th,td{text-align:left;padding:7px 11px;border-bottom:1px solid var(--edge);vertical-align:top}
+th{color:var(--label);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;font-weight:600}
+td{color:#a8a297}
+td code,th code{font-family:var(--mono);font-size:11.5px;color:#c8c2b3}
+.sw{display:inline-block;width:11px;height:11px;border-radius:2px;vertical-align:-1px;
+  margin-right:7px;border:1px solid rgba(255,255,255,.14)}
+hr.big{border:0;border-top:1px solid var(--edge);margin:52px 0 0}
+.foot{color:#5b564c;font-size:12px;margin-top:40px;font-family:var(--mono)}
+@media (max-width:760px){.wrap{padding:32px 14px 90px}pre{font-size:9.5px}}
+</style></head><body><div class="wrap">
+
+<h1>Estelle CLI &middot; the design book</h1>
+<p class="lede">Every screen the CLI has, every screen the mocks specify, and every screen the
+gaps demand. <b>Forty-one of them, numbered, so you can say "rebuild 14 this way".</b></p>
+<p class="lede">Read it top to bottom. Each screen carries a status badge, the frame, one line on what it is
+for, the keys that work on it, and at most two notes. Where a note is red it is a defect or a conflict I want
+a ruling on. Where it is pink it is a question. Where it is green it is something already right that I would
+not change.</p>
+<table style="max-width:900px"><thead><tr><th>badge</th><th>what it means</th><th>how the frame was made</th></tr></thead><tbody>
+<tr><td><span class="badge b-ship">SHIPPED</span></td><td>renders today</td>
+<td>Rebuilt cell by cell from the SVG the production renderer wrote, at
+<code>ESTELLE_ACTUAL_GALLERY_DIR=&lt;dir&gt; cargo test -p estelle-tui --bin estelle actual_renderer_gallery</code>,
+regenerated for this book. The colours are read back, not retyped, so a colour defect could not be tidied
+away by the person drawing the picture.</td></tr>
+<tr><td><span class="badge b-spec">SPEC</span></td><td>in your mocks, not built</td>
+<td>Transcribed from <code>docs/design/cli-reference-2026-08-24/</code>: the four committed
+<code>skill*.png</code> plus 193 further screenshots on disk from 2026-08-24 and 25.</td></tr>
+<tr><td><span class="badge b-prop">PROPOSED</span></td><td>mine, and I say why</td>
+<td>Drawn only where a capability already exists on the server or in the client and has nowhere to appear.
+Every value on a proposed frame is a field something real already returns.</td></tr>
+</tbody></table>
+<p class="lede" style="margin-top:18px">Four things are deliberately <b>not</b> drawn anywhere in this book,
+because drawing them would waste your review on something false: an orchestra progress fill invented from a
+field the server never writes; an auto-deploy step, which does not exist; Estelle silently choosing a model,
+which the affinity measurement does not support (p=0.63 at n=12); and any end-user analytics, which we do not
+collect. The one progress bar that does appear, on screen 22, is discussed rather than accepted.</p>
+<p class="lede" style="margin-top:14px"><span class="badge b-ship">SHIPPED</span> 25 &middot; <span class="badge b-spec">SPEC</span> 12 &middot; <span class="badge b-prop">PROPOSED</span> 4 &nbsp;&nbsp;total 41</p><div class="toc"><h3>Every screen, in order</h3><ol><li><span class="n">1</span><a class="t" href="#s1">Boot</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">2</span><a class="t" href="#s2">Login, two stage: who you are, then who pays</a><span class="badge b-spec">SPEC</span></li><li><span class="n">3</span><a class="t" href="#s3">Home</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">4</span><a class="t" href="#s4">Home, narrow, production hidden</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">5</span><a class="t" href="#s5">Cream</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">6</span><a class="t" href="#s6">No repository here</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">7</span><a class="t" href="#s7">Waiting for an answer</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">8</span><a class="t" href="#s8">Grounding context: what the answer was built on</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">9</span><a class="t" href="#s9">Gate refused: a package that does not exist</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">10</span><a class="t" href="#s10">Navigation refuses: the index is stale</a><span class="badge b-prop">PROPOSED</span></li><li><span class="n">11</span><a class="t" href="#s11">Compaction refuses: one line instead of a context bar</a><span class="badge b-spec">SPEC</span></li><li><span class="n">12</span><a class="t" href="#s12">Skills, typed</a><span class="badge b-spec">SPEC</span></li><li><span class="n">13</span><a class="t" href="#s13">Skills, offered</a><span class="badge b-spec">SPEC</span></li><li><span class="n">14</span><a class="t" href="#s14">Skills, browse and toggle</a><span class="badge b-spec">SPEC</span></li><li><span class="n">15</span><a class="t" href="#s15">Skills, browse, as it ships today</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">16</span><a class="t" href="#s16">Skills, offered, as it ships today</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">17</span><a class="t" href="#s17">Slash palette</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">18</span><a class="t" href="#s18">Every command, in one place</a><span class="badge b-prop">PROPOSED</span></li><li><span class="n">19</span><a class="t" href="#s19">Shell mode, and why it must not look like Estelle</a><span class="badge b-spec">SPEC</span></li><li><span class="n">20</span><a class="t" href="#s20">Live /work progress</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">21</span><a class="t" href="#s21">The proposed diff, read-only</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">22</span><a class="t" href="#s22">Orchestra, running</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">23</span><a class="t" href="#s23">Orchestra, finished</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">24</span><a class="t" href="#s24">Production, one unresolved issue</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">25</span><a class="t" href="#s25">Panels, one terminal</a><span class="badge b-spec">SPEC</span></li><li><span class="n">26</span><a class="t" href="#s26">Todos, expanded and collapsed</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">27</span><a class="t" href="#s27">Settings</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">28</span><a class="t" href="#s28">Settings, one suite</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">29</span><a class="t" href="#s29">Model pool</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">30</span><a class="t" href="#s30">Provider API key picker</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">31</span><a class="t" href="#s31">Autonomy</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">32</span><a class="t" href="#s32">How much memory do I have left</a><span class="badge b-prop">PROPOSED</span></li><li><span class="n">33</span><a class="t" href="#s33">Usage</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">34</span><a class="t" href="#s34">The answer itself: a table, and a diagram</a><span class="badge b-spec">SPEC</span></li><li><span class="n">35</span><a class="t" href="#s35">Session tabs</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">36</span><a class="t" href="#s36">Doctor, failing</a><span class="badge b-spec">SPEC</span></li><li><span class="n">37</span><a class="t" href="#s37">Resume a session</a><span class="badge b-spec">SPEC</span></li><li><span class="n">38</span><a class="t" href="#s38">Sweep, running</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">39</span><a class="t" href="#s39">Tool calls, collapsed and open</a><span class="badge b-spec">SPEC</span></li><li><span class="n">40</span><a class="t" href="#s40">The code graph</a><span class="badge b-spec">SPEC</span></li><li><span class="n">41</span><a class="t" href="#s41">Memory: what Estelle knows, and correcting it</a><span class="badge b-prop">PROPOSED</span></li></ol></div><h2 class="sec">A. First contact</h2>
+<section class="screen" id="s1">
+<div class="sh"><span class="num">1</span><span class="name">Boot</span><span class="badge b-ship">SHIPPED</span><span class="src">cli-rs 00-boot.txt · boot_scene.rs</span></div>
+<p class="purpose">The splash while the client resolves auth and the repo. It condenses on its own and is skippable.
+The dither field and the higanbana are the brand; the founder has twice said to keep them.</p>
+<div class="frame"><pre>
+                                                                                                <span class="d">·</span>
+
+
+
+
+                                                        <span class="b">Estelle</span>
+
+                                                      <span class="b">by Fate Labs</span>
+
+
+                                                                                             <span class="r">⡀</span>
+                                                                                 <span class="r">⣀⡄⠢⢄ ⠰⠏⢢   ⢸⠻⠂ ⡠⠒⢦⡀</span>
+                                                                             <span class="r">⣠⠒⠂⠒⠪⢀ ⣀⣑⡀ ⢈⣆  ⡃  ⠜  ⠈⡠⠔⠒⠲⣀</span>
+                                                                           <span class="r">⢀⢀⣉⣀ ⢀⣀⡀⠑⢿⣿⣯⣂⢸⣿⣇⢀⢡⣾⣿⣧⣠⣶⣿⡆ ⢀⠠⠍⠤⠤⢀</span>
+                                                              <span class="d">·   ·   ·  </span><span class="r">⢠⡎⠁  </span><span class="d">· </span><span class="r">⢻⣿⣿⣷⣌⢿⣿⣿⣍⣿⣿⢴⣿⡿⢉⣿⣿⠟⣿⣓⣥⣷⣶⣆   ⠛</span>
+                                                                             <span class="r">⣠⣤⣤⣤⣻⣎⠻⢿⣿⣿⣻⣿⣿⣿⢸⣿⣣⣿⣿⣿⣷⣿⣿⠿⠏⣿⠟⠐⠂⠒⠢⣀</span>
+<span class="d">·   ·   ·   ·   ·   ·   ·   ·   ·   ·   ·   ·   ·   ·   ·   ·   ·   ·   ·   </span><span class="r">⠐⣿⠟⠛⠿⢿⣿⣷⣤⣙⢿⣿⣽⣿⣿⣾⣿⣿⣿⣿⣿⠟⣋⣤⣴⣾⣿⣿⣿⣶  ⠘⠃  </span><span class="d">·   ·</span>
+     <span class="d">·       ·       ·       ·                                               </span><span class="r">⢻⡇   ⠈⠙⠻⢿⣷⣿⣿⣿⣿⣿⣿⣿⣿⣯⣶⣿⡿⠿⠛⠋⠉ ⢸⡿</span>
+<span class="d">· · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · </span><span class="r">⠁ </span><span class="d">· ·   </span><span class="r">⣀⣩⣿⣿⣿⣿⣿⣟⠛⠋⠉ </span><span class="d">·   · </span><span class="r">⠿⠃</span><span class="d">·   ·   ·   ·</span>
+                                                                                  <span class="r">⢀⣴⣶⣿⠿⠛⠉⠈⢹⡏⠉⠛⢿⣷⣦⣶⣄</span>
+<span class="d">· · · · · · · · · · · · · · · · · · · · · · · · · · · · · · ∷ ∷ ∷∷∷ ∷ ∷ ∷∷∷ ∷ ∷ ∷∷</span><span class="r">⠘⠛⠉ </span><span class="d">∷ ∷∷</span><span class="r">⢸⡇</span><span class="d">∷ ∷</span><span class="r">⠈⠙⠛⠛⠁</span><span class="d">· · · · · · · · · ·</span>
+ <span class="d">·   ·   ·   ·   ·   ·   ·   ·   ·   ·   ·   ·   ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷</span><span class="r">⢸⡇ </span><span class="d">∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷</span>
+<span class="d">· · · · · · · · · · · · · · · · · · · ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ </span><span class="r">⠘⠃</span><span class="d">∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷</span>
+                   <span class="d">∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷</span>
+<span class="d">∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷</span>
+ <span class="d">∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷</span>
+<span class="d">∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷</span>
+ <span class="d">∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷∷∷ ∷ ∷ ∷ ∷ ∷ ∷ </span><span class="b">Grounded memory: every answer cited to file and line. </span><span class="d">∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷</span>
+<span class="d">∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷ ∷ ∷∷∷ ∷ ∷ ∷∷∷ ∷ ∷ ∷∷</span><span class="b">skip</span><span class="d">∷</span>
+<span class="d">∷∷ ∷ ∷ ∷∷∷ ∷ ∷ ∷∷∷∷∷ ∷ ∷∷∷ ∷ ∷ ∷∷∷ ∷∷∷ ∷∷∷∷∷ ∷ ∷∷∷ ∷ ∷ ∷∷∷∷∷ ∷ ∷∷∷ ∷ ∷ ∷∷∷ ∷∷∷ ∷∷∷ ∷ ∷ ∷∷∷∷∷ ∷ ∷∷∷ ∷ ∷ ∷∷∷ ∷ ∷ ∷∷∷ ∷ ∷ ∷</span></pre></div>
+<p class="keys">any key <kbd>skip</kbd> · condenses on its own after <code>CONDENSE_MS</code></p>
+<div class="rule"><b>Colour defect, not previously flagged.</b> Boot is the only surface that does not read <code>theme.rs</code>. Its rendered census is <code>#D6D1C5</code> / <code>#C91A0C</code> / <code>#605A4E</code> on a <code>#17140F</code> ground, where the tokens are <code>bright #E9E6DC</code> / <code>red #C52416</code> / <code>dim #6F6A5E</code> on <code>ground #16130F</code>. Four near-misses on one screen. It is drawn here in the correct tokens, so this is what it should be, not what it is.</div>
+</section>
+<section class="screen" id="s2">
+<div class="sh"><span class="num">2</span><span class="name">Login, two stage: who you are, then who pays</span><span class="badge b-spec">SPEC</span><span class="src">founder's design book 2026-08-24 §4 · onboarding step 2</span></div>
+<p class="purpose">First run. The founder's own correction is printed on the mock: <b>the old menu offered these as peers,
+and that single error caused the reopening picker and the infinite <code>Estelle key:</code> re-prompt.</b>
+Stage one is identity. Stage two is who pays for model tokens.</p>
+<div class="frame"><pre><span class="d">── create an account ─────────────────────────────────────────────────────────</span>
+
+<span class="b">STEP 1 · WHO YOU ARE</span>                      <span class="d">we never bill you for model tokens</span>
+
+<span class="sk">› Estelle key           </span><span class="m">paste one, or sign in</span>
+<span class="m">  Create an account     </span><span class="m">fatelabs.ca</span>
+
+<span class="d">──────────────────────────────────────────────────────────────────────────────</span>
+
+<span class="b">STEP 2 · WHO PAYS FOR THE MODEL</span>           <span class="d">you can add more than one</span>
+
+<span class="g">✓</span> <span class="m">khai@fatelabs.ca</span>
+
+<span class="sk">› Subscription          </span><span class="m">Claude · ChatGPT · Gemini</span>
+<span class="m">  Provider API key      </span><span class="m">unlocks unattended work</span>
+<span class="m">  Local model           </span><span class="m">LM Studio · Ollama</span>
+  <span class="d">Skip, decide later</span>
+
+<span class="d">AND WHAT EACH WAY OF PAYING GETS YOU</span>
+
+<span class="d">                                     plan      key    local</span>
+<span class="m">terminal, gate, memory          </span><span class="g">        ✓</span><span class="g">        ✓</span><span class="g">        ✓</span>
+<span class="m">works with the laptop closed    </span><span class="r">        ✗</span><span class="g">        ✓</span><span class="r">        ✗</span>
+<span class="m">code leaves your machine        </span><span class="w">      yes</span><span class="w">      yes</span><span class="g">    never</span>
+<span class="m">who pays for model tokens       </span><span class="m">   vendor</span><span class="m">      you</span><span class="g">   no-one</span>
+
+<span class="d">↑↓ navigate · enter select · esc back</span></pre></div>
+<p class="keys"><kbd>↑↓</kbd> navigate · <kbd>enter</kbd> select · <kbd>esc</kbd> back</p>
+<div class="ask"><b>Two facts printed on the founder's own mock, both true, both worth keeping in the copy.</b> A subscription plan is OAuth-bound to a client on YOUR machine, so our server physically cannot present it: architecture, not policy. And laptop-closed means Slack, monitors and scheduled repair, which is why the API key rung is the one that unlocks unattended work.</div>
+<div class="rule">The picker that ships under stage two is a flat ten-row provider list (Anthropic · OpenAI API · Google Gemini · GitHub Copilot · Azure OpenAI · AWS Bedrock · OpenRouter · DeepSeek · Fireworks · MiniMax) and it still draws <code>┌ PROVIDER API KEY ─┐</code> with corners. See screen 30.</div>
+</section>
+<h2 class="sec">B. Home, and the state you sit in</h2>
+<section class="screen" id="s3">
+<div class="sh"><span class="num">3</span><span class="name">Home</span><span class="badge b-ship">SHIPPED</span><span class="src">01-startup-home · 160x38</span></div>
+<p class="purpose">The screen after boot. Left is the session, right is live production. The middle block is the session gap:
+what changed in your code while you were away, with who did it. This is the only screen with a measured
+denominator on it, and it is the model for every other tile.</p>
+<div class="frame"><pre><span class="b">ESTELLE  ·  uqeu/estelle  ·  </span><span class="m">Fate Labs · owner                                                                                                                  </span>
+
+<span class="d">── </span><span class="m">session </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">──────────────────────────────────────────────────────────────────────  │  ── </span><span class="m">production </span><span class="d">· </span><span class="g">uqeu/estelle </span><span class="d">──────────────────────────────</span>
+   <span class="d">uqeu/estelle · cli/skill-suggest-20260901                                                      │  ── </span><span class="m">app </span><span class="d">· </span><span class="g">repo uqeu/estelle </span><span class="d">────────────────────────────────</span>
+<span class="b">Ask about uqeu/estelle                                                                            </span><span class="d">│  </span><span class="w">▲   </span><span class="m">error counts      ▂▅▃█ 14                              </span>
+                                                                                                  <span class="d">│  </span><span class="g">●   </span><span class="m">measured          14/3292 requests                     </span>
+<span class="b">Since your last session                                                                           </span><span class="d">│      ───────────────────────────────────────────────────────</span>
+<span class="m">Welcome back - you were last here about 3 hours ago.                                              </span><span class="d">│  ── </span><span class="m">services </span><span class="d">· </span><span class="g">4/4 up </span><span class="d">──────────────────────────────────────</span>
+<span class="m">Code you touched has changed since:                                                               </span><span class="d">│  no uptime checks registered · POST /monitor/uptime adds one</span>
+<span class="m">- billing/charge.rs - by Dana, about 2 hours ago - bound retry telemetry                          </span><span class="d">│                                                             </span>
+                                                                                                  <span class="d">│  ── </span><span class="m">agents </span><span class="d">· </span><span class="c">unread </span><span class="d">────────────────────────────────────────</span>
+<span class="m">Signed in · khai@fatelabs.ca · team                                                               </span><span class="d">│  ○   </span><span class="m">agents            </span><span class="d">no read yet · GET /agent/health      </span>
+<span class="m">Team · Fate Labs · owner                                                                          </span><span class="d">│                                                             </span>
+                                                                                                  <span class="d">│  ── </span><span class="m">estelle </span><span class="d">· </span><span class="g">0 unresolved </span><span class="d">─────────────────────────────────</span>
+<span class="b">/review  </span><span class="m">Read current changes                                                                     </span><span class="d">│  No errors have reached Estelle yet.                        </span>
+<span class="b">/sweep   </span><span class="m">Index or refresh this repo                                                               </span><span class="d">│  Point OTLP or Sentry at api.fatelabs.ca/monitor/ingest.    </span>
+<span class="b">?        </span><span class="m">Show shortcuts                                                                           </span><span class="d">│                                                             </span>
+                                                                                                  <span class="d">│  ── </span><span class="m">queue </span><span class="d">· 0 repair(s) ────────────────────────────────────</span>
+                                                                                                  <span class="d">│  ○   </span><span class="m">repairs           </span><span class="d">none reported                        </span>
+                                                                                                  <span class="d">│  ○   </span><span class="m">select            </span><span class="d">/monitor issues                      </span>
+                                                                                                  <span class="d">│                                                             </span>
+                                                                                                  <span class="d">│  ── </span><span class="m">github </span><span class="d">· </span><span class="w">unknown </span><span class="d">───────────────────────────────────────</span>
+                                                                                                  <span class="d">│  ○   </span><span class="m">connection        </span><span class="d">no read yet · GET /github/status     </span>
+                                                                                                  <span class="d">│                                                             </span>
+                                                                                                  <span class="d">│                                                             </span>
+                                                                                           <span class="m">⣀⣆     </span><span class="d">│                                                             </span>
+<span class="b">·   </span><span class="d">∷ ∷ </span><span class="b">·   · · ·   ·   ·   ·   ·   ·   · </span><span class="d">∷ ∷   </span><span class="b">·   ·   ·   ·   ·   ·   ·   ·   ·   ·   · </span><span class="d">∷ </span><span class="m">⠁     </span><span class="d">│                                                             </span>
+<span class="b">∷                                </span><span class="d">∷                                                 ∷ ∷            │                                                             </span>
+
+
+<span class="d">── </span><span class="m">ask </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+<span class="b">❯                                                                                                                                                               </span>
+
+
+
+
+
+  <span class="d">enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection                                                                            </span></pre></div>
+<p class="keys"><kbd>enter</kbd> send · <kbd>tab</kbd> repo · <kbd>ctrl+s</kbd> spend · <kbd>ctrl+m</kbd> models · <kbd>esc</kbd> stop · <kbd>ctrl+o</kbd> selection</p>
+<div class="ok"><b>The honest tile, already shipped.</b> <code>● measured 14/3292 requests</code> carries its denominator; <code>no uptime checks registered · POST /monitor/uptime adds one</code> says what is absent and how to make it present; <code>○ agents no read yet · GET /agent/health</code> names the route it has not called. None of those is a plausible zero. Keep this vocabulary everywhere.</div>
+<div class="rule"><b>The file citation in the session gap is raw ANSI blue.</b> <code>billing/charge.rs</code> on the line above renders <code>#65A8FF</code>, which is not in <code>theme.rs</code> at all. See screen 7.</div>
+</section>
+<section class="screen" id="s4">
+<div class="sh"><span class="num">4</span><span class="name">Home, narrow, production hidden</span><span class="badge b-ship">SHIPPED</span><span class="src">11-empty-state-dither · 100x32</span></div>
+<p class="purpose">The same home at 100 columns with <code>/prod</code> toggled off. This is the layout most people will
+actually see, and it is where the dither field has to survive a small window.</p>
+<div class="frame"><pre><span class="b">ESTELLE  ·  uqeu/estelle  ·  repo graph current                                                     </span>
+
+<span class="d">── </span><span class="m">session </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">────────────────────────────────  │  ── </span><span class="m">production </span><span class="d">· </span><span class="g">uqeu/estelle </span><span class="d">────────</span>
+   <span class="d">uqeu/estelle · cli/skill-suggest-20260901                │  ── </span><span class="m">app </span><span class="d">· </span><span class="g">repo uqeu/estelle </span><span class="d">──────────</span>
+<span class="b">Ask about uqeu/estelle                                      </span><span class="d">│  Connecting to Estelle...             </span>
+                                                            <span class="d">│                                       </span>
+<span class="b">/review  </span><span class="m">Read current changes                               </span><span class="d">│  ── </span><span class="m">agents </span><span class="d">· </span><span class="c">unread </span><span class="d">──────────────────</span>
+<span class="b">/sweep   </span><span class="m">Refresh this repo's index                          </span><span class="d">│  ○   </span><span class="m">agents            </span><span class="d">no read yet · …</span>
+<span class="b">?        </span><span class="m">Show shortcuts                                     </span><span class="d">│                                       </span>
+                                                            <span class="d">│  ── </span><span class="m">estelle </span><span class="d">· unread ─────────────────</span>
+                                                            <span class="d">│  ○   </span><span class="m">issues            </span><span class="d">no read yet · …</span>
+                                                            <span class="d">│                                       </span>
+                                                            <span class="d">│  ── </span><span class="m">queue </span><span class="d">· 0 repair(s) ──────────────</span>
+                                                            <span class="d">│  ○   </span><span class="m">repairs           </span><span class="d">none reported  </span>
+                                                            <span class="d">│  ○   </span><span class="m">select            </span><span class="d">/monitor issues</span>
+                                                            <span class="d">│                                       </span>
+                                                            <span class="d">│  ── </span><span class="m">github </span><span class="d">· </span><span class="w">unknown </span><span class="d">─────────────────</span>
+                                                            <span class="d">│  ○   </span><span class="m">connection        </span><span class="d">no read yet · …</span>
+                                                            <span class="d">│                                       </span>
+                                                            <span class="d">│                                       </span>
+                                                      <span class="m">⠠⠶    </span><span class="d">│                                       </span>
+<span class="b">∷                                                           </span><span class="d">│                                       </span>
+
+
+<span class="d">── </span><span class="m">ask </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">──────────────────────────────────────────────────────────────────────────────</span>
+<span class="b">❯                                                                                                   </span>
+
+
+
+
+
+  <span class="d">enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection                </span></pre></div>
+<p class="keys"><kbd>enter</kbd> send · <kbd>tab</kbd> repo · <kbd>ctrl+s</kbd> spend · <kbd>ctrl+m</kbd> models · <kbd>esc</kbd> stop · <kbd>ctrl+o</kbd> selection</p>
+<div class="ask"><b>Question for you.</b> The right pane truncates route names to <code>GET /agent/…</code>. A truncated route is not actionable. Either the pane drops the route below the width where it fits, or the row wraps. Which?</div>
+</section>
+<section class="screen" id="s5">
+<div class="sh"><span class="num">5</span><span class="name">Cream</span><span class="badge b-ship">SHIPPED</span><span class="src">13-cream-ink · 120x34</span></div>
+<p class="purpose">The light theme. Same renderer, same layout, the <code>ScreenTheme::Cream</code> palette. It is picked from
+the terminal's detected background, and from <code>/settings</code> row 2.</p>
+<div class="frame cream"><pre><span class="b">ESTELLE  </span><span class="d">·  </span><span class="b">uqeu/estelle  </span><span class="d">·  </span><span class="b">repo graph current                                                                         </span>
+
+<span class="d">── </span><span class="m">session </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">─────────────────────────────────────────────  │  ── </span><span class="m">production </span><span class="d">· </span><span class="g">uqeu/estelle </span><span class="d">───────────────</span>
+   <span class="d">uqeu/estelle · cli/skill-suggest-20260901                             │  ── </span><span class="m">app </span><span class="d">· </span><span class="g">repo uqeu/estelle </span><span class="d">─────────────────</span>
+<span class="b">Ask about uqeu/estelle                                                   </span><span class="d">│  Connecting to Estelle...                    </span>
+                                                                         <span class="d">│                                              </span>
+<span class="b">/review  </span><span class="m">Read current changes                                            </span><span class="d">│  ── </span><span class="m">agents </span><span class="d">· </span><span class="c">unread </span><span class="d">─────────────────────────</span>
+<span class="b">/sweep   </span><span class="m">Refresh this repo's index                                       </span><span class="d">│  ○   </span><span class="m">agents            </span><span class="d">no read yet · GET /ag…</span>
+<span class="b">?        </span><span class="m">Show shortcuts                                                  </span><span class="d">│                                              </span>
+                                                                         <span class="d">│  ── </span><span class="m">estelle </span><span class="d">· unread ────────────────────────</span>
+                                                                         <span class="d">│  ○   </span><span class="m">issues            </span><span class="d">no read yet · GET /is…</span>
+                                                                         <span class="d">│                                              </span>
+                                                                         <span class="d">│  ── </span><span class="m">queue </span><span class="d">· 0 repair(s) ─────────────────────</span>
+                                                                         <span class="d">│  ○   </span><span class="m">repairs           </span><span class="d">none reported         </span>
+                                                                         <span class="d">│  ○   </span><span class="m">select            </span><span class="d">/monitor issues       </span>
+                                                                         <span class="d">│                                              </span>
+                                                                         <span class="d">│  ── </span><span class="m">github </span><span class="d">· </span><span class="w">unknown </span><span class="d">────────────────────────</span>
+                                                                         <span class="d">│  ○   </span><span class="m">connection        </span><span class="d">no read yet · GET /gi…</span>
+                                                                         <span class="d">│                                              </span>
+                                                                         <span class="d">│                                              </span>
+                                                                         <span class="d">│                                              </span>
+                                                                         <span class="d">│                                              </span>
+                                                                   <span class="m">⠟⠂    </span><span class="d">│                                              </span>
+<span class="b">∷   </span><span class="d">· · ·   · · ·   · </span><span class="b">∷ ∷ </span><span class="d">· · · · · · · · · · · · · · · · · · </span><span class="b">∷ ∷ </span><span class="d">· · ·  │                                              </span>
+
+
+<span class="d">── </span><span class="m">ask </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">──────────────────────────────────────────────────────────────────────────────────────────────────</span>
+<span class="b">❯                                                                                                                       </span>
+
+
+
+
+
+  <span class="d">enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection                                    </span></pre></div>
+<p class="keys"><kbd>enter</kbd> send · <kbd>tab</kbd> repo · <kbd>ctrl+s</kbd> spend · <kbd>ctrl+m</kbd> models · <kbd>esc</kbd> stop · <kbd>ctrl+o</kbd> selection</p>
+<div class="rule"><b>There is no <code>/theme</code> command.</b> The mock's section header reads <code>6 · Both themes /theme toggles</code>, but <code>theme</code> sits in <code>DROPPED_COMMANDS</code> (<code>commands.rs:270</code>) and never resolves. Today the only door is <code>/settings</code> &rarr; <code>2 Theme</code>. Decide: restore <code>/theme</code>, or delete the line from the mock.</div>
+<div class="rule"><b>The cream skill pink is honestly unmeasured.</b> <code>#B06A8C</code> is pinned so a change to it is deliberate, but there is no cream skills mock in the reference folder, so nobody sampled it. If you want cream skills to look right, the cheapest fix is one screenshot.</div>
+</section>
+<section class="screen" id="s6">
+<div class="sh"><span class="num">6</span><span class="name">No repository here</span><span class="badge b-ship">SHIPPED</span><span class="src">live_renderer.rs:997 · no gallery frame exists</span></div>
+<p class="purpose">Run outside a git repository. This state has a renderer and no gallery frame, so nobody has looked at it
+since it was written.</p>
+<div class="frame"><pre><span class="b">ESTELLE</span>  <span class="d">·</span>  <span class="m">no repository</span>
+
+<span class="d">── </span><span class="m">session </span><span class="d">─────────────────────────────────────────────────────────────</span>
+
+<span class="b">No repository here</span>
+<span class="d">cd into a git repository to ask grounded questions</span>
+
+<span class="b">/review</span>  <span class="m">Read current changes</span>
+<span class="b">/sweep </span>  <span class="m">Index or refresh this repo</span>
+<span class="b">?      </span>  <span class="m">Show shortcuts</span>
+
+
+<span class="d">── </span><span class="m">ask </span><span class="d">──────────────────────────────────────────────────────────────────</span>
+<span class="b">❯</span>
+
+<span class="d">  enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection</span></pre></div>
+<p class="keys"><kbd>enter</kbd> send · <kbd>tab</kbd> repo · <kbd>ctrl+s</kbd> spend · <kbd>ctrl+m</kbd> models · <kbd>esc</kbd> stop · <kbd>ctrl+o</kbd> selection</p>
+<div class="ok"><b>This copy is already correct and the comment above it says why.</b> The old empty state interpolated <code>basename($PWD)</code> and invited you to ask about a repository that does not exist (<code>Ask about khai</code>). And the advice deliberately names <code>cd</code> and not <code>estelle init</code>, because <code>init</code> configures Estelle FOR a repository and cannot work outside one.</div>
+<div class="ask"><b>But it still offers <code>/review</code> and <code>/sweep</code>, neither of which can work here.</b> Same defect the copy above it was fixed for, one line lower.</div>
+</section>
+<h2 class="sec">C. Asking, answering, and refusing</h2>
+<section class="screen" id="s7">
+<div class="sh"><span class="num">7</span><span class="name">Waiting for an answer</span><span class="badge b-ship">SHIPPED</span><span class="src">01b-waiting-answer · 160x38</span></div>
+<p class="purpose">
+Your question is echoed with a <code>›</code> gutter and the status row carries the elapsed time. The status
+sentence is the honest one: <code>still waiting for Estelle · no response received yet</code>, not a
+percentage and not an ETA.</p>
+<div class="frame"><pre><span class="b">ESTELLE  ·  uqeu/estelle  ·  </span><span class="m">Fate Labs · owner                                                                                                                  </span>
+
+<span class="d">── </span><span class="m">session </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">──────────────────────────────────────────────────────────────────────  │  ── </span><span class="m">production </span><span class="d">· </span><span class="g">uqeu/estelle </span><span class="d">──────────────────────────────</span>
+   <span class="d">uqeu/estelle · cli/skill-suggest-20260901                                                      │  ── </span><span class="m">app </span><span class="d">· </span><span class="g">repo uqeu/estelle </span><span class="d">────────────────────────────────</span>
+<span class="b">Since your last session                                                                           </span><span class="d">│  GET /monitor/overview has not returned yet.                </span>
+<span class="b">Welcome back - you were last here about 3 hours ago.                                              </span><span class="d">│                                                             </span>
+<span class="b">Code you touched has changed since:                                                               </span><span class="d">│  ── </span><span class="m">agents </span><span class="d">· </span><span class="c">unread </span><span class="d">────────────────────────────────────────</span>
+<span class="b">- </span><span class="bad">billing/charge.rs </span><span class="b">- by Dana, about 2 hours ago - bound retry telemetry                          </span><span class="d">│  ○   </span><span class="m">agents            </span><span class="d">no read yet · GET /agent/health      </span>
+<span class="b">Signed in · khai@fatelabs.ca · team                                                               </span><span class="d">│                                                             </span>
+<span class="b">Team · Fate Labs · owner                                                                          </span><span class="d">│  ── </span><span class="m">estelle </span><span class="d">· unread ───────────────────────────────────────</span>
+                                                                                                  <span class="d">│  ○   </span><span class="m">issues            </span><span class="d">no read yet · GET /issues            </span>
+<span class="b">you                                                                                               </span><span class="d">│                                                             </span>
+                                                                                                  <span class="d">│  ── </span><span class="m">queue </span><span class="d">· 0 repair(s) ────────────────────────────────────</span>
+                                                                                                  <span class="d">│  ○   </span><span class="m">repairs           </span><span class="d">none reported                        </span>
+<span class="b">› What changed while I was away?                                                                  </span><span class="d">│  ○   </span><span class="m">select            </span><span class="d">/monitor issues                      </span>
+                                                                                                  <span class="d">│                                                             </span>
+                                                                                                  <span class="d">│  ── </span><span class="m">github </span><span class="d">· </span><span class="w">unknown </span><span class="d">───────────────────────────────────────</span>
+                                                                                                  <span class="d">│  ○   </span><span class="m">connection        </span><span class="d">no read yet · GET /github/status     </span>
+                                                                                                  <span class="d">│                                                             </span>
+                                                                                                  <span class="d">│                                                             </span>
+                                                                                                  <span class="d">│                                                             </span>
+                                                                                                  <span class="d">│                                                             </span>
+                                                                                                  <span class="d">│                                                             </span>
+                                                                                                  <span class="d">│                                                             </span>
+                                                                                                  <span class="d">│                                                             </span>
+                                                                                                  <span class="d">│                                                             </span>
+                                                                                                  <span class="d">│                                                             </span>
+                                                                                                  <span class="d">│                                                             </span>
+<span class="c">◐ </span><span class="m">Working · thinking · 1m 23s · still waiting for Estelle · no response received yet                                                                            </span>
+
+<span class="d">── </span><span class="m">ask </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+<span class="b">❯                                                                                                                                                               </span>
+
+
+
+
+
+  <span class="d">enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection                                                                            </span></pre></div>
+<p class="keys"><kbd>enter</kbd> send · <kbd>tab</kbd> repo · <kbd>ctrl+s</kbd> spend · <kbd>ctrl+m</kbd> models · <kbd>esc</kbd> stop · <kbd>ctrl+o</kbd> selection</p>
+<div class="rule"><b>DEFECT 1 of 2. Seventeen cells of <code>#65A8FF</code>, outlined above.</b> <code>billing/charge.rs</code> in the session gap is painted raw <code>Color::Blue</code>, which in a real terminal takes the user's OWN blue, not ours. Every other file citation in the product uses <code>Palette::cite #7FB3C8</code> and thirty-one cells of it are on this same frame. <b>Proposed token: <code>cite</code>.</b> It is the citation role, it is already here, and it makes the session gap match the context pane.</div>
+</section>
+<section class="screen" id="s8">
+<div class="sh"><span class="num">8</span><span class="name">Grounding context: what the answer was built on</span><span class="badge b-ship">SHIPPED</span><span class="src">02-orchestra-active right pane · Alt+M · /context</span></div>
+<p class="purpose">
+The pane that proves the answer. The team's swept graph on top with the file and symbol the answer cited;
+working memory below it, every path labelled <code>local, not pushed</code> so you can see what left your
+machine and what did not.</p>
+<div class="frame"><pre>  <span class="d">── </span><span class="m">context </span><span class="d">· alt+m · /context ───────────────────────────────────</span>
+  <span class="b">Repo graph · team's swept copy                                   </span>
+  <span class="b">1,993 files indexed                                              </span>
+  <span class="b">billing/charge.rs:82                                             </span>
+    <span class="d">symbol  charge_card                                            </span>
+
+  <span class="b">Working memory · local request context                           </span>
+  <span class="d">Sent through the configured Estelle model path.                  </span>
+  <span class="d">Not added to the team's Repo graph.                              </span>
+  <span class="b">billing/charge.rs · local, not pushed                            </span>
+  <span class="b">billing/retry.rs · local, not pushed                             </span>
+
+  <span class="d">Alt+M or /context closes                                         </span></pre></div>
+<p class="keys"><kbd>Alt+M</kbd> or <code>/context</code> toggles</p>
+<div class="rule"><b><code>Alt+M</code> is the one binding the code's own comment forbids.</b> <code>main.rs:6219</code> binds it; the comment eleven lines below reads <i>NEVER BIND alt+&lt;letter&gt; IN THIS BINARY. macOS EATS IT BEFORE WE SEE IT</i> and names <code>alt+m &rarr; µ</code> as an example. Terminal.app ships with Option-as-Meta off, so on a stock Mac this chord types <code>µ</code> into the composer. The pane is still reachable by <code>/context</code>. <b>Proposal: <code>ctrl+g</code></b>, and delete <code>Alt+M</code> from the two places the UI advertises it.</div>
+<div class="ask"><b>Question.</b> <code>Sent through the configured Estelle model path.</code> is true and vague. Would you rather it named the model that actually served the turn? The renderer already has <code>observed_model()</code> for exactly that.</div>
+</section>
+<section class="screen" id="s9">
+<div class="sh"><span class="num">9</span><span class="name">Gate refused: a package that does not exist</span><span class="badge b-ship">SHIPPED</span><span class="src">gate_refusal.rs · render_gate_modal · no gallery frame exists</span></div>
+<p class="purpose">
+<b>This is the product.</b> The deterministic merge gate refusing a diff that imports an invented package.
+No model was called to produce this verdict. The text below is the server's real blocker sentence, wrapped by
+the real column function at width 80.</p>
+<div class="frame"><pre><span class="d">── </span><span class="m">gate </span><span class="d">· </span><span class="r">refused </span><span class="d">──────────────────────────────────────────────────────────────</span>
+
+<span class="r">■</span> <span class="r">Gate refused</span>  <span class="d">verdict blocked</span>
+<span class="m">Gate protected this repository. Nothing was written.</span>
+
+<span class="r">│</span>    <span class="m">imports a package that does not exist: fastapi-retry-utils. The registry</span>
+<span class="r"> </span>    <span class="m">answered 404 — this is the published #1 hallucination class (a model</span>
+<span class="r"> </span>    <span class="m">inventing a plausible package name). If it is a private/internal</span>
+<span class="r"> </span>    <span class="m">distribution, it is not reachable from here, so the import will fail on any</span>
+<span class="r"> </span>    <span class="m">machine but the author's.</span>
+
+<span class="w">blast radius · 2 files · 47 changed lines</span>
+     <span class="m">billing/charge.rs</span>                   <span class="d">31 changed lines</span>
+     <span class="m">billing/retry.rs</span>                    <span class="d">16 changed lines</span>
+<span class="d">Enter or Esc closes · Ask Estelle</span></pre></div>
+<p class="keys"><kbd>enter</kbd> or <kbd>esc</kbd> closes</p>
+<div class="ok"><b>The refusal may not be truncated, and that is enforced.</b> Overlong blocker text wraps onto continuation rows instead of taking an ellipsis, and a test reassembles the rendered rows and asserts the original sentence survives character for character. Truncating a model name is fine. Truncating the sentence that explains why an edit was refused is not.</div>
+<div class="ask"><b>The founder's brief says this should be the best-looking thing we ship.</b> Right now it is one red bar, one sentence, and a blast radius. Three things it does not do that it could: name the FILE and LINE of the import (the server sends <code>path</code> and <code>line</code>, both currently empty strings); separate the CLAIM from the FINDING into the two columns the layout already reserves; and show the <code>clean-unverified</code> third state, which is neither pass nor block and today is invisible.</div>
+</section>
+<section class="screen" id="s10">
+<div class="sh"><span class="num">10</span><span class="name">Navigation refuses: the index is stale</span><span class="badge b-prop">PROPOSED</span><span class="src">server string is real (graph_currency.py:64) · no CLI screen renders it</span></div>
+<p class="purpose">
+The repo moved since the last sweep, so every symbol added since then would read as invented. The server
+already computes this verdict and writes the sentence. <b>The CLI has nowhere to put it.</b></p>
+<div class="frame"><pre><span class="d">── </span><span class="m">gate </span><span class="d">· </span><span class="r">refused </span><span class="d">──────────────────────────────────────────────────────────────</span>
+
+<span class="r">■</span> <span class="r">Gate refused</span>  <span class="d">cannot answer</span>
+<span class="m">No answer was produced. Nothing was guessed.</span>
+
+<span class="r">│</span>    <span class="m">uqeu/estelle: STALE — indexed at 95160cb9f196, repo is now a973c8aef31d.</span>
+<span class="r"> </span>    <span class="m">Real code added since then reads as invented.</span>
+
+<span class="d">   </span><span class="m">/sweep</span><span class="d"> refreshes the index · this refusal is not a failure</span></pre></div>
+<p class="keys"><kbd>enter</kbd> or <kbd>esc</kbd> closes · <code>/sweep</code> fixes it</p>
+<div class="ok"><b>Why this screen has to exist.</b> A real-but-unswept symbol and a genuinely fabricated one produce the same <i>not found</i>. Without this screen the two are indistinguishable to the user, and the gate's own docstring calls that failure SILENT BY CONSTRUCTION. There are four states, not two: <code>current</code> · <code>stale</code> · <code>unknown</code> · <code>unreachable</code>, and <code>unknown</code> is explicitly NOT the same as up to date.</div>
+<div class="ask"><b>Decision for you.</b> Should a stale index refuse, or answer with a banner? Refusing is the thesis. Answering with a banner is what every rival does.</div>
+</section>
+<section class="screen" id="s11">
+<div class="sh"><span class="num">11</span><span class="name">Compaction refuses: one line instead of a context bar</span><span class="badge b-spec">SPEC</span><span class="src">founder's design book 2026-08-24 §4 · server behaviour is real, CLI is silent</span></div>
+<p class="purpose">
+Your last message alone is larger than the model's usable window. There is nothing to compact. The mock
+replaces the percentage context bar every other CLI ships with the single fact you can act on.</p>
+<div class="frame"><pre><span class="w">!</span> <span class="b">compact BLOCKED</span>  <span class="d">latest_turn_exceeds_usable_window</span>
+  <span class="m">your last message alone is larger than the model's window —</span>
+  <span class="m">context was left UNCHANGED. Split it, or /model something bigger.</span></pre></div>
+<p class="keys"><code>/compact</code> · <code>/model</code></p>
+<div class="rule"><b>Today this is silent.</b> <code>session_compaction.py:239,247</code> returns the ORIGINAL transcript under five blocked reasons and the API ships it as a normal <code>200</code>. So the compaction you asked for did not happen and nothing told you. That is the absent-versus-zero defect in its purest form.</div>
+<div class="ask"><b>The mock's argument, which I think is right.</b> A percentage would have told you nothing. This tells you the one thing you can do. Confirm you want no context percentage anywhere in the CLI, and I will make that a rule with a test rather than a preference.</div>
+</section>
+<h2 class="sec">D. Skills. The surface you said was beautiful.</h2>
+<section class="screen" id="s12">
+<div class="sh"><span class="num">12</span><span class="name">Skills, typed</span><span class="badge b-spec">SPEC</span><span class="src">skill.png §5 left panel</span></div>
+<p class="purpose">
+You type <code>/</code> then <kbd>tab</kbd>. The list is framed, the selection carries a <code>›</code> and
+the selected row is pink. Below the closing rule the composer shows what it is now bound to.</p>
+<div class="frame"><pre><span class="d">┌ </span><span class="m">skills </span><span class="d">─────────────────────────</span>
+<span class="d">│</span> <span class="sk">›</span> <span class="sk">improve-codebase-architecture</span>
+<span class="d">│</span>   <span class="m">refactor-cleaner</span>
+<span class="d">│</span>   <span class="m">systematic-debugging</span>
+<span class="d">└────────────────────────</span>
+
+<span class="sk">_________________________________________</span>
+
+<span class="sk">»</span> <span class="b">▏</span>
+<span class="d">estelle · </span><span class="sk">skill: improve-codebase-architecture</span></pre></div>
+<p class="keys"><kbd>/</kbd> then <kbd>tab</kbd> opens · <kbd>↑↓</kbd> select · <kbd>enter</kbd> bind · <kbd>esc</kbd> close</p>
+<div class="rule"><b>This mock draws a box, and the shipped renderer forbids boxes.</b> <code>BOX_CORNERS</code> in <code>main.rs</code> asserts that <code>┌ ┐ └ ┘ ├ ┤ ┬ ┴ ┼</code> reach zero live frames, with your own rule quoted verbatim beside it: <i>there are no boxes in Estelle</i>. <code>│</code> is exempt because it is the divider BETWEEN panes, never a border around one. <b>These two cannot both be true. You have to pick one, and I would keep the no-box rule and let the skills list use the same <code>── skills ────</code> rule every other picker uses.</b></div>
+<div class="rule"><b>The pink rule under the box is hand-placed.</b> It is 41 characters in the mock because that looked right, not because anything computes it. In Rust it becomes <code>rule width</code> and spans the pane. It will look slightly different, and it will be the same on every terminal width.</div>
+<div class="ask"><b>The principle, printed on your own mock, in your own words.</b> <i>It offers, never auto-runs. A skill that fires without you asking is an agent choosing for you.</i> That is the same rule as propose-only auto-repair, applied to skills. Any implementation that auto-fires a skill violates it, and it is worth a test rather than a comment.</div>
+</section>
+<section class="screen" id="s13">
+<div class="sh"><span class="num">13</span><span class="name">Skills, offered</span><span class="badge b-spec">SPEC</span><span class="src">skill.png §5 right panel</span></div>
+<p class="purpose">
+You did not ask. Estelle read your draft and noticed. Your prompt sits highlighted at the top, the offer sits
+under it, and the skill name is pink.</p>
+<div class="frame"><pre><span class="sel">❯ i want to organise this codebase better                              </span>
+
+
+<span class="sk">»</span> <span class="m">This looks like </span><span class="sk">improve-codebase-architecture.</span>
+  <span class="d">tab to use it · enter to answer normally</span>
+
+  <span class="d">________________________________________</span>
+
+<span class="b">❯</span> <span class="b">▏</span></pre></div>
+<p class="keys"><kbd>tab</kbd> takes the offer · <kbd>enter</kbd> answers normally · typing on dismisses it</p>
+<div class="ask"><b>The principle, printed on your own mock, in your own words.</b> <i>It offers, never auto-runs. A skill that fires without you asking is an agent choosing for you.</i> That is the same rule as propose-only auto-repair, applied to skills. Any implementation that auto-fires a skill violates it, and it is worth a test rather than a comment.</div>
+<div class="ok"><b><kbd>tab</kbd> is claimed narrowly and correctly.</b> It only takes the offer when an offer is actually drawn on screen; otherwise <kbd>tab</kbd> still means move focus, and complete the command once the line starts with a slash. One owner decides both the pixels and the key, so they cannot disagree.</div>
+</section>
+<section class="screen" id="s14">
+<div class="sh"><span class="num">14</span><span class="name">Skills, browse and toggle</span><span class="badge b-spec">SPEC</span><span class="src">skill 2.png / skill 4.png §7 left panel</span></div>
+<p class="purpose">
+<b>The panel you meant when you said the skills were beautiful.</b> A real total and an on-count, a per-skill
+token cost, an on/off toggle that is separate from selection, and the compose budget at the bottom.</p>
+<div class="frame"><pre><span class="b">Skills</span> <span class="m">238</span> <span class="d">·</span> <span class="m">189 on</span>
+<span class="d">/ search · space toggle · enter run</span>
+
+<span class="sk">›</span> <span class="g">on </span> <span class="b">deepen-architecture     </span> <span class="m">~640</span>
+  <span class="g">on </span> <span class="m">systematic-debugging    </span> <span class="m">~520</span>
+  <span class="d">off</span> <span class="d">whitepaper-draft        </span> <span class="m">~641</span>
+  <span class="g">on </span> <span class="m">bug-hunt                </span> <span class="m">~310</span>
+
+<span class="d">3 max compose · 1,800 tok budget</span></pre></div>
+<p class="keys"><kbd>/</kbd> search · <kbd>space</kbd> toggle on/off · <kbd>enter</kbd> run · <kbd>↑↓</kbd> select</p>
+<div class="ok"><b>This one survives a mathematical renderer unchanged.</b> Four fixed columns: <code>Col::l(2)</code> marker, <code>Col::l(3)</code> state, <code>Col::l(n)</code> name, <code>Col::r(6)</code> cost, gap 2. <code>on</code> and <code>off</code> both fit 3. The cost column is right-aligned, which is the only reason the tildes line up. Nothing here needs a hand-placed space.</div>
+<div class="rule"><b>None of the four numbers exists on the wire.</b> The shipped screen says so out loud: <i>on/off · per-skill cost · compose budget: not measured — the server does not send them.</i> Building this panel is a SERVER change first: <code>GET /skills</code> has to return <code>total</code>, <code>enabled</code>, <code>tokens</code> per skill, and the compose budget. Until it does, the honest screen is 15, not this one.</div>
+<div class="ask"><b>Your own note under this mock, kept because it is the reason the numbers matter.</b> The library went 246 to 238 skills and 225,343 to 131,119 tokens, minus 41.8 percent, and bodies too big to survive a three-skill compose went 143 to 42. Without a token column nobody could have seen that.</div>
+</section>
+<section class="screen" id="s15">
+<div class="sh"><span class="num">15</span><span class="name">Skills, browse, as it ships today</span><span class="badge b-ship">SHIPPED</span><span class="src">12-skills · 130x34</span></div>
+<p class="purpose">
+The same surface, built. Three rows, no counts, no costs, no toggle. The second line is the honest one and it
+is why this screen is not a lie, only a smaller thing than the mock.</p>
+<div class="frame"><pre><span class="b">ESTELLE  ·  uqeu/estelle                                                                                                          </span>
+
+<span class="d">── </span><span class="m">session </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+   <span class="d">uqeu/estelle · cli/skill-suggest-20260901                                                                                      </span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<span class="d">── </span><span class="m">skills </span><span class="d">· </span><span class="c">3 of 3 · type to filter </span><span class="d">──────────────────────────────────────────────────────────────────────────────────────────────</span>
+<span class="b">A playbook is offered when your draft names it, and run only when you press tab.                                                  </span>
+<span class="b">on/off · per-skill cost · compose budget: not measured · the server does not send them.                                           </span>
+<span class="sk">&gt; 1 review                    </span><span class="d">Review the current change against production evidence                                               </span>
+  <span class="sk">2 trace                     </span><span class="d">Trace an issue to a bound repository symbol                                                         </span>
+  <span class="sk">3 ground                    </span><span class="d">Check an answer against the current repo graph                                                      </span>
+<span class="d">↑↓ navigate · 1-9 or Enter select · Esc close                                                                                     </span></pre></div>
+<p class="keys"><kbd>↑↓</kbd> navigate · <kbd>1-9</kbd> or <kbd>enter</kbd> select · <kbd>esc</kbd> close</p>
+<div class="ok"><b>Note the pink is already correct here.</b> Twenty-one cells of <code>#CA92AF</code>, the value sampled off your mock. It shipped as <code>#D48FB0</code> for months and nobody could say where that came from.</div>
+<div class="ask"><b>Gap between this and screen 14, stated plainly.</b> Missing: the total, the on-count, the per-skill token cost, the space-toggle, the compose limit, and the <code>/</code> search. Present: the list, the pink selection, and a sentence saying what is missing.</div>
+</section>
+<section class="screen" id="s16">
+<div class="sh"><span class="num">16</span><span class="name">Skills, offered, as it ships today</span><span class="badge b-ship">SHIPPED</span><span class="src">12b-skill-suggestion · 130x34</span></div>
+<p class="purpose">
+Built, and close to the mock. The offer band sits directly above the composer, reading the draft you have
+already typed. It never runs on its own.</p>
+<div class="frame"><pre><span class="b">ESTELLE  ·  uqeu/estelle  ·  repo graph current                                                                                   </span>
+
+<span class="d">── </span><span class="m">session </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">───────────────────────────────────────────────────  │  ── </span><span class="m">production </span><span class="d">· </span><span class="g">uqeu/estelle </span><span class="d">───────────────────</span>
+   <span class="d">uqeu/estelle · cli/skill-suggest-20260901                                   │  ── </span><span class="m">app </span><span class="d">· </span><span class="g">repo uqeu/estelle </span><span class="d">─────────────────────</span>
+<span class="b">Ask about uqeu/estelle                                                         </span><span class="d">│  Connecting to Estelle...                        </span>
+                                                                               <span class="d">│                                                  </span>
+<span class="b">/review  </span><span class="m">Read current changes                                                  </span><span class="d">│  ── </span><span class="m">agents </span><span class="d">· </span><span class="c">unread </span><span class="d">─────────────────────────────</span>
+<span class="b">/sweep   </span><span class="m">Refresh this repo's index                                             </span><span class="d">│  ○   </span><span class="m">agents            </span><span class="d">no read yet · GET /agent/…</span>
+<span class="b">?        </span><span class="m">Show shortcuts                                                        </span><span class="d">│                                                  </span>
+                                                                               <span class="d">│  ── </span><span class="m">estelle </span><span class="d">· unread ────────────────────────────</span>
+                                                                               <span class="d">│  ○   </span><span class="m">issues            </span><span class="d">no read yet · GET /issues </span>
+                                                                               <span class="d">│                                                  </span>
+                                                                               <span class="d">│  ── </span><span class="m">queue </span><span class="d">· 0 repair(s) ─────────────────────────</span>
+                                                                               <span class="d">│  ○   </span><span class="m">repairs           </span><span class="d">none reported             </span>
+                                                                               <span class="d">│  ○   </span><span class="m">select            </span><span class="d">/monitor issues           </span>
+                                                                               <span class="d">│                                                  </span>
+                                                                               <span class="d">│  ── </span><span class="m">github </span><span class="d">· </span><span class="w">unknown </span><span class="d">────────────────────────────</span>
+                                                                               <span class="d">│  ○   </span><span class="m">connection        </span><span class="d">no read yet · GET /github…</span>
+                                                                               <span class="d">│                                                  </span>
+                                                                         <span class="m">⠠⠶    </span><span class="d">│                                                  </span>
+<span class="b">∷                                                                              </span><span class="d">│                                                  </span>
+
+<span class="sk">» </span><span class="m">This looks like </span><span class="sk">improve-codebase-architecture.                                                                                  </span>
+  <span class="d">tab to use · enter to answer normally                                                                                           </span>
+
+
+<span class="d">── </span><span class="m">ask </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+<span class="b">❯ improve the architecture of the retrieval layer                                                                                 </span>
+
+
+
+
+
+  <span class="d">enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection                                              </span></pre></div>
+<p class="keys"><kbd>tab</kbd> to use · <kbd>enter</kbd> to answer normally</p>
+<div class="ok"><b>The two are filed side by side in the gallery on purpose.</b> Screen 15 is a MENU that waits to be read. This is an INFERENCE that appeared because your draft was read. You asked for the second and the product only had the first.</div>
+<div class="ask"><b>Difference from the mock, for you to rule on.</b> The mock highlights your prompt in a tint band above the offer; the shipped version leaves the draft in the composer below it. The mock's version reads better because the offer points UP at the thing it is about.</div>
+</section>
+<h2 class="sec">E. The command surface</h2>
+<section class="screen" id="s17">
+<div class="sh"><span class="num">17</span><span class="name">Slash palette</span><span class="badge b-ship">SHIPPED</span><span class="src">06-slash-palette · 130x38</span></div>
+<p class="purpose">
+Type <code>/</code> and the palette filters as you go. It docks above the hint row rather than covering the
+transcript. Shown filtered to <code>/m</code>.</p>
+<div class="frame"><pre><span class="b">ESTELLE  ·  uqeu/estelle                                                                                                          </span>
+
+<span class="d">── </span><span class="m">session </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">───────────────────────────────────────────────────  │  ── </span><span class="m">production </span><span class="d">· </span><span class="g">uqeu/estelle </span><span class="d">───────────────────</span>
+   <span class="d">uqeu/estelle · cli/skill-suggest-20260901                                   │  ── </span><span class="m">app </span><span class="d">· </span><span class="g">repo uqeu/estelle </span><span class="d">─────────────────────</span>
+<span class="b">Ask about uqeu/estelle                                                         </span><span class="d">│  Connecting to Estelle...                        </span>
+                                                                               <span class="d">│                                                  </span>
+<span class="b">/review  </span><span class="m">Read current changes                                                  </span><span class="d">│  ── </span><span class="m">agents </span><span class="d">· </span><span class="c">unread </span><span class="d">─────────────────────────────</span>
+<span class="b">/sweep   </span><span class="m">Index or refresh this repo                                            </span><span class="d">│  ○   </span><span class="m">agents            </span><span class="d">no read yet · GET /agent/…</span>
+<span class="b">?        </span><span class="m">Show shortcuts                                                        </span><span class="d">│                                                  </span>
+                                                                               <span class="d">│  ── </span><span class="m">estelle </span><span class="d">· unread ────────────────────────────</span>
+                                                                               <span class="d">│  ○   </span><span class="m">issues            </span><span class="d">no read yet · GET /issues </span>
+                                                                               <span class="d">│                                                  </span>
+                                                                               <span class="d">│  ── </span><span class="m">queue </span><span class="d">· 0 repair(s) ─────────────────────────</span>
+                                                                               <span class="d">│  ○   </span><span class="m">repairs           </span><span class="d">none reported             </span>
+                                                                               <span class="d">│  ○   </span><span class="m">select            </span><span class="d">/monitor issues           </span>
+                                                                               <span class="d">│                                                  </span>
+                                                                               <span class="d">│  ── </span><span class="m">github </span><span class="d">· </span><span class="w">unknown </span><span class="d">────────────────────────────</span>
+                                                                               <span class="d">│  ○   </span><span class="m">connection        </span><span class="d">no read yet · GET /github…</span>
+                                                                               <span class="d">│                                                  </span>
+                                                                         <span class="m">⠠⠶    </span><span class="d">│                                                  </span>
+<span class="b">∷                                                                              </span><span class="d">│                                                  </span>
+
+
+<span class="d">── </span><span class="m">ask </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+<span class="b">❯ /m                                                                                                                              </span>
+
+
+
+
+  <span class="badc">/me           your account: plan, balance, budget, provider, invites                                                            </span>
+  <span class="b">/marketplace  the team's published plugins                                                                                      </span>
+  <span class="b">/memory       an answered question: what Estelle knows about this repo                                                          </span>
+  <span class="b">/mode         read or lower the server autonomy ceiling                                                                         </span>
+  <span class="b">/model        browse your BYOK model pool                                                                                       </span>
+  <span class="b">/memories     the held-memory listing with trust tiers                                                                          </span>
+  <span class="b">/mcp          list Estelle's MCP tools                                                                                          </span>
+  <span class="b">/whoami       which credential kinds are present, never their values                                                            </span>
+  <span class="d">enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection                                              </span></pre></div>
+<p class="keys">type to filter · <kbd>↑↓</kbd> select · <kbd>tab</kbd> complete · <kbd>enter</kbd> run</p>
+<div class="rule"><b>DEFECT 2 of 2. Fifty-one cells of <code>#70C6CC</code>, outlined above.</b> The selected row is painted raw <code>Color::Cyan</code> bold, via <code>style.rs:54 accent_style_for</code>, so on a real terminal the selection takes the user's own cyan. That function already has a measured branch for light backgrounds (<code>#005F87</code>); only the dark branch was never given a token. <b>Proposed token: <code>plan #9FC4E0</code></b> — the palette's cool accent, distinct from <code>cite</code> so a selected row is never mistaken for a citation. <b>The alternative, which I think is better:</b> drop the accent entirely and mark selection the way the other four pickers do, <code>bright</code> on a <code>tint</code> row. Then there is one selection language in the product instead of two.</div>
+<div class="ask"><b>The palette lists <code>/model</code>, <code>/memories</code> and <code>/mcp</code>, which are not in the session command list at all.</b> They come from a second table, <code>GRAFT_HELP</code>, kept because Codex's slash surface stays reachable. Two tables feed one popup. That is fine, but it is why the counts in any doc keep disagreeing.</div>
+</section>
+<section class="screen" id="s18">
+<div class="sh"><span class="num">18</span><span class="name">Every command, in one place</span><span class="badge b-prop">PROPOSED</span><span class="src">help_lines() · 48 session + 15 graft + 2 skill namespaces</span></div>
+<p class="purpose">
+<code>/help</code> as it renders today, complete. This is the whole feature surface of the CLI in one frame,
+which is what you asked to see. Rows in red are advertised here and <b>refused by the resolver</b>.</p>
+<div class="frame"><pre><span class="d">── </span><span class="m">help </span><span class="d">· </span><span class="m">63 commands </span><span class="d">────────────────────────────────────────────────────────────</span>
+
+<span class="b">/help       </span><span class="m">what you can do here</span>
+<span class="b">/login      </span><span class="m">connect grounding plus the model plan, API key, or local engine you already have</span>
+<span class="r">/logout     </span><span class="d">remove local Estelle and plan credentials</span>
+<span class="b">/whoami     </span><span class="m">which credential kinds are present, never their values</span>
+<span class="b">/doctor     </span><span class="m">why a provider login cannot generate an answer</span>
+<span class="b">/init       </span><span class="m">a grounded brief of this repo</span>
+<span class="b">/graph      </span><span class="m">the swept code graph; /graph nodes draws the dependency view</span>
+<span class="b">/me         </span><span class="m">your account: plan, balance, budget, provider, invites</span>
+<span class="b">/keys       </span><span class="m">your API keys — prefixes and expiry state, never raw keys</span>
+<span class="b">/team       </span><span class="m">your team: role, seats, members, invites; /team board ranks members</span>
+<span class="b">/cards      </span><span class="m">learned-knowledge cards with folder counts and provenance</span>
+<span class="b">/entities   </span><span class="m">every symbol the swept repo defines, with defining files</span>
+<span class="b">/usage      </span><span class="m">requests and tokens by day</span>
+<span class="b">/activity   </span><span class="m">calls and tokens by endpoint, with serving models</span>
+<span class="b">/runs       </span><span class="m">the team's agent-run history with grounding flags</span>
+<span class="b">/outcomes   </span><span class="m">how the team's applied changes fared: accept/revert/reject</span>
+<span class="b">/analytics  </span><span class="m">your usage analytics derived from run history</span>
+<span class="b">/audit      </span><span class="m">the tamper-evident trail of privileged actions on your account</span>
+<span class="b">/requests   </span><span class="m">the billable engine-call stream with the log total</span>
+<span class="b">/presence   </span><span class="m">who's active, files in flight, pending handoffs</span>
+<span class="b">/leaderboard</span><span class="m">skills ranked by verified grounded outcome</span>
+<span class="b">/billing    </span><span class="m">settings catalog with monthly pricing and current choices</span>
+<span class="b">/marketplace</span><span class="m">the team's published plugins</span>
+<span class="b">/automations</span><span class="m">stored gated agents — with their live/firing state</span>
+<span class="b">/suites     </span><span class="m">your custom suites with draft/active status</span>
+<span class="b">/memory     </span><span class="m">an answered question: what Estelle knows about this repo</span>
+<span class="b">/sweep      </span><span class="m">index this repo into memory</span>
+<span class="b">/sessions   </span><span class="m">your recent sessions</span>
+<span class="b">/resume     </span><span class="m">pick a past session back up</span>
+<span class="b">/work       </span><span class="m">plan, implement, gate and repair a change</span>
+<span class="b">/orchestra  </span><span class="m">run one gated server task</span>
+<span class="b">/context    </span><span class="m">toggle grounding context side panel (Alt+M)</span>
+<span class="b">/gate       </span><span class="m">run the merge gate on your staged diff</span>
+<span class="b">/scan       </span><span class="m">scan the staged diff for security findings</span>
+<span class="b">/improve    </span><span class="m">rank grounded improvements for this repo</span>
+<span class="b">/verify     </span><span class="m">check code for APIs that do not exist</span>
+<span class="b">/apply      </span><span class="m">write the last /work diff to the working tree</span>
+<span class="b">/undo       </span><span class="m">reverse the last explicit /apply</span>
+<span class="b">/mode       </span><span class="m">read or lower the server autonomy ceiling</span>
+<span class="b">/routing    </span><span class="m">show the server's model route and reason</span>
+<span class="b">/presets    </span><span class="m">show or set the server-owned plan/implement/review routing table</span>
+<span class="b">/hardware   </span><span class="m">estimate which local models fit customer-declared hardware</span>
+<span class="b">/status     </span><span class="m">endpoint, credential, repo and connection state</span>
+<span class="b">/skills     </span><span class="m">browse Estelle playbooks</span>
+<span class="b">/tools      </span><span class="m">list every MCP tool Estelle exposes</span>
+<span class="b">!&lt;cmd&gt;      </span><span class="m">explain the !command form</span>
+<span class="b">/clear      </span><span class="m">clear the transcript</span>
+<span class="b">/exit       </span><span class="m">leave the session</span>
+<span class="b">/prod       </span><span class="m">toggle live production health</span>
+<span class="b">/todo       </span><span class="m">toggle the server-emitted task ledger (Ctrl+T)</span>
+<span class="b">/settings   </span><span class="m">open interactive Estelle settings</span>
+<span class="b">/model      </span><span class="m">browse your BYOK model pool</span>
+<span class="b">/plan       </span><span class="m">enter the server-enforced planning ceiling</span>
+<span class="b">/memories   </span><span class="m">the held-memory listing with trust tiers</span>
+<span class="b">/mcp        </span><span class="m">list Estelle's MCP tools</span>
+<span class="b">/grep       </span><span class="m">search code with server-side structure</span>
+<span class="b">/permissions</span><span class="m">view the effective autonomy boundary</span>
+<span class="b">/keymap     </span><span class="m">composer keymap status</span>
+<span class="b">/review     </span><span class="m">run Estelle's grounded merge gate</span>
+<span class="b">/compact    </span><span class="m">ask Guardian for a bounded replacement projection</span>
+<span class="b">/diff       </span><span class="m">show the local working-tree diff</span>
+<span class="b">/task       </span><span class="m">view server orchestra work</span>
+<span class="b">/version    </span><span class="m">show this Estelle build</span>
+
+<span class="d">/skill:&lt;name&gt;  </span><span class="m">run one Estelle skill playbook by name</span>
+<span class="d">/skills:&lt;name&gt; </span><span class="m">alias of /skill: — both spellings run the same playbook</span></pre></div>
+<p class="keys"><kbd>?</kbd> on an empty composer opens this</p>
+<div class="rule"><b><code>/logout</code> is advertised and does not work.</b> It is in the help table AND in <code>DROPPED_COMMANDS</code>, so <code>resolve_session_name</code> returns nothing for it. The comment beside that line records the worse half: for a while the near-miss matcher did NOT honour the dropped list, so <code>/logout</code> said unknown command while <code>/logot</code>, one edit away, resolved and deleted every stored credential. The typo wiped your keys; the correct spelling did nothing. The matcher is fixed. The advertisement is not.</div>
+<div class="ask"><b>There are also 22 top-level commands that never appear in any screen</b> — <code>estelle login</code> · <code>estelle doctor</code> · <code>estelle init</code> · <code>estelle sweep</code> · <code>estelle reindex</code> · <code>estelle serve</code> · <code>estelle connect</code> · <code>estelle remove</code> · <code>estelle github</code> · <code>estelle monitor</code> · <code>estelle research</code> · <code>estelle memory</code> · <code>estelle ask</code> · <code>estelle recall</code> · <code>estelle verify</code> · <code>estelle gate</code> · <code>estelle hook</code> · <code>estelle install-hooks</code> · <code>estelle uninstall-hooks</code> · <code>estelle acp</code> · <code>estelle mcp</code> · <code>estelle mcp-server</code>. <code>/help</code> inside the session does not mention one of them.</div>
+</section>
+<section class="screen" id="s19">
+<div class="sh"><span class="num">19</span><span class="name">Shell mode, and why it must not look like Estelle</span><span class="badge b-spec">SPEC</span><span class="src">founder's design book 2026-08-24 §5 · /shell explains the form</span></div>
+<p class="purpose">
+<code>!cargo test</code> runs on your machine. The output is yours, not Estelle's. <b>The founder's rule:
+if a user cannot tell what Estelle said from what their machine printed, we have undermined our own claim.</b></p>
+<div class="frame"><pre><span class="sk">›</span> <span class="b">you</span>   <span class="m">add retry to the client</span>
+
+<span class="d">│</span> <span class="m">estelle</span>  <span class="m">I'll add a bounded retry with backoff. Three attempts,</span>
+<span class="d">│</span>          <span class="m">a named constant, and the existing error type.</span>
+
+<span class="b">$</span> <span class="b">cargo test</span>
+<span class="d">│</span> <span class="m">   Compiling estelle-tui v0.2.31</span>
+<span class="d">│</span> <span class="m">test result: ok. 14 passed; 0 failed</span>
+<span class="d">│</span> <span class="d">exit 0 · 4.1s · bounded at 30s</span>
+
+<span class="r">×</span> <span class="r">gate refused</span> <span class="d">— see above</span></pre></div>
+<p class="keys"><kbd>!</kbd> prefixes a shell command · the timeout is visible and overridable</p>
+<div class="ask"><b>Two variants were drawn and you have not picked.</b> A: gutter marks, above. B: labelled rules, <code>── you ──</code> / <code>── estelle ──</code> / <code>── shell ── cargo test ──</code>. A is denser and keeps the left edge scannable; B is unmissable. A was marked recommended on the mock.</div>
+<div class="rule"><b>Make the shell timeout visible and overridable, never a silent kill.</b> Codex's default is 10s; ours is 30s. But theirs bounds an AGENT and ours bounds a HUMAN running <code>!cargo build</code>. A build killed at 30 seconds with no line saying why is the worst version of this.</div>
+</section>
+<h2 class="sec">F. The self-correcting loop</h2>
+<section class="screen" id="s20">
+<div class="sh"><span class="num">20</span><span class="name">Live /work progress</span><span class="badge b-ship">SHIPPED</span><span class="src">15-work-progress-label · 130x34</span></div>
+<p class="purpose">
+The plan, its evidence, and the phase ladder. <b>Step 5 says <code>— unevidenced</code> and the line under the
+table says <i>Estelle is guessing there</i>.</b> Step 6 is human-gated and cannot be taken.</p>
+<div class="frame"><pre><span class="b">ESTELLE  ·  uqeu/estelle                                                                                                          </span>
+
+<span class="d">── </span><span class="m">session </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">───────────────────────────────────────────────────  │  ── </span><span class="m">production </span><span class="d">· </span><span class="g">uqeu/estelle </span><span class="d">───────────────────</span>
+   <span class="d">uqeu/estelle · cli/skill-suggest-20260901                                   │  ── </span><span class="m">app </span><span class="d">· </span><span class="g">repo uqeu/estelle </span><span class="d">─────────────────────</span>
+<span class="d">── </span><span class="m">plan </span><span class="d">· </span><span class="pl">revision 4 </span><span class="d">────────────────────────────────────────────────────────  │  Connecting to Estelle...                        </span>
+          <span class="d">step                                evidence                         │                                                  </span>
+  <span class="g">✓    </span><span class="d">1  </span><span class="m">read the failing test               </span><span class="c">gate ok · 2 cites                </span><span class="d">│  ── </span><span class="m">agents </span><span class="d">· </span><span class="c">unread </span><span class="d">─────────────────────────────</span>
+  <span class="g">✓    </span><span class="d">2  </span><span class="m">locate every parse_header call      </span><span class="c">12 refs · graph                  </span><span class="d">│  ○   </span><span class="m">agents            </span><span class="d">no read yet · GET /agent/…</span>
+  <span class="g">✓    </span><span class="d">3  </span><span class="m">rewrite for the folded shape        </span><span class="c">headers.rs:288                   </span><span class="d">│                                                  </span>
+  <span class="g">✓    </span><span class="d">4  </span><span class="m">update the 12 call sites            </span><span class="c">blast radius 12                  </span><span class="d">│  ── </span><span class="m">estelle </span><span class="d">· unread ────────────────────────────</span>
+  <span class="b">▶    </span><span class="d">5  </span><span class="b">run the suite + the mutant          </span><span class="c">— unevidenced                    </span><span class="d">│  ○   </span><span class="m">issues            </span><span class="d">no read yet · GET /issues </span>
+  <span class="w">▲    </span><span class="d">6  </span><span class="m">deploy the checkout worker          </span><span class="c">human-gated                      </span><span class="d">│                                                  </span>
+          <span class="w">step 5 has no evidence — Estelle is guessing there                   </span><span class="d">│  ── </span><span class="m">queue </span><span class="d">· 0 repair(s) ─────────────────────────</span>
+          <span class="w">step 6 is blocked — human-gated                                      </span><span class="d">│  ○   </span><span class="m">repairs           </span><span class="d">none reported             </span>
+<span class="b">work  </span><span class="m">Checking every claim against your code · revision 6 · elapsed 1.2s · sc  </span><span class="d">│  ○   </span><span class="m">select            </span><span class="d">/monitor issues           </span>
+<span class="b">scope ✓ → recall ✓ → conventions ✓ → prompt ✓ → implement ✓ → gate ✓           </span><span class="d">│                                                  </span>
+                                                                               <span class="d">│  ── </span><span class="m">github </span><span class="d">· </span><span class="w">unknown </span><span class="d">────────────────────────────</span>
+                                                                               <span class="d">│  ○   </span><span class="m">connection        </span><span class="d">no read yet · GET /github…</span>
+                                                                               <span class="d">│                                                  </span>
+                                                                               <span class="d">│                                                  </span>
+                                                                               <span class="d">│                                                  </span>
+                                                                               <span class="d">│                                                  </span>
+                                                                               <span class="d">│                                                  </span>
+                                                                               <span class="d">│                                                  </span>
+<span class="c">◐ </span><span class="m">Working · 4 of 6 landed · run the suite + the mutant                                                                            </span>
+
+<span class="d">── </span><span class="m">ask </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+<span class="b">❯                                                                                                                                 </span>
+
+
+
+
+
+  <span class="d">enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection                                              </span></pre></div>
+<p class="keys"><kbd>enter</kbd> send · <kbd>tab</kbd> repo · <kbd>ctrl+s</kbd> spend · <kbd>ctrl+m</kbd> models · <kbd>esc</kbd> stop · <kbd>ctrl+o</kbd> selection</p>
+<div class="ok"><b>The step vocabulary is deliberately not the status vocabulary.</b> Plan steps are <code>✓ done</code> · <code>▶ active</code> · <code>▲ blocked</code> · <code>□ not started</code>; rail rows are <code>● landed</code> · <code>▲ blocked</code> · <code>◐ in flight</code> · <code>○ queued</code> · <code>■ refused</code>. <code>▲</code> means the same in both. A plan step is a thing you WILL do, so not started is a box you can imagine ticking; a rail row is a thing that IS, so idle is a hollow circle. Collapsing them would force one surface to lie about its tense.</div>
+<div class="rule"><b>The label row is truncated mid-word: <code>elapsed 1.2s · sc</code>.</b> At 130 columns the work line runs off. It should drop the trailing segment, not slice it. This is the starship rule the brief asked us to steal: segments render independently and degrade to nothing.</div>
+</section>
+<section class="screen" id="s21">
+<div class="sh"><span class="num">21</span><span class="name">The proposed diff, read-only</span><span class="badge b-ship">SHIPPED</span><span class="src">05-proposed-diff · 150x34</span></div>
+<p class="purpose">
+<code>/work</code> produced a patch. Nothing has been written. The header says so twice, and
+<code>/apply</code> is the only thing that touches your tree.</p>
+<div class="frame"><pre><span class="b">ESTELLE  ·  uqeu/estelle                                                                                                                              </span>
+
+<span class="d">── </span><span class="m">session </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">────────────────────────────────────────────────────────────────  │  ── </span><span class="m">work draft </span><span class="d">· /work · read only ─────────────────────</span>
+   <span class="d">uqeu/estelle · cli/skill-suggest-20260901                                                │  read-only · /apply submits this exact patch            </span>
+                                                                                            <span class="d">│  </span><span class="b">billing/charge.rs                                      </span>
+                                                                                            <span class="d">│  </span><span class="c">@@ -82 +82 @@                                          </span>
+                                                                                            <span class="d">│   </span><span class="b">82     - old()                                        </span>
+                                                                                            <span class="d">│       </span><span class="b">82 + </span><span class="g">retry_after()                                </span>
+                                                                                            <span class="d">│                                                         </span>
+                                                                                            <span class="d">│                                                         </span>
+                                                                                            <span class="d">│                                                         </span>
+                                                                                            <span class="d">│                                                         </span>
+                                                                                            <span class="d">│                                                         </span>
+                                                                                            <span class="d">│                                                         </span>
+                                                                                            <span class="d">│                                                         </span>
+                                                                                            <span class="d">│                                                         </span>
+                                                                                            <span class="d">│                                                         </span>
+                                                                                            <span class="d">│                                                         </span>
+                                                                                            <span class="d">│                                                         </span>
+                                                                                            <span class="d">│                                                         </span>
+                                                                                            <span class="d">│                                                         </span>
+                                                                                            <span class="d">│                                                         </span>
+                                                                                            <span class="d">│                                                         </span>
+                                                                                            <span class="d">│                                                         </span>
+
+
+<span class="d">── </span><span class="m">ask </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+<span class="b">❯                                                                                                                                                     </span>
+
+
+
+
+
+  <span class="d">enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection                                                                  </span></pre></div>
+<p class="keys"><code>/apply</code> writes it · <code>/undo</code> reverses the last apply</p>
+<div class="ask"><b>This is one quarter of a story that should be one screen.</b> Your brief asked for <code>/diff</code> + <code>/propose</code> + <code>/apply</code> + <code>/undo</code> as ONE visual sequence. Today <code>/apply</code> and <code>/undo</code> have no screen at all: they print a line into the transcript and that is it. The moment a patch enters your working tree is the moment that most needs a picture.</div>
+<div class="rule"><b>Auto-apply is not a thing and must not be drawn as one.</b> The default plan is <code>write_sandbox</code> plus <code>open_pr</code>, a reviewable PR a human merges. Auto-merge is opt-in, off by default, and gated. There is no auto-deploy step anywhere in the system.</div>
+</section>
+<section class="screen" id="s22">
+<div class="sh"><span class="num">22</span><span class="name">Orchestra, running</span><span class="badge b-ship">SHIPPED</span><span class="src">02-orchestra-active · 180x34</span></div>
+<p class="purpose">
+Eight workers across three model pools. Every row carries the worker's own reported state, and
+<code>w7</code> reports <code>Unknown · worker state not reported</code> rather than being counted as anything.</p>
+<div class="frame"><pre><span class="b">ESTELLE  ·  uqeu/estelle  ·  repo graph current  ·  </span><span class="m">1,993 files                                                                                                                     </span>
+
+<span class="d">── </span><span class="m">session </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">───────────────────────────────────────────────────────────────────────────────────  │  ── </span><span class="m">context </span><span class="d">· alt+m · /context ────────────────────────────────────</span>
+   <span class="d">uqeu/estelle · cli/skill-suggest-20260901                                                                   │  </span><span class="b">Repo graph · team's swept copy                                    </span>
+<span class="g">● Task(Trace checkout failures · 24 workers)                                                                   </span><span class="d">│  </span><span class="b">1,993 files indexed                                               </span>
+  <span class="d">models · </span><span class="m">Claude Opus 4.1 · GPT-5.5 · Gemini 2.5 Pro                                                          </span><span class="d">│  </span><span class="b">billing/charge.rs:82                                              </span>
+  <span class="d">8 agents tracing 24 production assignments across three model pools                                          │    symbol  charge_card                                             </span>
+                                                                                                               <span class="d">│                                                                    </span>
+    <span class="d">wkr   state                                                                                  age     cost  │  </span><span class="b">Working memory · local request context                            </span>
+<span class="g">✓   </span><span class="d">w1    </span><span class="m">[3/3] Bound checkout_timeout to billing/charge.rs:82                                 </span><span class="d">ahead        —  │  Sent through the configured Estelle model path.                   </span>
+<span class="c">◐   </span><span class="d">w2    </span><span class="m">[2/4] Reading the retry gate                                                         </span><span class="d">ahead        —  │  Not added to the team's Repo graph.                               </span>
+<span class="c">◐   </span><span class="d">w3    </span><span class="m">[1/3] Grouping deploy-correlated events                                              </span><span class="d">ahead        —  │  </span><span class="b">billing/charge.rs · local, not pushed                             </span>
+<span class="d">·   w4    [0/2] Queued                                                                         ahead        —  │  </span><span class="b">billing/retry.rs · local, not pushed                              </span>
+<span class="g">✓   </span><span class="d">w5    </span><span class="m">[4/4] Verified the symbol range                                                      </span><span class="d">ahead        —  │                                                                    </span>
+<span class="c">◐   </span><span class="d">w6    </span><span class="m">[1/3] Comparing the proposed patch                                                   </span><span class="d">ahead        —  │  Alt+M or /context closes                                          </span>
+<span class="w">?   </span><span class="d">w7    </span><span class="m">Unknown · worker state not reported                                                  </span><span class="d">ahead        —  │                                                                    </span>
+<span class="c">◐   </span><span class="d">w8    </span><span class="m">[0/2] Checking the regression suite                                                  </span><span class="d">ahead        —  │                                                                    </span>
+<span class="d">per-worker model + cost · no server contract                                                                   │                                                                    </span>
+<span class="d">Plan floor · not reported                                                                                      │                                                                    </span>
+<span class="c">◐ Working... [</span><span class="g">━━━━━━━━━━━━━━━━━━━━━━</span><span class="d">──────────────────────────] 11/24                                          │                                                                    </span>
+                                                                                                               <span class="d">│                                                                    </span>
+                                                                                                               <span class="d">│                                                                    </span>
+                                                                                                               <span class="d">│                                                                    </span>
+                                                                                                               <span class="d">│                                                                    </span>
+
+
+<span class="d">── </span><span class="m">ask </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+<span class="b">❯                                                                                                                                                                                   </span>
+
+
+
+
+
+  <span class="d">enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection                                                                                                </span></pre></div>
+<p class="keys"><kbd>enter</kbd> send · <kbd>tab</kbd> repo · <kbd>ctrl+s</kbd> spend · <kbd>ctrl+m</kbd> models · <kbd>esc</kbd> stop · <kbd>ctrl+o</kbd> selection</p>
+<div class="rule"><b>There is a progress bar on this screen and your mock says there must not be.</b> <code>◒ Working... [━━━━━━━───────] 11/24</code>. Your annotation reads: <i>no progress bar: orchestra_live.py sets progress to None and never writes it again, so a fill would be invented.</i> That is half right and the distinction matters. The per-worker <code>progress</code> field IS <code>None</code> (<code>orchestra_live.py:33</code>) and nothing ever fills it. But the fleet's <code>completed</code> and <code>total</code> ARE server-owned facts, and <code>11/24</code> is read off them. So the NUMBER is measured and the FILL is a rendering of it. <b>Your call:</b> keep the bar because its inputs are real, or drop it and keep <code>11/24</code> alone because a bar reads as an ETA and there is none.</div>
+<div class="ok"><b>Two columns are honest about being empty.</b> <code>cost</code> is a dash on every row with <i>per-worker model + cost · no server contract</i> under the table, and <code>Plan floor · not reported</code> sits beside it. Neither shows a plausible zero.</div>
+<div class="ask"><b>The <code>age</code> column reads <code>ahead</code> on all eight rows.</b> That is the frame's monotonic clock being unable to compare itself to a server epoch, rendered honestly rather than as <code>0s</code>. It is correct and it is also unreadable. Suggest <code>—</code> with one line saying the clock disagrees.</div>
+</section>
+<section class="screen" id="s23">
+<div class="sh"><span class="num">23</span><span class="name">Orchestra, finished</span><span class="badge b-ship">SHIPPED</span><span class="src">03-orchestra-completed · 180x30</span></div>
+<p class="purpose">
+All eight reported terminal outcomes. No bar, because there is nothing left to run. The narrator line is
+marked <code>measured</code> upstream rather than <code>observed</code>.</p>
+<div class="frame"><pre><span class="b">ESTELLE  ·  uqeu/estelle  ·  repo graph current  ·  </span><span class="m">1,993 files                                                                                                                     </span>
+
+<span class="d">── </span><span class="m">session </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">───────────────────────────────────────────────────────────────────────────────────  │  ── </span><span class="m">context </span><span class="d">· alt+m · /context ────────────────────────────────────</span>
+   <span class="d">uqeu/estelle · cli/skill-suggest-20260901                                                                   │  </span><span class="b">Repo graph · team's swept copy                                    </span>
+<span class="g">● Task(Trace checkout failures · 8 workers)                                                                    </span><span class="d">│  </span><span class="b">1,993 files indexed                                               </span>
+  <span class="d">models · </span><span class="m">Claude Opus 4.1 · GPT-5.5 · Gemini 2.5 Pro                                                          </span><span class="d">│  </span><span class="b">billing/charge.rs:82                                              </span>
+  <span class="d">All 8 agents reported terminal outcomes                                                                      │    symbol  charge_card                                             </span>
+                                                                                                               <span class="d">│                                                                    </span>
+    <span class="d">wkr   state                                                                                  age     cost  │  </span><span class="b">Working memory · local request context                            </span>
+<span class="g">✓   </span><span class="d">w1    </span><span class="m">[3/3] Bound checkout_timeout                                                         </span><span class="d">ahead        —  │  Sent through the configured Estelle model path.                   </span>
+<span class="g">✓   </span><span class="d">w2    </span><span class="m">[4/4] Verified the retry gate                                                        </span><span class="d">ahead        —  │  Not added to the team's Repo graph.                               </span>
+<span class="g">✓   </span><span class="d">w3    </span><span class="m">[3/3] Grouped the production events                                                  </span><span class="d">ahead        —  │  </span><span class="b">billing/charge.rs · local, not pushed                             </span>
+<span class="g">✓   </span><span class="d">w4    </span><span class="m">[2/2] Checked the proposed repair                                                    </span><span class="d">ahead        —  │  </span><span class="b">billing/retry.rs · local, not pushed                              </span>
+<span class="g">✓   </span><span class="d">w5    </span><span class="m">[4/4] Resolved the symbol range                                                      </span><span class="d">ahead        —  │                                                                    </span>
+<span class="g">✓   </span><span class="d">w6    </span><span class="m">[3/3] Compared the proposed patch                                                    </span><span class="d">ahead        —  │  Alt+M or /context closes                                          </span>
+<span class="g">✓   </span><span class="d">w7    </span><span class="m">[2/2] Verified the worker result                                                     </span><span class="d">ahead        —  │                                                                    </span>
+<span class="g">✓   </span><span class="d">w8    </span><span class="m">[2/2] Checked the regression suite                                                   </span><span class="d">ahead        —  │                                                                    </span>
+<span class="d">per-worker model + cost · no server contract                                                                   │                                                                    </span>
+<span class="d">Plan floor · not reported                                                                                      │                                                                    </span>
+                                                                                                               <span class="d">│                                                                    </span>
+
+
+<span class="d">── </span><span class="m">ask </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+<span class="b">❯                                                                                                                                                                                   </span>
+
+
+
+
+
+  <span class="d">enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection                                                                                                </span></pre></div>
+<p class="keys"><kbd>enter</kbd> send · <kbd>tab</kbd> repo · <kbd>ctrl+s</kbd> spend · <kbd>ctrl+m</kbd> models · <kbd>esc</kbd> stop · <kbd>ctrl+o</kbd> selection</p>
+<div class="ask"><b>A finished fleet still shows an empty cost column and a not-reported plan floor.</b> If cost is ever going to be real, this is the screen it lands on. It is also the screen where <i>what did that cost me</i> is the only question anyone asks.</div>
+</section>
+<h2 class="sec">G. Production, and the panes it lives in</h2>
+<section class="screen" id="s24">
+<div class="sh"><span class="num">24</span><span class="name">Production, one unresolved issue</span><span class="badge b-ship">SHIPPED</span><span class="src">04-production-issues · 160x38</span></div>
+<p class="purpose">
+An error caught, grouped, and traced to a symbol. Below it the repair queue, drafted and awaiting a human.
+This is the loop's outer edge and it is the screen a customer opens in the morning.</p>
+<div class="frame"><pre><span class="b">ESTELLE  ·  uqeu/estelle  ·  </span><span class="m">Fate Labs · owner                                                                                                                  </span>
+
+<span class="d">── </span><span class="m">session </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">──────────────────────────────────────────────────────────────────────  │  ── </span><span class="m">production </span><span class="d">· </span><span class="g">uqeu/estelle </span><span class="d">──────────────────────────────</span>
+   <span class="d">uqeu/estelle · cli/skill-suggest-20260901                                                      │  ── </span><span class="m">app </span><span class="d">· </span><span class="g">repo uqeu/estelle </span><span class="d">────────────────────────────────</span>
+<span class="b">Ask about uqeu/estelle                                                                            </span><span class="d">│  </span><span class="w">▲   </span><span class="m">error counts      ▂▅▃█ 14                              </span>
+                                                                                                  <span class="d">│  </span><span class="g">●   </span><span class="m">measured          14/3292 requests                     </span>
+<span class="b">Since your last session                                                                           </span><span class="d">│      ───────────────────────────────────────────────────────</span>
+<span class="m">Welcome back - you were last here about 3 hours ago.                                              </span><span class="d">│  ── </span><span class="m">services </span><span class="d">· </span><span class="g">4/4 up </span><span class="d">──────────────────────────────────────</span>
+<span class="m">Code you touched has changed since:                                                               </span><span class="d">│  no uptime checks registered · POST /monitor/uptime adds one</span>
+<span class="m">- billing/charge.rs - by Dana, about 2 hours ago - bound retry telemetry                          </span><span class="d">│                                                             </span>
+                                                                                                  <span class="d">│  ── </span><span class="m">agents </span><span class="d">· </span><span class="c">unread </span><span class="d">────────────────────────────────────────</span>
+<span class="m">Signed in · khai@fatelabs.ca · team                                                               </span><span class="d">│  ○   </span><span class="m">agents            </span><span class="d">no read yet · GET /agent/health      </span>
+<span class="m">Team · Fate Labs · owner                                                                          </span><span class="d">│                                                             </span>
+                                                                                                  <span class="d">│  ── </span><span class="m">estelle </span><span class="d">· </span><span class="r">1 unresolved </span><span class="d">─────────────────────────────────</span>
+<span class="b">/review  </span><span class="m">Read current changes                                                                     </span><span class="d">│  </span><span class="m">caught · Checkout timeout after deploy                     </span>
+<span class="b">/sweep   </span><span class="m">Index or refresh this repo                                                               </span><span class="d">│  grouped · 47 event(s) · traced to · billing/charge.rs:82   </span>
+<span class="b">?        </span><span class="m">Show shortcuts                                                                           </span><span class="d">│                                                             </span>
+                                                                                                  <span class="d">│  ── </span><span class="m">queue </span><span class="d">· </span><span class="w">1 repair(s) </span><span class="d">────────────────────────────────────</span>
+                                                                                                  <span class="d">│  </span><span class="m">drafted repair · Checkout timeout after deploy · awaiting  </span>
+                                                                                                  <span class="d">│  </span><span class="m">human review                                               </span>
+                                                                                                  <span class="d">│         gate absent · awaiting the proposed patch           </span>
+                                                                                                  <span class="d">│         diff unavailable - unavailable                      </span>
+                                                                                                  <span class="d">│                                                             </span>
+                                                                                                  <span class="d">│  ── </span><span class="m">github </span><span class="d">· </span><span class="w">unknown </span><span class="d">───────────────────────────────────────</span>
+                                                                                                  <span class="d">│  ○   </span><span class="m">connection        </span><span class="d">no read yet · GET /github/status     </span>
+                                                                                           <span class="m">⣀⣆     </span><span class="d">│                                                             </span>
+<span class="b">·   </span><span class="d">∷ ∷ </span><span class="b">·   · · ·   ·   ·   ·   ·   ·   · </span><span class="d">∷ ∷   </span><span class="b">·   ·   ·   ·   ·   ·   ·   ·   ·   ·   · </span><span class="d">∷ </span><span class="m">⠁     </span><span class="d">│                                                             </span>
+<span class="b">∷                                </span><span class="d">∷                                                 ∷ ∷            │                                                             </span>
+
+
+<span class="d">── </span><span class="m">ask </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+<span class="b">❯                                                                                                                                                               </span>
+
+
+
+
+
+  <span class="d">enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection                                                                            </span></pre></div>
+<p class="keys"><kbd>enter</kbd> send · <kbd>tab</kbd> repo · <kbd>ctrl+s</kbd> spend · <kbd>ctrl+m</kbd> models · <kbd>esc</kbd> stop · <kbd>ctrl+o</kbd> selection</p>
+<div class="ok"><b>Read the queue rows.</b> <code>drafted repair · awaiting human review</code>, then <code>gate absent · awaiting the proposed patch</code>, then <code>diff unavailable - unavailable</code>. Three different absences, three different sentences. That is the discipline.</div>
+<div class="rule"><b><code>diff unavailable - unavailable</code> is the word twice.</b> A formatter is joining a label to a reason and the reason is the label. It should either say why, or say nothing.</div>
+<div class="ask"><b>Your brief asked for mermaid diagrams on this screen.</b> Nothing renders a diagram in the CLI today. See screen 34.</div>
+</section>
+<section class="screen" id="s25">
+<div class="sh"><span class="num">25</span><span class="name">Panels, one terminal</span><span class="badge b-spec">SPEC</span><span class="src">skill 3.png §6</span></div>
+<p class="purpose">
+<b>The tab strip and the split.</b> One terminal, several agents, each a tab with its own status dot. The
+right pane carries production above and the orchestra fleet below.</p>
+<div class="frame"><pre><span class="d">agents</span>  <span class="g">●</span> <span class="b">scope</span>   <span class="w">◐</span> <span class="w">implement</span>   <span class="d">· review</span>   <span class="d">· gate</span>                    <span class="d">+ new</span>
+<span class="d">─────────────────────────────────────────────────────────────────────────────</span>
+<span class="b">❯</span> <span class="b">add retry to the client</span>       <span class="d">│</span> <span class="m">production</span>
+                                <span class="d">│</span> <span class="g">●</span> <span class="m">api        </span><span class="d">071b1aa6 · 16/246</span>
+<span class="d">●</span> <span class="m">Three attempts, backoff.</span>      <span class="d">│</span> <span class="g">●</span> <span class="m">postgres   </span><span class="d">17/60 · 47% disk</span>
+                                <span class="d">│</span> <span class="w">●</span> <span class="m">postgrest  </span><span class="d">restarting</span>
+<span class="w">◐</span> <span class="m">Working · 31s</span>                 <span class="d">│</span> <span class="m">errors 1h</span>  <span class="r">▁▂█▁</span>  <span class="m">47</span>
+                                <span class="d">│</span>
+                                <span class="d">│</span> <span class="m">orchestra </span><span class="d">· fleet 3 workers · rev 7</span>
+                                <span class="d">│</span> <span class="g">✓</span> <span class="m">w1  haiku </span>   <span class="d">0.4s  $0.001</span>
+                                <span class="d">│</span> <span class="w">◐</span> <span class="m">w2  sonnet</span>    <span class="d">27s  $0.061</span>
+                                <span class="d">│</span> <span class="d">· w3  queued</span>
+<span class="d">─────────────────────────────────────────────────────────────────────────────</span>
+<span class="d">click a tab · drag a divider · ctrl+\ split · ctrl+w close a VIEW</span></pre></div>
+<p class="keys"><kbd>ctrl+\</kbd> split · <kbd>ctrl+w</kbd> close a view · drag a divider · click a tab</p>
+<div class="ok"><b>The constraint printed beside this mock, and it is the important one.</b> <i>Closing a pane never stops an agent.</i> Reopening is one <code>GET</code> with <code>after_revision=0</code>, which returns the full snapshot. There is no replay to miss. Server-owned snapshots, monotonic revision, long-poll with an ETag. That is what makes a pane safe to close.</div>
+<div class="rule"><b>Almost none of the interaction here is built.</b> Shipped: a session tab strip (screen 33) and ONE fixed two-pane split. Not shipped: <code>ctrl+\</code>, a draggable divider, clicking a tab, <code>+ new</code>, per-tab phase dots, and closing a view. The layout is a Rust <code>Layout::default().constraints(...)</code>, which is the right foundation for a real divider and will land the alignment for free.</div>
+<div class="ask"><b>The status dots here use a fourth glyph set.</b> <code>●</code> for a done phase, <code>◐</code> for the running one, <code>·</code> for the not-yet ones. The shipped vocabulary would spell that <code>✓ ▶ □</code> for plan steps or <code>● ◐ ○</code> for rail rows. Pick one and I will make the tab strip use it.</div>
+</section>
+<section class="screen" id="s26">
+<div class="sh"><span class="num">26</span><span class="name">Todos, expanded and collapsed</span><span class="badge b-ship">SHIPPED</span><span class="src">09-todo-expanded / 10-todo-collapsed · 130</span></div>
+<p class="purpose">
+The server's task ledger. Note row five: <code>? Unverified: Confirm the account model</code>. Unknown is its
+own state and gets its own glyph rather than being folded into pending.</p>
+<div class="frame"><pre><span class="d">EXPANDED · ctrl+t</span>
+
+<span class="b">Todo                                                                           </span>
+<span class="g">✓ Bind checkout timeout — billing/charge.rs:82                                 </span>
+<span class="g">✓ Run the gate regression — 18/18 passed                                       </span>
+<span class="c">● Inspect the proposed diff — 2 files                                          </span>
+<span class="m">○ Open a reviewable PR                                                         </span>
+<span class="m">? Unverified: Confirm the account model                                        </span>
+<span class="g">✓ Trace the deploy — deploy-8e17                                               </span>
+<span class="m">○ Check GitHub connection                                                      </span>
+<span class="m">○ Record the final verdict                                                     </span>
+<span class="m">ctrl+t to collapse                                                             </span>
+
+
+<span class="d">COLLAPSED · ctrl+t</span>
+
+<span class="b">Todo                                                                           </span>
+<span class="g">✓ Bind checkout timeout — billing/charge.rs:82                                 </span>
+<span class="g">✓ Run the gate regression — 18/18 passed                                       </span>
+<span class="c">● Inspect the proposed diff — 2 files                                          </span>
+<span class="m">○ Open a reviewable PR                                                         </span>
+<span class="m">? Unverified: Confirm the account model                                        </span>
+<span class="m">… +3 more (1 done) · ctrl+t to expand                                          </span></pre></div>
+<p class="keys"><kbd>ctrl+t</kbd> expands and collapses</p>
+<div class="ok"><b>Collapsed says what it hid.</b> <code>… +3 more (1 done) · ctrl+t to expand</code>, not <code>+3 more</code>. The count of hidden DONE items is the part people would otherwise have to expand to learn.</div>
+<div class="rule"><b><code>?</code> is a sixth mark and it is not in either vocabulary.</b> Neither <code>Mark</code> nor <code>StepMark</code> defines it, yet the todo list and the orchestra table both use it, and it is the most honest glyph on either screen. <b>Proposal: promote <code>?</code> to <code>Mark::Unknown</code>, coloured <code>warn</code>, with the meaning <i>not measured</i>.</b> Right now the rule says five marks, no synonyms, and the product ships seven.</div>
+<div class="ask"><b>With no ledger, <kbd>ctrl+t</kbd> prints a sentence into the transcript</b> (<i>Todo state unavailable: the server has not emitted a task ledger for this session.</i>). Correct, and invisible if you are looking at the top of a long scroll.</div>
+</section>
+<h2 class="sec">H. Pickers. Four screens, one shape.</h2>
+<section class="screen" id="s27">
+<div class="sh"><span class="num">27</span><span class="name">Settings</span><span class="badge b-ship">SHIPPED</span><span class="src">07-settings · 130x38</span></div>
+<p class="purpose">
+Sixteen suites. Every row says who owns the setting: <code>server enforced</code>, <code>client display</code>,
+<code>client-owned</code>, <code>server-owned</code>, <code>server schema</code>, <code>server contract</code>.</p>
+<div class="frame"><pre><span class="b">ESTELLE  ·  uqeu/estelle                                                                                                          </span>
+
+<span class="d">── </span><span class="m">session </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+   <span class="d">uqeu/estelle · cli/skill-suggest-20260901                                                                                      </span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<span class="d">── </span><span class="m">settings </span><span class="d">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+<span class="b">&gt; 1 Mode                      </span><span class="d">plan · account ceiling · server enforced                                                            </span>
+  <span class="m">2 Theme                     </span><span class="d">Estelle Dark · client display                                                                       </span>
+  <span class="m">3 Production home           </span><span class="d">hidden · client-owned                                                                               </span>
+  <span class="m">4 Model                     </span><span class="d">account-wide auto route · server-owned                                                              </span>
+  <span class="m">5 Skills                    </span><span class="d">server registry · invoke explicitly                                                                 </span>
+  <span class="m">6 Credential                </span><span class="d">secure store · managed by /login                                                                    </span>
+  <span class="m">7 Code                      </span><span class="d">1 setting · server schema                                                                           </span>
+  <span class="m">8 Monitor                   </span><span class="d">1 setting · server schema                                                                           </span>
+  <span class="m">9 Review                    </span><span class="d">no configurable settings · server contract                                                          </span>
+    <span class="m">Repair                    </span><span class="d">1 setting · server schema                                                                           </span>
+    <span class="m">Prod                      </span><span class="d">no configurable settings · server contract                                                          </span>
+    <span class="m">Guardian                  </span><span class="d">no configurable settings · server contract                                                          </span>
+    <span class="m">Research                  </span><span class="d">no configurable settings · server contract                                                          </span>
+    <span class="m">Memory                    </span><span class="d">no configurable settings · server contract                                                          </span>
+    <span class="m">Agent                     </span><span class="d">no configurable settings · server contract                                                          </span>
+    <span class="m">Global                    </span><span class="d">1 setting · server schema                                                                           </span>
+<span class="d">↑↓ navigate · 1-9 or Enter select · Esc close                                                                                     </span></pre></div>
+<p class="keys"><kbd>↑↓</kbd> navigate · <kbd>1-9</kbd> or <kbd>enter</kbd> select · <kbd>esc</kbd> close</p>
+<div class="ok"><b>Rows 9 through 16 have no number.</b> Only nine rows can be reached by digit, so only nine carry one. A tenth row numbered <code>10</code> that no keypress can reach would be a lie about the keyboard.</div>
+<div class="ask"><b>Eight of sixteen suites say <code>no configurable settings</code>.</b> Half this screen is a list of things you cannot change. Worth collapsing them to one line under the rule.</div>
+</section>
+<section class="screen" id="s28">
+<div class="sh"><span class="num">28</span><span class="name">Settings, one suite</span><span class="badge b-ship">SHIPPED</span><span class="src">07b-monitor-settings · 130x34</span></div>
+<p class="purpose">
+Inside a suite. One row, and it names its scope and its owner: <code>30 · team · server</code>.</p>
+<div class="frame"><pre><span class="b">ESTELLE  ·  uqeu/estelle                                                                                                          </span>
+
+<span class="d">── </span><span class="m">session </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+   <span class="d">uqeu/estelle · cli/skill-suggest-20260901                                                                                      </span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<span class="d">── </span><span class="m">monitor settings </span><span class="d">──────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+<span class="b">&gt; 1 Data retention (days)     </span><span class="d">30 · team · server                                                                                  </span>
+<span class="d">↑↓ navigate · 1-9 or Enter select · Esc close                                                                                     </span></pre></div>
+<p class="keys"><kbd>↑↓</kbd> navigate · <kbd>enter</kbd> edit · <kbd>esc</kbd> back</p>
+<div class="rule"><b>The value shown is the DEFAULT, not the team's setting.</b> The schema default is 30 and the team value on the wire is 45. This frame shows 30. Whichever is right, one screen showing a number that is not the number in force is the exact defect class this product exists to prevent. Worth a probe before the port.</div>
+</section>
+<section class="screen" id="s29">
+<div class="sh"><span class="num">29</span><span class="name">Model pool</span><span class="badge b-ship">SHIPPED</span><span class="src">08-model-picker · 130x34</span></div>
+<p class="purpose">
+Every model your keys reach, grouped by provider, with the active one marked <code>current</code>. Account-wide,
+so it is the same pool on every machine you sign in from.</p>
+<div class="frame"><pre><span class="b">ESTELLE  ·  uqeu/estelle                                                                                                          </span>
+
+<span class="d">── </span><span class="m">session </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+   <span class="d">uqeu/estelle · cli/skill-suggest-20260901                                                                                      </span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<span class="d">── </span><span class="m">model pool </span><span class="d">· </span><span class="c">account-wide </span><span class="d">─────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+<span class="b">&gt; 1 claude-opus-4.1           </span><span class="d">Anthropic · account-wide · current                                                                  </span>
+  <span class="m">2 claude-sonnet-4.5         </span><span class="d">Anthropic · account-wide                                                                            </span>
+  <span class="m">3 gpt-5.5                   </span><span class="d">OpenAI · account-wide                                                                               </span>
+  <span class="m">4 gpt-5.5-codex             </span><span class="d">OpenAI · account-wide                                                                               </span>
+<span class="d">↑↓ navigate · 1-9 or Enter select · Esc close                                                                                     </span></pre></div>
+<p class="keys"><kbd>↑↓</kbd> navigate · <kbd>1-9</kbd> or <kbd>enter</kbd> select · <kbd>esc</kbd> close · <kbd>ctrl+m</kbd> opens it</p>
+<div class="rule"><b>Estelle does not silently choose a model, and no screen may imply it does.</b> The affinity re-rank does not beat random: p=0.63 at n=12. The <code>(model, task, verdict)</code> join is built and holds no rows worth ranking on. The pin stays yours.</div>
+<div class="ask"><b>Your mock <code>10 · Models — every one your keys reach</code> is a much larger screen</b> — score, n, input and output price, context, 30-day uptime, a <code>no key</code> state, and per-model failure notes. Its own annotation is the reason it is honest: <i>score is empty because score is OURS. 12 outcomes, p=0.63.</i> Every score a dash. That version is worth building; the dashes are the point.</div>
+</section>
+<section class="screen" id="s30">
+<div class="sh"><span class="num">30</span><span class="name">Provider API key picker</span><span class="badge b-ship">SHIPPED</span><span class="src">cli-rs live · 2026-08-24 capture · no gallery frame</span></div>
+<p class="purpose">
+Reached from login stage two. Ten providers, each naming how it authenticates. This is a real screenshot of
+the running binary, not a mock, which is why it still has a box around it.</p>
+<div class="frame"><pre><span class="d">┌ </span><span class="m">CONVERSATION  Tab · Ctrl←/→ focus </span><span class="d">───────────────────────────────</span>
+ <span class="r">Credential flow did not complete: login cancelled; no credential was</span>
+ <span class="r">written. Run /doctor.</span>
+<span class="d">└──────────────────────────────────────────────────────────────────</span>
+
+<span class="d">┌ </span><span class="m">PROVIDER API KEY </span><span class="d">──────────────────────────────────────────────</span>
+<span class="b">›</span> <span class="b">1 Anthropic     </span>          <span class="m">Anthropic API key · masked input</span>
+  <span class="m">2 OpenAI API    </span>          <span class="m">OpenAI API key · masked input</span>
+  <span class="m">3 Google Gemini </span>          <span class="m">Google AI Studio API key · masked input</span>
+  <span class="m">4 GitHub Copilot</span>          <span class="m">GitHub device code</span>
+  <span class="m">5 Azure OpenAI  </span>          <span class="m">API base and Azure OpenAI API key</span>
+  <span class="m">6 AWS Bedrock   </span>          <span class="m">Bedrock API key · masked input</span>
+  <span class="m">7 OpenRouter    </span>          <span class="m">API key · 200+ models</span>
+  <span class="m">8 DeepSeek      </span>          <span class="m">API key · masked input</span>
+  <span class="m">9 Fireworks     </span>          <span class="m">API key · masked input</span>
+  <span class="m">  MiniMax       </span>          <span class="m">API key · masked input</span>
+<span class="d">↑↓ navigate · 1–9 or Enter select · Esc close</span>
+<span class="d">└──────────────────────────────────────────────────────────────────</span></pre></div>
+<p class="keys"><kbd>↑↓</kbd> navigate · <kbd>1-9</kbd> or <kbd>enter</kbd> select · <kbd>esc</kbd> close</p>
+<div class="rule"><b>Three defects on one captured screen.</b> It draws boxes, which the no-box rule forbids. The refusal at the top is the login-cancel loop you hit live. And it has no gallery frame, so no test renders it and nobody would have seen any of this without your screenshot.</div>
+<div class="ask"><b>Ten rows, nine reachable by digit.</b> MiniMax has no number. Same shape as screen 27. If a picker can exceed nine rows, the digits are a convenience and <kbd>↑↓</kbd> is the contract; say that once in the footer rather than leaving a blank.</div>
+</section>
+<section class="screen" id="s31">
+<div class="sh"><span class="num">31</span><span class="name">Autonomy</span><span class="badge b-ship">SHIPPED</span><span class="src">14-autonomy · 130x34</span></div>
+<p class="purpose">
+The dial, as four rungs that each say what the previous one could not do. Default is <code>plan</code>, and
+the ceiling is enforced on the server, not here.</p>
+<div class="frame"><pre><span class="b">ESTELLE  ·  uqeu/estelle                                                                                                          </span>
+
+<span class="d">── </span><span class="m">session </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+   <span class="d">uqeu/estelle · cli/skill-suggest-20260901                                                                                      </span>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<span class="d">── </span><span class="m">autonomy </span><span class="d">──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
+<span class="b">&gt; 1 plan                      </span><span class="d">verify · remember · retrieve · advise · current                                                     </span>
+  <span class="m">2 accept-edits              </span><span class="d">+ sandboxed diff · reviewable PR                                                                    </span>
+  <span class="m">3 branch                    </span><span class="d">+ push to non-main branch · run CI · never merge                                                    </span>
+  <span class="m">4 auto                      </span><span class="d">+ guarded merge · commands · otherwise reviewable PR                                                </span>
+<span class="d">↑↓ navigate · 1-9 or Enter select · Esc close                                                                                     </span></pre></div>
+<p class="keys"><kbd>shift+tab</kbd> opens it · <kbd>↑↓</kbd> navigate · <kbd>enter</kbd> select</p>
+<div class="ok"><b>The wording is exactly right and I would not touch it.</b> Each rung is written as <code>+ what this adds</code>, and rung 4 ends <code>otherwise reviewable PR</code>, so the fail-closed direction is on the screen rather than in a doc. There is no auto-deploy rung because there is no auto-deploy.</div>
+<div class="ask"><b>Nothing here shows the kill switch or the audit trail.</b> Both exist (<code>ESTELLE_AUTO_MODE_KILL</code>, HMAC-logged actions). A dial with no visible brake is a dial people will not turn.</div>
+</section>
+<h2 class="sec">I. The questions the CLI cannot answer yet</h2>
+<section class="screen" id="s32">
+<div class="sh"><span class="num">32</span><span class="name">How much memory do I have left</span><span class="badge b-prop">PROPOSED</span><span class="src">every field below is already returned by POST /sweep/estimate</span></div>
+<p class="purpose">
+<b>You asked for this screen by name and it does not exist.</b> The server computes the whole answer on every
+sweep. The client reads one boolean out of the reply and throws the rest away
+(<code>top_level.rs:2314</code>, <code>estimate.get("fits")</code>).</p>
+<div class="frame"><pre><span class="d">── </span><span class="m">memory · </span><span class="c">uqeu/estelle </span><span class="d">───────────────────────────────────────────────</span>
+
+<span class="d"> </span> <span class="m">held      </span><span class="b">   38.4M</span>  <span class="d">tokens in the team's swept copy</span>
+<span class="d"> </span> <span class="m">cap       </span><span class="b">  250.0M</span>  <span class="d">Ultra · account-wide</span>
+<span class="g">●</span> <span class="m">free      </span><span class="b">  211.6M</span>  <span class="d">84.6% of the plan is unspent</span>
+
+<span class="d">── </span><span class="m">this sweep </span><span class="d">──────────────────────────────────────────────────────────</span>
+
+<span class="d"> </span> <span class="m">measured  </span><span class="b">   11.5M</span>  <span class="d">1,204 files · counted, not estimated</span>
+<span class="d"> </span> <span class="m">net new   </span><span class="b">    2.1M</span>  <span class="d">9.4M is already held and will not be re-ingested</span>
+<span class="g">●</span> <span class="m">fits      </span><span class="g">     yes</span>  <span class="d">0 blocked · 0 billable · $0.00 overflow</span>
+
+   <span class="d">largest paths</span>
+     <span class="m">logs/</span>                    <span class="m">4.9M</span>
+     <span class="m">vendor-reference/</span>        <span class="m">2.6M</span>
+     <span class="m">web/node_modules/</span>        <span class="m">1.2M</span>
+
+<span class="m">1,204 files; 211.6M of your 250M capacity is free.</span>
+
+<span class="d">── </span><span class="m">when it does not fit </span><span class="d">────────────────────────────────────────────────</span>
+
+<span class="w">▲</span> <span class="m">fits      </span><span class="r">      no</span>  <span class="d">18.3M would not fit</span>
+   <span class="m">Team (100M) fits — $99/mo. Or sweep a narrower path and exclude</span>
+   <span class="m">the biggest directories: logs/ (4.9M), vendor-reference/ (2.6M).</span></pre></div>
+<p class="keys"><code>/sweep</code> shows it before ingesting · <code>/memory</code> should show it any time</p>
+<div class="rule"><b>Everything above is a field the server already sends.</b> <code>cap</code> · <code>held_tokens</code> · <code>remaining_tokens</code> · <code>estimated_tokens</code> · <code>net_new_tokens</code> · <code>fits</code> · <code>blocked_tokens</code> · <code>billable_tokens</code> · <code>overflow_cost_usd</code> · <code>suggested_plan</code> · <code>largest_paths</code> · <code>exact</code> · and a written <code>message</code>. The bottom block is the server's own sentence, not mine.</div>
+<div class="ok"><b>Two honesty details worth keeping.</b> <code>net new</code> exists because a re-sweep of an unchanged repo ingests nothing, so pricing the whole repo against a namespace that already holds it would refuse every sweep after the first. And <code>exact</code> flips to false as soon as ONE file was sized from bytes rather than counted, so the screen must be able to say <i>estimated</i> instead of <i>measured</i>.</div>
+<div class="ask"><b>Where does it live?</b> <code>/sweep</code> before it ingests is the obvious moment. But <i>how much memory do I have left</i> is a question people ask at other times, which argues for <code>/memory</code> or a row in <code>/me</code>.</div>
+</section>
+<section class="screen" id="s33">
+<div class="sh"><span class="num">33</span><span class="name">Usage</span><span class="badge b-ship">SHIPPED</span><span class="src">commands.rs · renders into the transcript, has no screen</span></div>
+<p class="purpose">
+<code>/usage</code> today. Requests and tokens by day, printed as transcript lines. It answers what you spent
+and never what you have left.</p>
+<div class="frame"><pre><span class="b">❯</span> <span class="b">/usage</span>
+
+<span class="m">7 days  |  3,292 requests  |  1,184,220 tokens</span>
+<span class="m">2026-08-26  |  411 requests  |  148,004 tokens</span>
+<span class="m">2026-08-27  |  508 requests  |  191,776 tokens</span>
+<span class="m">2026-08-28  |  466 requests  |  163,190 tokens</span>
+<span class="m">2026-08-29  |  612 requests  |  229,441 tokens</span>
+<span class="m">2026-08-30  |  399 requests  |  141,822 tokens</span>
+<span class="m">2026-08-31  |  477 requests  |  164,003 tokens</span>
+<span class="m">2026-09-01  |  419 requests  |  145,984 tokens</span></pre></div>
+<p class="keys"><code>/usage</code> · <code>/activity</code> for the same by endpoint · <kbd>ctrl+s</kbd> spend</p>
+<div class="ok"><b>Every cell can say <code>not returned</code> independently.</b> <code>requests not returned</code> and <code>tokens not returned</code> are separate strings, so a day with one and not the other does not print a zero.</div>
+<div class="ask"><b>Your mock <code>5 · Spend, click it</code> is the version worth building.</b> Collapsed it is one segment on the status line, <code>~/estelle · main · $0.104 · ⚙ affinity</code>; expanded it breaks into input, output, <code>cached … already warm</code>, this turn, your priciest available model, and saved. The annotation says the receipts are real and <i>the gap is that no CLI prints it</i>.</div>
+</section>
+<section class="screen" id="s34">
+<div class="sh"><span class="num">34</span><span class="name">The answer itself: a table, and a diagram</span><span class="badge b-spec">SPEC</span><span class="src">founder's design book 2026-08-24 §17 · nothing renders markdown in the CLI today</span></div>
+<p class="purpose">
+When Estelle has a table it draws a table. When it has a graph it draws the graph. Markdown is rendered, not
+printed, and a citation stays clickable inside a rendered table.</p>
+<div class="frame"><pre><span class="sk">»</span> <span class="m">Three call sites disagree on the same flag.</span>
+
+<span class="d">file                        passes            strict</span>
+<span class="c">api_autorepair.py:486</span>       <span class="m">gate_certified</span>    <span class="g">yes</span>
+<span class="c">slack_conversation.py:713</span>   <span class="m">gate_certified</span>    <span class="g">yes</span>
+<span class="c">dev_from_ticket.py:294</span>      <span class="m">gate_merges</span>       <span class="r">no</span>
+
+<span class="d">enter on a citation opens it · 3 files read · 0 guesses</span>
+
+
+<span class="sk">»</span> <span class="m">Here is the path a repair takes.</span>
+
+     <span class="d">monitor</span>  <span class="d">───▶</span>  <span class="d">research</span>
+                         <span class="d">│</span>
+                         <span class="d">▼</span>
+       <span class="d">code</span>  <span class="d">───▶</span>  <span class="d">gate</span>  <span class="r">─── refused ──▶</span>  <span class="m">repair, round 1 of 3</span>
+                         <span class="d">└──</span> <span class="g">clean ────▶</span>  <span class="m">reviewable PR</span>
+
+<span class="d">m toggles the source · the diagram is the default</span></pre></div>
+<p class="keys"><kbd>enter</kbd> on a citation opens it · <kbd>m</kbd> toggles diagram and source</p>
+<div class="ask"><b>The argument on your own mock.</b> jcode renders mermaid and it is the one thing its terminal does that ours does not. Tables, lists, code fences and mermaid all parse client-side, so this costs no tokens and no round trip.</div>
+<div class="rule"><b>This is also the answer to the mermaid ask on the production screen.</b> One markdown renderer serves both, and building it twice is how two owners of one derived fact start disagreeing.</div>
+</section>
+<section class="screen" id="s35">
+<div class="sh"><span class="num">35</span><span class="name">Session tabs</span><span class="badge b-ship">SHIPPED</span><span class="src">live_renderer.rs:114 · has no gallery frame</span></div>
+<p class="purpose">
+Several sessions in one terminal. This is the shipped half of screen 25, and no test renders it, because the
+gallery's fixture has no tabs.</p>
+<div class="frame"><pre><span class="d">sessions</span>  <span class="sel"> + s-4a19 </span> <span class="d"> · s-77c2 </span> <span class="d"> · s-0b3e </span>  <span class="d">Alt+Left/Right switch · Ctrl+W close view</span></pre></div>
+<p class="keys"><kbd>ctrl+tab</kbd> / <kbd>ctrl+shift+tab</kbd> cycle · <kbd>alt+←</kbd> <kbd>alt+→</kbd> switch · <kbd>ctrl+w</kbd> close</p>
+<div class="rule"><b>Tabs are labelled with session IDs.</b> <code>s-4a19</code> tells you nothing. The mock labels them by what the agent is doing (<code>scope</code>, <code>implement</code>, <code>review</code>, <code>gate</code>) with a status dot. The server already sends a session title; this strip does not read it.</div>
+<div class="rule"><b>The footer advertises <kbd>Alt+Left/Right</kbd>, and the binding beside it warns against alt-chords on macOS.</b> Arrows survive where letters do not, so this one probably works. It has never been in a rendered frame, so nobody has checked.</div>
+</section>
+<section class="screen" id="s36">
+<div class="sh"><span class="num">36</span><span class="name">Doctor, failing</span><span class="badge b-spec">SPEC</span><span class="src">founder's design book 2026-08-24 §7 · doctor.rs exists, has no screen</span></div>
+<p class="purpose">
+<code>/doctor</code> can exit non-zero now, and <b>a thing that can fail needs a design for failing.</b> The
+mock's key detail is the last line of the failing row: it says what the failure is NOT.</p>
+<div class="frame"><pre><span class="d">── </span><span class="m">doctor </span><span class="d">─────────────────────────────────────────────────</span>
+
+<span class="g">✓</span> <span class="m">Estelle account   </span>  <span class="b">khai@fatelabs.ca</span>
+<span class="g">✓</span> <span class="m">Claude plan       </span>  <span class="b">imported</span>
+<span class="r">✗</span> <span class="m">Local model       </span>  <span class="r">FAIL</span>
+    <span class="m">no answer within 5s</span>
+    <span class="c">http://localhost:1234/v1/models</span>
+    <span class="w">NOT a rejected credential — check the endpoint first</span>
+
+<span class="d">exit 1</span></pre></div>
+<p class="keys"><code>/doctor</code> · <code>estelle doctor</code> exits non-zero</p>
+<div class="ok"><b>That third line is the whole screen.</b> A timeout and a 401 are the same red row and opposite problems. Saying which one it is NOT is faster to act on than saying which one it is.</div>
+<div class="rule"><b>Your brief's own line about this: <i>every failure state gets a design — that discipline gap is why doctor shipped unable to fail.</i></b></div>
+</section>
+<section class="screen" id="s37">
+<div class="sh"><span class="num">37</span><span class="name">Resume a session</span><span class="badge b-spec">SPEC</span><span class="src">founder's design book 2026-08-24 §6 · resume_picker.rs is vendored, unwired</span></div>
+<p class="purpose">
+Frecency-ranked, the way zoxide ranks directories: most recent plus most frequent, not alphabetical. Each row
+carries how the session ended, which is the only thing that helps you pick.</p>
+<div class="frame"><pre><span class="d">── </span><span class="m">resume </span><span class="d">───────────────────────────────────────────────────</span>
+
+<span class="sk">›</span> <span class="b">estelle </span>   <span class="d">2m ago    · </span><span class="r">gate refused ×3</span>
+  <span class="m">web     </span>   <span class="d">1h ago    · </span><span class="m">34/0/7</span>
+  <span class="m">cli-rs  </span>   <span class="d">3h ago    · </span><span class="g">315 passed</span>
+  <span class="m">estelle </span>   <span class="d">yesterday · </span><span class="d">no outcome recorded</span>
+
+<span class="d">↑↓ navigate · enter resume · esc new</span></pre></div>
+<p class="keys"><kbd>↑↓</kbd> navigate · <kbd>enter</kbd> resume · <kbd>esc</kbd> start new · <code>/resume</code></p>
+<div class="rule"><b>An id that never existed and a real session with no checkpoint return the same string</b> (<code>(no saved session)</code>). Any resume screen has to distinguish <i>no such session</i> from <i>this session saved nothing</i>, or it inherits that bug into the UI. Hence the fourth row above.</div>
+<div class="ask"><b>Also worth stealing from atuin, per your brief:</b> the transcript is a log, theirs is a queryable store. What ran, where, exit code, when. That is the same data this picker needs.</div>
+</section>
+<section class="screen" id="s38">
+<div class="sh"><span class="num">38</span><span class="name">Sweep, running</span><span class="badge b-ship">SHIPPED</span><span class="src">top_level.rs · progress is real, no gallery frame exists</span></div>
+<p class="purpose">
+The long one. Five named states with real percentages, from a local file collection through a capacity check
+to either a synchronous upload or a background ingest.</p>
+<div class="frame"><pre><span class="d">── </span><span class="m">sweep · </span><span class="c">uqeu/estelle </span><span class="d">───────────────────────────────────────────</span>
+
+<span class="g">✓</span> <span class="m">collecting source        </span>  <span class="d">1,204 files · 41.2 MB</span>
+<span class="g">✓</span> <span class="m">checking account capacity</span>  <span class="d">20%</span>
+<span class="w">◐</span> <span class="m">sending source set       </span>  <span class="d">35%</span>
+<span class="d">○</span> <span class="d">repo swept</span>
+
+<span class="d">nothing has been sent that .estelleignore excludes</span></pre></div>
+<p class="keys"><code>/sweep</code> · <code>--dry-run</code> collects and sends nothing</p>
+<div class="ok"><b>No fantasy ETA, by rule.</b> <code>ingest_progress.py:14</code> reads <i>never a fantasy constant</i>, and the percentages above are phase boundaries, not a prediction.</div>
+<div class="rule"><b>The capacity check is the screen 32 gap in one line.</b> <code>checking account capacity</code> is a step the user watches go past, and the reply it reads holds every number they wanted. Today the step reports a percentage and discards the answer.</div>
+<div class="ask"><b>When it does NOT fit, the client dumps the raw JSON reply into the error string.</b> <code>this sweep does not fit the account capacity: {concise_value(&amp;estimate)}</code>. That is the one moment the user most needs screen 32 and instead they get a serialised object.</div>
+</section>
+<h2 class="sec">J. Three more the mocks specify and the CLI has not built</h2>
+<section class="screen" id="s39">
+<div class="sh"><span class="num">39</span><span class="name">Tool calls, collapsed and open</span><span class="badge b-spec">SPEC</span><span class="src">founder's design book 2026-08-24 §16</span></div>
+<p class="purpose">
+Every tool call is one collapsed row. Open it and you get the last twelve lines and a count.
+<b>Never a silent truncation.</b></p>
+<div class="frame"><pre><span class="d">COLLAPSED · THREE STEPS</span>
+
+<span class="d">├</span> <span class="c">←</span> <span class="m">read </span>  <span class="c">src/client.rs</span>                          <span class="d"> 0.1s</span>
+<span class="d">├</span> <span class="g">✓</span> <span class="m">edit </span>  <span class="c">src/client.rs</span>  <span class="g">+12</span> <span class="r">-3</span>                <span class="d"> 0.2s</span>
+<span class="d">└</span> <span class="g">✓</span> <span class="m">bash </span>  <span class="b">cargo test</span>  <span class="d">· 14 passed</span>              <span class="d">11.3s</span> <span class="d">▸</span>
+
+
+<span class="d">OPEN · THE SAME BASH STEP</span>
+
+<span class="d">└</span> <span class="m">bash</span>  <span class="b">cargo test</span>                                <span class="d">11.3s</span>
+  <span class="d">┌</span>
+  <span class="d">│</span> <span class="b">$ cargo test --workspace</span>
+  <span class="d">│</span>   <span class="m">Compiling estelle-tui v0.3.0</span>
+  <span class="d">│</span>    <span class="m">Finished test profile in 8.1s</span>
+  <span class="d">│</span>     <span class="m">Running unittests src/lib.rs</span>
+  <span class="d">│</span>
+  <span class="d">│</span> <span class="m">test client::retry::bounded ... </span><span class="g">ok</span>
+  <span class="d">│</span> <span class="m">test client::retry::gives_up ... </span><span class="g">ok</span>
+  <span class="d">│</span> <span class="d">… 12 more · ctrl+o for all 400</span>
+  <span class="d">│</span>
+  <span class="d">│</span> <span class="m">test result: </span><span class="g">ok</span><span class="m">. 14 passed; 0 failed</span>
+  <span class="d">└</span>
+  <span class="m">compile     </span>   <span class="d">8.1s</span>
+  <span class="m">tests       </span>   <span class="d">3.2s</span>   <span class="g">14 of 14</span>
+
+<span class="d">c copies the command · r re-runs it</span></pre></div>
+<p class="keys"><kbd>▸</kbd> or click expands · <kbd>c</kbd> copies the command · <kbd>r</kbd> re-runs it · <kbd>ctrl+o</kbd> all lines</p>
+<div class="ok"><b>The rule printed under this mock is the one I would hold you to.</b> <i>A bash step that printed 400 lines shows the last 12 and a count, never a silent truncation.</i> A capped read means <i>cannot answer</i>, never <i>that is all there is</i>, and this is that rule applied to a scrollback.</div>
+<div class="rule"><b>This mock draws boxes too</b> (<code>┌ │ └</code> around the shell output). Same conflict as screens 12 and 25. If the no-box rule holds, the shell block needs a different container: an indent plus a <code>│</code> rail is already exempt and would read almost identically.</div>
+<div class="ask"><b>Tool output defaults to collapsed.</b> Confirm that is what you want as the default, because it is the difference between a transcript you can scan and one you scroll.</div>
+</section>
+<section class="screen" id="s40">
+<div class="sh"><span class="num">40</span><span class="name">The code graph</span><span class="badge b-spec">SPEC</span><span class="src">founder's design book 2026-08-24 §8 · /graph nodes and blast_radius already answer</span></div>
+<p class="purpose">
+What Guardian retrieves from. Chokepoints marked by what touching them moves, walkable with the arrow keys,
+exportable. <b>The data exists; this is a renderer over it.</b></p>
+<div class="frame"><pre><span class="d">── </span><span class="m">graph · </span><span class="c">estelle/serve </span><span class="d">──────────────── </span><span class="m">1,204 nodes · 8,910 edges</span>
+
+              <span class="m">◆ api.py</span>
+        <span class="d">┌───────┼────────┐</span>
+    <span class="m">◆ api_dev</span>  <span class="m">◆ api_work</span>  <span class="m">◆ api_integr</span>
+        <span class="d">└───────┼────────┘</span>
+              <span class="r">◆ deep_review_gate</span>
+                  <span class="d">│</span>
+              <span class="m">◆ gate_sources</span>
+                  <span class="d">│</span>
+              <span class="g">◆ review_ruleset</span>
+
+<span class="d">◆ chokepoint · 3 in, 4 out · touching it moves 41 files</span>
+<span class="d">↑↓ walk · enter opens · b blast radius · / filter · x export dot</span></pre></div>
+<p class="keys"><kbd>↑↓</kbd> walk · <kbd>enter</kbd> opens · <kbd>b</kbd> blast radius · <kbd>/</kbd> filter · <kbd>x</kbd> export dot</p>
+<div class="ok"><b>The read path is real.</b> <code>/graph nodes</code>, <code>blast_radius</code>, <code>chokepoints</code>, <code>core_files</code>, <code>subsystems</code>, <code>import_cycles</code> and <code>refactor_order</code> all answer today. None of them has a screen; they print lines.</div>
+<div class="rule"><b>The half that is not wired is the half that matters.</b> Your annotation: <i>editing and retracting from the CLI is not wired, and a memory the customer cannot correct is the failure this section exists to close.</i> <code>/memories</code> lists with trust tiers and supersession works on the server. There is no CLI door to correct one.</div>
+<div class="ask"><b>Guardian owns the graph, so Guardian owns this screen.</b> That is your line and it means this one is not a CLI-lane build.</div>
+</section>
+<section class="screen" id="s41">
+<div class="sh"><span class="num">41</span><span class="name">Memory: what Estelle knows, and correcting it</span><span class="badge b-prop">PROPOSED</span><span class="src">/memory and /memories answer · nothing edits or retracts</span></div>
+<p class="purpose">
+The held-memory listing with trust tiers, and the missing half: a way to say <i>that is wrong</i> without
+leaving the terminal.</p>
+<div class="frame"><pre><span class="d">── </span><span class="m">memory · </span><span class="c">uqeu/estelle </span><span class="d">──────────────────────────────────────────</span>
+
+<span class="g">●</span> <span class="m">verified </span>  <span class="b">the merge gate is deterministic and calls no model</span>
+             <span class="c">serve/gate_verdict.py:41</span>  <span class="d">· cited · 3 sources</span>
+
+<span class="w">▲</span> <span class="m">asserted </span>  <span class="b">the CLI publishes from the estelle-cli repository</span>
+             <span class="d">no citation · told to Estelle on 2026-08-14</span>
+
+<span class="d">○</span> <span class="m">superseded</span> <span class="d">the ladder is Pro $19 / Ultra $59</span>
+             <span class="d">replaced 2026-08-29 by a live read of /plans</span>
+
+<span class="d">↑↓ walk · enter opens the citation · </span><span class="sk">e</span><span class="d"> edit · </span><span class="sk">x</span><span class="d"> retract · / filter</span></pre></div>
+<p class="keys"><kbd>↑↓</kbd> walk · <kbd>enter</kbd> opens the citation · <kbd>e</kbd> edit · <kbd>x</kbd> retract</p>
+<div class="rule"><b>The two pink keys are the proposal; everything above them ships.</b> Trust tiers, supersession and the citation are real. <code>edit_memory</code> exists as an MCP tool and has no CLI door.</div>
+<div class="ok"><b>A superseded memory is shown, not deleted.</b> The rule elsewhere in the system is that a downgrade never silently deletes, and a memory listing that hides what it used to believe is the same defect.</div>
+<div class="ask"><b>Retraction is destructive and needs a confirmation design.</b> There is a live example to avoid: until 2026-09-01 a secret survived <code>/purge</code> in four stores while every guard stayed green. A retract key that reports success over a store it cannot reach is worse than no retract key.</div>
+</section>
+<h2 class="sec">K. The rules under every screen</h2>
+
+<p class="lede">Nothing in this section is a screen. It is the small number of rules that make every screen
+above reproducible by a Rust renderer without a single hand-placed space.</p>
+
+<h3 style="font-size:15px;margin:26px 0 4px">The pink, and where it came from</h3>
+<p class="purpose">I sampled it independently before reading the code, with a pixel histogram over
+<code>skill.png</code>, <code>skill 2.png</code> and <code>skill 4.png</code>. Every pink glyph in those mocks
+is one value, <b><code>#CA92AF</code></b> (hue 328.9, saturation 0.28, value 0.79): 5,740 pixels in
+<code>skill.png</code>, 2,798 in each of the other two, and everything else in that hue band is antialiasing
+of it. <code>skill 3.png</code>, the panels mock, contains no pink at all, which is consistent with it having
+no skill on it.
+<br><br>That value is already pinned in <code>cli-rs/tui/src/theme.rs</code> with the same provenance, so this
+is an independent confirmation rather than a new finding. Worth saying why it is pinned: it shipped as
+<code>#D48FB0</code> for months and nobody could say where that came from. The cream variant,
+<code>#B06A8C</code>, is honestly unmeasured, because there is no cream skills mock to sample.</p>
+
+<h3 style="font-size:15px;margin:26px 0 4px">The dark palette</h3>
+<table><thead><tr><th>token</th><th>value</th><th>what it means</th></tr></thead><tbody><tr><td><code>ground</code></td><td><span class="sw" style="background:#16130F"></span><code>#16130F</code></td><td>the terminal ground</td></tr><tr><td><code>tint</code></td><td><span class="sw" style="background:#241F19"></span><code>#241F19</code></td><td>one step off the ground: the selected row, the active plan step</td></tr><tr><td><code>dim</code></td><td><span class="sw" style="background:#6F6A5E"></span><code>#6F6A5E</code></td><td>rules, hints, absent facts, anything you are not meant to read first</td></tr><tr><td><code>mid</code></td><td><span class="sw" style="background:#948E81"></span><code>#948E81</code></td><td>body text</td></tr><tr><td><code>bright</code></td><td><span class="sw" style="background:#E9E6DC"></span><code>#E9E6DC</code></td><td>the thing on the row that matters</td></tr><tr><td><code>red</code></td><td><span class="sw" style="background:#C52416"></span><code>#C52416</code></td><td>refused</td></tr><tr><td><code>green</code></td><td><span class="sw" style="background:#5F9E6E"></span><code>#5F9E6E</code></td><td>landed, healthy, done</td></tr><tr><td><code>warn</code></td><td><span class="sw" style="background:#C9A227"></span><code>#C9A227</code></td><td>blocked, needs a human</td></tr><tr><td><code>cite</code></td><td><span class="sw" style="background:#7FB3C8"></span><code>#7FB3C8</code></td><td>a file:line citation, and the in-flight mark</td></tr><tr><td><code>plan</code></td><td><span class="sw" style="background:#9FC4E0"></span><code>#9FC4E0</code></td><td>plan surfaces</td></tr><tr><td><code>skill</code></td><td><span class="sw" style="background:#CA92AF"></span><code>#CA92AF</code></td><td>THE PINK. the offered skill name, the typed palette's selected row</td></tr><tr><td><code>diff_add</code></td><td><span class="sw" style="background:#1B2E1D"></span><code>#1B2E1D</code></td><td>added line ground</td></tr><tr><td><code>diff_del</code></td><td><span class="sw" style="background:#361A18"></span><code>#361A18</code></td><td>removed line ground</td></tr></tbody></table>
+
+<h3 style="font-size:15px;margin:26px 0 4px">The cream palette</h3>
+<table><thead><tr><th>token</th><th>value</th><th></th></tr></thead><tbody><tr><td><code>ground</code></td><td><span class="sw" style="background:#E9E6DC"></span><code>#E9E6DC</code></td><td></td></tr><tr><td><code>tint</code></td><td><span class="sw" style="background:#DCD7C9"></span><code>#DCD7C9</code></td><td></td></tr><tr><td><code>dim</code></td><td><span class="sw" style="background:#8B8578"></span><code>#8B8578</code></td><td></td></tr><tr><td><code>mid</code></td><td><span class="sw" style="background:#575043"></span><code>#575043</code></td><td></td></tr><tr><td><code>bright</code></td><td><span class="sw" style="background:#1F1C17"></span><code>#1F1C17</code></td><td></td></tr><tr><td><code>red</code></td><td><span class="sw" style="background:#B0210F"></span><code>#B0210F</code></td><td></td></tr><tr><td><code>green</code></td><td><span class="sw" style="background:#3D7550"></span><code>#3D7550</code></td><td></td></tr><tr><td><code>warn</code></td><td><span class="sw" style="background:#96751A"></span><code>#96751A</code></td><td></td></tr><tr><td><code>cite</code></td><td><span class="sw" style="background:#38708C"></span><code>#38708C</code></td><td></td></tr><tr><td><code>plan</code></td><td><span class="sw" style="background:#356A8C"></span><code>#356A8C</code></td><td></td></tr><tr><td><code>skill</code></td><td><span class="sw" style="background:#B06A8C"></span><code>#B06A8C</code></td><td>NOT MEASURED — no cream skills mock exists</td></tr><tr><td><code>diff_add</code></td><td><span class="sw" style="background:#D2DFCC"></span><code>#D2DFCC</code></td><td></td></tr><tr><td><code>diff_del</code></td><td><span class="sw" style="background:#EBD3CF"></span><code>#EBD3CF</code></td><td></td></tr></tbody></table>
+
+<h3 style="font-size:15px;margin:26px 0 4px">The two colour defects, and the token each should become</h3>
+<table><thead><tr><th>screen</th><th>value</th><th>cells</th><th>what it paints</th><th>why it is wrong</th><th>proposed</th></tr></thead><tbody>
+<tr><td>7 · waiting for an answer</td><td><span class="sw" style="background:#65A8FF"></span><code>#65A8FF</code></td><td>17</td>
+<td><code>billing/charge.rs</code> in the session gap</td>
+<td>raw <code>Color::Blue</code>. In a real terminal it takes the user's own blue, which is the exact thing the
+palette module exists to prevent. Thirty-one cells of the correct token are on the same frame.</td>
+<td><code>cite #7FB3C8</code></td></tr>
+<tr><td>17 · slash palette</td><td><span class="sw" style="background:#70C6CC"></span><code>#70C6CC</code></td><td>51</td>
+<td>the selected row, <code>/me</code> plus its description</td>
+<td>raw <code>Color::Cyan</code> bold via <code>accent_style_for</code>. That function already has a measured
+branch for light backgrounds; only the dark branch was never given a token.</td>
+<td><code>plan #9FC4E0</code>, or drop the accent and use <code>bright</code> on <code>tint</code> like the other four pickers</td></tr>
+<tr><td>1 · boot</td><td><span class="sw" style="background:#D6D1C5"></span><span class="sw" style="background:#C91A0C"></span><span class="sw" style="background:#605A4E"></span><span class="sw" style="background:#17140F"></span></td><td>1,019</td>
+<td>the entire splash</td>
+<td>Not previously flagged. Boot reads none of <code>theme.rs</code>: four near-miss values where four tokens
+already exist. Nobody notices because they are close.</td>
+<td><code>bright</code> · <code>red</code> · <code>dim</code> · <code>ground</code></td></tr>
+</tbody></table>
+
+<h3 style="font-size:15px;margin:26px 0 4px">The status glyphs. There are supposed to be five.</h3>
+<p class="purpose">Two vocabularies are written down and defended, and they should not be merged: a plan step
+is a thing you WILL do, so not-started is a box you can imagine ticking; a rail row is a thing that IS, so idle
+is a hollow circle. <code>▲</code> means the same in both. <b>But the product ships two more sets that nobody
+wrote down.</b></p>
+<table><thead><tr><th>vocabulary</th><th>glyphs</th><th>defined where</th></tr></thead><tbody>
+<tr><td>rail rows and headlines</td><td><code>● landed</code> · <code>▲ blocked</code> · <code>◐ in flight</code> · <code>○ queued</code> · <code>■ refused</code></td><td><code>marks.rs Mark</code>, with the rule "five marks, five meanings, no synonyms"</td></tr>
+<tr><td>plan steps</td><td><code>✓ done</code> · <code>▶ active</code> · <code>▲ blocked</code> · <code>□ not started</code></td><td><code>marks.rs StepMark</code></td></tr>
+<tr><td>todo ledger</td><td><code>✓</code> · <code>●</code> · <code>○</code> · <code>?</code></td><td>nowhere. <code>?</code> is undefined in either enum and is the most honest glyph on the screen</td></tr>
+<tr><td>orchestra workers</td><td><code>✓</code> · <code>◐</code> · <code>·</code> · <code>?</code></td><td>nowhere</td></tr>
+</tbody></table>
+<div class="ask"><b>The ask:</b> promote <code>?</code> to a sixth <code>Mark</code>, coloured <code>warn</code>,
+meaning <i>not measured</i>. It is already doing that job on two screens and the rule that says there are five
+is currently false.</div>
+
+<h3 style="font-size:15px;margin:26px 0 4px">Why the Rust version will line up, and where the mocks will not</h3>
+<p class="purpose">You said the JavaScript was aligning with hard-coded spaces and Rust would do it with maths.
+That machinery already exists and every SHIPPED screen above went through it.</p>
+<table><thead><tr><th>piece</th><th>contract</th></tr></thead><tbody>
+<tr><td><code>Col::l(w)</code> / <code>Col::r(w)</code></td><td>a fixed cell width, left or right aligned, with a
+default gap of 2. <code>row()</code> pads to <code>w</code> and truncates past it. There is no way to write a
+hand-placed space through this API.</td></tr>
+<tr><td><code>RULE</code></td><td>U+2500, solid, one owner. Every rule in the product reads this constant. You
+picked it off a rendered specimen sheet over the dense and spaced dashes and the ASCII the demo video used.</td></tr>
+<tr><td>the no-box rule</td><td><code>┌ ┐ └ ┘ ├ ┤ ┬ ┴ ┼</code> are asserted to reach zero live frames, with a
+positive control proving the detector can fire. <code>│</code> is exempt: it is the divider between panes,
+never a border around one.</td></tr>
+<tr><td>refusal columns</td><td><code>[3, claim, finding]</code> where claim and finding split the remaining
+width 30:34. At 80 columns that is 3 / 34 / 39 with two-space gaps. Screen 9 above was laid out by running
+that arithmetic, not by eye.</td></tr>
+</tbody></table>
+
+<h3 style="font-size:15px;margin:26px 0 4px">Three places a mock will not survive the port</h3>
+<table><thead><tr><th>screen</th><th>what the mock does</th><th>what happens in Rust</th></tr></thead><tbody>
+<tr><td>12 · skills, typed</td><td>frames the list in <code>┌ skills ──── │ └</code> and puts a pink rule of 41
+characters under it</td><td>the corners are forbidden by an assertion with a positive control, and the rule
+becomes <code>rule(width)</code> and spans the pane. It will not be 41 characters on any terminal.</td></tr>
+<tr><td>25 · panels</td><td>the vertical divider sits at a fixed character column and the horizontal rules meet
+it</td><td>the divider is a <code>Layout</code> constraint, so it moves with the window. A rule that crosses it
+would be a <code>┬</code>, which is a box corner. The rules have to break at the divider instead.</td></tr>
+<tr><td>39 · tool calls</td><td>wraps shell output in <code>┌ │ └</code></td><td>same corner assertion. An
+indent plus a <code>│</code> rail is already exempt and reads almost identically.</td></tr>
+</tbody></table>
+<p class="purpose">Everything else in the mocks is fixed-width columns with consistent gutters and ports
+straight across. The skills browse panel in screen 14 is the cleanest case: four columns, the cost column
+right-aligned, no hand-placed spaces anywhere.</p>
+<h2 class="sec">L. Features with no screen at all</h2><p class="lede">This is the list you most need to see. Every row is a capability that exists on the server or in the mocks and has nowhere to appear in the terminal. The middle column says where in this book I drew a proposal for it, or <code>none</code> if I did not.</p><table><thead><tr><th>capability</th><th>drawn at</th><th>what exists today</th></tr></thead><tbody><tr><td><b>How much memory is left</b></td><td><code>screen 32</code></td><td><code>POST /sweep/estimate</code> returns cap, held, remaining, net-new, blocked, overflow cost, a suggested plan, the largest paths and a written sentence. The client reads <code>fits</code> and drops the rest. This is the question you asked by name.</td></tr><tr><td><b>Correcting a memory</b></td><td><code>screen 41</code></td><td><code>/memories</code> lists with trust tiers and supersession works. Nothing in the CLI can edit or retract one. Your own annotation: a memory the customer cannot correct is the failure that section exists to close.</td></tr><tr><td><b>The code graph</b></td><td><code>screen 40</code></td><td><code>/graph nodes</code>, <code>blast_radius</code>, <code>chokepoints</code>, <code>core_files</code>, <code>subsystems</code>, <code>import_cycles</code> and <code>refactor_order</code> all answer. None of them draws anything; they print lines.</td></tr><tr><td><b><code>/apply</code> and <code>/undo</code></b></td><td><code>screen 21</code></td><td>The moment a patch enters your working tree, and the moment it comes back out. Both print one line. Your brief asked for diff, propose, apply and undo as ONE visual story.</td></tr><tr><td><b><code>/doctor</code> failing</b></td><td><code>screen 36</code></td><td>It can exit non-zero now and there is no design for the failing row.</td></tr><tr><td><b>Resume</b></td><td><code>screen 37</code></td><td><code>resume_picker.rs</code> is vendored and unwired. <code>/resume</code> and <code>/sessions</code> print lists.</td></tr><tr><td><b>Markdown and mermaid in an answer</b></td><td><code>screen 34</code></td><td>Nothing renders a table as a table or a diagram as a diagram. Your production screen asked for mermaid; one renderer serves both.</td></tr><tr><td><b>Tool call output</b></td><td><code>screen 39</code></td><td>There is no collapsed tool row and no expand. A 400-line test run is 400 lines.</td></tr><tr><td><b>Split panes</b></td><td><code>screen 25</code></td><td><code>ctrl+\</code>, a draggable divider, clicking a tab, <code>+ new</code>, per-tab phase dots and closing a view are all unbuilt. One fixed two-pane layout ships.</td></tr><tr><td><b>Spend, per turn</b></td><td><code>screen 33</code></td><td>Your <code>5 · Spend, click it</code> mock. The receipts are real and no CLI prints them. <kbd>ctrl+s</kbd> is advertised on every frame's hint row.</td></tr><tr><td><b>Compaction refusing</b></td><td><code>screen 11</code></td><td>Five blocked reasons return the original transcript as a normal 200. The CLI says nothing.</td></tr><tr><td><b>Signed out</b></td><td><code>none</code></td><td>There is no frame for <i>no credential yet</i> anywhere in the gallery. The only shipped copy is <code>Live Monitor unavailable. / Run /login here.</code> in the production pane.</td></tr><tr><td><b>Rate limited, 402, provider down</b></td><td><code>none</code></td><td>No screen. A provider raise becomes a clean 402 or 502 on the server; the CLI has no design for either.</td></tr><tr><td><b>The 22 top-level commands</b></td><td><code>none</code></td><td>Everything you can type before entering the session: <code>estelle login</code> · <code>estelle doctor</code> · <code>estelle init</code> · <code>estelle sweep</code> · <code>estelle reindex</code> · <code>estelle serve</code> · <code>estelle connect</code> · <code>estelle remove</code> · <code>estelle github</code> · <code>estelle monitor</code> · <code>estelle research</code> · <code>estelle memory</code> · <code>estelle ask</code> · <code>estelle recall</code> · <code>estelle verify</code> · <code>estelle gate</code> · <code>estelle hook</code> · <code>estelle install-hooks</code> · <code>estelle uninstall-hooks</code> · <code>estelle acp</code> · <code>estelle mcp</code> · <code>estelle mcp-server</code>. <code>/help</code> inside the session names none of them.</td></tr><tr><td><b><code>/theme</code></b></td><td><code>screen 5</code></td><td>Both themes ship and the mock says <code>/theme toggles</code>, but <code>theme</code> is in <code>DROPPED_COMMANDS</code> and never resolves. Only <code>/settings</code> can switch it.</td></tr><tr><td><b><code>/logout</code></b></td><td><code>screen 18</code></td><td>Advertised in <code>/help</code> and refused by the resolver. Not a missing screen: a screen that lies.</td></tr></tbody></table><hr class="big"><p class="foot">Estelle CLI design book &middot; built 2026-09-02 from origin/main 95160cb9 and cli-rs 03c98bab &middot; shipped frames regenerated from the production renderer, not redrawn.</p></div></body></html>

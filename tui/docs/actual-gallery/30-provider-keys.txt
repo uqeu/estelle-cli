@@ -1,9 +1,9 @@
 ── providers · 10 · one pool ───────────────────────────────────────────────────────────────────────────────────────
 
       provider              how it authenticates  state         in      out  note
-  ›   Anthropic             api key               on file    $5.00   $25.00  sk-ant-…4f2c · added 12 Aug
+  ›   Anthropic             api key               on file    $5.00   $25.00  added 12 Aug · verified today
       Claude subscription   subscription import   on file     plan     plan  imported from Claude Code
-      OpenAI API            api key               on file    $5.00   $25.00  sk-…9d1a · added 3 Aug
+      OpenAI API            api key               on file    $5.00   $25.00  added 3 Aug · verified today
       ChatGPT plan          oauth device          on file     plan     plan  device code · headless-safe
       Google Gemini         api key               no key     $1.50    $6.00  login gemini adds it
       OpenRouter            api key               on file   varies   varies  200+ models, priced per model
@@ -12,8 +12,8 @@
       Azure OpenAI          api key               no key         —        —  needs an API base as well
       Ollama                local, none           on file    $0.00    $0.00  localhost:11434 · this machine
 
-  ↑↓ navigate · enter edits · d removes · esc closes · in/out are $ per million tokens
-  keys live in your OS keychain. Estelle prints a prefix and a state, never a value.
+  ↑↓ navigate · enter replaces · d removes · esc closes · in/out are $ per million tokens
+  keys live in the OS keychain. Estelle prints a state and a date. No prefix, no suffix, no value.
 
 ── what this key costs · anthropic ─────────────────────────────────────────────────────────────────────────────────
 

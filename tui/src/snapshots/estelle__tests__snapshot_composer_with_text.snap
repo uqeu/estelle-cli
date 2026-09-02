@@ -1,12 +1,11 @@
 ---
 source: tui/src/main.rs
-assertion_line: 9789
 expression: "rendered_frame(&app, Instant::now())"
 ---
 "ESTELLE  ·  uqeu/estelle                                                        "
 "                                                                                "
 "── session · uqeu/estelle ──────────────────────────────────────────────────────"
-"   uqeu/estelle · coach/r11-cli-integration                                     "
+"   uqeu/estelle · main                                                          "
 "Ask about uqeu/estelle                                                          "
 "                                                                                "
 "/review  Read current changes                                                   "

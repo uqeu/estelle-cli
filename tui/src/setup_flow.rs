@@ -77,7 +77,14 @@ fn python_symbol(line: &str) -> Option<&str> {
 
 fn rust_symbol(line: &str) -> Option<&str> {
     let mut line = line.trim_start();
-    for prefix in ["pub(crate) ", "pub ", "async ", "unsafe ", "const ", "default "] {
+    for prefix in [
+        "pub(crate) ",
+        "pub ",
+        "async ",
+        "unsafe ",
+        "const ",
+        "default ",
+    ] {
         if let Some(rest) = line.strip_prefix(prefix) {
             line = rest.trim_start();
         }
@@ -106,15 +113,33 @@ fn ruby_symbol(line: &str) -> Option<&str> {
 fn brace_language_symbol(line: &str) -> Option<&str> {
     let mut line = line.trim_start();
     for prefix in [
-        "public ", "private ", "protected ", "internal ", "static ", "final ", "abstract ",
-        "sealed ", "override ", "open ", "async ", "virtual ", "partial ",
+        "public ",
+        "private ",
+        "protected ",
+        "internal ",
+        "static ",
+        "final ",
+        "abstract ",
+        "sealed ",
+        "override ",
+        "open ",
+        "async ",
+        "virtual ",
+        "partial ",
     ] {
         if let Some(rest) = line.strip_prefix(prefix) {
             line = rest.trim_start();
         }
     }
     for prefix in [
-        "func ", "function ", "class ", "interface ", "struct ", "enum ", "protocol ", "record ",
+        "func ",
+        "function ",
+        "class ",
+        "interface ",
+        "struct ",
+        "enum ",
+        "protocol ",
+        "record ",
         "trait ",
     ] {
         if let Some(name) = identifier_after(line, prefix) {

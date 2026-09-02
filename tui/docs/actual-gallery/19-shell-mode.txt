@@ -13,7 +13,7 @@
   ! exit 0 · 47.8s elapsed · timeout 120s, never reached
 
   this ran in your shell, not Estelle. no model call, no grounding, no memory write.
-  Estelle did not read the output. ask it to, and that becomes a turn you can see and price.
+  Estelle did not read the output. asking it to makes a turn, priced on the run line above.
 
   shell       /bin/zsh -lc                inherited from $SHELL, not a shell Estelle chose
   cwd         ~/Desktop/estelle/cli-rs    the command's cwd, not the session's repository root

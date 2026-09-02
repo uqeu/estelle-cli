@@ -5,18 +5,22 @@ mod binding_probe;
 mod claude_import;
 mod cols;
 mod commands;
-/// 🔴 THE DESIGN BOOK'S SCREENS, AND WHY THEY ARE TEST-ONLY.
-///
-/// Every screen in here is driven by a FIXTURE, not by live state — there is no `/doctor` failure
-/// to stage on demand, no stale index to induce, no eight-worker fleet to summon. The only consumer
-/// is `actual_renderer_gallery_covers_the_product_surfaces`, which renders each one through the
-/// production buffer and writes it into the book. Compiling them into the shipped binary would put
-/// fixture data one wrong `match` arm away from a customer's terminal, which is precisely the
-/// mistake `screens.rs` guards against by stamping `DESIGN FIXTURE · NOT LIVE DATA` on every page
-/// it dumps. Gating the module is the stronger version of that guard.
-#[cfg(test)]
-mod design_book;
 mod copilot_login;
+/// 🔴 THE DESIGN BOOK'S SCREENS, AND WHY THEY SHIP NOW.
+///
+/// They used to be `#[cfg(test)]`, on the argument that compiling fixture data into the binary
+/// puts it one wrong `match` arm away from a customer's terminal. The founder overruled the shape,
+/// not the risk: *"I still need to have them hard made. Basically you fake them, you fake the tool
+/// call and all that stuff in the demo, because we just have to send this to them."* A screen that
+/// only exists inside `cargo test` is not a screen he can record.
+///
+/// ⚠️ **SO THE GUARD MOVED FROM THE COMPILER TO ONE FUNCTION, AND GOT STRONGER, NOT WEAKER.**
+/// `design_book::render` is the only entry point, and with [`design_book::fixtures_allowed`] shut
+/// — which is the default, in every configuration, on every path — it renders an empty state that
+/// NAMES the missing contract instead of drawing a number nobody measured. Reaching the fixtures
+/// now takes `--demo` or `ESTELLE_DEMO_FIXTURES=1`: an explicit request, by name, per process.
+/// `fixture_data_cannot_reach_a_default_configuration_run` asserts that over every screen.
+mod design_book;
 mod doctor;
 mod gate_refusal;
 mod history_import;
@@ -164,10 +168,22 @@ const WORK_PHASES: [&str; 6] = [
     "implement",
     "gate",
 ];
-// P6's brand palette is intentionally truecolor; the rest of the TUI remains theme-safe ANSI.
+/// 🔴 **THE CREAM THE FOUNDER ASKED US TO STOP USING, KEPT ONLY SO A TEST CAN REFUSE IT.**
+///
+/// `#E9E6DC` is the light ground he said *"kind of hurt my eye"*. `theme::Palette` came down to
+/// `#DDDAD1` and `Theme::CreamInk::background` went on returning this one, so the fix landed in
+/// the palette and not on the screen. Nothing renders it now; it survives as the needle in
+/// `dark_theme_inherits_the_terminal_background_instead_of_painting_ansi_black`, which asserts the
+/// background is NOT this. A retired value with a live guard on it is cheaper than a comment.
+///
+/// ⚠️ `FATE_GHOST` (`#C8C2B3`) and `FATE_INK` (`#46433B`) stood beside this and are gone entirely:
+/// between them they were **309 untokened cells** in the design book, and both had exact
+/// counterparts in `theme::Palette` (`mid` and `dim`) that already existed in both themes.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "retired value, kept as a test needle")
+)]
 const FATE_BG: Color = Color::from_u32(0xE9_E6_DC);
-const FATE_GHOST: Color = Color::from_u32(0xC8_C2_B3);
-const FATE_INK: Color = Color::from_u32(0x46_43_3B);
 const FATE_RED: Color = Color::from_u32(0xC9_1A_0C);
 const FATE_RED_SOFT: Color = Color::from_u32(0xE2_8F_86);
 const BAYER_8: [[u8; 8]; 8] = [
@@ -196,28 +212,42 @@ impl Theme {
         }
     }
 
+    /// 🔴 **THE 5%-DIMMER CREAM LANDED IN THE PALETTE AND NOT ON THE SCREEN.**
+    ///
+    /// The founder said the light ground *"kind of hurt my eye"*, [`theme::Palette`] came down to
+    /// `#DDDAD1`, its test asserts the move clause by clause — and this function went on returning
+    /// `FATE_BG` (`#E9E6DC`), so **the cream frame the book shows him still painted the old
+    /// value.** The book's own CSS had already been rewritten to `#DDDAD1`, which means the swatch
+    /// and the picture beside it disagreed. Two owners for one derived fact, and the one nobody
+    /// audited was the one that ships.
+    ///
+    /// Dark stays [`Color::Reset`] on purpose: ANSI 0 is a painted colour that most terminal
+    /// themes render as a grey sheet, and `Reset` inherits the terminal's own ground.
     fn background(self) -> Color {
         match self {
-            // ANSI 0 is a painted colour — most terminal themes render it as a grey sheet.
-            // Reset inherits the terminal's own background. Cream Ink is the deliberate
-            // painted surface and stays painted.
             Self::Dark => Color::Reset,
-            Self::CreamInk => FATE_BG,
+            Self::CreamInk => self.screen_palette().ground,
         }
     }
 
+    /// 🔴 **`Color::Black` IS NOT INK, IT IS WHATEVER THE TERMINAL DECIDES.**
+    ///
+    /// The cream theme's primary text was ANSI 0 while `theme.rs` declared cream ink as `#1F1C17`
+    /// — the same defect class as the `#65A8FF` "Claude-like semantic blue" the previous pass
+    /// removed, and it was the largest single block of untokened colour left in the book: **71
+    /// cells on `13-cream-ink`**. Dark is unchanged in value (`bright` IS `#E9E6DC`); only its
+    /// owner moved.
     fn primary(self) -> Color {
-        match self {
-            Self::Dark => FATE_BG,
-            Self::CreamInk => Color::Black,
-        }
+        self.screen_palette().bright
     }
 
+    /// The secondary prose role — separators, the session-gap paragraph, the signed-in line.
+    ///
+    /// ⚠️ It was `#C8C2B3`/`#787267`, in no palette, and it was the **biggest** untokened colour in
+    /// the book at 293 cells across seven frames. [`theme::Palette::mid`] is exactly this role and
+    /// already existed in both themes; the name was never the problem, the value was hand-typed.
     fn ghost(self) -> Color {
-        match self {
-            Self::Dark => FATE_GHOST,
-            Self::CreamInk => Color::from_u32(0x78_72_67),
-        }
+        self.screen_palette().mid
     }
 
     fn alert(self) -> Color {
@@ -287,6 +317,25 @@ enum Command {
     },
     /// Diagnose credential stores and provider-runtime readiness without printing secrets.
     Doctor,
+    /// Page through the design book's screens in this terminal, rendered by the real renderer.
+    ///
+    /// 🔴 The DATA behind these screens is a design fixture and it is OFF by default: without
+    /// `--demo` (or `ESTELLE_DEMO_FIXTURES=1`) each screen renders an empty state naming the
+    /// contract it still needs. The LAYOUT is production either way.
+    Demo {
+        /// Render one screen by name instead of paging through all of them.
+        #[arg(value_name = "SCREEN")]
+        screen: Option<String>,
+        /// List every screen with the contract it still needs, and exit.
+        #[arg(long)]
+        list: bool,
+        /// Draw the design fixtures. Without this the screens render their empty state.
+        #[arg(long)]
+        demo: bool,
+        /// Render on the cream ground rather than the dark one.
+        #[arg(long)]
+        cream: bool,
+    },
     /// Scan your own ~/.claude and ~/.codex for exposed credentials. Fully offline: no network,
     /// no account; prints rule + fingerprint + path + line, never the value.
     Leaked,
@@ -3357,8 +3406,10 @@ impl App {
         let echo = pending.label();
         match pending {
             QueuedRequest::Shell { command, timeout } => {
-                let (id, cancel) =
-                    self.begin_active(&format!("local shell · timeout {}s", timeout.as_secs()), &echo);
+                let (id, cancel) = self.begin_active(
+                    &format!("local shell · timeout {}s", timeout.as_secs()),
+                    &echo,
+                );
                 let tx = tx.clone();
                 let root = self.root.clone();
                 tokio::spawn(async move {
@@ -3622,8 +3673,7 @@ impl App {
             // refused. Without this the failure below would be orphaned: a "not sent" banner with
             // no question above it, and the user's own words gone from the record entirely.
             // The PARK path above deliberately does not echo; that request has not settled.
-            self.transcript
-                .push(TranscriptEntry::User(pending.label()));
+            self.transcript.push(TranscriptEntry::User(pending.label()));
             self.transcript.push(TranscriptEntry::Failure([
                 "The request was not sent.".to_string(),
                 "This client has no Estelle credential.".to_string(),
@@ -5007,7 +5057,8 @@ async fn answer_dispatched_suite(
                 Ok(measured) if !measured.patch.trim().is_empty() => measured,
                 _ => {
                     return Ok(dispatch_refusal(
-                        "I understood the request, but there is no readable local diff to inspect. Nothing was sent to Review or Guardian.".to_string(),
+                        "No readable local diff. Nothing was sent to Review or Guardian."
+                            .to_string(),
                     ));
                 }
             };
@@ -6677,7 +6728,7 @@ fn failure_advice(error: &str) -> Vec<String> {
     match http_status(error) {
         Some(409) => two(
             "Estelle is already ingesting for this account.",
-            "Nothing is wrong here — let the run in flight finish, then retry.",
+            "A run is already in flight. Retry when it finishes.",
         ),
         Some(401 | 403) => two(
             "The credential was refused.",
@@ -6685,14 +6736,14 @@ fn failure_advice(error: &str) -> Vec<String> {
         ),
         Some(402) => two(
             "This account is over its allowance for that operation.",
-            "Raise the plan or wait for the next period; the command itself is fine.",
+            "Raise the plan or wait for the next period. The command is not the problem.",
         ),
         Some(429 | 503) => two(
             "Estelle asked to be retried later, and the client already waited the interval it advertised.",
-            "Retry shortly. Nothing needs changing here.",
+            "Retry shortly. No change is needed.",
         ),
         Some(status) if status >= 500 => two(
-            "Estelle failed on its side, not on yours.",
+            "The failure was server-side.",
             "Retry; if it persists, report the message above.",
         ),
         _ => two(
@@ -6700,6 +6751,220 @@ fn failure_advice(error: &str) -> Vec<String> {
             "Correct the command or account state, then retry.",
         ),
     }
+}
+
+/// `estelle demo --list` — every book screen and the contract it still needs, as plain rows.
+///
+/// ⚠️ **NO FIXTURE DATA CROSSES THIS FUNCTION.** A listing is names and contracts; it is safe with
+/// the gate shut, which is why it is the one demo path that does not consult it.
+fn demo_listing(fixtures: bool) -> String {
+    const SPEC: &[cols::Col] = &[cols::Col::l(24), cols::Col::l(8), cols::Col::l(72)];
+    let mut out = vec![cols::row(
+        SPEC,
+        &[
+            cols::Cell("screen", Color::Reset),
+            cols::Cell("size", Color::Reset),
+            cols::Cell("needs", Color::Reset),
+        ],
+        0,
+    )]
+    .into_iter()
+    .map(|line| {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
+    })
+    .collect::<Vec<_>>();
+    for screen in design_book::SCREENS {
+        let size = format!("{}x{}", screen.width, screen.height);
+        let line = cols::row(
+            SPEC,
+            &[
+                cols::Cell(screen.name, Color::Reset),
+                cols::Cell(&size, Color::Reset),
+                cols::Cell(screen.contract, Color::Reset),
+            ],
+            0,
+        );
+        out.push(
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+                .trim_end()
+                .to_string(),
+        );
+    }
+    out.push(String::new());
+    out.push(format!(
+        "{} screens · fixtures {}",
+        design_book::SCREENS.len(),
+        if fixtures {
+            "ON — the numbers on these screens are NOT measured"
+        } else {
+            "off — each screen renders its empty state"
+        }
+    ));
+    out.join("\n")
+}
+
+/// Page through the design book in the real terminal, with the real renderer.
+///
+/// 🔴 **THE FIXTURE BANNER IS DRAWN BY THIS FUNCTION, NOT BY THE SCREENS.** A per-screen footnote
+/// is a thing a screen can forget; the founder's constraint is that a fixture must be unmistakable
+/// in the product. So the viewer's own chrome carries it, once, above every screen, and the screens
+/// keep their own specific disclosures underneath.
+async fn run_demo(name: Option<&str>, list: bool, demo: bool, cream: bool) -> ExitCode {
+    let fixtures = design_book::fixtures_allowed(demo);
+    if list {
+        let mut stdout = tokio::io::stdout();
+        let ok = stdout
+            .write_all(format!("{}\n", demo_listing(fixtures)).as_bytes())
+            .await
+            .is_ok();
+        return if ok {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
+    let mut index = 0usize;
+    if let Some(name) = name {
+        match design_book::SCREENS
+            .iter()
+            .position(|screen| screen.name == name)
+        {
+            Some(found) => index = found,
+            None => {
+                let mut stdout = tokio::io::stdout();
+                let _ = stdout
+                    .write_all(
+                        format!("no screen named {name:?}\n\n{}\n", demo_listing(fixtures))
+                            .as_bytes(),
+                    )
+                    .await;
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    let mut theme = if cream { Theme::CreamInk } else { Theme::Dark };
+    let session = match TerminalSession::enter() {
+        Ok(session) => session,
+        Err(error) => return demo_failure(&error).await,
+    };
+    let mut terminal = match Terminal::new(CrosstermBackend::new(io::stdout())) {
+        Ok(terminal) => terminal,
+        Err(error) => {
+            drop(session);
+            return demo_failure(&error).await;
+        }
+    };
+    let mut events = EventStream::new();
+    let mut ticker = tokio::time::interval(FRAME_INTERVAL);
+    let mut tick = 0u64;
+    loop {
+        let screen = &design_book::SCREENS[index];
+        let palette = theme.screen_palette();
+        let mut lines = demo_chrome(screen, index, fixtures, &palette);
+        lines.extend(design_book::render(screen, &palette, tick, true, fixtures));
+        if terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    Paragraph::new(lines).style(Style::default().bg(theme.background())),
+                    frame.area(),
+                );
+            })
+            .is_err()
+        {
+            break;
+        }
+        tokio::select! {
+            _ = ticker.tick() => tick = tick.wrapping_add(1),
+            event = events.next() => match event {
+                Some(Ok(Event::Key(key))) if key.kind != KeyEventKind::Release => {
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => break,
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
+                        KeyCode::Right | KeyCode::Down | KeyCode::Char('n' | 'j') => {
+                            index = (index + 1) % design_book::SCREENS.len();
+                        }
+                        KeyCode::Left | KeyCode::Up | KeyCode::Char('p' | 'k') => {
+                            index = (index + design_book::SCREENS.len() - 1)
+                                % design_book::SCREENS.len();
+                        }
+                        KeyCode::Char('t') => {
+                            theme = match theme {
+                                Theme::Dark => Theme::CreamInk,
+                                Theme::CreamInk => Theme::Dark,
+                            };
+                        }
+                        _ => {}
+                    }
+                }
+                Some(Ok(_)) => {}
+                Some(Err(_)) | None => break,
+            },
+        }
+    }
+    drop(session);
+    ExitCode::SUCCESS
+}
+
+/// The viewer's own two rows: which screen, and whether anything on it was measured.
+fn demo_chrome(
+    screen: &design_book::BookScreen,
+    index: usize,
+    fixtures: bool,
+    palette: &theme::Palette,
+) -> Vec<Line<'static>> {
+    let total = design_book::SCREENS.len();
+    let position = format!("{} of {total}", index + 1);
+    let head = cols::rule(
+        screen.name,
+        &position,
+        usize::from(screen.width).min(140),
+        palette.dim,
+        palette.mid,
+        palette.cite,
+    );
+    let head = Line::from(
+        head.spans
+            .into_iter()
+            .map(|span| Span::styled(span.content.into_owned(), span.style))
+            .collect::<Vec<_>>(),
+    );
+    // 🔴 The banner says WHAT IS NOT MEASURED, in the same words on every screen. Never a badge
+    // that only a reader who knows the convention can decode.
+    let banner = if fixtures {
+        Span::styled(
+            "  design fixture · the numbers on this screen were NOT measured".to_string(),
+            Style::default().fg(palette.warn),
+        )
+    } else {
+        Span::styled(
+            format!("  needs {}", screen.contract),
+            Style::default().fg(palette.dim),
+        )
+    };
+    vec![
+        head,
+        Line::from(banner),
+        Line::from(Span::styled(
+            "  ←/→ screens · t theme · q quit".to_string(),
+            Style::default().fg(palette.dim),
+        )),
+        Line::from(""),
+    ]
+}
+
+async fn demo_failure(error: &impl std::fmt::Display) -> ExitCode {
+    let mut stdout = tokio::io::stdout();
+    let _ = stdout
+        .write_all(format!("estelle demo could not claim the terminal: {error}\n").as_bytes())
+        .await;
+    ExitCode::FAILURE
 }
 
 #[tokio::main]
@@ -6754,6 +7019,15 @@ async fn main() -> ExitCode {
             Err(error) => login_failure(&error).await,
             Ok(_) => ExitCode::SUCCESS,
         };
+    }
+    if let Some(Command::Demo {
+        screen,
+        list,
+        demo,
+        cream,
+    }) = &args.command
+    {
+        return run_demo(screen.as_deref(), *list, *demo, *cream).await;
     }
     if matches!(args.command, Some(Command::Doctor)) {
         // ⚠️ `lines_with_binding`, not `lines`: the latter cannot fail, so `doctor` used to exit 0
@@ -7029,12 +7303,25 @@ mod tests {
     use wiremock::matchers::method;
     use wiremock::matchers::path;
 
+    /// 🔴 **THE BRANCH NAME IS PINNED, AND THAT IS WHY EIGHT SNAPSHOTS WERE PERMANENTLY RED.**
+    ///
+    /// `App::new` calls `read_branch(&root)`, which shells out to `git rev-parse --abbrev-ref
+    /// HEAD` against the LIVE worktree. Every snapshot in this file carries that answer on frame
+    /// line 4, so eight of them were green only on `coach/r11-cli-integration` — the branch they
+    /// happened to be recorded on — and red on every branch since, including this one.
+    ///
+    /// ⚠️ **A TEST THAT CANNOT BE GREEN ON YOUR BRANCH IS WORSE THAN A MISSING TEST.** It teaches
+    /// the reader to scroll past a red snapshot, and the next red one will be a real regression in
+    /// the frame these eight exist to protect. The fix is not to re-record them on this branch —
+    /// that just moves the problem to the next lane — it is to stop the fixture reading the
+    /// environment at all. `read_branch` itself is untouched and still exercised by its own tests.
     fn test_app() -> App {
         let mut app = App::new(Args {
             command: None,
             repo: Some("uqeu/estelle".to_string()),
         });
         app.boot = None;
+        app.branch = Some("main".to_string());
         app
     }
 
@@ -8386,7 +8673,13 @@ mod tests {
 
         let retention_spec = json!({"key": "retention_days", "default": 30});
         assert_eq!(
-            resolved_setting_value(&settings, "monitor", "retention_days", "team", &retention_spec),
+            resolved_setting_value(
+                &settings,
+                "monitor",
+                "retention_days",
+                "team",
+                &retention_spec
+            ),
             json!(45),
             "the team-scoped value lost to the schema default again"
         );
@@ -8424,7 +8717,11 @@ mod tests {
 
         assert_eq!(BootPalette::Light.bone(), cream.ground, "light boot ground");
         assert_eq!(BootPalette::Light.ghost(), cream.dim, "light boot dither");
-        assert_eq!(BootPalette::Light.ink(), cream.bright, "light boot wordmark");
+        assert_eq!(
+            BootPalette::Light.ink(),
+            cream.bright,
+            "light boot wordmark"
+        );
         assert_eq!(BootPalette::Light.lily(), cream.red, "light higanbana");
 
         // ⚠️ THE NEGATIVE CONTROL. Eight `assert_eq!`s between two constant tables pass forever if
@@ -8866,9 +9163,15 @@ mod tests {
         );
 
         assert_eq!(app.theme, Theme::CreamInk);
+        let cream = theme::ScreenTheme::Cream.palette();
         let buffer = rendered_buffer_at_size(&app, Instant::now(), 100, 28);
-        assert!(buffer.content.iter().any(|cell| cell.bg == FATE_BG));
-        assert!(buffer.content.iter().any(|cell| cell.fg == Color::Black));
+        assert!(buffer.content.iter().any(|cell| cell.bg == cream.ground));
+        // ⚠️ Was `Color::Black`. ANSI 0 is whatever the terminal decides; cream ink is `#1F1C17`.
+        assert!(buffer.content.iter().any(|cell| cell.fg == cream.bright));
+        assert!(
+            buffer.content.iter().all(|cell| cell.fg != Color::Black),
+            "cream ink is a palette value, never ANSI 0"
+        );
     }
 
     #[test]
@@ -10881,8 +11184,14 @@ mod tests {
         );
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 30);
         assert!(rendered.contains("── connect estelle ─"), "{rendered}");
-        assert!(rendered.contains("grounds your coding agent in your real codebase"));
-        assert!(rendered.contains("never bills you for model tokens"));
+        // ⚠️ Both sentences lost their second person in the AI-speak pass, and a test that
+        // still pinned the old wording would have made that pass look like a regression.
+        assert!(rendered.contains("grounds the coding agent in the real codebase"));
+        assert!(rendered.contains("never bills model tokens"));
+        assert!(
+            !rendered.contains("your real codebase"),
+            "the second person came back: {rendered}"
+        );
         assert!(!rendered.contains("Claude subscription"));
         assert!(!rendered.contains("ChatGPT plan"));
         assert!(!rendered.contains("ASK ESTELLE"));
@@ -12626,7 +12935,7 @@ mod tests {
         app.auth_resolved = true;
         app.session_context = Some(session_gap::SessionContext {
             human_lines: vec![
-                "Welcome back. You were away about 5 hours.".to_string(),
+                "Away about 5 hours.".to_string(),
                 "Elsewhere while you were away: 48 committed file changes.".to_string(),
             ],
             model_context: "session context".to_string(),
@@ -12636,8 +12945,8 @@ mod tests {
         app.submit("what changed?".to_string(), &tx);
 
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
-        assert!(rendered.contains("Since your last session"));
-        assert!(rendered.contains("Welcome back. You were away about 5 hours."));
+        assert!(rendered.contains("Since the last session"));
+        assert!(rendered.contains("Away about 5 hours."));
         // 🔴 **THE `you` LABEL IS GONE AND ITS ABSENCE IS PART OF THE CONTRACT NOW.**
         // The founder: *"Delete the word 'you'. I don't want to see that 'you' any more."* What
         // the label was standing in for — this turn is MINE — is the highlight band, asserted in
@@ -12714,7 +13023,20 @@ mod tests {
         // sheet. Color::Reset inherits the terminal's own background. Cream Ink is the
         // deliberate painted surface and stays painted.
         assert_eq!(Theme::Dark.background(), Color::Reset);
-        assert_eq!(Theme::CreamInk.background(), FATE_BG);
+        // 🔴 THE CREAM GROUND IS THE PALETTE'S, NOT A SECOND COPY OF IT. This line used to read
+        // `FATE_BG` (`#E9E6DC`) and stayed green through the day the founder's "5% too bright"
+        // instruction was implemented — because the instruction was implemented in `theme.rs` and
+        // this owner was never told. Asserting the PALETTE rather than a literal is what makes the
+        // next move of that value impossible to land in one place only.
+        assert_eq!(
+            Theme::CreamInk.background(),
+            theme::ScreenTheme::Cream.palette().ground
+        );
+        assert_ne!(
+            Theme::CreamInk.background(),
+            FATE_BG,
+            "the old cream is back"
+        );
 
         let app = test_app();
         let buffer = rendered_buffer_at_size(&app, Instant::now(), 120, 32);
@@ -13841,9 +14163,7 @@ mod tests {
                     TranscriptEntry::Answer { text, .. } => text.contains(needle),
                     _ => false,
                 })
-                .unwrap_or_else(|| {
-                    panic!("no transcript entry for {needle:?}")
-                })
+                .unwrap_or_else(|| panic!("no transcript entry for {needle:?}"))
         };
         assert!(
             position("You live in Toronto") < position("second"),
@@ -13986,7 +14306,10 @@ mod tests {
         app.recall_queue_into_composer();
         assert!(app.queue.is_empty(), "recall did not take the queue");
         let draft = app.composer.text();
-        assert_eq!(draft, "2\n3", "the editable view should show them on their own lines");
+        assert_eq!(
+            draft, "2\n3",
+            "the editable view should show them on their own lines"
+        );
         app.submit(draft, &tx);
         assert_eq!(
             labels(&app),
@@ -14115,6 +14438,50 @@ mod tests {
         );
     }
 
+    /// 🔴 A THREE-LEVEL TEXTURE WHOSE LEVELS DO NOT DESCEND IS NOT A TEXTURE.
+    ///
+    /// The dither's ladder was `mid` → `#46433B`/`bright` → `ghost` + `Modifier::DIM`. On the dark
+    /// theme the FAINTEST level carried the BRIGHTEST base colour (`#C8C2B3` against `mid`'s
+    /// `#948E81`) and leaned on `DIM` — a modifier plenty of terminals drop for a truecolor
+    /// foreground — to look faint. On cream, level 1 was `bright`: the middle step painted at
+    /// maximum contrast. Two themes, two orderings, neither monotonic, and nothing red.
+    ///
+    /// ⚠️ **THE ASSERTION IS ON CONTRAST AGAINST THE GROUND, NOT ON LUMINANCE.** Dark descends by
+    /// getting darker and cream descends by getting lighter; a luminance test would have to be
+    /// written twice with opposite signs, and the second one is the one that rots. Distance from
+    /// the ground is the same sentence in both themes.
+    #[test]
+    fn the_dither_ink_levels_descend_toward_the_ground_in_both_themes() {
+        fn rgb(color: Color) -> (f32, f32, f32) {
+            match color {
+                Color::Rgb(r, g, b) => (f32::from(r), f32::from(g), f32::from(b)),
+                other => panic!("the dither ladder must be truecolor, got {other:?}"),
+            }
+        }
+        fn apart(ink: Color, ground: (f32, f32, f32)) -> f32 {
+            let (r, g, b) = rgb(ink);
+            ((r - ground.0).powi(2) + (g - ground.1).powi(2) + (b - ground.2).powi(2)).sqrt()
+        }
+
+        for theme in [Theme::Dark, Theme::CreamInk] {
+            let palette = theme.screen_palette();
+            let ground = rgb(palette.ground);
+            // The three levels, brightest-ink-first, exactly as `render_symbol_ground` matches.
+            let ladder = [palette.mid, palette.dim, palette.tint];
+            let distances = ladder.map(|ink| apart(ink, ground)).to_vec();
+            assert!(
+                distances[0] > distances[1] && distances[1] > distances[2],
+                "{theme:?} dither ladder does not descend: {distances:?}"
+            );
+            // ⚠️ A ladder of three identical values would also "descend" under `>=`. It does not
+            // here, and a floor says so rather than leaving it to the operator above.
+            assert!(
+                distances[0] - distances[2] > 5.0,
+                "{theme:?} dither has no visible range: {distances:?}"
+            );
+        }
+    }
+
     /// The flourish fits the rect it is given, in both axes.
     ///
     /// "The flower got cut off" is a clipping report, and clipping is what happens when a motif
@@ -14217,7 +14584,11 @@ mod tests {
         // `the_queued_mark_and_the_reply_mark_are_never_the_same_glyph`. Both replies landed, so
         // both are `●`; grounding is the colour, and the structural second channel is the `cited`
         // lines a grounded answer carries in the evidence gutter.
-        assert_eq!(grounded.symbol(), "\u{25cf}", "a grounded reply must open with ●");
+        assert_eq!(
+            grounded.symbol(),
+            "\u{25cf}",
+            "a grounded reply must open with ●"
+        );
         assert_eq!(
             ungrounded.symbol(),
             "\u{25cf}",
@@ -14485,10 +14856,7 @@ mod tests {
             // ⚠️ THE CONTROL. A frame that painted EVERY row would satisfy the clause above and
             // mean nothing — the band has to distinguish this turn from the rest of the screen.
             let painted_rows = (0..buffer.area.height)
-                .filter(|y| {
-                    (0..buffer.area.width)
-                        .all(|x| buffer[(x, *y)].bg != Color::Reset)
-                })
+                .filter(|y| (0..buffer.area.width).all(|x| buffer[(x, *y)].bg != Color::Reset))
                 .count();
             assert!(
                 painted_rows < usize::from(buffer.area.height),
@@ -14760,7 +15128,14 @@ mod failure_advice_tests {
     #[test]
     fn a_server_side_failure_does_not_blame_the_caller() {
         let advice = failure_advice("Estelle returned HTTP 500 Internal Server Error: boom");
-        assert!(advice.iter().any(|line| line.contains("not on yours")));
+        // ⚠️ THE SENTENCE MOVED AND THIS LINE IS PART OF THAT CHANGE. It read
+        // "Estelle failed on its side, not on yours" — an apology-shaped reassurance where a
+        // fact belongs. What the caller needs is which side failed, which is what is asserted.
+        assert!(advice.iter().any(|line| line.contains("server-side")));
+        assert!(
+            !advice.iter().any(|line| line.contains("not on yours")),
+            "the reassurance came back"
+        );
     }
 
     /// ⚠️ THE CONTROL. An unrecognised failure must keep the original wording rather than invent

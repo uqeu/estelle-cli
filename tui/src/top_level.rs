@@ -76,6 +76,7 @@ fn contract(command: &Command) -> Contract {
         | Command::Mcp { .. }
         | Command::McpServer
         | Command::Screens { .. }
+        | Command::Demo { .. }
         | Command::Upgrade { .. }
         | Command::Version => Contract::Local,
         Command::Init { .. }
@@ -452,7 +453,7 @@ fn guard_hook(payload: &HookPayload) -> Vec<String> {
     };
     vec![hook_message(
         Some(format!(
-            "⛔ Estelle: this command looks like {reason} — read it again before running."
+            "⛔ Estelle: {reason} — read the command again before running it."
         )),
         Some(format!(
             "Estelle's Bash guard flagged the command as {reason}. Confirm the target is intended; advisory, not a block."
@@ -1864,6 +1865,7 @@ async fn run_authenticated(
         | Command::Mcp { .. }
         | Command::McpServer
         | Command::Screens { .. }
+        | Command::Demo { .. }
         | Command::Upgrade { .. }
         | Command::Version => Err("local command reached the remote dispatcher".to_string()),
     }
@@ -2451,7 +2453,7 @@ where
                         .get("message")
                         .and_then(Value::as_str)
                         .filter(|message| !message.trim().is_empty())
-                        .unwrap_or("Repo swept. Your agent can now recall and verify against it.")
+                        .unwrap_or("Repo swept. Recall and verify are live on it.")
                         .to_string(),
                 );
                 report(SweepProgress {
@@ -3046,7 +3048,7 @@ fn await_github_callback(
                         write_github_callback_response(
                             &mut stream,
                             200,
-                            "Estelle: GitHub authorized. You can close this tab and return to your terminal.\n",
+                            "Estelle: GitHub authorized. Close this tab; the terminal has it.\n",
                         )?;
                         return Ok(pair);
                     }
@@ -3054,7 +3056,7 @@ fn await_github_callback(
                         write_github_callback_response(
                             &mut stream,
                             400,
-                            "Estelle: GitHub authorization failed. Close this tab and try again in your terminal.\n",
+                            "Estelle: GitHub authorization failed. Close this tab; retry in the terminal.\n",
                         )?;
                         return Err(error);
                     }
@@ -3833,7 +3835,7 @@ fn suite_empty_message(suite: &str, action: &str, reply: &Value) -> Option<Strin
             })
         }
         ("monitor", "alerts") if empty("rules") => {
-            Some("No alert rules exist. Nothing will page you when production breaks.".to_string())
+            Some("No alert rules exist. A production break pages nobody.".to_string())
         }
         ("monitor", "uptime") if empty("status") || empty("checks") => {
             Some("No uptime checks are registered.".to_string())
@@ -6115,7 +6117,7 @@ tests/test_serve.py:88: AssertionError\n\
         let alerts = render_suite_reply("monitor", "alerts", &json!({"rules": [], "active": []}))
             .expect("alerts")
             .join("\n");
-        assert!(alerts.contains("Nothing will page you"));
+        assert!(alerts.contains("pages nobody"), "{alerts}");
 
         let uptime = render_suite_reply(
             "monitor",

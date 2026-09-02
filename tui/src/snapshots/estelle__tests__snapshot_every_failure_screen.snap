@@ -1,12 +1,11 @@
 ---
 source: tui/src/main.rs
-assertion_line: 9805
 expression: "rendered_frame_at_size(&app, Instant::now(), 80, 52)"
 ---
 "ESTELLE  ·  uqeu/estelle                                                        "
 "                                                                                "
 "── session · uqeu/estelle ──────────────────────────────────────────────────────"
-"   uqeu/estelle · coach/r11-cli-integration                                     "
+"   uqeu/estelle · main                                                          "
 "■ failed                                                                        "
 "Estelle rejected the stored credential.                                         "
 "The API reported that this credential is not authorized.                        "

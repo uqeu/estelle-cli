@@ -1,7 +1,7 @@
 ESTELLE  ·  uqeu/estelle
 
 ── session · uqeu/estelle ────────────────────────────────────────────────────────────────  │  ── work draft · /work · read only ─────────────────────
-   uqeu/estelle · cli/design-book-rust-20260902                                             │  read-only · /apply submits this exact patch
+   uqeu/estelle · main                                                                      │  read-only · /apply submits this exact patch
                                                                                             │  billing/charge.rs
                                                                                             │  @@ -82 +82 @@
                                                                                             │   82     - old()

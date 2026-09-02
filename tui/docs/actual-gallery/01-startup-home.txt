@@ -1,10 +1,10 @@
 ESTELLE  ·  uqeu/estelle  ·  Fate Labs · owner
 
 ── session · uqeu/estelle ──────────────────────────────────────────────────────────────────────  │  ── production · uqeu/estelle ──────────────────────────────
-   uqeu/estelle · cli/design-book-rust-20260902                                                   │  ── app · repo uqeu/estelle ────────────────────────────────
+   uqeu/estelle · main                                                                            │  ── app · repo uqeu/estelle ────────────────────────────────
 Ask about uqeu/estelle                                                                            │  ▲   error counts      ▂▅▃█ 14
                                                                                                   │  ●   measured          14/3292 requests
-Since your last session                                                                           │      ───────────────────────────────────────────────────────
+Since the last session                                                                            │      ───────────────────────────────────────────────────────
 Welcome back - you were last here about 3 hours ago.                                              │  ── services · 4/4 up ──────────────────────────────────────
 Code you touched has changed since:                                                               │  no uptime checks registered · POST /monitor/uptime adds one
 - billing/charge.rs - by Dana, about 2 hours ago - bound retry telemetry                          │

@@ -1,8 +1,7 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
-const SAFETY_BUFFERING_HEADER_TEXT: &str =
-    "Our systems are thinking a bit more about this request before responding.";
+const SAFETY_BUFFERING_HEADER_TEXT: &str = "An extra safety pass is running on this turn.";
 
 fn thread_settings_for_test(
     model: &str,

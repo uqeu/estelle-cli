@@ -14,7 +14,7 @@
 
   ⏺ the new claim supersedes the old one, and stops being served.
   an edit SUPERSEDES, it does not overwrite. retracted is not deleted.
-  the superseded claim stays readable, dated and cited — you see what was believed when.
+  the superseded claim stays readable, dated and cited — what was believed when, on the record.
 
   enter reads · e edits · d retracts · c shows citations
   measured came off an instrument · observed was seen once · asserted is somebody's word.

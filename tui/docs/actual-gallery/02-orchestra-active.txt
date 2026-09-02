@@ -1,7 +1,7 @@
 ESTELLE  ·  uqeu/estelle  ·  repo graph current  ·  1,993 files
 
 ── session · uqeu/estelle ───────────────────────────────────────────────────────────────────────────────────  │  ── context · alt+m · /context ────────────────────────────────────
-   uqeu/estelle · cli/design-book-rust-20260902                                                                │  Repo graph · team's swept copy
+   uqeu/estelle · main                                                                                         │  Repo graph · team's swept copy
 ● Task(Trace checkout failures · 24 workers)                                                                   │  1,993 files indexed
   models · Claude Opus 4.1 · GPT-5.5 · Gemini 2.5 Pro                                                          │  billing/charge.rs:82
   8 agents tracing 24 production assignments across three model pools                                          │    symbol  charge_card
@@ -17,7 +17,7 @@ ESTELLE  ·  uqeu/estelle  ·  repo graph current  ·  1,993 files
 ◐   w8    [0/2] Checking the regression suite                                                     4s        —  │
 per-worker model + cost · no server contract                                                                   │
 Plan floor · not reported                                                                                      │
-◒ Working... [━━━━━━━━━━━━━━━━━━━━━━──────────────────────────] 11/24                                          │
+◑ Working... [━━━━━━━━━━━━━━━━━━━━━━──────────────────────────] 11/24                                          │
                                                                                                                │
                                                                                                                │
                                                                                                                │

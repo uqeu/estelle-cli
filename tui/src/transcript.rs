@@ -6,6 +6,7 @@
 
 use std::path::Path;
 
+use crate::marks;
 use crossterm::event::MouseButton;
 use crossterm::event::MouseEvent;
 use crossterm::event::MouseEventKind;
@@ -22,7 +23,6 @@ use ratatui::layout::Rect;
 use ratatui::style::Color;
 use ratatui::style::Modifier;
 use ratatui::style::Style;
-use crate::marks;
 use ratatui::text::Line;
 use ratatui::text::Span;
 use serde_json::Value;
@@ -166,7 +166,7 @@ pub(crate) fn render(
         match entry {
             TranscriptEntry::SessionHandoff(lines) => {
                 let mut rendered = vec![Line::styled(
-                    "Since your last session",
+                    "Since the last session",
                     Style::default()
                         .fg(palette.primary)
                         .add_modifier(Modifier::BOLD),

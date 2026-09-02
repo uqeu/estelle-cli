@@ -382,7 +382,7 @@ fn build_context(
     evidence: GitEvidence,
 ) -> SessionContext {
     let first = format!(
-        "Welcome back. You were away {}. It is now {} UTC.",
+        "Away {}. It is now {} UTC.",
         humanize(gap_seconds),
         now.format("%H:%M %A")
     );
@@ -399,10 +399,7 @@ fn build_context(
         .collect::<Vec<_>>();
     if recent.is_empty() {
         return if gap_seconds >= NEWS_FREE_GAP_SECONDS {
-            SessionContext::from_lines(vec![
-                first,
-                "No committed changes were found while you were away.".to_string(),
-            ])
+            SessionContext::from_lines(vec![first, "No commits landed in that window.".to_string()])
         } else {
             SessionContext::default()
         };
@@ -478,7 +475,7 @@ fn rest_line(rest: &[&GitChange]) -> String {
     }
     let who = actors_phrase(&actors);
     format!(
-        "Elsewhere while you were away: {}{}.",
+        "Elsewhere in that window: {}{}.",
         plural(rest.len(), "committed file change"),
         if who.is_empty() {
             String::new()

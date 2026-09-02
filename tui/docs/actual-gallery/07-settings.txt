@@ -1,7 +1,7 @@
 ESTELLE  ·  uqeu/estelle
 
 ── session · uqeu/estelle ────────────────────────────────────────────────────────────────────────────────────────────────────────
-   uqeu/estelle · cli/design-book-rust-20260902
+   uqeu/estelle · main
 
 
 

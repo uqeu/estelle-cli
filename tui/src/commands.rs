@@ -2876,7 +2876,7 @@ fn render_registry(value: Option<&Value>, label: &str, description_key: &str) ->
         && hidden > 0
     {
         lines.push(format!(
-            "{hidden} more not shown here \u{b7} the picker lists them all and filters as you type"
+            "{hidden} more \u{b7} the picker lists all of them and filters as it is typed"
         ));
     }
     lines
@@ -3587,9 +3587,7 @@ mod tests {
             "a row exceeded its width bound"
         );
         assert!(
-            lines
-                .last()
-                .is_some_and(|line| line.contains("235 more not shown")),
+            lines.last().is_some_and(|line| line.contains("235 more")),
             "the bound bit and said nothing: {:?}",
             lines.last()
         );

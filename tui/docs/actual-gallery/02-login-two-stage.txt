@@ -25,7 +25,7 @@
 
   an Estelle plan buys grounding: memory, the code graph, recall and the gate. it never pays for model tokens.
   the model credential stays yours — your Claude plan, your ChatGPT plan, your API key, or this machine.
-  you can finish stage 2 later. grounding works without a model; answering does not.
+  stage 2 can wait. grounding works without a model; answering does not.
 
       what you get                                   needs      why
   ✓   memory · code graph · recall · the gate        stage 1    already working, on Free, with no model

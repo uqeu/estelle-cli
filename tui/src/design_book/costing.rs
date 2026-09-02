@@ -44,7 +44,7 @@ use crate::theme::Palette;
 /// ⚠️ Both glyphs are one terminal column and the bar is a fixed `width`, which is why the bar can
 /// sit in a `Col` at all: a bar whose length depended on its value would push every column right of
 /// it, and that is the bug `cols::every_row_in_a_table_is_the_same_width` exists to catch.
-fn bar(percent: usize, width: usize) -> String {
+pub(crate) fn bar(percent: usize, width: usize) -> String {
     let filled = (percent.min(100) * width).div_ceil(100);
     let mut out = String::with_capacity(width * 3);
     for index in 0..width {
@@ -57,7 +57,7 @@ fn bar(percent: usize, width: usize) -> String {
 ///
 /// ⚠️ Green here is a claim that there is room, so the boundary is stated once rather than being
 /// re-guessed at each call site — the two-owners defect, in miniature.
-fn load_colour(percent: usize, palette: &Palette) -> Color {
+pub(crate) fn load_colour(percent: usize, palette: &Palette) -> Color {
     match percent {
         0..=65 => palette.green,
         66..=94 => palette.warn,
@@ -65,7 +65,7 @@ fn load_colour(percent: usize, palette: &Palette) -> Color {
     }
 }
 
-fn label(palette: &Palette, text: &str, value: &str, accent: Color) -> Line<'static> {
+pub(crate) fn label(palette: &Palette, text: &str, value: &str, accent: Color) -> Line<'static> {
     owned(Line::from(vec![
         Span::styled(format!("  {text}  "), Style::default().fg(palette.dim)),
         Span::styled(value.to_string(), Style::default().fg(accent)),
@@ -151,7 +151,10 @@ pub(crate) fn memory_remaining(palette: &Palette, _tick: u64, _pulse: bool) -> V
     lines.push(blank());
 
     // ── The fields the client used to throw away ───────────────────────────────
-    lines.push(note(palette, "if it did not fit, this is what you would see"));
+    lines.push(note(
+        palette,
+        "if it did not fit, this is what you would see",
+    ));
     lines.push(blank());
     let overflow: &[(&str, &str, Color)] = &[
         ("blocked", "0 tokens", palette.dim),
@@ -182,7 +185,12 @@ pub(crate) fn memory_remaining(palette: &Palette, _tick: u64, _pulse: bool) -> V
         ("logs/", "4.9M", "43.4%", "excluded by default now"),
         ("vendor-reference/", "2.1M", "18.2%", ""),
         ("docs/", "1.4M", "12.1%", ""),
-        ("src/estelle/serve/", "0.9M", "7.8%", "the part you ask about"),
+        (
+            "src/estelle/serve/",
+            "0.9M",
+            "7.8%",
+            "the part you ask about",
+        ),
         ("cli-rs/tui/", "0.7M", "6.1%", ""),
     ];
     for (index, (path, tokens, share, why)) in paths.iter().enumerate() {
@@ -278,8 +286,22 @@ pub(crate) fn usage_spend(palette: &Palette, _tick: u64, _pulse: bool) -> Vec<Li
         let mut line = owned(row(
             SPEND,
             &[
-                Cell(name, if *selected { palette.bright } else { palette.mid }),
-                Cell(spend, if *spend == "—" { palette.dim } else { palette.mid }),
+                Cell(
+                    name,
+                    if *selected {
+                        palette.bright
+                    } else {
+                        palette.mid
+                    },
+                ),
+                Cell(
+                    spend,
+                    if *spend == "—" {
+                        palette.dim
+                    } else {
+                        palette.mid
+                    },
+                ),
                 Cell(share, palette.dim),
                 Cell(
                     why,
@@ -383,222 +405,10 @@ pub(crate) fn usage_spend(palette: &Palette, _tick: u64, _pulse: bool) -> Vec<Li
     lines
 }
 
-/// 🔴 **THE COSTING PANEL ITSELF** — screen 33b, the four things he asked for, on one screen.
-///
-/// *"Per model: what it costs, what the run is spending, how much is left in the plan, and how much
-/// memory has been used."* All four, side by side, because the point of the panel is the
-/// COMPARISON: a per-Mtok price means nothing without the run it is being spent on, and a run spend
-/// means nothing without the budget it is drawing down.
-///
-/// ⚠️ **AFFINITY DECIDES BY DEFAULT AND THE HUMAN CAN OVERRIDE, PER ROLE.** The founder was
-/// explicit that this is not one global switch: *"I really like Opus 5 planning; Affinity might
-/// choose Codex 5.6 for the solve."* So the lock column is per ROLE — a `plan` lock and a `solve`
-/// lock — and an unlocked role reads `affinity`, never a blank.
-pub(crate) fn model_cost(palette: &Palette, _tick: u64, _pulse: bool) -> Vec<Line<'static>> {
-    const POOL: &[Col] = &[
-        Col::l(2),
-        Col::l(20),
-        Col::l(10),
-        Col::r(7),
-        Col::r(8),
-        Col::r(9),
-        Col::l(9),
-        Col::l(26),
-    ];
-    const BUDGET: &[Col] = &[Col::l(15), Col::l(26), Col::r(5), Col::l(40)];
-    const MEMORY_PERCENT: usize = 41;
-    const RUN_PERCENT: usize = 12;
-
-    let memory_bar = bar(MEMORY_PERCENT, 26);
-    let memory_percent = format!("{MEMORY_PERCENT}%");
-    let run_bar = bar(RUN_PERCENT, 26);
-    let run_percent = format!("{RUN_PERCENT}%");
-
-    let mut lines = vec![
-        rule(
-            "cost",
-            "ctrl+m locks a role",
-            118,
-            palette.dim,
-            palette.mid,
-            palette.cite,
-        ),
-        blank(),
-        owned(head(
-            POOL,
-            &[
-                "",
-                "model",
-                "provider",
-                "in/M",
-                "out/M",
-                "run spend",
-                "role",
-                "",
-            ],
-            palette.dim,
-            0,
-        )),
-    ];
-
-    // `role` is the override, and `affinity` is what it reads when nobody has overridden it.
-    let pool: &[(&str, &str, &str, &str, &str, &str, &str, &str)] = &[
-        (
-            "●",
-            "claude-opus-5",
-            "anthropic",
-            "$5.00",
-            "$25.00",
-            "$2.41",
-            "plan",
-            "locked by you",
-        ),
-        (
-            "●",
-            "gpt-5.6-codex",
-            "openai",
-            "$5.00",
-            "$25.00",
-            "$1.26",
-            "solve",
-            "affinity",
-        ),
-        (
-            "●",
-            "claude-sonnet-5",
-            "anthropic",
-            "$3.00",
-            "$15.00",
-            "$1.26",
-            "solve",
-            "affinity · cost pick",
-        ),
-        (
-            "●",
-            "deepseek-v4-pro",
-            "deepseek",
-            "$0.95",
-            "$3.80",
-            "$0.53",
-            "review",
-            "affinity",
-        ),
-        (
-            "●",
-            "haiku-4.5",
-            "anthropic",
-            "$0.80",
-            "$4.00",
-            "$0.00",
-            "scope",
-            "affinity",
-        ),
-        (
-            "○",
-            "Qwen3-Coder-80B",
-            "local",
-            "—",
-            "—",
-            "—",
-            "—",
-            "this machine, no bill",
-        ),
-    ];
-    for (index, (mark, name, provider, input, output, spend, role, note_text)) in
-        pool.iter().enumerate()
-    {
-        let locked = note_text.contains("locked");
-        let mut line = owned(row(
-            POOL,
-            &[
-                Cell(mark, if *mark == "●" { palette.green } else { palette.dim }),
-                Cell(name, if locked { palette.bright } else { palette.mid }),
-                Cell(provider, palette.dim),
-                Cell(input, palette.mid),
-                Cell(output, palette.mid),
-                Cell(
-                    spend,
-                    if *spend == "—" {
-                        palette.dim
-                    } else {
-                        palette.bright
-                    },
-                ),
-                Cell(role, if locked { palette.warn } else { palette.plan }),
-                Cell(
-                    note_text,
-                    if locked { palette.warn } else { palette.dim },
-                ),
-            ],
-            0,
-        ));
-        if index == 0 {
-            line = line.style(Style::default().bg(palette.tint));
-        }
-        lines.push(line);
-    }
-    lines.push(blank());
-    lines.push(note(
-        palette,
-        "affinity decides by default. enter locks the highlighted model to its role; only that role.",
-    ));
-    lines.push(blank());
-
-    // ── The budget half. Always visible, which is the founder's global rule 2. ──
-    lines.push(rule(
-        "budget",
-        "always visible",
-        118,
-        palette.dim,
-        palette.mid,
-        palette.plan,
-    ));
-    lines.push(blank());
-    lines.push(owned(row(
-        BUDGET,
-        &[
-            Cell("run spend", palette.mid),
-            Cell(&run_bar, load_colour(RUN_PERCENT, palette)),
-            Cell(&run_percent, palette.mid),
-            Cell("$5.46 this session · $45 soft cap", palette.dim),
-        ],
-        2,
-    )));
-    lines.push(owned(row(
-        BUDGET,
-        &[
-            Cell("memory used", palette.mid),
-            Cell(&memory_bar, load_colour(MEMORY_PERCENT, palette)),
-            Cell(&memory_percent, palette.mid),
-            Cell("103M of 250M · 6 repos held", palette.dim),
-        ],
-        2,
-    )));
-    lines.push(owned(row(
-        BUDGET,
-        &[
-            Cell("plan remaining", palette.mid),
-            Cell("", palette.dim),
-            Cell("", palette.dim),
-            Cell("147M free · resets 1 Sep", palette.green),
-        ],
-        2,
-    )));
-    lines.push(blank());
-    lines.push(note(
-        palette,
-        "run spend is YOUR key billed by YOUR vendor. memory is the Estelle plan. they are two bills.",
-    ));
-    lines.push(note(
-        palette,
-        "a provider that does not publish a limit gets a dash here, never an estimate.",
-    ));
-    lines
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::design_book::panel::model_cost;
     use crate::theme::ScreenTheme;
 
     fn text(lines: &[Line<'static>]) -> String {
@@ -631,10 +441,10 @@ mod tests {
         let palette = ScreenTheme::Dark.palette();
         let rendered = text(&model_cost(&palette, 0, true));
         for clause in [
-            "in/M",            // 1. per model: what it costs
-            "run spend",       // 2. what the run is spending
-            "plan remaining",  // 3. how much is left in the plan
-            "memory used",     // 4. how much memory has been used
+            "in/M",           // 1. per model: what it costs
+            "run spend",      // 2. what the run is spending
+            "plan remaining", // 3. how much is left in the plan
+            "memory used",    // 4. how much memory has been used
         ] {
             assert!(
                 rendered.contains(clause),
@@ -686,14 +496,14 @@ mod tests {
         let palette = ScreenTheme::Dark.palette();
         let rendered = text(&memory_remaining(&palette, 0, true));
         for field in [
-            "memory used",     // held_tokens
-            "plan remaining",  // remaining_tokens + cap
-            "net new",         // net_new_tokens
-            "fits",            // fits
-            "blocked",         // blocked_tokens
+            "memory used",       // held_tokens
+            "plan remaining",    // remaining_tokens + cap
+            "net new",           // net_new_tokens
+            "fits",              // fits
+            "blocked",           // blocked_tokens
             "billable overflow", // billable_tokens + overflow_cost_usd
-            "suggested plan",  // suggested_plan
-            "largest paths",   // largest_paths
+            "suggested plan",    // suggested_plan
+            "largest paths",     // largest_paths
         ] {
             assert!(
                 rendered.contains(field),
@@ -752,8 +562,11 @@ mod tests {
             let rows = model_cost(&palette, 0, true)
                 .into_iter()
                 .filter(|line| {
-                    let text: String =
-                        line.spans.iter().map(|span| span.content.as_ref()).collect();
+                    let text: String = line
+                        .spans
+                        .iter()
+                        .map(|span| span.content.as_ref())
+                        .collect();
                     ["anthropic", "openai", "deepseek", "local"]
                         .iter()
                         .any(|provider| text.contains(provider))

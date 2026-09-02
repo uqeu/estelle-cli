@@ -1,7 +1,7 @@
 ESTELLE  ·  uqeu/estelle  ·  repo graph current  ·  1,993 files
 
 ── session · uqeu/estelle ───────────────────────────────────────────────────────────────────────────────────  │  ── context · alt+m · /context ────────────────────────────────────
-   uqeu/estelle · cli/design-book-rust-20260902                                                                │  Repo graph · team's swept copy
+   uqeu/estelle · main                                                                                         │  Repo graph · team's swept copy
 ● Task(Trace checkout failures · 8 workers)                                                                    │  1,993 files indexed
   models · Claude Opus 4.1 · GPT-5.5 · Gemini 2.5 Pro                                                          │  billing/charge.rs:82
   All 8 agents reported terminal outcomes                                                                      │    symbol  charge_card

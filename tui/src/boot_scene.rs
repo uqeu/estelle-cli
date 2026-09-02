@@ -23,7 +23,7 @@ pub const CONDENSE_MS: u64 = PLAY_MS * 62 / 100;
 
 pub const TIPS: [&str; 5] = [
     "Grounded memory: every answer cited to file and line.",
-    "The gate blocks any answer that invents an API before it reaches you.",
+    "The gate blocks any answer that invents an API, before it is shown.",
     "A swarm fans work across agents; every result returns through the gate.",
     "Context that never runs out: a 4,000-turn session held under 800 tokens.",
     "One merge gate: grounding, secrets, static analysis, CVEs. Pass or block.",

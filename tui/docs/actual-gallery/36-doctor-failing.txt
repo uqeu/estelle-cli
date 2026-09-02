@@ -4,7 +4,7 @@
   ●   endpoint          api.fatelabs.ca         200 · 41 ms · build 1f5cc7a4, build_verified true
   ●   account           khai@fatelabs.ca        Free · 10M tokens · plan resolved from /plans
   ●   repository        uqeu/estelle · main     swept at 6ff03b18 · 5,608 symbols indexed
-  ●   provider key      anthropic               on file · sk-ant-…4f2c · a generation returned 200
+  ●   provider key      anthropic               on file · a generation returned 200 · no value printed
   ●   grounding gate    POST /gate              refused a fabricated import — the gate doing its job
   ○   local model       none                    not configured — optional, and not why anything failed
   ■   MCP initialize    POST /mcp               500 · the handshake was accepted, then failed inside
