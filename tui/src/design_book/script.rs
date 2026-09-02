@@ -27,18 +27,15 @@
 
 use crate::design_book::script_cartwheel::CARTWHEEL;
 use crate::design_book::script_estelle::ESTELLE_REPO;
-use crate::design_book::script_sable::SABLE;
+use crate::design_book::script_solo::SOLO;
 use crate::design_book::session::{Film, Say};
 
 /// Strings that exist ONLY in a fixture, used by the gate test in both directions.
 ///
 /// 🔴 The positive half is why this is a list and not an `assert!(!contains)`: an absence check
 /// passes identically over a player that drew nothing at all.
-pub(crate) const FIXTURE_NEEDLES: &[&str] = &[
-    "claims/upstream.py:141",
-    "0009-upstream-retry-budget.md:31",
-    "PR #412",
-];
+pub(crate) const FIXTURE_NEEDLES: &[&str] =
+    &["billing/hooks.py:88", "amount_capturable_updated", "$52.65"];
 
 /// 🔴 **WHAT A BEAT SAYS WHEN NOBODY ASKED FOR FIXTURES.**
 ///
@@ -60,9 +57,9 @@ pub(crate) const SHUT: &[Say] = &[Say::System(
 pub(crate) const FILMS: &[Film] = &[
     Film {
         number: 1,
-        repo: "sable/claims-agent",
-        branch: "feat/retry-budget",
-        beats: SABLE,
+        repo: "saltbox/inkwell",
+        branch: "feat/billing",
+        beats: SOLO,
     },
     Film {
         number: 2,
@@ -122,7 +119,7 @@ pub(crate) fn dress(app: &mut crate::App, film: &Film, fixtures: bool) {
     // Sable's `claims-api` on the right would be a continuity error a viewer catches before any
     // of the copy lands — and film 3 is on Ultra, which is a different plan with no team at all.
     let (email, plan, seats, team) = match film.number {
-        1 => ("you@sable.dev", "team", 2, Some(("team-sable", "Sable"))),
+        1 => ("you@saltbox.dev", "ultra", 1, None),
         2 => (
             "you@cartwheel.shop",
             "team",
@@ -152,7 +149,7 @@ pub(crate) fn dress(app: &mut crate::App, film: &Film, fixtures: bool) {
         .ok();
     }
     let services: [&str; 3] = match film.number {
-        1 => ["claims-api", "insurer-proxy", "worker"],
+        1 => ["inkwell-web", "inkwell-api", "billing"],
         2 => ["checkout", "catalog", "webhooks"],
         _ => ["api.fatelabs.ca", "sweep-worker", "monitor-ingest"],
     };
@@ -208,7 +205,7 @@ pub(crate) fn dress(app: &mut crate::App, film: &Film, fixtures: bool) {
     // The agents belong to the company the film is set at, for the same reason the services do.
     #[allow(non_snake_case, reason = "read as a fixed pair by the JSON below")]
     let AGENTS: [&str; 2] = match film.number {
-        1 => ["claims-reader", "policy-matcher"],
+        1 => ["indexer", "mailer"],
         2 => ["cart-worker", "fulfilment"],
         _ => ["sweep-worker", "hook-relay"],
     };
@@ -234,7 +231,7 @@ pub(crate) fn dress(app: &mut crate::App, film: &Film, fixtures: bool) {
         "prs": [{
             "number": match film.number { 1 => 412, 2 => 418, _ => 421 },
             "title": match film.number {
-                1 => "Cap upstream retries at 2",
+                1 => "Migrate billing off the removed Stripe fields",
                 2 => "Move checkout off removed Stripe fields",
                 _ => "Split the sweep upload and poll budgets" },
             "url": format!("https://github.com/{}/pull/1", film.repo),
@@ -255,7 +252,7 @@ pub(crate) fn dress(app: &mut crate::App, film: &Film, fixtures: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::design_book::script_sable::{FIXTURE_KEY, SABLE};
+    use crate::design_book::script_solo::{FIXTURE_KEY, SOLO};
     use crate::design_book::session::Say;
 
     /// 🔴 **THE FIXTURE CREDENTIAL IS STILL REFUSED BY THE SHIPPED FENCE.**
@@ -284,12 +281,24 @@ mod tests {
         );
     }
 
-    /// The three lines of the credential refusal, as the script writes them.
+    /// The three lines of the credential refusal, FOUND rather than indexed.
+    ///
+    /// ⚠️ **IT WAS `SOLO[2]`, THEN `SOLO[10]`, AND BOTH WENT STALE THE MOMENT A BEAT MOVED.** The
+    /// script is data the founder reorders — that is the whole point of the file — so a guard that
+    /// pins a beat by POSITION is a guard that breaks on the edit it exists to survive. It searches
+    /// for the refusal now, and fails loudly if the film ever loses it.
+    fn credential_lines() -> &'static [&'static str; 3] {
+        SOLO.iter()
+            .flat_map(|beat| beat.reply.iter())
+            .find_map(|say| match say {
+                Say::Failure(lines) if lines[0].contains("did not go out") => Some(lines),
+                _ => None,
+            })
+            .expect("film 1 must still carry the credential refusal")
+    }
+
     fn credential_beat() -> String {
-        match &SABLE[2].reply[0] {
-            Say::Failure(lines) => lines.join(" "),
-            _ => String::new(),
-        }
+        credential_lines().join(" ")
     }
 
     /// 🔴 **THE REFUSAL MUST SURVIVE THE PRODUCT'S OWN REDACTOR.**
@@ -305,9 +314,7 @@ mod tests {
     /// masked — the redactor is working, and the refusal is simply worded to get past it.
     #[test]
     fn the_credential_beat_survives_the_products_own_redactor() {
-        let Say::Failure(lines) = &SABLE[2].reply[0] else {
-            panic!("beat 3's first say must be the refusal banner");
-        };
+        let lines = credential_lines();
         for line in lines {
             assert_eq!(
                 estelle_client::mask_secret(line),
@@ -397,17 +404,23 @@ mod tests {
     #[test]
     fn film_one_stands_alone_with_the_sound_off() {
         let text = spoken();
+        // 🔴 **FILM 1 ARGUES ONE THING: THE PLAN SURVIVED THE PROVIDER, AND A SMALL MODEL
+        // FINISHED THE JOB.** Each needle is a beat a silent viewer has to see, so trimming a beat
+        // is a test failure rather than a quiet loss of the film's whole argument.
         for statement in [
-            "claims/upstream.py:141",      // 1 · cited answers about your own code
-            "fastapi_turbo",               // 2 · it refuses what it cannot ground
-            "blocked this prompt",         // 3 · the credential fence
-            "529",                         // 4 · the provider dies
-            "Provider returned 529",       // 5 · the provider names its own failure
-            "on your hardware",            // 6 · the work moves to HIS machine
-            "Codex plan",                  // 6b · a plan is spent by this CLI, never a server
-            "Your team decided otherwise", // 7 · team memory contradicts him
-            "Nothing merged",              // 8 · propose-only
-            "billed by Estelle",           // 9 · what it cost
+            "billing/hooks.py",                   // 1 · it read his actual repo
+            "reached your Anthropic usage limit", // 2 · the wall, and it is a cap, not an outage
+            "All ten workers stopped",            // 3 · ten subagents die at once
+            "the decisions from steps 1 to 4",    // 3b · the plan and the work survive it
+            "$52.65",                             // 4 · cost is the REASON he moves
+            "codex",        // 5 · a plan he already pays for does the thinking
+            "this machine", // 6 · his own hardware does the writing
+            "context7",     // 7 · research feeds it live docs
+            "every name resolves in this repo", // 8 · the gate checks the small model
+            "not idempotent", // 9 · a rival family argues with it
+            "did not go out", // 10 · the credential fence
+            "455 tests",    // 11 · the long task finishes, correct
+            "what you actually paid", // 12 · the bill
         ] {
             assert!(
                 text.contains(statement),

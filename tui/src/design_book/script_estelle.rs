@@ -41,7 +41,7 @@ pub(crate) const ESTELLE_REPO: &[Beat] = &[
             },
             Say::Wait(1_400),
             Say::System(
-                "The Redis decision came out of Marcus's revert at 23:02, not out of a meeting. Anyone who proposes a Redis-backed status cache will be shown it, with the commit.",
+                "The Redis decision came out of Marcus's revert at 23:02, not out of a meeting. I will show this to anyone who proposes a Redis-backed status cache, with the commit.",
             ),
         ],
         read_ms: 6_200,
@@ -107,7 +107,7 @@ pub(crate) const ESTELLE_REPO: &[Beat] = &[
         reply: &[
             Say::Failure([
                 "STALE \u{2014} indexed at 6ff03b18, the repo is now 75557c7f.",
-                "214 files have changed since the sweep. No citation is given.",
+                "214 files changed since the sweep. I give no citation.",
                 "A stale index does not fail loudly; it answers with a plausible wrong line.",
             ]),
             Say::Wait(1_600),
@@ -131,8 +131,8 @@ pub(crate) const ESTELLE_REPO: &[Beat] = &[
         think_ms: 2_800,
         reply: &[
             Say::Answer {
-                text: "Two callers, both added since that sweep \u{2014} which is why the first answer \
-                       was refused rather than guessed.",
+                text: "Two callers. Both arrived after that sweep, so I refused the first answer \
+                       instead of a guess.",
                 grounded: true,
             },
             Say::Wait(700),
@@ -169,7 +169,7 @@ pub(crate) const ESTELLE_REPO: &[Beat] = &[
             },
             Say::Wait(1_100),
             Say::System(
-                "Estelle bills memory. Model tokens are billed by whoever you brought \u{2014} here, nobody: that last answer ran on this machine.",
+                "Your bill counts memory. Whoever you bring bills the model tokens. Here that is nobody: the last answer ran on this machine.",
             ),
         ],
         read_ms: 6_000,

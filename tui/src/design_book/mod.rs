@@ -42,8 +42,8 @@ pub(crate) mod script;
 pub(crate) mod script_cartwheel;
 /// Film 3 · this repo, as data.
 pub(crate) mod script_estelle;
-/// Film 1 · Sable, as data.
-pub(crate) mod script_sable;
+/// Film 1 · a solo developer and his own machine, as data.
+pub(crate) mod script_solo;
 /// The vocabulary a scripted session is written in.
 pub(crate) mod session;
 pub(crate) mod skills;

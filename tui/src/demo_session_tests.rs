@@ -412,9 +412,13 @@ fn the_submitted_turn_does_not_carry_the_typo() {
         })
         .collect();
     assert_eq!(submitted.len(), film.beats.len());
-    assert!(submitted[0].contains("claims fetch?"), "{:?}", submitted[0]);
-    assert!(!submitted[0].contains("fecth"), "the typo was submitted");
-    assert!(!submitted[3].contains("webook"), "the typo was submitted");
+    assert!(
+        submitted[0].contains("stripe migration"),
+        "{:?}",
+        submitted[0]
+    );
+    assert!(!submitted[0].contains("migraton"), "the typo was submitted");
+    assert!(!submitted[2].contains("teh"), "the typo was submitted");
 }
 
 /// Everything the film ever put in the transcript, as one string.
@@ -473,7 +477,45 @@ fn a_film_cannot_draw_fixture_numbers_with_the_gate_shut() {
         );
     }
     // The frame is the product either way: his own typed words are still on it.
-    assert!(shut.contains("where do we retry"), "{shut}");
+    assert!(shut.contains("stripe migration"), "{shut}");
+}
+
+/// 🔴 **NO FILM SAYS "SAVED", AND THIS READS THE RENDERED FRAMES RATHER THAN THE SCRIPT.**
+///
+/// `design_book/costing.rs` renders `saved $0.214 · affinity picked, you did not` against a
+/// MODELLED all-opus baseline, on a surface `ESTELLE_DEMO_FIXTURES=1 estelle demo` shows customers.
+/// The films run through the same fixture flag, so "does that string reach a film?" is a question
+/// about OUTPUT, and the honest way to answer it is to look at the output.
+///
+/// ⚠️ **THE SCRIPT-LEVEL CHECK IN `script.rs` IS NOT ENOUGH ON ITS OWN.** It reads the words a film
+/// writes; this reads the words a film DRAWS, which is a superset — anything a beat pulls in from
+/// the book, from `gate_refusal`, or from a future `Say` variant lands here and nowhere else.
+///
+/// 🔴 The word is only allowed over a MEASURED counterfactual. A modelled baseline re-prices the
+/// same tokens at another model's rate: a legitimate estimate and an illegitimate sentence, because
+/// "saved" asserts a fact about money that never left his account.
+#[test]
+fn no_film_frame_ever_says_saved() {
+    for film in script::FILMS {
+        let total = runtime_ms(&cue_sheet(film, true, PANE));
+        let mut inspected = 0usize;
+        for fraction in 0..16 {
+            let frame = frame_at(film, total * fraction / 16, true);
+            inspected += frame.lines().count();
+            for claim in ["saved", "savings", "you save"] {
+                assert!(
+                    !frame.to_ascii_lowercase().contains(claim),
+                    "film {} draws {claim:?} \u{2014} only a MEASURED counterfactual may say it:\n{frame}",
+                    film.number
+                );
+            }
+        }
+        assert!(
+            inspected > 400,
+            "only {inspected} rows inspected for film {} \u{2014} the guard proves nothing",
+            film.number
+        );
+    }
 }
 
 /// 🔴 **THE WATERMARK IS GONE.**

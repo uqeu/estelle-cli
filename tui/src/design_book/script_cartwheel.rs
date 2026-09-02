@@ -42,7 +42,6 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
                 ],
             },
             Say::Wait(1_400),
-            Say::System("You did not ask it to start. It had already started."),
         ],
         read_ms: 5_000,
     },
@@ -166,7 +165,7 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
             Say::Failure([
                 "Hold \u{2014} Priya opened `feat/status-page` 20 minutes ago.",
                 "3 commits. You would be the second person on this.",
-                "Nothing has been created.",
+                "I created nothing.",
             ]),
             Say::Wait(1_300),
             Say::Table {
@@ -197,7 +196,6 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
                 ],
             },
             Say::Wait(1_200),
-            Say::System("It does not tell you it posted. It shows you the message."),
         ],
         read_ms: 6_800,
     },
