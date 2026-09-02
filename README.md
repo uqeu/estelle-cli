@@ -80,7 +80,7 @@ estelle acp                            # Agent Client Protocol, over stdio
 ```
 
 Answers cite the files and lines they came from. When Estelle cannot ground an answer, it says so instead
-of inventing one. `estelle --help` lists all twenty-two commands.
+of inventing one. `estelle --help` lists all twenty-six commands.
 
 To bypass credential storage, set `ESTELLE_API_KEY` in the process environment. It takes precedence over
 `~/.estelle/auth.json` and is never persisted by Estelle.

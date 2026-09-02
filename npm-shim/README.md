@@ -90,8 +90,7 @@ returns a merge verdict you can fail a build on.
 
 **And the edit hook inspects Python only today.** A write to any other file type produces no output at
 all, so on that path "not checked" and "clean" look the same. Use `estelle gate` on the diff if you need
-a verdict for another language, and read the language scope under [What is
-measured](#what-is-measured).
+a verdict for another language, and read the language scope under "What is measured" below.
 
 **Serve any other harness.**
 
@@ -100,10 +99,11 @@ estelle mcp-server            # Estelle's tools over MCP, for any agent
 estelle acp                   # Agent Client Protocol, over stdio
 ```
 
-`estelle --help` lists all twenty-two commands. A few worth knowing early:
+`estelle --help` lists all twenty-six commands. A few worth knowing early:
 
 | | |
 |---|---|
+| `estelle setup` | configure, brief, sweep, then prove Estelle on a real symbol from your repo |
 | `estelle init` | write the MCP entry for every editor you have installed |
 | `estelle doctor` | credential and runtime readiness, reported without printing a secret value |
 | `estelle recall` | search your memory and your code together |
