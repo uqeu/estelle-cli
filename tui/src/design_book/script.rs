@@ -529,6 +529,8 @@ mod tests {
             "0009-upstream-retry-budget.md:31",      // 2 · a decision, volunteered, with its line
             "reads it instead of guessing",          // 3 · he disagrees, and his reason is kept
             "Sam proposed",                          // 4 · a proposal already parked in Slack
+            "can never certify a claim",             // 4b · 🔴 memory says HOW it knows
+            "stays readable and dated",              // 4c · 🔴 memory can be WRONG, and says so
             "where do we bound the capture retries", // 5 · 🔴 a teammate's PROMPT, word for word
             "I do not have the answers he got",      // 6 · 🔴 and the half it refuses to invent
             "inside billing/capture.py right now",   // 7 · a teammate mid-flight in the same file

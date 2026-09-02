@@ -41,17 +41,46 @@ brackets.
 
 ## Film 2 · `cartwheel/storefront` · the repo moved without him
 
+🔴 **REWRITTEN 2026-09-02 AFTER A SURFACE AUDIT, AND THE OLD TABLE WAS WRONG IN BOTH DIRECTIONS.**
+The film went from **11 beats to 16**, and memory became the spine rather than one beat, on the
+founder's note: *"we talk about memory in the films again, we need to show how good Estelle memory
+and context is."*
+
+⚠️ **TWO ROWS HERE PREVIOUSLY READ ⛔ NOT BUILT AND WERE FALSE NEGATIVES.** They are the reason this
+section was re-measured rather than edited. A ⛔ on a thing we ship is not a harmless conservatism —
+it is the founder declining, in a room, to claim something true.
+
+* *"What a teammate asked their agent"* was filed as *"not a surface, a query, or an endpoint
+  today."* **`POST /turns` is an endpoint today** (`src/estelle/serve/api_turns.py:18`), Tier 1, with
+  no model on the path — and `memory_routing.namespace_for:46` resolves a team member to the **team
+  id**, so `handle_turns` reads the whole team namespace with no per-member filter. A teammate's
+  verbatim prompts come back to any member's key. The gap is the CLIENT, not the product.
+* *"A teammate inside the same file right now"* was filed as ⛔. **`GET /presence` ships it** and the
+  CLI renders it (`commands.rs:805`, `commands.rs:1799`): `active` rows carry `member`, `since` and
+  `files`. The concurrency signal the row said we lacked is on the wire.
+
+**The whole 🟡 column below is ONE missing line**: `estelle-client/src/endpoint.rs` has no `Turns`
+variant, so no command can ask for a door the server already answers.
+
 | beat | depicted | status | confidence |
 |---|---|---|---|
-| 1 | **A four-day rollup: who merged, who decided, who opened what** | `list_sessions` and team activity are built; **the narrative rollup is not.** | repo doc |
-| 2 | **A team decision volunteered BEFORE he writes the code, with its ADR line** | ⛔ **Not built.** Contradiction detection over the memory graph. The repo's own film notes call it *"the single most valuable unbuilt thing"*. | repo doc |
-| 3 | Recording his own counter-decision, linked to the one it departs from | ⛔ **Not built.** Memory holds decisions; a decision that cites the decision it revises is not a shape we write. | probed |
-| 3b | **A teammate's proposal parked in Slack, and a second teammate's agent answer about it** | ⛔ **Not built.** Requires Slack ingest joined to session memory. | probed |
-| 4 | **A teammate inside the same file right now** | ⛔ **Not built.** Concurrent-work detection across teammates. | repo doc |
-| 5 | 🔴 **What a teammate ASKED THEIR AGENT and what it ANSWERED** | ⛔ **NOT BUILT, AND IT IS THE MOST DIFFERENTIATED FRAME IN THE THREE FILMS.** Sessions are stored per account; a cross-teammate read of question-and-answer pairs is not a surface, a query, or an endpoint today. **This is the one to build.** | probed |
-| 5b | A second agent-conversation frame, used to confirm rather than contradict | ⛔ **Not built.** Same mechanism as beat 5. | probed |
-| 6 | **The memory catch: code that compiles, that the gate passes, that a team decision forbids** | ⛔ **Not built** — the catch itself. ✅ The gate half is real. | repo doc |
-| 8 | Slack + Linear + GitHub in one turn, replying **inside a teammate's own thread** | ✅ The Slack → PR loop is live and proven. ⛔ **Threading a reply into a specific teammate's earlier thread, and the Linear write, are not.** | repo doc |
+| 1 | **Who is active, who worked overnight, what is in flight** | ✅ **Built.** `GET /presence`, team-scoped through the same namespace resolver. `commands.rs:1799` renders `active`/`overnight`/`files_in_use`/`handoffs`. | probed |
+| 1 | A four-day narrative rollup naming who merged what | ⚠️ The FACTS are in memory (`commit` is a stored kind, `content_trust.py:88`). **The rollup is a grounded answer, not a dedicated surface** — it is drawn here as prose, which is what the answer path returns. | probed |
+| 2 | **A team decision volunteered before he writes the code, with its ADR line** | ✅ **The surface is built** — `GET /memory/cards` returns title, folder, body and `sources`, and `commands.rs` prints a `provenance` line from them. ⛔ **The VOLUNTEERING is not.** Nothing watches what he is about to write and raises a contradicting decision unprompted; the repo's own notes call that *"the single most valuable unbuilt thing"*. **In the film he asks and it answers.** | probed |
+| 3 | Estelle asks him for his reasoning instead of offering a menu | ✅ Grounded answer path. ⛔ **The `/choose` numbered picker was CUT** — no option surface exists in this client. | probed |
+| 4 | **His own sentence stored verbatim, casing and typo intact** | 🟡 **Server built, no CLI door.** `turn_log.prepare_turn` strips the ends and stops: *"a store that tidies what was said cannot later prove what was said."* Read side is `POST /turns`. | probed |
+| 5 | **A proposal made in Slack weeks ago, retrieved** | ✅ **Built.** `slack` is a real ingested memory kind (`content_trust.EXTERNALLY_AUTHORED_KINDS`), reachable through the grounded answer path. | probed |
+| 5b | 🔴 **A listing that says HOW it knows — `grounded` may certify, `acquired` may not** | ✅ **Built, and under-used.** `GET /memories` renders `source \| trust \| N chunks \| externally authored` straight off `MemoryItem`. `content_trust.trust_of:95` returns exactly two values. ⛔ **NOT `measured\|observed\|asserted`** — that is `FleetEvidence`'s vocabulary on the orchestra surface and `MemoryItem.trust` never takes it. | probed |
+| 6 | 🔴 **What a teammate TYPED at their own agent, verbatim** | 🟡 **Server built and TEAM-WIDE; no CLI door.** See the correction above. `Turn` carries `author`, `at`, `role`, `source`. **One `Turns` variant in `endpoint.rs` closes this.** | probed |
+| 6 | ⛔ **What the teammate was TOLD** | ⛔ **No store holds it, and the film now REFUSES it on camera.** `prepare_turn` is called in production without a `role`, so every Tier-1 row is `role="user"`. The earlier cut drew a column headed *"what they were told"* over nothing. Estelle now says: *"I have his questions. I do not have the answers he got."* | probed |
+| 7 | A second turn-log read, used to confirm rather than contradict | 🟡 Same door as beat 6. | probed |
+| 7b | 🔴 **A memory RETRACTED — withdrawn, dated, and still readable** | 🟡 **Built as a TOP-LEVEL command**, `estelle memory retract <subject> --reason` (`top_level.rs:3339` → `POST /retract`); **no in-session slash form.** `Memory.retract` closes the temporal fact log AND the recall mirror and **reads both back** rather than trusting the write. ⛔ **`claim_closed` and `recall_cleared` come back on the wire and the CLI drops them** — `top_level.rs:3763` lists the scalars it prints and neither is in it. **Two words fix that.** | probed |
+| 8–10 | The fleet working while he interrupts it | ✅ `POST /work`, `POST /orchestra`, and `orchestra_view` is the product's own renderer. ⛔ **The PLAYER does the mid-word interrupt (`Key::Interrupt`); the product's composer blocks on a turn.** Same limit film 1 carries. | probed |
+| 11 | **The memory catch: code that compiles, that the gate passes, that a team decision forbids** | ✅ The gate half is real. ⛔ **The CATCH is not** — same unbuilt contradiction detection as beat 2. | repo doc |
+| 13 | A handoff note left for teammates who are not here | 🟡 **Read half built, write half not reachable.** `POST /presence` carries a `note` (`api_console.py:111`), and `endpoint.rs` declares `Presence` as `[Get]` only. So this terminal reads a handoff note and cannot leave one. | probed |
+| 13 | ⛔ **"Three members have been alerted"** | ⛔ **CUT. Nothing in the product alerts a person.** No DM, no per-member email, no push. The only human-facing push is a Slack CHANNEL post needing a connected app plus a per-channel opt-in, fired by monitor signals rather than by presence. The film now says *"Nobody was paged, and nobody will be."* | probed |
+| — | ⛔ **A `● /slack` receipt posting into a teammate's thread** | ⛔ **CUT.** No `/slack` command exists in this client. The Slack bot is its own door and does not take instructions from this terminal. | probed |
+| — | ⛔ **A `who \| branch \| commits` table** | ⛔ **CUT.** `presence.py:20-29` carries `member`, `started`, `last_active`, `files`, `note`. No branch. No commit count. | probed |
 
 ## Film 3 · `cartwheel/storefront` · the night checkout went down
 

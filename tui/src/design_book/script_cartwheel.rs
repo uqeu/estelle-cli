@@ -5,6 +5,24 @@
 //! inside the same file. Neither of them has spoken to the other. **Estelle reads what Devon TYPED**,
 //! and that is the frame no competitor can build — every tool on the market reads his commits.
 //!
+//! ## 🔴 MEMORY IS THE SPINE, NOT A BEAT
+//!
+//! The founder, 2 September: *"we talk about memory in the films again, we need to show how good
+//! Estelle memory and context is."* **Eleven of the sixteen beats are a memory surface**, and they
+//! are deliberately four DIFFERENT claims rather than four recall demos:
+//!
+//! | # | the claim | the surface |
+//! |---|---|---|
+//! | 1 · 6 · 13 | it spans PEOPLE — a teammate you never spoke to | `/presence`, `POST /turns` |
+//! | 2 · 5 | it spans TIME and CHANNELS — a decision made in Slack weeks ago | `/cards`, ingested `slack` |
+//! | 5b | it says HOW IT KNOWS — `grounded` may certify, `acquired` may not | `/memories` |
+//! | 7b | it can be WRONG, and says so — withdrawn, dated, still readable | `memory retract` |
+//! | 6 | and it REFUSES the half nobody stores | `POST /turns` holds `role="user"` only |
+//!
+//! ⛔ **The fourth row is the one nobody demos.** A memory product that only ever accumulates is a
+//! memory product that quietly rots, and every rival's demo is an accumulation demo. Retraction,
+//! provenance and a trust tier are what separate a memory from a transcript.
+//!
 //! ## 🔴 THE COVERAGE MARKERS, AND WHY THEY ARE IN THIS FILE
 //!
 //! Every beat below carries one of three markers. James will ask *"is that real?"*, and the answer
@@ -45,8 +63,13 @@ use crate::design_book::session::{Beat, FleetFixture, FleetWorker, Key, Say};
 static PRESENT: &[Col] = &[Col::l(10), Col::l(18), Col::l(44)];
 /// `● /cards` — `title · folder · body`, the fields `commands.rs` prints for a knowledge card.
 static CARD: &[Col] = &[Col::l(24), Col::l(12), Col::l(42)];
-/// `● /memories` — `source · kind · chunks · trust`, the `MemoryItem` fields, in order.
-static HELD: &[Col] = &[Col::l(20), Col::l(13), Col::r(9), Col::l(24)];
+/// `● /memories` — `source · trust · chunks · externally authored`.
+///
+/// ⚠️ **THIS ORDER IS THE RENDERER'S, NOT A CHOICE.** An earlier draft drew `source · kind · chunks
+/// · trust`, which prints a `kind` column `commands.rs` never emits and puts `trust` last. The
+/// shipped loop formats `source | trust | N chunks | externally authored` — trust SECOND, because
+/// which of the things Estelle holds may certify a claim is the first fact about them.
+static HELD: &[Col] = &[Col::l(22), Col::l(11), Col::r(9), Col::l(21)];
 /// `● /turns` — `at · author · text`. Three of `Turn`'s five fields; `role` and `source` are
 /// constant on every row this film draws, so printing them would be four wasted columns.
 static TURN: &[Col] = &[Col::l(9), Col::l(8), Col::l(56)];
@@ -250,9 +273,9 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
         ],
         read_ms: 6_600,
     },
-    // ── 5 · ✅ SHIPPED · `GET /memories` (`commands.rs:798`) renders `MemoryItem` as
-    //       `source · kind · chunks · trust`, and `slack` is a real ingested memory kind
-    //       (`memory_routing.ACCOUNT_LEVEL_KINDS`).
+    // ── 5 · ✅ SHIPPED · the grounded answer path over ingested Slack. `slack` is a real memory
+    //       kind (`content_trust.EXTERNALLY_AUTHORED_KINDS`), so a proposal made in a channel weeks
+    //       ago is retrievable here.
     //
     //       🔴 A PROPOSAL ALREADY PARKED IN SLACK. He is about to suggest a thing his own teammate
     //       suggested on Thursday, to silence. Nobody reads four days of #eng, and this is the cost
@@ -263,17 +286,6 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
         )],
         think_ms: 4_000,
         reply: &[
-            Say::Table {
-                name: "memories",
-                columns: HELD,
-                rows: &[
-                    "source | kind | chunks | trust",
-                    "slack:#eng | slack | 214 | externally authored",
-                    "docs/adr | decision | 41 | team authored",
-                    "git:storefront | commit | 1,308 | team authored",
-                ],
-            },
-            Say::Wait(2_000),
             Say::Answer {
                 text: "Sam proposed one retry policy module in #eng on Thursday. Three people \
                        reacted and nobody replied. Your design already has him behind it.",
@@ -284,7 +296,55 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
                 "No ticket exists for it. Open one, and Sam gets an answer four days late instead of never.",
             ),
         ],
-        read_ms: 8_200,
+        read_ms: 6_800,
+    },
+    // ── 5b · ✅ SHIPPED · `GET /memories` (`commands.rs:798`), whose loop formats exactly
+    //        `source | trust | N chunks | externally authored` from `MemoryItem`.
+    //
+    //        🔴 **THE GROUNDING THESIS, IN ONE TABLE, WITH THE PRODUCT'S OWN VALUES.** He challenges
+    //        a memory, and the answer is not *"trust me"* — it is a listing that says WHICH of the
+    //        things Estelle holds may certify a claim about his code. `trust_of` returns exactly two
+    //        values (`content_trust.py:95`): `grounded` for swept code, `acquired` for everything
+    //        else. Slack, ADRs, commit messages and chat turns are all `acquired`, and the ones an
+    //        attacker could have written are `externally authored` on top.
+    //
+    //        ⛔ **NOT `measured | observed | asserted`.** That is `FleetEvidence`'s vocabulary on the
+    //        orchestra surface, a different axis on a different field. `MemoryItem.trust` has never
+    //        held those three words, and printing them here would invent a value the field cannot
+    //        take — in the one frame whose whole job is showing that Estelle marks what it knows.
+    Beat {
+        typed: &[
+            Key::Type("how do you know sam "),
+            Key::Pause(900),
+            Key::Type("actually said that"),
+        ],
+        think_ms: 3_800,
+        reply: &[
+            Say::Table {
+                name: "memories",
+                columns: HELD,
+                rows: &[
+                    "source | trust | chunks | externally authored",
+                    "slack:#eng | acquired | 214 | yes",
+                    "docs/adr | acquired | 41 | yes",
+                    "git:storefront/src | grounded | 8,104 | no",
+                    "git:storefront/tests | grounded | 2,190 | no",
+                ],
+            },
+            Say::Wait(2_200),
+            Say::Answer {
+                text: "I hold his message and I quote it back. It is a Slack message, so it can \
+                       never certify a claim about your code.",
+                grounded: true,
+            },
+            Say::Wait(1_600),
+            Say::Answer {
+                text: "Only your swept code carries that standing. Everything else on that list is \
+                       something a person said, and the list tells you which is which.",
+                grounded: true,
+            },
+        ],
+        read_ms: 8_400,
     },
     // ── 6 · 🔴🔴 THE CENTRE OF THE FILM, AND THE FRAME NOBODY ELSE CAN BUILD.
     //
@@ -373,6 +433,55 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
             Say::Answer {
                 text: "I read what they typed. Marcus's revert is in the repo, so he acted on \
                        whatever he was told.",
+                grounded: true,
+            },
+        ],
+        read_ms: 8_400,
+    },
+    // ── 7b · 🟡 BUILT, NOT SURFACED · `estelle memory retract <subject> --reason` is a shipped
+    //         TOP-LEVEL command (`top_level.rs:3339` → `POST /retract`). There is no in-session
+    //         slash form, so this receipt is a command he would run in another window today.
+    //
+    //         🔴 **THE HALF NOBODY DEMOS: MEMORY THAT IS WRONG, AND SAYS SO.** A memory product
+    //         that only ever accumulates is a memory product that quietly rots. `Memory.retract`
+    //         is explicit that this is NOT deletion — *"it stops being recalled, and the record
+    //         that Estelle believed it survives"* — and it closes BOTH stores, the temporal fact
+    //         log and the recall mirror, because closing one shipped a build that answered a
+    //         retracted claim as current.
+    //
+    //         ⚠️ **AND IT READS BOTH BACK RATHER THAN TRUSTING THE WRITE.** `retract_everywhere`
+    //         re-reads each store and names on the envelope whatever it could not confirm
+    //         withdrawn: *"a deletion the customer believes happened and did not is worse than a
+    //         refusal."* That is this repo's own standing rule, running inside the product.
+    //
+    //         ⛔ `claim_closed` and `recall_cleared` come back on the wire and the CLI drops them —
+    //         `top_level.rs:3763` lists the scalars it prints and neither is in it. So the receipt
+    //         here shows only what the terminal prints today, and Estelle says the read-back in
+    //         prose. `docs/demos/SHOWN-NOT-BUILT.md` carries the row.
+    Beat {
+        typed: &[Key::Type(
+            "the card saying we run payments through the legacy charge api is wrong, priya moved us off it in march",
+        )],
+        think_ms: 4_000,
+        reply: &[
+            Say::Command {
+                name: "memory retract",
+                lines: &[
+                    "purged: 1",
+                    "retracted: payments run through the legacy charge API",
+                    "reason: Priya migrated capture off it in March",
+                ],
+            },
+            Say::Wait(2_000),
+            Say::Answer {
+                text: "I stopped serving it. I read the fact log and the recall mirror back to \
+                       check, because a write that returns cleanly can still leave the claim standing.",
+                grounded: true,
+            },
+            Say::Wait(1_800),
+            Say::Answer {
+                text: "The old claim stays readable and dated. Anyone who asks why an answer \
+                       changed sees that you withdrew it today, and why.",
                 grounded: true,
             },
         ],
