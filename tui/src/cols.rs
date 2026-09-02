@@ -93,6 +93,31 @@ pub fn owned(line: Line<'_>) -> Line<'static> {
     .style(style)
 }
 
+/// The slice of a long list to draw so the selected row is always on screen.
+///
+/// 🔴 **A WALKABLE LIST WITH NO WINDOW IS A PICTURE AGAIN, AND A LIVE WALK IS WHAT PROVED IT.**
+/// `/memories` against production returned 200 rows into a 50-line terminal on 2026-09-02: every
+/// row past the fold was unreachable by any keypress, and `↓` moved a band the reader could no
+/// longer see. `skills_filtered`'s docstring records the same defect one screen over —
+/// *"handing it 247 rows does not produce a long list, it produces a list whose tail cannot be
+/// reached"*. The bound belongs at the point the surface is built.
+///
+/// Returns `(first, count)`. `count` is `0` only when there is nothing to draw or no room for it.
+///
+/// ⚠️ The band is kept CENTRED where it can be, and pinned at whichever end it has reached. A
+/// window that only scrolled when the cursor left it makes the last row of a page jump the whole
+/// page, which is the motion a reader loses their place in.
+pub fn window(total: usize, cursor: usize, visible: usize) -> (usize, usize) {
+    if total == 0 || visible == 0 {
+        return (0, 0);
+    }
+    let count = visible.min(total);
+    let first = cursor.saturating_sub(count / 2).min(total - count);
+    debug_assert!(first + count <= total);
+    debug_assert!(count == total || (first..first + count).contains(&cursor.min(total - 1)));
+    (first, count)
+}
+
 pub fn head<'a>(cols: &[Col], labels: &[&'a str], dim: Color, indent: usize) -> Line<'a> {
     let cells = labels
         .iter()
@@ -157,6 +182,36 @@ fn truncate(value: &str, width: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::window;
+
+    /// The band is always inside the window, at both ends and in the middle.
+    #[test]
+    fn the_window_always_contains_the_band_and_never_runs_past_the_list() {
+        for total in [0usize, 1, 3, 200] {
+            for visible in [0usize, 1, 5, 20] {
+                for cursor in 0..total.max(1) {
+                    let (first, count) = window(total, cursor, visible);
+                    assert!(first + count <= total, "{total}/{cursor}/{visible}");
+                    if count > 0 && cursor < total {
+                        assert!(
+                            (first..first + count).contains(&cursor),
+                            "the band fell outside the window: {total}/{cursor}/{visible}"
+                        );
+                    }
+                }
+            }
+        }
+        // A list shorter than the window is drawn whole, from the top.
+        assert_eq!(window(3, 2, 20), (0, 3));
+        // A cursor at the end pins the window to the end rather than scrolling past it.
+        assert_eq!(window(200, 199, 10), (190, 10));
+        // An empty list draws nothing rather than one blank row.
+        assert_eq!(window(0, 0, 10), (0, 0));
+    }
+}
+
+#[cfg(test)]
+mod column_tests {
     use super::*;
 
     fn width(line: &Line<'_>) -> usize {

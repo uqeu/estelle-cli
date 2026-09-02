@@ -2479,11 +2479,25 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
     // keys and painted nothing for a release, because the render call was lost in a refactor and
     // no warning ties a missing screen to a live keymap. It returns early for the same reason the
     // affinity surfaces do — a transcript drawn under a full-screen pane is a second frame.
+    if let Some(pane) = &app.held_memory {
+        let palette = app.theme.screen_palette();
+        let lines = pane.lines(&palette, usize::from(area.width), usize::from(area.height));
+        frame.render_widget(
+            Paragraph::new(lines).style(
+                Style::default()
+                    .fg(app.theme.primary())
+                    .bg(app.theme.background()),
+            ),
+            area,
+        );
+        return;
+    }
     if let Some(walk) = &app.graph_walk {
         let palette = app.theme.screen_palette();
         let lines = walk.lines(
             &palette,
             usize::from(area.width),
+            usize::from(area.height),
             pulse_tick(app, now),
             true,
         );

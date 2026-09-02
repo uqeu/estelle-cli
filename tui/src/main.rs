@@ -48,6 +48,7 @@ mod local_provider;
 mod login;
 mod marks;
 mod mcp_tool;
+mod memory_view;
 mod orchestra_view;
 mod production_hud;
 mod provider_catalog;
@@ -852,6 +853,14 @@ enum UiEvent {
         proposed_prs: Result<estelle_client::ProposedPrsResponse, Error>,
     },
     ProdGraph(Result<production_hud::ProductionGraph, String>),
+    /// `GET /memories`, for the walkable held-memory pane.
+    HeldMemory(Result<Value, String>),
+    /// `POST /retract`'s receipt. The subject travels WITH it so a slow reply cannot land on
+    /// whatever row the band moved to.
+    Retracted {
+        subject: String,
+        result: Result<Value, String>,
+    },
     /// The capacity half of `POST /sweep/estimate`, asked by `/memory left`.
     MemoryLeft(Result<Value, String>),
     /// The four graph tools, fetched for the walkable pane.
@@ -1977,6 +1986,9 @@ struct App {
     /// The walkable code graph, when it is open. `None` is closed — there is no third state, and
     /// the loading and refused states live INSIDE the walk so the pane owns its own honesty.
     graph_walk: Option<graph_walk::Walk>,
+    /// The walkable held-memory pane (`/memories`), when it is open.
+    held_memory: Option<memory_view::Held>,
+    held_memory_in_flight: bool,
     /// Held for as long as the copied text must stay on the clipboard.
     ///
     /// ⚠️ **DROPPING THE LEASE CAN DROP THE CLIPBOARD.** On the X11 path the process that owns a
@@ -2332,6 +2344,8 @@ impl App {
             gate_refusals: 0,
             affinity_surface: None,
             graph_walk: None,
+            held_memory: None,
+            held_memory_in_flight: false,
             clipboard_lease: None,
             graph_walk_in_flight: false,
             affinity_costs: affinity_cli::CostLedger::default(),
@@ -2718,6 +2732,7 @@ impl App {
             // a `GET /graph?walk` nobody serves and printed the summary anyway.
             "graph" if argument.trim() == "walk" => self.open_graph_walk(tx),
             "memory" if argument.trim() == "left" => self.request_memory_left(tx),
+            "memories" if argument.trim().is_empty() => self.open_held_memory(tx),
             "context" => self.toggle_context_panel(),
             "prod" => self.toggle_prod_panel(tx),
             "diff" => self.toggle_diff_panel(),
@@ -3496,6 +3511,72 @@ impl App {
                 "closed"
             }
         )));
+    }
+
+    /// Open the walkable held-memory pane (`/memories`).
+    ///
+    /// 🔴 **`/memories` ALREADY EXISTED AND PRINTED TWELVE ROWS AND A `… N more`.** A list you
+    /// cannot act on is the half of screen 41 the founder wrote *"a memory the customer cannot
+    /// correct is the failure that section exists to close"* about.
+    fn open_held_memory(&mut self, tx: &mpsc::UnboundedSender<UiEvent>) {
+        if self.held_memory_in_flight {
+            return;
+        }
+        let Some(client) = self.client.clone() else {
+            self.transcript.push(TranscriptEntry::System(
+                "Held memory lives on your Estelle account. Run /login first.".to_string(),
+            ));
+            return;
+        };
+        self.held_memory_in_flight = true;
+        let repo = self.repo.clone();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            // 🔴 **`get_scoped`, NOT `get`. CAUGHT BY A LIVE PTY WALK, NOT BY A TEST.**
+            // `Endpoint::Memories` is `requires_repo: true`, so the unscoped `get` never left the
+            // client — it returned `Memories requires a repository scope` before a byte was sent,
+            // and every unit test in this commit was green while the pane could not open at all.
+            // Passing `repo` in the QUERY is not the same as passing it as the SCOPE, and only the
+            // scope satisfies the endpoint table.
+            let result: Result<Value, String> = client
+                .get_scoped(
+                    estelle_client::Endpoint::Memories,
+                    &repo,
+                    &(),
+                    &CancellationToken::new(),
+                )
+                .await
+                .map_err(|error| error.to_string());
+            let _ = tx.send(UiEvent::HeldMemory(result));
+        });
+    }
+
+    /// Send the confirmed retraction.
+    ///
+    /// ⚠️ **THE REPO IS SENT, AND THAT IS NOT A DETAIL.** `api_erasure.py` records what happened
+    /// when it was not: *"a user who picked a repo and believed they had scoped a retraction
+    /// closed claims across EVERY namespace they own."* The pane's confirmation names the scope it
+    /// is about to use, and this is the call that has to match it.
+    fn request_retraction(&mut self, subject: String, tx: &mpsc::UnboundedSender<UiEvent>) {
+        let Some(client) = self.client.clone() else {
+            if let Some(pane) = self.held_memory.as_mut() {
+                pane.refused(&subject, "no credential: run /login first.");
+            }
+            return;
+        };
+        let repo = self.repo.as_str().to_string();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let result: Result<Value, String> = client
+                .post(
+                    estelle_client::Endpoint::Retract,
+                    &serde_json::json!({"subject": subject, "repo": repo}),
+                    &CancellationToken::new(),
+                )
+                .await
+                .map_err(|error| error.to_string());
+            let _ = tx.send(UiEvent::Retracted { subject, result });
+        });
     }
 
     /// `/memory left` — how much memory this account has, and what this repo would take.
@@ -5040,6 +5121,26 @@ impl App {
                         )
                     };
                     self.request_production_graph(tx);
+                }
+            }
+            UiEvent::HeldMemory(result) => {
+                self.held_memory_in_flight = false;
+                match result {
+                    Ok(reply) => {
+                        self.held_memory =
+                            Some(memory_view::Held::new(self.repo.as_str().to_string(), &reply));
+                    }
+                    Err(error) => self.transcript.push(TranscriptEntry::System(format!(
+                        "Held memory could not be read: {error}"
+                    ))),
+                }
+            }
+            UiEvent::Retracted { subject, result } => {
+                if let Some(pane) = self.held_memory.as_mut() {
+                    match result {
+                        Ok(reply) => pane.retracted(&subject, &reply),
+                        Err(error) => pane.refused(&subject, &error),
+                    }
                 }
             }
             UiEvent::MemoryLeft(result) => match result {
@@ -6853,6 +6954,20 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
             }
             graph_walk::Action::Export => {
                 app.export_graph_walk();
+                return false;
+            }
+        }
+    }
+    if let Some(pane) = app.held_memory.as_mut() {
+        match pane.key(key) {
+            memory_view::Action::Passthrough => {}
+            memory_view::Action::Handled => return false,
+            memory_view::Action::Close => {
+                app.held_memory = None;
+                return false;
+            }
+            memory_view::Action::Retract(subject) => {
+                app.request_retraction(subject, tx);
                 return false;
             }
         }
@@ -11059,6 +11174,114 @@ mod tests {
             !screen.contract.contains("summary"),
             "`summary` is on the wire and must not be listed as missing"
         );
+    }
+
+    fn held_memory_reply() -> Value {
+        json!({
+            "memories": [
+                {"source": "key:cream-is-e9e6dc", "kind": "fact", "trust": "acquired",
+                 "may_ground": false, "externally_authored": false, "chunks": 1},
+                {"source": "serve/api.py", "kind": "code", "trust": "grounded",
+                 "may_ground": true, "externally_authored": false, "chunks": 42}
+            ],
+            "count": 2, "limit": 200, "truncated": false,
+            "repo": "uqeu/estelle", "scope": "uqeu/estelle"
+        })
+    }
+
+    /// 🔴 **THE RETRACT KEY REACHES THE SERVER ONLY AFTER A SECOND, DELIBERATE KEY.**
+    ///
+    /// Driven through `handle_key` and the live event loop, not through `memory_view` alone: the
+    /// unit tests prove the state machine and say nothing about whether the binary calls it.
+    #[test]
+    fn the_held_memory_pane_takes_its_keys_and_retracts_only_after_a_confirmation() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let now = Instant::now();
+        let mut app = test_app();
+        app.handle_ui_event(UiEvent::HeldMemory(Ok(held_memory_reply())), &tx);
+
+        let listed = rendered_frame_at_size(&app, now, 130, 40);
+        assert!(listed.contains("key:cream-is-e9e6dc"), "{listed}");
+        assert!(listed.contains("grounded"), "{listed}");
+        assert!(
+            listed.contains("x retract"),
+            "the footer must name the key that changes something:\n{listed}"
+        );
+
+        // 🔴 `x` DRAWS A CONFIRMATION AND SENDS NOTHING. The list must be gone from the frame, so
+        // there is no state in which a reader thinks they are still walking rows.
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), &tx);
+        let confirming = rendered_frame_at_size(&app, now, 130, 40);
+        assert!(confirming.contains("This is not a delete."), "{confirming}");
+        assert!(
+            !confirming.contains("serve/api.py"),
+            "the list was still drawn under a destructive confirmation:\n{confirming}"
+        );
+
+        // Any key that is not enter cancels.
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), &tx);
+        assert!(
+            rendered_frame_at_size(&app, now, 130, 40).contains("serve/api.py"),
+            "cancelling did not return to the list"
+        );
+
+        // And the receipt is what the pane reports - never the absence of an error.
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), &tx);
+        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &tx);
+        app.handle_ui_event(
+            UiEvent::Retracted {
+                subject: "key:cream-is-e9e6dc".to_string(),
+                result: Ok(json!({"retracted": true, "purged": 1, "namespaces": ["a"],
+                                  "scope": "uqeu/estelle", "claim_closed": true,
+                                  "recall_cleared": false, "partial": true,
+                                  "warning": "recall could not be confirmed"})),
+            },
+            &tx,
+        );
+        let receipt = rendered_frame_at_size(&app, now, 130, 40);
+        assert!(receipt.contains("PARTIAL"), "{receipt}");
+        assert!(receipt.contains("IT IS STILL LIVE"), "{receipt}");
+        assert!(
+            receipt.contains("key:cream-is-e9e6dc"),
+            "a retraction is not a delete, so the row stays:\n{receipt}"
+        );
+
+        handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &tx);
+        assert!(app.held_memory.is_none(), "esc did not close the pane");
+    }
+
+    /// The pane's keys belong to the pane, and its chords still belong to the app.
+    #[test]
+    fn the_held_memory_pane_owns_its_letters_and_passes_chords_through() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.handle_ui_event(UiEvent::HeldMemory(Ok(held_memory_reply())), &tx);
+
+        // `?` submits /help when nothing owns the keyboard. Here it must do nothing.
+        let before = app.transcript.len();
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE), &tx);
+        assert_eq!(
+            app.transcript.len(),
+            before,
+            "a key the pane does not bind escaped it and ran an app command"
+        );
+        // ctrl+t still reaches the app.
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL), &tx);
+        assert!(
+            app.transcript.len() > before,
+            "ctrl+t did not reach the app while the pane was open"
+        );
+    }
+
+    /// The door resolves locally, and `/memories` with no credential says why.
+    #[test]
+    fn the_held_memory_door_refuses_without_a_credential() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        assert!(app.handle_local_command("memories", "", &tx));
+        assert!(app.held_memory.is_none());
+        assert!(!app.held_memory_in_flight);
+        assert!(transcript_text(&app).contains("Run /login first"));
     }
 
     fn transcript_text(app: &App) -> String {

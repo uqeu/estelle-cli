@@ -100,6 +100,9 @@ pub(crate) struct Fetched {
     pub withheld: Option<String>,
 }
 
+/// Rows the opened detail block takes, so the window shrinks by exactly that when `enter` is on.
+const DETAIL_CHROME: usize = 22;
+
 /// The whole pane.
 pub(crate) struct Walk {
     repo: String,
@@ -175,10 +178,17 @@ impl Walk {
     ///
     /// ⚠️ Returned as a closure argument rather than a `Surface` because `Detail` borrows out of
     /// `self` and a `Surface` holding that borrow cannot escape this method.
+    /// The pane, windowed to `height`.
+    ///
+    /// 🔴 **`height` IS NOT DECORATION.** A repo's graph is hundreds of files; without a window
+    /// every row past the fold is unreachable by any keypress while `↓` moves a band the reader
+    /// can no longer see. Found on the sibling pane by a live walk against production, and fixed
+    /// in both: the same defect `skills_filtered` recorded one screen over.
     pub(crate) fn lines(
         &self,
         palette: &crate::theme::Palette,
         width: usize,
+        height: usize,
         tick: u64,
         pulse: bool,
     ) -> Vec<ratatui::text::Line<'static>> {
@@ -195,9 +205,18 @@ impl Walk {
                 pulse,
             );
         }
+        // The window follows the band, and what it leaves out is counted by `graph_view`'s
+        // `matched of total` row rather than dropped.
+        const CHROME: usize = 12;
+        let visible = height
+            .saturating_sub(CHROME + usize::from(self.opened) * DETAIL_CHROME)
+            .max(1);
+        let (first, count) = crate::cols::window(self.matched.len(), self.cursor, visible);
         let rows = self
             .matched
             .iter()
+            .skip(first)
+            .take(count)
             .filter_map(|index| self.nodes.get(*index))
             .cloned()
             .map(|node| Node {
@@ -213,10 +232,12 @@ impl Walk {
             &Surface::Walk {
                 repo: &self.repo,
                 filter: &self.filter,
-                matched: rows.len(),
+                // ⚠️ `matched` IS THE FILTER'S ANSWER, NOT THE WINDOW'S. Reporting the drawn row
+                // count here would make a scrolled pane claim the filter matched twelve files.
+                matched: self.matched.len(),
                 total: self.nodes.len(),
                 nodes: &rows,
-                selected: (!rows.is_empty()).then_some(self.cursor),
+                selected: (!rows.is_empty()).then(|| self.cursor.saturating_sub(first)),
                 hints: if self.filtering { FILTER_KEYS } else { KEYS },
                 detail: detail.as_ref(),
             },
@@ -581,7 +602,7 @@ mod tests {
     /// a helper that cannot observe the thing under test turns every assertion built on it into
     /// decoration. The marker below is the band, made legible.
     fn frame(walk: &Walk) -> String {
-        walk.lines(&ScreenTheme::Dark.palette(), 130, 0, false)
+        walk.lines(&ScreenTheme::Dark.palette(), 130, 50, 0, false)
             .iter()
             .map(|line| {
                 let band = if line.style.bg.is_some() { "\u{203a}" } else { " " };
@@ -847,6 +868,55 @@ mod tests {
         assert!(
             !measured.contains("press b to take"),
             "a measured row still advertised the key that measures it:\n{measured}"
+        );
+    }
+
+    /// The same windowing property, on the graph. Found on the sibling pane by a live walk.
+    #[test]
+    fn a_long_walk_windows_to_the_pane_and_the_band_is_always_drawn() {
+        let mut walk = Walk::new(Fetched {
+            repo: "uqeu/estelle".to_string(),
+            chokepoints: (0..200)
+                .map(|index| format!("src/file{index:03}.rs  (0.{index:03})"))
+                .collect(),
+            ..Fetched::default()
+        });
+        let drawn = |walk: &Walk| {
+            walk.lines(&ScreenTheme::Dark.palette(), 130, 30, 0, false)
+                .iter()
+                .map(|line| {
+                    let band = if line.style.bg.is_some() { "\u{203a}" } else { " " };
+                    format!(
+                        "{band}{}",
+                        line.spans
+                            .iter()
+                            .map(|span| span.content.as_ref())
+                            .collect::<String>()
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let top = drawn(&walk);
+        assert!(top.len() <= 30, "the pane rendered {} lines into 30", top.len());
+        assert!(
+            top.iter().any(|line| line.contains("200 of 200 files match")),
+            "the count row must report the FILTER's answer, not the window's:\n{}",
+            top.join("\n")
+        );
+        for step in 0..220 {
+            press(&mut walk, KeyCode::Down);
+            let frame = drawn(&walk);
+            let banded = frame
+                .iter()
+                .filter(|line| line.starts_with('\u{203a}'))
+                .count();
+            assert_eq!(banded, 1, "step {step}: {banded} banded rows");
+        }
+        assert!(
+            drawn(&walk)
+                .iter()
+                .any(|line| line.contains("src/file199.rs")),
+            "walking to the end did not bring the last row into view"
         );
     }
 
