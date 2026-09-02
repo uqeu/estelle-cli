@@ -68,13 +68,33 @@ fn columns(width: usize) -> [Col; 5] {
 
 /// The glyph and colour for a worker's state.
 ///
-/// ⚠️ Every terminal outcome gets its OWN glyph: the contract is explicit that "a stopped process
-/// is not a successful process" and "a timeout may never render a checkmark".
+/// 🔴 **WHERE A STATUS MEANS ONE OF THE SIX MARKS, IT READS `Mark`. WHERE IT MEANS SOMETHING
+/// FINER, IT DOES NOT — AND THE BOUNDARY IS THE POINT.**
+///
+/// D7 in the design-book backlog calls this "the last place two vocabularies can drift", and it
+/// was right about the drift and wrong about the remedy. Two of these arms were literal
+/// duplicates of `Mark` and are now `Mark`:
+///
+/// | status | was | is | why |
+/// |---|---|---|---|
+/// | `Running` | `◐` cite, hand-written | [`crate::marks::Mark::InFlight`] | same glyph, same colour, two owners |
+/// | `Queued` | **`·` dim** | [`crate::marks::Mark::Queued`] (`○`) | **the same meaning under two glyphs — the actual drift** |
+/// | `Lost`/`NeedsInput`/`Unknown` | `?` literal | [`crate::marks::Mark::Unknown`] | already fixed, kept |
+///
+/// ⚠️ **THE TERMINAL OUTCOMES STAY DISTINCT, AND A TEST FORBIDS COLLAPSING THEM.** `Mark` has six
+/// meanings; this table has twelve statuses, and `Completed`, `Failed`, `TimedOut` and `Cancelled`
+/// are four different endings that a customer must be able to tell apart —
+/// `terminal_outcomes_have_distinct_glyphs_as_well_as_colours` asserts exactly that, and the
+/// contract behind it is explicit: *a stopped process is not a successful process* and *a timeout
+/// may never render a checkmark*. Folding them into `Mark::Refused` would satisfy D7's letter and
+/// break the thing D7 exists to protect. The same ruling the book already makes about plan steps —
+/// *"Collapsing them would force one surface to lie about its tense"* — applies here.
 fn glyph(status: FleetAgentStatus, palette: &Palette) -> (&'static str, Color) {
+    let mark = |mark: crate::marks::Mark| (mark.glyph(), mark.colour(palette));
     match status {
         FleetAgentStatus::Completed => ("✓", palette.green),
-        FleetAgentStatus::Running => ("◐", palette.cite),
-        FleetAgentStatus::Queued => ("·", palette.dim),
+        FleetAgentStatus::Running => mark(crate::marks::Mark::InFlight),
+        FleetAgentStatus::Queued => mark(crate::marks::Mark::Queued),
         FleetAgentStatus::Created | FleetAgentStatus::Starting => ("◌", palette.dim),
         FleetAgentStatus::AwaitingApproval => ("◆", palette.warn),
         FleetAgentStatus::Failed | FleetAgentStatus::Killed => ("×", palette.red),
@@ -83,10 +103,9 @@ fn glyph(status: FleetAgentStatus, palette: &Palette) -> (&'static str, Color) {
         FleetAgentStatus::Cancelled => ("−", palette.dim),
         // ⚠️ `?` used to be a bare literal here and a second bare literal in the todo ledger, in
         // neither enum and in neither test — see `marks::Mark`'s header for what that cost.
-        FleetAgentStatus::Lost | FleetAgentStatus::NeedsInput | FleetAgentStatus::Unknown => (
-            crate::marks::Mark::Unknown.glyph(),
-            crate::marks::Mark::Unknown.colour(palette),
-        ),
+        FleetAgentStatus::Lost | FleetAgentStatus::NeedsInput | FleetAgentStatus::Unknown => {
+            mark(crate::marks::Mark::Unknown)
+        }
     }
 }
 
@@ -496,6 +515,65 @@ mod tests {
         // 1 of 4 completed: the green run must be a quarter of the bar, not all of it.
         let total = filled.content.chars().count() + remaining.content.chars().count();
         assert_eq!(filled.content.chars().count(), total / 4);
+    }
+
+    /// 🔴 **THE STATES THAT MEAN ONE OF THE SIX MARKS READ `Mark`, AND THE ONES THAT DO NOT ARE
+    /// LISTED BY NAME.**
+    ///
+    /// D7's complaint was that this table keeps its own glyphs. Two arms were literal duplicates —
+    /// `Running` drew `◐` in `cite`, which IS `Mark::InFlight`, and `Queued` drew `·` where
+    /// `Mark::Queued` draws `○`: one meaning, two glyphs, which is the drift itself. They read
+    /// `Mark` now.
+    ///
+    /// ⚠️ The rest are a deliberate exemption and the test says which ones, so a future reader
+    /// cannot mistake the remaining literals for an oversight. `Completed`, `Failed`, `TimedOut`
+    /// and `Cancelled` are four endings a customer must tell apart, and `Mark` has one glyph for
+    /// all four.
+    #[test]
+    fn the_states_that_mean_a_mark_read_the_mark_and_the_exemptions_are_named() {
+        let palette = ScreenTheme::Dark.palette();
+        for (status, mark) in [
+            (FleetAgentStatus::Running, crate::marks::Mark::InFlight),
+            (FleetAgentStatus::Queued, crate::marks::Mark::Queued),
+            (FleetAgentStatus::Unknown, crate::marks::Mark::Unknown),
+            (FleetAgentStatus::Lost, crate::marks::Mark::Unknown),
+            (FleetAgentStatus::NeedsInput, crate::marks::Mark::Unknown),
+        ] {
+            assert_eq!(
+                glyph(status, &palette),
+                (mark.glyph(), mark.colour(&palette)),
+                "{status:?} draws its own glyph where `Mark` already has the meaning"
+            );
+        }
+
+        // The exemptions, by name. Each is a meaning `Mark` does not carry.
+        let exempt = [
+            FleetAgentStatus::Completed,
+            FleetAgentStatus::Created,
+            FleetAgentStatus::Starting,
+            FleetAgentStatus::AwaitingApproval,
+            FleetAgentStatus::Failed,
+            FleetAgentStatus::Killed,
+            FleetAgentStatus::TimedOut,
+            FleetAgentStatus::Blocked,
+            FleetAgentStatus::Cancelled,
+        ];
+        for status in exempt {
+            let drawn = glyph(status, &palette).0;
+            assert!(
+                !crate::marks::Mark::ALL
+                    .iter()
+                    .any(|mark| mark.glyph() == drawn),
+                "{status:?} draws {drawn:?}, which is a Mark glyph — either route it through \
+                 `Mark` or give it a glyph of its own"
+            );
+        }
+        // NEGATIVE CONTROL: the membership test must be able to say YES.
+        assert!(
+            crate::marks::Mark::ALL
+                .iter()
+                .any(|mark| mark.glyph() == crate::marks::Mark::Queued.glyph())
+        );
     }
 
     /// Inherited from `fleet_terminal_glyphs_have_distinct_colours_as_well_as_shapes`.
