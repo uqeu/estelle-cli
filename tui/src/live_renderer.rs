@@ -2442,6 +2442,27 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         ),
         area,
     );
+    // 🔴 THE AFFINITY SURFACES ARE FULL-SCREEN, AND THEIR RENDER CALL WAS LOST IN A REFACTOR.
+    //
+    // `ctrl+s` opens the costs surface and Esc closes it; the state and the keys survived the move
+    // from `main.rs` to this module and the DRAW did not, because it lived in the 2,175-line
+    // renderer block that moved. The result compiled, held state, handled keys, and painted
+    // nothing - `affinity_cli::cost_line`, `plan_line`, `memory_line` and `highlight` were all
+    // dead code that no warning tied back to a missing screen.
+    //
+    // It returns early, exactly as the original did: these surfaces own the whole frame, so the
+    // transcript, composer and rails below must not draw underneath them.
+    if let Some(surface) = &app.affinity_surface {
+        surface.render(
+            frame,
+            area,
+            app.theme,
+            &app.affinity_costs,
+            app.account.as_ref(),
+            app.fleet.as_ref(),
+        );
+        return;
+    }
     let content_area = area;
     // `bottom_pane_desired_height` includes the composer's OWN chrome - its hint row and the
     // padding around it - which is what left a blank row between the ask rule and the prompt
@@ -2512,9 +2533,22 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         && !show_context_panel
         && !app.citations.is_empty()
         && design_split.is_some();
-    // The design gives production a PERMANENT home on the right, not a `/prod` toggle: a rail
-    // you have to remember to open is, from the user's seat, a rail that is not there.
-    let prod_as_rail = !app.diff_panel_visible
+    // 🔴 `app.prod_panel_visible` IS THE FIRST CLAUSE AND IT WAS MISSING FOR A WHOLE REFACTOR.
+    //
+    // The comment that used to sit here said production has a PERMANENT home and `/prod` is not a
+    // toggle. The rest of the binary never agreed: `App::poll_production_if_due` returns early on
+    // this exact flag (`main.rs`), `/prod` prints "Production health closed.", and the flag
+    // defaults to FALSE. So a rail drawn without reading it could never hold live data - it
+    // rendered, it never polled, and `/prod` off left a FROZEN rail on screen while telling the
+    // user it had closed. A stale rail with no indication is worse than a rail that does not open.
+    //
+    // The flag is the one owner of this fact everywhere else in the product, so it is the owner
+    // here. `v0.2.32` reads it (`main.rs:7030` on `origin/main`); this refactor stopped, and the
+    // test that would have said so was deleted in the same change - see
+    // `production_home_is_opt_in_and_every_empty_section_has_an_action`, rewritten against THIS
+    // renderer rather than the one it replaced.
+    let prod_as_rail = app.prod_panel_visible
+        && !app.diff_panel_visible
         && !show_context_panel
         && !show_citation_pane
         && !modal_open
@@ -2754,9 +2788,9 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             && !app.todo_visible
             && app.picker.is_none()
             && app.resume_picker.is_none()
-            // The production rail is permanent now, so it can no longer be a reason to drop
-            // the empty-state ground: the art lives in the session column, which is still
-            // empty. A rail the user asked for (diff, context, evidence) still displaces it.
+            // The production rail is OPT-IN, like every other rail, so a user who has not
+            // opened it keeps the empty-state ground. A rail the user asked for - diff,
+            // context, evidence, or production - still displaces it.
             && (!show_auxiliary_pane || prod_as_rail);
         if show_ground {
             if let Some(flourish) = flourish_area(transcript_root) {

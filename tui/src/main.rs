@@ -2064,12 +2064,19 @@ const ASK_HINTS: &[(&str, &str)] = &[
 /// wiring it into the renderer would be the first step towards quietly hiding the two hints
 /// instead of binding the two keys.
 ///
-/// ⚠️ **IT WAS THREE UNTIL 2026-09-02, AND ONE OF THE THREE WAS NOT A DEBT.** `ctrl+m` is
-/// carriage return in this binary and could never have been bound; it is off the row now, and the
-/// reason is enforced by `the_advertised_keys_that_are_not_yet_bound_are_exactly_these` rather than
-/// left as a sentence. `tab` and `ctrl+s` are genuine debts: nothing stops them being bound.
+/// ⚠️ **IT WAS THREE UNTIL 2026-09-02, THEN TWO, AND IT IS NOW EMPTY.** `ctrl+m` is carriage
+/// return in this binary and could never have been bound. `ctrl+s` was a real debt and the
+/// affinity costs surface PAID it. `tab` is bound too, though to `move_focus` rather than to the
+/// `repo` the hint row advertises - a hint that disagrees with its binding, which is a different
+/// defect from an unbound hint and is recorded as such rather than hidden back in this list.
+///
+/// 🔴 **THIS LEDGER WAS A GUARD THAT COULD NOT FAIL.** Its test asserted
+/// `assert_eq!(ASK_HINTS_NOT_BOUND, ["tab", "ctrl+s"])` - a constant compared to a copy of
+/// itself - while promising "the day someone binds `ctrl+s` this test goes red". Someone bound
+/// `ctrl+s` and nothing went red, because the only thing that assertion could detect was somebody
+/// editing this line. The test now READS `handle_key` and detects the binding itself.
 #[cfg(test)]
-const ASK_HINTS_NOT_BOUND: &[&str] = &["tab", "ctrl+s"];
+const ASK_HINTS_NOT_BOUND: &[&str] = &[];
 
 fn estelle_composer() -> ComposerInput {
     let mut composer = ComposerInput::with_commands(
@@ -8300,6 +8307,18 @@ mod tests {
         (presets, providers, work)
     }
 
+    /// 🔴 THIS TEST USED TO DRIVE `ctrl+m`, AND DRIVING IT WAS THE DEFECT.
+    ///
+    /// The affinity lane bound the models surface to `ctrl+m` and asserted it here. `Ctrl+M` is
+    /// ASCII 0x0D - the SAME BYTES as `enter` - and this binary does not enable the keyboard
+    /// protocol that separates them, so the terminal delivers `KeyCode::Enter` with no modifier.
+    /// A synthetic `KeyEvent::new(KeyCode::Char('m'), CONTROL)` reaches `handle_key` in a test and
+    /// NEVER reaches it from a real terminal, so the test passed while the binding could only ever
+    /// do harm: the arm sat above the Enter handling and swallowed every send.
+    ///
+    /// The binding is gone and the models surface has NO chord, deliberately - choosing its
+    /// replacement is a design decision the founder has open on screen 10. What is asserted now is
+    /// that the chord stays gone, which is the half a passing test hid.
     #[test]
     fn affinity_shortcuts_open_and_close_the_full_screen_surfaces() {
         let mut app = test_app();
@@ -8310,16 +8329,15 @@ mod tests {
             &tx,
         );
         assert!(
-            app.affinity_surface
-                .as_ref()
-                .is_some_and(affinity_cli::Surface::is_models)
+            app.affinity_surface.is_none(),
+            "ctrl+m opened a surface: it is carriage return here, so that arm eats every Enter"
         );
-        handle_key(
-            &mut app,
-            KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL),
-            &tx,
+        // And the bytes a REAL terminal sends for that chord must still send the message.
+        handle_key(&mut app, KeyEvent::from(KeyCode::Enter), &tx);
+        assert!(
+            app.affinity_surface.is_none(),
+            "enter opened an affinity surface"
         );
-        assert!(app.affinity_surface.is_none());
         handle_key(
             &mut app,
             KeyEvent::new(
@@ -9088,9 +9106,120 @@ mod tests {
     /// to work — but the lie is written down here, and the day someone binds `ctrl+s` this test
     /// goes red and makes them delete the entry. An unadvertised gap is the one that never gets
     /// closed.
+    /// The body of `handle_key`, read from this file, so a binding is detected rather than
+    /// declared. Bounded: the slice ends at the next item so a later `fn` cannot leak in.
+    #[cfg(test)]
+    fn handle_key_body() -> &'static str {
+        const SRC: &str = include_str!("main.rs");
+        let start = SRC
+            .find("\nfn handle_key(app: &mut App")
+            .expect("handle_key must exist to be scanned");
+        let rest = &SRC[start + 1..];
+        let end = rest[1..]
+            .find("\nfn ")
+            .map(|offset| offset + 2)
+            .unwrap_or(rest.len());
+        &rest[..end]
+    }
+
+    /// Which source pattern proves a hint's chord is actually bound in `handle_key`.
+    #[cfg(test)]
+    const CHORD_BINDING_PATTERN: &[(&str, &str)] = &[
+        ("enter", "KeyCode::Enter"),
+        ("tab", "KeyCode::Tab"),
+        ("ctrl+s", "control_letter(&key, 's')"),
+        ("ctrl+g", "KeyCode::Char('g')"),
+        ("esc", "KeyCode::Esc"),
+    ];
+
+    /// `/prod` IS OPT-IN, AND THIS IS ASSERTED ON RENDERED CELLS RATHER THAN ON THE FLAG.
+    ///
+    /// 🔴 CARRIED FORWARD FROM A TEST THAT WAS DELETED WITH THE RENDERER IT GUARDED. The original
+    /// `production_home_is_opt_in_and_every_empty_section_has_an_action` lives on `origin/main`
+    /// against the old `main.rs` renderer and exists NOWHERE on the branches that replaced it with
+    /// `live_renderer.rs`. The behaviour regressed, the comment beside it was rewritten to
+    /// DESCRIBE the regression as the design, and the test that contradicted both was removed in
+    /// the same change - all three moved together, so nothing was left to disagree.
+    ///
+    /// It is deliberately written against `live_renderer.rs`, because a copy written against the
+    /// old renderer would die in the same merge that reintroduces the bug, which is exactly how
+    /// the original was lost.
+    ///
+    /// ⚠️ IT ASSERTS THE DIVIDER COLUMN, NOT A HEADING. A heading is a string a refactor renames;
+    /// the divider is the structural consequence of the rail existing, and the founder's own probe
+    /// for this defect was the conversation pane's right edge moving from column 139 to 90 at 140
+    /// columns. The two states are each other's control: if the detector could not tell them
+    /// apart, the first assertion would fail.
+    #[test]
+    fn production_home_is_opt_in_and_every_empty_section_has_an_action() {
+        const DIVIDER: char = '\u{2502}';
+        let mut app = test_app();
+        app.auth_resolved = true;
+
+        // CLOSED - the default. `App::new` sets `prod_panel_visible: false`.
+        assert!(
+            !app.prod_panel_visible,
+            "production must default to closed, or the rail polls nothing and shows nothing"
+        );
+        let closed = rendered_frame_at_size(&app, Instant::now(), 140, 36);
+        let closed_dividers = closed.matches(DIVIDER).count();
+        assert_eq!(
+            closed_dividers, 0,
+            "a rail is drawn with /prod CLOSED - it cannot poll (poll_production_if_due returns \
+             early on this flag) so it can only show stale or empty data:\n{closed}"
+        );
+
+        // OPEN - what `/prod` does.
+        app.prod_panel_visible = true;
+        let open = rendered_frame_at_size(&app, Instant::now(), 140, 36);
+        let open_dividers = open.matches(DIVIDER).count();
+        assert!(
+            open_dividers > 0,
+            "/prod opened and no rail divider was drawn:\n{open}"
+        );
+
+        // AND CLOSING IT AGAIN PUTS THE FRAME BACK. `/prod` printed "Production health closed."
+        // while the rail stayed on screen; that sentence is only true if this holds.
+        app.prod_panel_visible = false;
+        let reclosed = rendered_frame_at_size(&app, Instant::now(), 140, 36);
+        assert_eq!(
+            reclosed.matches(DIVIDER).count(),
+            0,
+            "/prod says it closed production health and the rail is still drawn:\n{reclosed}"
+        );
+    }
+
     #[test]
     fn the_advertised_keys_that_are_not_yet_bound_are_exactly_these() {
-        assert_eq!(ASK_HINTS_NOT_BOUND, ["tab", "ctrl+s"]);
+        let body = handle_key_body();
+
+        // NEGATIVE CONTROL. The detector must be able to say NO, or every line below is decoration.
+        assert!(
+            !body.contains("control_letter(&key, 'y')"),
+            "control chord ctrl+y is bound; pick another unbound chord for the control"
+        );
+        // POSITIVE CONTROL. The detector must be able to say YES on a chord known to be bound.
+        assert!(
+            body.contains("KeyCode::Char('g')"),
+            "detector cannot see ctrl+g, which IS bound - the scan is reading the wrong text"
+        );
+
+        for (hint, _) in ASK_HINTS {
+            let pattern = CHORD_BINDING_PATTERN
+                .iter()
+                .find(|(chord, _)| chord == hint)
+                .map(|(_, pattern)| *pattern)
+                .unwrap_or_else(|| panic!("{hint} is advertised with no binding pattern to check"));
+            let bound = body.contains(pattern);
+            let declared_unbound = ASK_HINTS_NOT_BOUND.contains(hint);
+            assert_eq!(
+                bound, !declared_unbound,
+                "{hint}: handle_key {} it, ledger says {} - the hint row and the keymap disagree",
+                if bound { "binds" } else { "does not bind" },
+                if declared_unbound { "unbound" } else { "bound" }
+            );
+        }
+
         for key in ASK_HINTS_NOT_BOUND {
             assert!(
                 ASK_HINTS.iter().any(|(hint, _)| hint == key),
@@ -9116,13 +9245,22 @@ mod tests {
             !ASK_HINTS.iter().any(|(key, _)| *key == "ctrl+m"),
             "ctrl+m is carriage return here — it cannot be advertised on the hint row"
         );
+        // ⚠️ SCOPED TO `handle_key`'s BODY, NOT THE WHOLE FILE. Scanning the file caught its own
+        // negative test - the one that DRIVES ctrl+m to prove nothing binds it - and a guard that
+        // fires on the test proving its own property is a guard you delete rather than trust.
+        // Only a `ctrl+m` arm inside the keymap can swallow Enter, so only the keymap is scanned.
         assert!(
-            !include_str!("main.rs")
+            !body
                 .lines()
                 .filter(|line| !line.trim_start().starts_with("//"))
                 .any(|line| line.contains("KeyCode::Char('m')")
                     && line.contains("KeyModifiers::CONTROL")),
-            "something bound ctrl+m: it is carriage return here, so that arm eats every Enter"
+            "something bound ctrl+m in handle_key: it is carriage return here, so that arm eats \
+             every Enter"
+        );
+        assert!(
+            !body.contains("control_letter(&key, 'm')"),
+            "control_letter(&key, 'm') in handle_key: ctrl+m cannot be a chord in this binary"
         );
 
         // ⚠️ THE OTHER HALF: the pair that replaced it must be a chord that actually reaches the

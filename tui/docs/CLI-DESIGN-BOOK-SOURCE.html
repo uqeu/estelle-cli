@@ -109,7 +109,8 @@ hr.big{border:0;border-top:1px solid var(--edge);margin:52px 0 0}
 <p class="lede">Every screen the CLI has, every screen the mocks specify, and every screen the
 gaps demand. <b>Forty-one of them, numbered, so you can say "rebuild 14 this way".</b></p>
 <p class="lede">Read it top to bottom. Each screen carries a status badge, the frame, one line on what it is
-for, the keys that work on it, and at most two notes. Where a note is red it is a defect or a conflict I want
+for, the keys that work on it, and at most three notes. <b>Every frame in this book is drawn by the
+production renderer</b>, so what the two badges separate is whether the DATA under the layout is live. Where a note is red it is a defect or a conflict I want
 a ruling on. Where it is pink it is a question. Where it is green it is something already right that I would
 not change.</p>
 <table style="max-width:900px"><thead><tr><th>badge</th><th>what it means</th><th>how the frame was made</th></tr></thead><tbody>
@@ -129,8 +130,8 @@ Every value on a proposed frame is a field something real already returns.</td><
 because drawing them would waste your review on something false: an orchestra progress fill invented from a
 field the server never writes; an auto-deploy step, which does not exist; Estelle silently choosing a model,
 which the affinity measurement does not support (p=0.63 at n=12); and any end-user analytics, which we do not
-collect. The one progress bar that does appear, on screen 22, is discussed rather than accepted.</p>
-<p class="lede" style="margin-top:14px"><span class="badge b-ship">SHIPPED</span> 25 &middot; <span class="badge b-spec">SPEC</span> 12 &middot; <span class="badge b-prop">PROPOSED</span> 4 &nbsp;&nbsp;total 41</p><div class="toc"><h3>Every screen, in order</h3><ol><li><span class="n">1</span><a class="t" href="#s1">Boot</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">2</span><a class="t" href="#s2">Login, two stage: who you are, then who pays</a><span class="badge b-spec">SPEC</span></li><li><span class="n">3</span><a class="t" href="#s3">Home</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">4</span><a class="t" href="#s4">Home, narrow, production hidden</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">5</span><a class="t" href="#s5">Cream</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">6</span><a class="t" href="#s6">No repository here</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">7</span><a class="t" href="#s7">Waiting for an answer</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">8</span><a class="t" href="#s8">Grounding context: what the answer was built on</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">9</span><a class="t" href="#s9">Gate refused: a package that does not exist</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">10</span><a class="t" href="#s10">Navigation refuses: the index is stale</a><span class="badge b-prop">PROPOSED</span></li><li><span class="n">11</span><a class="t" href="#s11">Compaction refuses: one line instead of a context bar</a><span class="badge b-spec">SPEC</span></li><li><span class="n">12</span><a class="t" href="#s12">Skills, typed</a><span class="badge b-spec">SPEC</span></li><li><span class="n">13</span><a class="t" href="#s13">Skills, offered</a><span class="badge b-spec">SPEC</span></li><li><span class="n">14</span><a class="t" href="#s14">Skills, browse and toggle</a><span class="badge b-spec">SPEC</span></li><li><span class="n">15</span><a class="t" href="#s15">Skills, browse, as it ships today</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">16</span><a class="t" href="#s16">Skills, offered, as it ships today</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">17</span><a class="t" href="#s17">Slash palette</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">18</span><a class="t" href="#s18">Every command, in one place</a><span class="badge b-prop">PROPOSED</span></li><li><span class="n">19</span><a class="t" href="#s19">Shell mode, and why it must not look like Estelle</a><span class="badge b-spec">SPEC</span></li><li><span class="n">20</span><a class="t" href="#s20">Live /work progress</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">21</span><a class="t" href="#s21">The proposed diff, read-only</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">22</span><a class="t" href="#s22">Orchestra, running</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">23</span><a class="t" href="#s23">Orchestra, finished</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">24</span><a class="t" href="#s24">Production, one unresolved issue</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">25</span><a class="t" href="#s25">Panels, one terminal</a><span class="badge b-spec">SPEC</span></li><li><span class="n">26</span><a class="t" href="#s26">Todos, expanded and collapsed</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">27</span><a class="t" href="#s27">Settings</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">28</span><a class="t" href="#s28">Settings, one suite</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">29</span><a class="t" href="#s29">Model pool</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">30</span><a class="t" href="#s30">Provider API key picker</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">31</span><a class="t" href="#s31">Autonomy</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">32</span><a class="t" href="#s32">How much memory do I have left</a><span class="badge b-prop">PROPOSED</span></li><li><span class="n">33</span><a class="t" href="#s33">Usage</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">34</span><a class="t" href="#s34">The answer itself: a table, and a diagram</a><span class="badge b-spec">SPEC</span></li><li><span class="n">35</span><a class="t" href="#s35">Session tabs</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">36</span><a class="t" href="#s36">Doctor, failing</a><span class="badge b-spec">SPEC</span></li><li><span class="n">37</span><a class="t" href="#s37">Resume a session</a><span class="badge b-spec">SPEC</span></li><li><span class="n">38</span><a class="t" href="#s38">Sweep, running</a><span class="badge b-ship">SHIPPED</span></li><li><span class="n">39</span><a class="t" href="#s39">Tool calls, collapsed and open</a><span class="badge b-spec">SPEC</span></li><li><span class="n">40</span><a class="t" href="#s40">The code graph</a><span class="badge b-spec">SPEC</span></li><li><span class="n">41</span><a class="t" href="#s41">Memory: what Estelle knows, and correcting it</a><span class="badge b-prop">PROPOSED</span></li></ol></div><h2 class="sec">A. First contact</h2>
+collect. The one progress bar that does appear, on screen 20, is discussed rather than accepted.</p>
+<p class="lede" style="margin-top:14px"><span class="badge b-ship">SHIPPED</span> 25 &middot; <span class="badge b-spec">SPEC</span> 12 &middot; <span class="badge b-prop">PROPOSED</span> 4 &nbsp;&nbsp;total 41</p><div class="toc"><h3>Every screen, in order</h3><ol></ol></div><h2 class="sec">A. First contact</h2>
 <section class="screen" id="s1">
 <div class="sh"><span class="num">1</span><span class="name">Boot</span><span class="badge b-ship">SHIPPED</span><span class="src">cli-rs 00-boot.txt · boot_scene.rs</span></div>
 <p class="purpose">The splash while the client resolves auth and the repo. It condenses on its own and is skippable.
@@ -167,7 +168,7 @@ The dither field and the higanbana are the brand; the founder has twice said to 
 <span class="d">∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷ ∷ ∷∷∷ ∷ ∷ ∷∷∷ ∷ ∷ ∷∷</span><span class="b">skip</span><span class="d">∷</span>
 <span class="d">∷∷ ∷ ∷ ∷∷∷ ∷ ∷ ∷∷∷∷∷ ∷ ∷∷∷ ∷ ∷ ∷∷∷ ∷∷∷ ∷∷∷∷∷ ∷ ∷∷∷ ∷ ∷ ∷∷∷∷∷ ∷ ∷∷∷ ∷ ∷ ∷∷∷ ∷∷∷ ∷∷∷ ∷ ∷ ∷∷∷∷∷ ∷ ∷∷∷ ∷ ∷ ∷∷∷ ∷ ∷ ∷∷∷ ∷ ∷ ∷</span></pre></div>
 <p class="keys">any key <kbd>skip</kbd> · condenses on its own after <code>CONDENSE_MS</code></p>
-<div class="rule"><b>Colour defect, not previously flagged.</b> Boot is the only surface that does not read <code>theme.rs</code>. Its rendered census is <code>#D6D1C5</code> / <code>#C91A0C</code> / <code>#605A4E</code> on a <code>#17140F</code> ground, where the tokens are <code>bright #E9E6DC</code> / <code>red #C52416</code> / <code>dim #6F6A5E</code> on <code>ground #16130F</code>. Four near-misses on one screen. It is drawn here in the correct tokens, so this is what it should be, not what it is.</div>
+<div class="ok"><b>Boot used to be the one surface that read none of the palette, and it is fixed.</b> It painted four values that were each a shade off a token that already existed &mdash; the kind of wrong nobody spots, because they are close. It reads the tokens now, and a test compares the boot table to the palette in both themes rather than pinning a hex, so retuning the brand moves the splash with it.</div>
 </section>
 <section class="screen" id="s2">
 <div class="sh"><span class="num">2</span><span class="name">Login, two stage: who you are, then who pays</span><span class="badge b-spec">SPEC</span><span class="src">founder's design book 2026-08-24 §4 · onboarding step 2</span></div>
@@ -203,7 +204,7 @@ Stage one is identity. Stage two is who pays for model tokens.</p>
 <span class="d">↑↓ navigate · enter select · esc back</span></pre></div>
 <p class="keys"><kbd>↑↓</kbd> navigate · <kbd>enter</kbd> select · <kbd>esc</kbd> back</p>
 <div class="ask"><b>Two facts printed on the founder's own mock, both true, both worth keeping in the copy.</b> A subscription plan is OAuth-bound to a client on YOUR machine, so our server physically cannot present it: architecture, not policy. And laptop-closed means Slack, monitors and scheduled repair, which is why the API key rung is the one that unlocks unattended work.</div>
-<div class="rule">The picker that ships under stage two is a flat ten-row provider list (Anthropic · OpenAI API · Google Gemini · GitHub Copilot · Azure OpenAI · AWS Bedrock · OpenRouter · DeepSeek · Fireworks · MiniMax) and it still draws <code>┌ PROVIDER API KEY ─┐</code> with corners. See screen 30.</div>
+<div class="rule">The picker that ships under stage two is a flat ten-row provider list (Anthropic · OpenAI API · Google Gemini · GitHub Copilot · Azure OpenAI · AWS Bedrock · OpenRouter · DeepSeek · Fireworks · MiniMax) and it still draws <code>┌ PROVIDER API KEY ─┐</code> with corners. See screen 28.</div>
 </section>
 <h2 class="sec">B. Home, and the state you sit in</h2>
 <section class="screen" id="s3">
@@ -251,12 +252,12 @@ denominator on it, and it is the model for every other tile.</p>
   <span class="d">enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection                                                                            </span></pre></div>
 <p class="keys"><kbd>enter</kbd> send · <kbd>tab</kbd> repo · <kbd>ctrl+s</kbd> spend · <kbd>ctrl+m</kbd> models · <kbd>esc</kbd> stop · <kbd>ctrl+o</kbd> selection</p>
 <div class="ok"><b>The honest tile, already shipped.</b> <code>● measured 14/3292 requests</code> carries its denominator; <code>no uptime checks registered · POST /monitor/uptime adds one</code> says what is absent and how to make it present; <code>○ agents no read yet · GET /agent/health</code> names the route it has not called. None of those is a plausible zero. Keep this vocabulary everywhere.</div>
-<div class="rule"><b>The file citation in the session gap is raw ANSI blue.</b> <code>billing/charge.rs</code> on the line above renders <code>#65A8FF</code>, which is not in <code>theme.rs</code> at all. See screen 7.</div>
+<div class="ok"><b>The file citation in the session gap is Estelle's own blue now.</b> It used to be a hardcoded value in no palette this product ships. See screen 7 for what it was and why it survived so long.</div>
 </section>
 <section class="screen" id="s4">
-<div class="sh"><span class="num">4</span><span class="name">Home, narrow, production hidden</span><span class="badge b-ship">SHIPPED</span><span class="src">11-empty-state-dither · 100x32</span></div>
-<p class="purpose">The same home at 100 columns with <code>/prod</code> toggled off. This is the layout most people will
-actually see, and it is where the dither field has to survive a small window.</p>
+<div class="sh"><span class="num">4</span><span class="name">Home, narrow</span><span class="badge b-ship">SHIPPED</span><span class="src">11-empty-state-dither · 100x32</span></div>
+<p class="purpose">The same home at 100 columns. This is the layout most people will actually see, and it is where the
+dither field has to survive a small window.</p>
 <div class="frame"><pre><span class="b">ESTELLE  ·  uqeu/estelle  ·  repo graph current                                                     </span>
 
 <span class="d">── </span><span class="m">session </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">────────────────────────────────  │  ── </span><span class="m">production </span><span class="d">· </span><span class="g">uqeu/estelle </span><span class="d">────────</span>
@@ -291,6 +292,7 @@ actually see, and it is where the dither field has to survive a small window.</p
   <span class="d">enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection                </span></pre></div>
 <p class="keys"><kbd>enter</kbd> send · <kbd>tab</kbd> repo · <kbd>ctrl+s</kbd> spend · <kbd>ctrl+m</kbd> models · <kbd>esc</kbd> stop · <kbd>ctrl+o</kbd> selection</p>
 <div class="ask"><b>Question for you.</b> The right pane truncates route names to <code>GET /agent/…</code>. A truncated route is not actionable. Either the pane drops the route below the width where it fits, or the row wraps. Which?</div>
+<div class="rule"><b>This caption used to say <i>production hidden</i>, and production is drawn.</b> You caught it. The caption was left over from when <code>/prod</code> was an opt-in toggle; <code>live_renderer.rs</code> now gives production a permanent home on the right whenever the split fits, and ignores the toggle. So the narrow case is <b>not</b> "production hidden" &mdash; it is production at 44 columns, which is the real question this frame is here to answer.</div>
 </section>
 <section class="screen" id="s5">
 <div class="sh"><span class="num">5</span><span class="name">Cream</span><span class="badge b-ship">SHIPPED</span><span class="src">13-cream-ink · 120x34</span></div>
@@ -331,8 +333,9 @@ the terminal's detected background, and from <code>/settings</code> row 2.</p>
 
   <span class="d">enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection                                    </span></pre></div>
 <p class="keys"><kbd>enter</kbd> send · <kbd>tab</kbd> repo · <kbd>ctrl+s</kbd> spend · <kbd>ctrl+m</kbd> models · <kbd>esc</kbd> stop · <kbd>ctrl+o</kbd> selection</p>
-<div class="rule"><b>There is no <code>/theme</code> command.</b> The mock's section header reads <code>6 · Both themes /theme toggles</code>, but <code>theme</code> sits in <code>DROPPED_COMMANDS</code> (<code>commands.rs:270</code>) and never resolves. Today the only door is <code>/settings</code> &rarr; <code>2 Theme</code>. Decide: restore <code>/theme</code>, or delete the line from the mock.</div>
-<div class="rule"><b>The cream skill pink is honestly unmeasured.</b> <code>#B06A8C</code> is pinned so a change to it is deliberate, but there is no cream skills mock in the reference folder, so nobody sampled it. If you want cream skills to look right, the cheapest fix is one screenshot.</div>
+<div class="ok"><b><code>/theme</code> exists now.</b> You asked why it did not. It was on the dropped-commands list as a Codex-only name, which was wrong: the CLI has two first-class palettes and the only door to them was <code>/settings</code> &rarr; row 2. <code>/theme</code> opens the <b>same</b> picker that row opens and saves through the same server setting, so there is one owner of "which theme is in force" rather than two surfaces that can disagree.</div>
+<div class="rule"><b>The cream pink is a dark maroon now, and it was not the only one.</b> Your rule &mdash; <i>on the cream ground every lighter colour becomes a darker version of itself</i> &mdash; turned out to be true of <b>six</b> roles, not one. Measured against their own ground, six cream accents read WEAKER than the same role reads on the dark theme, and five of them failed the ordinary readability floor outright. The pink was the worst: <code>#B06A8C</code> at 2.8:1 against paper, where the dark pink gets 7.4:1. It is <code>#6F2046</code> now, a dark maroon, at 7.6:1. <code>dim</code>, <code>green</code>, <code>warn</code>, <code>cite</code> and <code>plan</code> came down with it, and a test now refuses any cream accent that uses less of the light theme's headroom than its dark twin uses of the dark theme's.</div>
+<div class="rule"><b>Two more things the measurement found, which nobody would have looked for.</b> Cream <code>cite</code> and cream <code>plan</code> differed by three, six and zero &mdash; <b>one colour under two role names</b>, for the life of the theme, invisible to the guard that checks marks because <code>plan</code> is not a mark. And the cream diff bands sat at <b>1.01:1</b> against the page: an added line and a deleted line drawn as two invisible rectangles, while every check on the text inside them passed.</div>
 </section>
 <section class="screen" id="s6">
 <div class="sh"><span class="num">6</span><span class="name">No repository here</span><span class="badge b-ship">SHIPPED</span><span class="src">live_renderer.rs:997 · no gallery frame exists</span></div>
@@ -404,14 +407,15 @@ percentage and not an ETA.</p>
 
   <span class="d">enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection                                                                            </span></pre></div>
 <p class="keys"><kbd>enter</kbd> send · <kbd>tab</kbd> repo · <kbd>ctrl+s</kbd> spend · <kbd>ctrl+m</kbd> models · <kbd>esc</kbd> stop · <kbd>ctrl+o</kbd> selection</p>
-<div class="rule"><b>DEFECT 1 of 2. Seventeen cells of <code>#65A8FF</code>, outlined above.</b> <code>billing/charge.rs</code> in the session gap is painted raw <code>Color::Blue</code>, which in a real terminal takes the user's OWN blue, not ours. Every other file citation in the product uses <code>Palette::cite #7FB3C8</code> and thirty-one cells of it are on this same frame. <b>Proposed token: <code>cite</code>.</b> It is the citation role, it is already here, and it makes the session gap match the context pane.</div>
+<div class="ok"><b>The file path here used to be a blue we did not own, and it is fixed.</b> <code>billing/charge.rs</code> was painted with a hardcoded value whose own comment called it <i>"Claude-like semantic blue"</i> &mdash; a colour named after a rival product, on the one thing on the screen that leads back to your own code. It is Estelle's citation blue now, the same one the context pane uses, and the test that used to pin the old value asserts the RELATIONSHIP instead, so retuning the citation colour moves this with it.</div>
 </section>
 <section class="screen" id="s8">
-<div class="sh"><span class="num">8</span><span class="name">Grounding context: what the answer was built on</span><span class="badge b-ship">SHIPPED</span><span class="src">02-orchestra-active right pane · Alt+M · /context</span></div>
+<div class="sh"><span class="num">8</span><span class="name">Grounding context: what the answer was built on</span><span class="badge b-ship">SHIPPED</span><span class="src">08-grounding-context &middot; 130x30</span></div>
 <p class="purpose">
 The pane that proves the answer. The team's swept graph on top with the file and symbol the answer cited;
 working memory below it, every path labelled <code>local, not pushed</code> so you can see what left your
-machine and what did not.</p>
+machine and what did not. <b>It has its own frame now</b> &mdash; it used to be shown as a sliver of the
+orchestra screen, which is why two screens in this book carried the same picture.</p>
 <div class="frame"><pre>  <span class="d">── </span><span class="m">context </span><span class="d">· alt+m · /context ───────────────────────────────────</span>
   <span class="b">Repo graph · team's swept copy                                   </span>
   <span class="b">1,993 files indexed                                              </span>
@@ -425,15 +429,10 @@ machine and what did not.</p>
   <span class="b">billing/retry.rs · local, not pushed                             </span>
 
   <span class="d">Alt+M or /context closes                                         </span></pre></div>
-<<<<<<< HEAD
-<p class="keys"><kbd>Alt+M</kbd> or <code>/context</code> toggles</p>
-<div class="rule"><b><code>Alt+M</code> is the one binding the code's own comment forbids.</b> <code>main.rs:6219</code> binds it; the comment eleven lines below reads <i>NEVER BIND alt+&lt;letter&gt; IN THIS BINARY. macOS EATS IT BEFORE WE SEE IT</i> and names <code>alt+m &rarr; µ</code> as an example. Terminal.app ships with Option-as-Meta off, so on a stock Mac this chord types <code>µ</code> into the composer. The pane is still reachable by <code>/context</code>. <b>Proposal: <code>ctrl+g</code></b>, and delete <code>Alt+M</code> from the two places the UI advertises it.</div>
-=======
 <p class="keys"><kbd>ctrl+g</kbd> or <code>/context</code> toggles</p>
 <div class="ok"><b>It is <code>ctrl+g</code> now, everywhere, and the hint says the same thing.</b> You put it exactly right: Windows has no option key, macOS has no alt key, and both have control &mdash; so control is the only modifier that can mean one thing on both machines. This was <code>alt+m</code>, which macOS eats as a compose key and turns into <code>µ</code> in the composer; the binding sat <b>four lines above a comment forbidding it</b>, which is why nobody caught it by reading the code. A check now scans this file and goes red on any <code>alt+&lt;letter&gt;</code> chord.</div>
 <div class="rule"><b>Why not <code>ctrl+m</code>, which is the letter you would expect &mdash; and the change it forced to your hint row.</b> <code>Ctrl+M</code> is carriage return, the same bytes as <kbd>enter</kbd>. This binary does not turn on the newer keyboard protocol that can tell them apart, so a <code>ctrl+m</code> binding would swallow every <kbd>enter</kbd> and <b>sending a message would stop working</b>.
 <br><br>🔴 <b>So the hint row changed, deliberately, and this is the note saying so.</b> It read <code>enter send &middot; tab repo &middot; ctrl+s spend &middot; ctrl+m models &middot; esc stop</code> on every frame &mdash; your line, verbatim, picked three times &mdash; and one of those five keys could never exist. The rule that settled it: <b>the hint and the binding must agree, and when they cannot both be right, the working binding wins.</b> The fourth pair is <code>ctrl+g context</code> now: a real binding that had no hint at all, on a pane nobody can reach by a key they were never told about. <b>The model pool did not lose a door</b> &mdash; it is <code>/model</code>, printed on screen 27. Two tests hold it: one refuses <code>ctrl+m</code> on the row, the other presses <code>ctrl+g</code> and asserts the panel actually moves.</div>
->>>>>>> f55b86ec3 (fix(cli): the hint row on every frame advertised a key that is carriage return)
 <div class="ask"><b>Question.</b> <code>Sent through the configured Estelle model path.</code> is true and vague. Would you rather it named the model that actually served the turn? The renderer already has <code>observed_model()</code> for exactly that.</div>
 </section>
 <section class="screen" id="s9">
@@ -495,8 +494,9 @@ replaces the percentage context bar every other CLI ships with the single fact y
 <section class="screen" id="s12">
 <div class="sh"><span class="num">12</span><span class="name">Skills, typed</span><span class="badge b-spec">SPEC</span><span class="src">skill.png §5 left panel</span></div>
 <p class="purpose">
-You type <code>/</code> then <kbd>tab</kbd>. The list is framed, the selection carries a <code>›</code> and
-the selected row is pink. Below the closing rule the composer shows what it is now bound to.</p>
+You type <code>/</code> then <kbd>tab</kbd>. <b>No frame:</b> the selected row is a band, which says WHICH
+row in a way a border never did. Below the closing rule the composer shows what it is now bound to, and
+<kbd>enter</kbd> binds the skill so you never finish typing its name.</p>
 <div class="frame"><pre><span class="d">┌ </span><span class="m">skills </span><span class="d">─────────────────────────</span>
 <span class="d">│</span> <span class="sk">›</span> <span class="sk">improve-codebase-architecture</span>
 <span class="d">│</span>   <span class="m">refactor-cleaner</span>
@@ -508,12 +508,10 @@ the selected row is pink. Below the closing rule the composer shows what it is n
 <span class="sk">»</span> <span class="b">▏</span>
 <span class="d">estelle · </span><span class="sk">skill: improve-codebase-architecture</span></pre></div>
 <p class="keys"><kbd>/</kbd> then <kbd>tab</kbd> opens · <kbd>↑↓</kbd> select · <kbd>enter</kbd> bind · <kbd>esc</kbd> close</p>
-<div class="rule"><b>This mock draws a box, and the shipped renderer forbids boxes.</b> <code>BOX_CORNERS</code> in <code>main.rs</code> asserts that <code>┌ ┐ └ ┘ ├ ┤ ┬ ┴ ┼</code> reach zero live frames, with your own rule quoted verbatim beside it: <i>there are no boxes in Estelle</i>. <code>│</code> is exempt because it is the divider BETWEEN panes, never a border around one. <b>These two cannot both be true. You have to pick one, and I would keep the no-box rule and let the skills list use the same <code>── skills ────</code> rule every other picker uses.</b></div>
-<div class="rule"><b>The pink rule under the box is hand-placed.</b> It is 41 characters in the mock because that looked right, not because anything computes it. In Rust it becomes <code>rule width</code> and spans the pane. It will look slightly different, and it will be the same on every terminal width.</div>
-<div class="ask"><b>The principle, printed on your own mock, in your own words.</b> <i>It offers, never auto-runs. A skill that fires without you asking is an agent choosing for you.</i> That is the same rule as propose-only auto-repair, applied to skills. Any implementation that auto-fires a skill violates it, and it is worth a test rather than a comment.</div>
+<div class="ok"><b>The box is gone and the rule is computed.</b> The mock drew <code>┌ skills ────</code> with a gutter and a hand-placed 41-character rule; this frame is the real renderer, so the rule spans the pane at any terminal width and the selection is a <code>tint</code> band. A test asserts zero box corners across every frame in this book. It reads a little different from your mock and it is the same on every screen size, which the mock could not promise.</div>
 </section>
 <section class="screen" id="s13">
-<div class="sh"><span class="num">13</span><span class="name">Skills, offered</span><span class="badge b-spec">SPEC</span><span class="src">skill.png §5 right panel</span></div>
+<div class="sh"><span class="num">13</span><span class="name">Skills, offered, before you send</span><span class="badge b-spec">SPEC</span><span class="src">skill.png §5 right panel</span></div>
 <p class="purpose">
 You did not ask. Estelle read your draft and noticed. Your prompt sits highlighted at the top, the offer sits
 under it, and the skill name is pink.</p>
@@ -527,7 +525,7 @@ under it, and the skill name is pink.</p>
 
 <span class="b">❯</span> <span class="b">▏</span></pre></div>
 <p class="keys"><kbd>tab</kbd> takes the offer · <kbd>enter</kbd> answers normally · typing on dismisses it</p>
-<div class="ask"><b>The principle, printed on your own mock, in your own words.</b> <i>It offers, never auto-runs. A skill that fires without you asking is an agent choosing for you.</i> That is the same rule as propose-only auto-repair, applied to skills. Any implementation that auto-fires a skill violates it, and it is worth a test rather than a comment.</div>
+<div class="ask"><b>The principle, printed on your own mock, in your own words.</b> <i>It offers, never auto-runs. A skill that fires without you asking is an agent choosing for you.</i> That is the same rule as propose-only auto-repair, applied to skills &mdash; and it is a test rather than a comment: <code>the_offer_never_claims_to_have_run</code>.</div>
 <div class="ok"><b><kbd>tab</kbd> is claimed narrowly and correctly.</b> It only takes the offer when an offer is actually drawn on screen; otherwise <kbd>tab</kbd> still means move focus, and complete the command once the line starts with a slash. One owner decides both the pixels and the key, so they cannot disagree.</div>
 </section>
 <section class="screen" id="s14">
@@ -546,96 +544,12 @@ token cost, an on/off toggle that is separate from selection, and the compose bu
 <span class="d">3 max compose · 1,800 tok budget</span></pre></div>
 <p class="keys"><kbd>/</kbd> search · <kbd>space</kbd> toggle on/off · <kbd>enter</kbd> run · <kbd>↑↓</kbd> select</p>
 <div class="ok"><b>This one survives a mathematical renderer unchanged.</b> Four fixed columns: <code>Col::l(2)</code> marker, <code>Col::l(3)</code> state, <code>Col::l(n)</code> name, <code>Col::r(6)</code> cost, gap 2. <code>on</code> and <code>off</code> both fit 3. The cost column is right-aligned, which is the only reason the tildes line up. Nothing here needs a hand-placed space.</div>
-<div class="rule"><b>None of the four numbers exists on the wire.</b> The shipped screen says so out loud: <i>on/off · per-skill cost · compose budget: not measured — the server does not send them.</i> Building this panel is a SERVER change first: <code>GET /skills</code> has to return <code>total</code>, <code>enabled</code>, <code>tokens</code> per skill, and the compose budget. Until it does, the honest screen is 15, not this one.</div>
+<div class="rule"><b>None of the four numbers exists on the wire, and that is the whole build.</b> This panel is a SERVER change first: <code>GET /skills</code> has to return a total, an enabled count, a token cost per skill and the compose budget. Until it does the layout above is real and the numbers in it are a design fixture, which is what the DESIGN badge means and what the screen itself prints when you open it without <code>--demo</code>.</div>
 <div class="ask"><b>Your own note under this mock, kept because it is the reason the numbers matter.</b> The library went 246 to 238 skills and 225,343 to 131,119 tokens, minus 41.8 percent, and bodies too big to survive a three-skill compose went 143 to 42. Without a token column nobody could have seen that.</div>
 </section>
-<section class="screen" id="s15">
-<div class="sh"><span class="num">15</span><span class="name">Skills, browse, as it ships today</span><span class="badge b-ship">SHIPPED</span><span class="src">12-skills · 130x34</span></div>
-<p class="purpose">
-The same surface, built. Three rows, no counts, no costs, no toggle. The second line is the honest one and it
-is why this screen is not a lie, only a smaller thing than the mock.</p>
-<div class="frame"><pre><span class="b">ESTELLE  ·  uqeu/estelle                                                                                                          </span>
-
-<span class="d">── </span><span class="m">session </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
-   <span class="d">uqeu/estelle · cli/skill-suggest-20260901                                                                                      </span>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-<span class="d">── </span><span class="m">skills </span><span class="d">· </span><span class="c">3 of 3 · type to filter </span><span class="d">──────────────────────────────────────────────────────────────────────────────────────────────</span>
-<span class="b">A playbook is offered when your draft names it, and run only when you press tab.                                                  </span>
-<span class="b">on/off · per-skill cost · compose budget: not measured · the server does not send them.                                           </span>
-<span class="sk">&gt; 1 review                    </span><span class="d">Review the current change against production evidence                                               </span>
-  <span class="sk">2 trace                     </span><span class="d">Trace an issue to a bound repository symbol                                                         </span>
-  <span class="sk">3 ground                    </span><span class="d">Check an answer against the current repo graph                                                      </span>
-<span class="d">↑↓ navigate · 1-9 or Enter select · Esc close                                                                                     </span></pre></div>
-<p class="keys"><kbd>↑↓</kbd> navigate · <kbd>1-9</kbd> or <kbd>enter</kbd> select · <kbd>esc</kbd> close</p>
-<div class="ok"><b>Note the pink is already correct here.</b> Twenty-one cells of <code>#CA92AF</code>, the value sampled off your mock. It shipped as <code>#D48FB0</code> for months and nobody could say where that came from.</div>
-<div class="ask"><b>Gap between this and screen 14, stated plainly.</b> Missing: the total, the on-count, the per-skill token cost, the space-toggle, the compose limit, and the <code>/</code> search. Present: the list, the pink selection, and a sentence saying what is missing.</div>
-</section>
-<section class="screen" id="s16">
-<div class="sh"><span class="num">16</span><span class="name">Skills, offered, as it ships today</span><span class="badge b-ship">SHIPPED</span><span class="src">12b-skill-suggestion · 130x34</span></div>
-<p class="purpose">
-Built, and close to the mock. The offer band sits directly above the composer, reading the draft you have
-already typed. It never runs on its own.</p>
-<div class="frame"><pre><span class="b">ESTELLE  ·  uqeu/estelle  ·  repo graph current                                                                                   </span>
-
-<span class="d">── </span><span class="m">session </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">───────────────────────────────────────────────────  │  ── </span><span class="m">production </span><span class="d">· </span><span class="g">uqeu/estelle </span><span class="d">───────────────────</span>
-   <span class="d">uqeu/estelle · cli/skill-suggest-20260901                                   │  ── </span><span class="m">app </span><span class="d">· </span><span class="g">repo uqeu/estelle </span><span class="d">─────────────────────</span>
-<span class="b">Ask about uqeu/estelle                                                         </span><span class="d">│  Connecting to Estelle...                        </span>
-                                                                               <span class="d">│                                                  </span>
-<span class="b">/review  </span><span class="m">Read current changes                                                  </span><span class="d">│  ── </span><span class="m">agents </span><span class="d">· </span><span class="c">unread </span><span class="d">─────────────────────────────</span>
-<span class="b">/sweep   </span><span class="m">Refresh this repo's index                                             </span><span class="d">│  ○   </span><span class="m">agents            </span><span class="d">no read yet · GET /agent/…</span>
-<span class="b">?        </span><span class="m">Show shortcuts                                                        </span><span class="d">│                                                  </span>
-                                                                               <span class="d">│  ── </span><span class="m">estelle </span><span class="d">· unread ────────────────────────────</span>
-                                                                               <span class="d">│  ○   </span><span class="m">issues            </span><span class="d">no read yet · GET /issues </span>
-                                                                               <span class="d">│                                                  </span>
-                                                                               <span class="d">│  ── </span><span class="m">queue </span><span class="d">· 0 repair(s) ─────────────────────────</span>
-                                                                               <span class="d">│  ○   </span><span class="m">repairs           </span><span class="d">none reported             </span>
-                                                                               <span class="d">│  ○   </span><span class="m">select            </span><span class="d">/monitor issues           </span>
-                                                                               <span class="d">│                                                  </span>
-                                                                               <span class="d">│  ── </span><span class="m">github </span><span class="d">· </span><span class="w">unknown </span><span class="d">────────────────────────────</span>
-                                                                               <span class="d">│  ○   </span><span class="m">connection        </span><span class="d">no read yet · GET /github…</span>
-                                                                               <span class="d">│                                                  </span>
-                                                                         <span class="m">⠠⠶    </span><span class="d">│                                                  </span>
-<span class="b">∷                                                                              </span><span class="d">│                                                  </span>
-
-<span class="sk">» </span><span class="m">This looks like </span><span class="sk">improve-codebase-architecture.                                                                                  </span>
-  <span class="d">tab to use · enter to answer normally                                                                                           </span>
-
-
-<span class="d">── </span><span class="m">ask </span><span class="d">· </span><span class="c">uqeu/estelle </span><span class="d">────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>
-<span class="b">❯ improve the architecture of the retrieval layer                                                                                 </span>
-
-
-
-
-
-  <span class="d">enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection                                              </span></pre></div>
-<p class="keys"><kbd>tab</kbd> to use · <kbd>enter</kbd> to answer normally</p>
-<div class="ok"><b>The two are filed side by side in the gallery on purpose.</b> Screen 15 is a MENU that waits to be read. This is an INFERENCE that appeared because your draft was read. You asked for the second and the product only had the first.</div>
-<div class="ask"><b>Difference from the mock, for you to rule on.</b> The mock highlights your prompt in a tint band above the offer; the shipped version leaves the draft in the composer below it. The mock's version reads better because the offer points UP at the thing it is about.</div>
-</section>
 <h2 class="sec">E. The command surface</h2>
-<section class="screen" id="s17">
-<div class="sh"><span class="num">17</span><span class="name">Slash palette</span><span class="badge b-ship">SHIPPED</span><span class="src">06-slash-palette · 130x38</span></div>
+<section class="screen" id="s15">
+<div class="sh"><span class="num">15</span><span class="name">Slash palette</span><span class="badge b-ship">SHIPPED</span><span class="src">06-slash-palette · 130x38</span></div>
 <p class="purpose">
 Type <code>/</code> and the palette filters as you go. It docks above the hint row rather than covering the
 transcript. Shown filtered to <code>/m</code>.</p>
@@ -678,11 +592,11 @@ transcript. Shown filtered to <code>/m</code>.</p>
   <span class="b">/whoami       which credential kinds are present, never their values                                                            </span>
   <span class="d">enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection                                              </span></pre></div>
 <p class="keys">type to filter · <kbd>↑↓</kbd> select · <kbd>tab</kbd> complete · <kbd>enter</kbd> run</p>
-<div class="rule"><b>DEFECT 2 of 2. Fifty-one cells of <code>#70C6CC</code>, outlined above.</b> The selected row is painted raw <code>Color::Cyan</code> bold, via <code>style.rs:54 accent_style_for</code>, so on a real terminal the selection takes the user's own cyan. That function already has a measured branch for light backgrounds (<code>#005F87</code>); only the dark branch was never given a token. <b>Proposed token: <code>plan #9FC4E0</code></b> — the palette's cool accent, distinct from <code>cite</code> so a selected row is never mistaken for a citation. <b>The alternative, which I think is better:</b> drop the accent entirely and mark selection the way the other four pickers do, <code>bright</code> on a <code>tint</code> row. Then there is one selection language in the product instead of two.</div>
+<div class="ok"><b>The selected row used to be the terminal's cyan, not ours, and it is fixed.</b> It went through <code>style.rs accent_style_for</code> as bare ANSI cyan, which means the one row you are looking at was the one row Estelle did not pick the colour of. It is the citation blue now, in both themes. <b>One thing left to rule on:</b> the other four pickers mark selection as <code>bright</code> text on a <code>tint</code> band rather than by colouring the row, so if you want a single selection language everywhere, this palette should use the band too and drop the accent entirely.</div>
 <div class="ask"><b>The palette lists <code>/model</code>, <code>/memories</code> and <code>/mcp</code>, which are not in the session command list at all.</b> They come from a second table, <code>GRAFT_HELP</code>, kept because Codex's slash surface stays reachable. Two tables feed one popup. That is fine, but it is why the counts in any doc keep disagreeing.</div>
 </section>
-<section class="screen" id="s18">
-<div class="sh"><span class="num">18</span><span class="name">Every command, in one place</span><span class="badge b-prop">PROPOSED</span><span class="src">help_lines() · 48 session + 15 graft + 2 skill namespaces</span></div>
+<section class="screen" id="s16">
+<div class="sh"><span class="num">16</span><span class="name">Every command, and which ones actually work</span><span class="badge b-prop">PROPOSED</span><span class="src">help_lines() · 48 session + 15 graft + 2 skill namespaces</span></div>
 <p class="purpose">
 <code>/help</code> as it renders today, complete. This is the whole feature surface of the CLI in one frame,
 which is what you asked to see. Rows in red are advertised here and <b>refused by the resolver</b>.</p>
@@ -755,11 +669,11 @@ which is what you asked to see. Rows in red are advertised here and <b>refused b
 <span class="d">/skill:&lt;name&gt;  </span><span class="m">run one Estelle skill playbook by name</span>
 <span class="d">/skills:&lt;name&gt; </span><span class="m">alias of /skill: — both spellings run the same playbook</span></pre></div>
 <p class="keys"><kbd>?</kbd> on an empty composer opens this</p>
-<div class="rule"><b><code>/logout</code> is advertised and does not work.</b> It is in the help table AND in <code>DROPPED_COMMANDS</code>, so <code>resolve_session_name</code> returns nothing for it. The comment beside that line records the worse half: for a while the near-miss matcher did NOT honour the dropped list, so <code>/logout</code> said unknown command while <code>/logot</code>, one edit away, resolved and deleted every stored credential. The typo wiped your keys; the correct spelling did nothing. The matcher is fixed. The advertisement is not.</div>
+<div class="ok"><b><code>/logout</code> works now, and the way it was broken is worth keeping in front of you.</b> It was advertised in <code>/help</code> AND on the dropped list, so the correct spelling answered <i>unknown command</i> &mdash; while <code>/logot</code>, one edit away, resolved through a near-miss matcher that did not honour the same list, and deleted every stored credential. <b>The typo wiped your keys; the correct spelling did nothing.</b> The fix separated two meanings that had been sharing one list: <i>this command does not exist</i>, and <i>this command exists and must never be reached by a guess</i>. Anything that deletes a credential or drops stored memory goes on the second list the day it is written.</div>
 <div class="ask"><b>There are also 22 top-level commands that never appear in any screen</b> — <code>estelle login</code> · <code>estelle doctor</code> · <code>estelle init</code> · <code>estelle sweep</code> · <code>estelle reindex</code> · <code>estelle serve</code> · <code>estelle connect</code> · <code>estelle remove</code> · <code>estelle github</code> · <code>estelle monitor</code> · <code>estelle research</code> · <code>estelle memory</code> · <code>estelle ask</code> · <code>estelle recall</code> · <code>estelle verify</code> · <code>estelle gate</code> · <code>estelle hook</code> · <code>estelle install-hooks</code> · <code>estelle uninstall-hooks</code> · <code>estelle acp</code> · <code>estelle mcp</code> · <code>estelle mcp-server</code>. <code>/help</code> inside the session does not mention one of them.</div>
 </section>
-<section class="screen" id="s19">
-<div class="sh"><span class="num">19</span><span class="name">Shell mode, and why it must not look like Estelle</span><span class="badge b-spec">SPEC</span><span class="src">founder's design book 2026-08-24 §5 · /shell explains the form</span></div>
+<section class="screen" id="s17">
+<div class="sh"><span class="num">17</span><span class="name">Shell mode, and why it must not look like Estelle</span><span class="badge b-spec">SPEC</span><span class="src">founder's design book 2026-08-24 §5 · /shell explains the form</span></div>
 <p class="purpose">
 <code>!cargo test</code> runs on your machine. The output is yours, not Estelle's. <b>The founder's rule:
 if a user cannot tell what Estelle said from what their machine printed, we have undermined our own claim.</b></p>
@@ -779,8 +693,8 @@ if a user cannot tell what Estelle said from what their machine printed, we have
 <div class="rule"><b>Make the shell timeout visible and overridable, never a silent kill.</b> Codex's default is 10s; ours is 30s. But theirs bounds an AGENT and ours bounds a HUMAN running <code>!cargo build</code>. A build killed at 30 seconds with no line saying why is the worst version of this.</div>
 </section>
 <h2 class="sec">F. The self-correcting loop</h2>
-<section class="screen" id="s20">
-<div class="sh"><span class="num">20</span><span class="name">Live /work progress</span><span class="badge b-ship">SHIPPED</span><span class="src">15-work-progress-label · 130x34</span></div>
+<section class="screen" id="s18">
+<div class="sh"><span class="num">18</span><span class="name">Live /work progress</span><span class="badge b-ship">SHIPPED</span><span class="src">15-work-progress-label · 130x34</span></div>
 <p class="purpose">
 The plan, its evidence, and the phase ladder. <b>Step 5 says <code>— unevidenced</code> and the line under the
 table says <i>Estelle is guessing there</i>.</b> Step 6 is human-gated and cannot be taken.</p>
@@ -822,8 +736,8 @@ table says <i>Estelle is guessing there</i>.</b> Step 6 is human-gated and canno
 <div class="ok"><b>The step vocabulary is deliberately not the status vocabulary.</b> Plan steps are <code>✓ done</code> · <code>▶ active</code> · <code>▲ blocked</code> · <code>□ not started</code>; rail rows are <code>● landed</code> · <code>▲ blocked</code> · <code>◐ in flight</code> · <code>○ queued</code> · <code>■ refused</code>. <code>▲</code> means the same in both. A plan step is a thing you WILL do, so not started is a box you can imagine ticking; a rail row is a thing that IS, so idle is a hollow circle. Collapsing them would force one surface to lie about its tense.</div>
 <div class="rule"><b>The label row is truncated mid-word: <code>elapsed 1.2s · sc</code>.</b> At 130 columns the work line runs off. It should drop the trailing segment, not slice it. This is the starship rule the brief asked us to steal: segments render independently and degrade to nothing.</div>
 </section>
-<section class="screen" id="s21">
-<div class="sh"><span class="num">21</span><span class="name">The proposed diff, read-only</span><span class="badge b-ship">SHIPPED</span><span class="src">05-proposed-diff · 150x34</span></div>
+<section class="screen" id="s19">
+<div class="sh"><span class="num">19</span><span class="name">The proposed diff, read-only</span><span class="badge b-ship">SHIPPED</span><span class="src">05-proposed-diff · 150x34</span></div>
 <p class="purpose">
 <code>/work</code> produced a patch. Nothing has been written. The header says so twice, and
 <code>/apply</code> is the only thing that touches your tree.</p>
@@ -865,8 +779,8 @@ table says <i>Estelle is guessing there</i>.</b> Step 6 is human-gated and canno
 <div class="ask"><b>This is one quarter of a story that should be one screen.</b> Your brief asked for <code>/diff</code> + <code>/propose</code> + <code>/apply</code> + <code>/undo</code> as ONE visual sequence. Today <code>/apply</code> and <code>/undo</code> have no screen at all: they print a line into the transcript and that is it. The moment a patch enters your working tree is the moment that most needs a picture.</div>
 <div class="rule"><b>Auto-apply is not a thing and must not be drawn as one.</b> The default plan is <code>write_sandbox</code> plus <code>open_pr</code>, a reviewable PR a human merges. Auto-merge is opt-in, off by default, and gated. There is no auto-deploy step anywhere in the system.</div>
 </section>
-<section class="screen" id="s22">
-<div class="sh"><span class="num">22</span><span class="name">Orchestra, running</span><span class="badge b-ship">SHIPPED</span><span class="src">02-orchestra-active · 180x34</span></div>
+<section class="screen" id="s20">
+<div class="sh"><span class="num">20</span><span class="name">Orchestra, running</span><span class="badge b-ship">SHIPPED</span><span class="src">02-orchestra-active · 180x34</span></div>
 <p class="purpose">
 Eight workers across three model pools. Every row carries the worker's own reported state, and
 <code>w7</code> reports <code>Unknown · worker state not reported</code> rather than being counted as anything.</p>
@@ -909,8 +823,8 @@ Eight workers across three model pools. Every row carries the worker's own repor
 <div class="ok"><b>Two columns are honest about being empty.</b> <code>cost</code> is a dash on every row with <i>per-worker model + cost · no server contract</i> under the table, and <code>Plan floor · not reported</code> sits beside it. Neither shows a plausible zero.</div>
 <div class="ask"><b>The <code>age</code> column reads <code>ahead</code> on all eight rows.</b> That is the frame's monotonic clock being unable to compare itself to a server epoch, rendered honestly rather than as <code>0s</code>. It is correct and it is also unreadable. Suggest <code>—</code> with one line saying the clock disagrees.</div>
 </section>
-<section class="screen" id="s23">
-<div class="sh"><span class="num">23</span><span class="name">Orchestra, finished</span><span class="badge b-ship">SHIPPED</span><span class="src">03-orchestra-completed · 180x30</span></div>
+<section class="screen" id="s21">
+<div class="sh"><span class="num">21</span><span class="name">Orchestra, finished</span><span class="badge b-ship">SHIPPED</span><span class="src">03-orchestra-completed · 180x30</span></div>
 <p class="purpose">
 All eight reported terminal outcomes. No bar, because there is nothing left to run. The narrator line is
 marked <code>measured</code> upstream rather than <code>observed</code>.</p>
@@ -948,8 +862,8 @@ marked <code>measured</code> upstream rather than <code>observed</code>.</p>
 <div class="ask"><b>A finished fleet still shows an empty cost column and a not-reported plan floor.</b> If cost is ever going to be real, this is the screen it lands on. It is also the screen where <i>what did that cost me</i> is the only question anyone asks.</div>
 </section>
 <h2 class="sec">G. Production, and the panes it lives in</h2>
-<section class="screen" id="s24">
-<div class="sh"><span class="num">24</span><span class="name">Production, one unresolved issue</span><span class="badge b-ship">SHIPPED</span><span class="src">04-production-issues · 160x38</span></div>
+<section class="screen" id="s22">
+<div class="sh"><span class="num">22</span><span class="name">Production, one unresolved issue</span><span class="badge b-ship">SHIPPED</span><span class="src">04-production-issues · 160x38</span></div>
 <p class="purpose">
 An error caught, grouped, and traced to a symbol. Below it the repair queue, drafted and awaiting a human.
 This is the loop's outer edge and it is the screen a customer opens in the morning.</p>
@@ -996,8 +910,8 @@ This is the loop's outer edge and it is the screen a customer opens in the morni
 <div class="rule"><b><code>diff unavailable - unavailable</code> is the word twice.</b> A formatter is joining a label to a reason and the reason is the label. It should either say why, or say nothing.</div>
 <div class="ask"><b>Your brief asked for mermaid diagrams on this screen.</b> Nothing renders a diagram in the CLI today. See screen 34.</div>
 </section>
-<section class="screen" id="s25">
-<div class="sh"><span class="num">25</span><span class="name">Panels, one terminal</span><span class="badge b-spec">SPEC</span><span class="src">skill 3.png §6</span></div>
+<section class="screen" id="s23">
+<div class="sh"><span class="num">23</span><span class="name">Panels, one terminal</span><span class="badge b-spec">SPEC</span><span class="src">skill 3.png §6</span></div>
 <p class="purpose">
 <b>The tab strip and the split.</b> One terminal, several agents, each a tab with its own status dot. The
 right pane carries production above and the orchestra fleet below.</p>
@@ -1017,11 +931,11 @@ right pane carries production above and the orchestra fleet below.</p>
 <span class="d">click a tab · drag a divider · ctrl+\ split · ctrl+w close a VIEW</span></pre></div>
 <p class="keys"><kbd>ctrl+\</kbd> split · <kbd>ctrl+w</kbd> close a view · drag a divider · click a tab</p>
 <div class="ok"><b>The constraint printed beside this mock, and it is the important one.</b> <i>Closing a pane never stops an agent.</i> Reopening is one <code>GET</code> with <code>after_revision=0</code>, which returns the full snapshot. There is no replay to miss. Server-owned snapshots, monotonic revision, long-poll with an ETag. That is what makes a pane safe to close.</div>
-<div class="rule"><b>Almost none of the interaction here is built.</b> Shipped: a session tab strip (screen 33) and ONE fixed two-pane split. Not shipped: <code>ctrl+\</code>, a draggable divider, clicking a tab, <code>+ new</code>, per-tab phase dots, and closing a view. The layout is a Rust <code>Layout::default().constraints(...)</code>, which is the right foundation for a real divider and will land the alignment for free.</div>
+<div class="rule"><b>Almost none of the interaction here is built.</b> Shipped: a session tab strip (screen 35) and ONE fixed two-pane split. Not shipped: <code>ctrl+\</code>, a draggable divider, clicking a tab, <code>+ new</code>, per-tab phase dots, and closing a view. The layout is a Rust <code>Layout::default().constraints(...)</code>, which is the right foundation for a real divider and will land the alignment for free.</div>
 <div class="ask"><b>The status dots here use a fourth glyph set.</b> <code>●</code> for a done phase, <code>◐</code> for the running one, <code>·</code> for the not-yet ones. The shipped vocabulary would spell that <code>✓ ▶ □</code> for plan steps or <code>● ◐ ○</code> for rail rows. Pick one and I will make the tab strip use it.</div>
 </section>
-<section class="screen" id="s26">
-<div class="sh"><span class="num">26</span><span class="name">Todos, expanded and collapsed</span><span class="badge b-ship">SHIPPED</span><span class="src">09-todo-expanded / 10-todo-collapsed · 130</span></div>
+<section class="screen" id="s24">
+<div class="sh"><span class="num">24</span><span class="name">Todos, expanded and collapsed</span><span class="badge b-ship">SHIPPED</span><span class="src">09-todo-expanded / 10-todo-collapsed · 130</span></div>
 <p class="purpose">
 The server's task ledger. Note row five: <code>? Unverified: Confirm the account model</code>. Unknown is its
 own state and gets its own glyph rather than being folded into pending.</p>
@@ -1050,12 +964,12 @@ own state and gets its own glyph rather than being folded into pending.</p>
 <span class="m">… +3 more (1 done) · ctrl+t to expand                                          </span></pre></div>
 <p class="keys"><kbd>ctrl+t</kbd> expands and collapses</p>
 <div class="ok"><b>Collapsed says what it hid.</b> <code>… +3 more (1 done) · ctrl+t to expand</code>, not <code>+3 more</code>. The count of hidden DONE items is the part people would otherwise have to expand to learn.</div>
-<div class="rule"><b><code>?</code> is a sixth mark and it is not in either vocabulary.</b> Neither <code>Mark</code> nor <code>StepMark</code> defines it, yet the todo list and the orchestra table both use it, and it is the most honest glyph on either screen. <b>Proposal: promote <code>?</code> to <code>Mark::Unknown</code>, coloured <code>warn</code>, with the meaning <i>not measured</i>.</b> Right now the rule says five marks, no synonyms, and the product ships seven.</div>
+<div class="ok"><b><code>?</code> is a real mark now.</b> It was on two shipped screens as a bare string in neither enum and neither test, under a docstring that said there were five marks &mdash; the file describing itself rather than the product. It is <code>Mark::Unknown</code>, meaning <i>the server did not tell us</i>. <b>Coloured <code>mid</code>, not <code>warn</code>:</b> unknown is the ABSENCE of a signal, and <code>warn</code> already means <i>a human is needed here</i>. Every test in that module iterates the enum now, so a seventh mark is a compile error rather than a silent gap.</div>
 <div class="ask"><b>With no ledger, <kbd>ctrl+t</kbd> prints a sentence into the transcript</b> (<i>Todo state unavailable: the server has not emitted a task ledger for this session.</i>). Correct, and invisible if you are looking at the top of a long scroll.</div>
 </section>
 <h2 class="sec">H. Pickers. Four screens, one shape.</h2>
-<section class="screen" id="s27">
-<div class="sh"><span class="num">27</span><span class="name">Settings</span><span class="badge b-ship">SHIPPED</span><span class="src">07-settings · 130x38</span></div>
+<section class="screen" id="s25">
+<div class="sh"><span class="num">25</span><span class="name">Settings</span><span class="badge b-ship">SHIPPED</span><span class="src">07-settings · 130x38</span></div>
 <p class="purpose">
 Sixteen suites. Every row says who owns the setting: <code>server enforced</code>, <code>client display</code>,
 <code>client-owned</code>, <code>server-owned</code>, <code>server schema</code>, <code>server contract</code>.</p>
@@ -1099,8 +1013,8 @@ Sixteen suites. Every row says who owns the setting: <code>server enforced</code
 <div class="ok"><b>Rows 9 through 16 have no number.</b> Only nine rows can be reached by digit, so only nine carry one. A tenth row numbered <code>10</code> that no keypress can reach would be a lie about the keyboard.</div>
 <div class="ask"><b>Eight of sixteen suites say <code>no configurable settings</code>.</b> Half this screen is a list of things you cannot change. Worth collapsing them to one line under the rule.</div>
 </section>
-<section class="screen" id="s28">
-<div class="sh"><span class="num">28</span><span class="name">Settings, one suite</span><span class="badge b-ship">SHIPPED</span><span class="src">07b-monitor-settings · 130x34</span></div>
+<section class="screen" id="s26">
+<div class="sh"><span class="num">26</span><span class="name">Settings, one suite</span><span class="badge b-ship">SHIPPED</span><span class="src">07b-monitor-settings · 130x34</span></div>
 <p class="purpose">
 Inside a suite. One row, and it names its scope and its owner: <code>30 · team · server</code>.</p>
 <div class="frame"><pre><span class="b">ESTELLE  ·  uqeu/estelle                                                                                                          </span>
@@ -1138,8 +1052,8 @@ Inside a suite. One row, and it names its scope and its owner: <code>30 · team 
 <p class="keys"><kbd>↑↓</kbd> navigate · <kbd>enter</kbd> edit · <kbd>esc</kbd> back</p>
 <div class="rule"><b>The value shown is the DEFAULT, not the team's setting.</b> The schema default is 30 and the team value on the wire is 45. This frame shows 30. Whichever is right, one screen showing a number that is not the number in force is the exact defect class this product exists to prevent. Worth a probe before the port.</div>
 </section>
-<section class="screen" id="s29">
-<div class="sh"><span class="num">29</span><span class="name">Model pool</span><span class="badge b-ship">SHIPPED</span><span class="src">08-model-picker · 130x34</span></div>
+<section class="screen" id="s27">
+<div class="sh"><span class="num">27</span><span class="name">Model pool</span><span class="badge b-ship">SHIPPED</span><span class="src">08-model-picker · 130x34</span></div>
 <p class="purpose">
 Every model your keys reach, grouped by provider, with the active one marked <code>current</code>. Account-wide,
 so it is the same pool on every machine you sign in from.</p>
@@ -1175,20 +1089,16 @@ so it is the same pool on every machine you sign in from.</p>
   <span class="m">3 gpt-5.5                   </span><span class="d">OpenAI · account-wide                                                                               </span>
   <span class="m">4 gpt-5.5-codex             </span><span class="d">OpenAI · account-wide                                                                               </span>
 <span class="d">↑↓ navigate · 1-9 or Enter select · Esc close                                                                                     </span></pre></div>
-<<<<<<< HEAD
-<p class="keys"><kbd>↑↓</kbd> navigate · <kbd>1-9</kbd> or <kbd>enter</kbd> select · <kbd>esc</kbd> close · <kbd>ctrl+m</kbd> opens it</p>
-=======
 <p class="keys"><kbd>↑↓</kbd> navigate · <kbd>1-9</kbd> or <kbd>enter</kbd> select · <kbd>esc</kbd> close · <code>/model</code> opens it</p>
 <div class="rule"><b>The door is <code>/model</code>, not <kbd>ctrl+m</kbd>, and this line used to say otherwise.</b> <kbd>Ctrl+M</kbd> is carriage return &mdash; the same bytes as <kbd>enter</kbd> &mdash; so it cannot be bound in this binary without breaking send. The hint row on every frame used to advertise <code>ctrl+m models</code> and no longer does; see screen 8 for why that was changed and what took its place.</div>
->>>>>>> f55b86ec3 (fix(cli): the hint row on every frame advertised a key that is carriage return)
 <div class="rule"><b>Estelle does not silently choose a model, and no screen may imply it does.</b> The affinity re-rank does not beat random: p=0.63 at n=12. The <code>(model, task, verdict)</code> join is built and holds no rows worth ranking on. The pin stays yours.</div>
 <div class="ask"><b>Your mock <code>10 · Models — every one your keys reach</code> is a much larger screen</b> — score, n, input and output price, context, 30-day uptime, a <code>no key</code> state, and per-model failure notes. Its own annotation is the reason it is honest: <i>score is empty because score is OURS. 12 outcomes, p=0.63.</i> Every score a dash. That version is worth building; the dashes are the point.</div>
 </section>
-<section class="screen" id="s30">
-<div class="sh"><span class="num">30</span><span class="name">Provider API key picker</span><span class="badge b-ship">SHIPPED</span><span class="src">cli-rs live · 2026-08-24 capture · no gallery frame</span></div>
+<section class="screen" id="s28">
+<div class="sh"><span class="num">28</span><span class="name">Provider API key picker</span><span class="badge b-ship">SHIPPED</span><span class="src">cli-rs live · 2026-08-24 capture · no gallery frame</span></div>
 <p class="purpose">
-Reached from login stage two. Ten providers, each naming how it authenticates. This is a real screenshot of
-the running binary, not a mock, which is why it still has a box around it.</p>
+Reached from login stage two. Ten providers, each naming <b>how it authenticates</b> and what the key costs
+to use.</p>
 <div class="frame"><pre><span class="d">┌ </span><span class="m">CONVERSATION  Tab · Ctrl←/→ focus </span><span class="d">───────────────────────────────</span>
  <span class="r">Credential flow did not complete: login cancelled; no credential was</span>
  <span class="r">written. Run /doctor.</span>
@@ -1208,11 +1118,11 @@ the running binary, not a mock, which is why it still has a box around it.</p>
 <span class="d">↑↓ navigate · 1–9 or Enter select · Esc close</span>
 <span class="d">└──────────────────────────────────────────────────────────────────</span></pre></div>
 <p class="keys"><kbd>↑↓</kbd> navigate · <kbd>1-9</kbd> or <kbd>enter</kbd> select · <kbd>esc</kbd> close</p>
-<div class="rule"><b>Three defects on one captured screen.</b> It draws boxes, which the no-box rule forbids. The refusal at the top is the login-cancel loop you hit live. And it has no gallery frame, so no test renders it and nobody would have seen any of this without your screenshot.</div>
-<div class="ask"><b>Ten rows, nine reachable by digit.</b> MiniMax has no number. Same shape as screen 27. If a picker can exceed nine rows, the digits are a convenience and <kbd>↑↓</kbd> is the contract; say that once in the footer rather than leaving a blank.</div>
+<div class="ok"><b>All three defects on this screen are closed.</b> It was a screenshot you sent, not a rendered frame &mdash; so it drew corners, it showed the login-cancel refusal you hit live, and no test rendered it at all. It comes out of the renderer now, under the same no-box guard as every other frame, which means the next regression on it goes red instead of waiting for another screenshot. Your note here was the third time you said no boxes.</div>
+<div class="ask"><b>Ten rows, nine reachable by digit.</b> MiniMax has no number. Same shape as screen 25. If a picker can exceed nine rows, the digits are a convenience and <kbd>↑↓</kbd> is the contract; say that once in the footer rather than leaving a blank.</div>
 </section>
-<section class="screen" id="s31">
-<div class="sh"><span class="num">31</span><span class="name">Autonomy</span><span class="badge b-ship">SHIPPED</span><span class="src">14-autonomy · 130x34</span></div>
+<section class="screen" id="s29">
+<div class="sh"><span class="num">29</span><span class="name">Autonomy</span><span class="badge b-ship">SHIPPED</span><span class="src">14-autonomy · 130x34</span></div>
 <p class="purpose">
 The dial, as four rungs that each say what the previous one could not do. Default is <code>plan</code>, and
 the ceiling is enforced on the server, not here.</p>
@@ -1253,8 +1163,8 @@ the ceiling is enforced on the server, not here.</p>
 <div class="ask"><b>Nothing here shows the kill switch or the audit trail.</b> Both exist (<code>ESTELLE_AUTO_MODE_KILL</code>, HMAC-logged actions). A dial with no visible brake is a dial people will not turn.</div>
 </section>
 <h2 class="sec">I. The questions the CLI cannot answer yet</h2>
-<section class="screen" id="s32">
-<div class="sh"><span class="num">32</span><span class="name">How much memory do I have left</span><span class="badge b-prop">PROPOSED</span><span class="src">every field below is already returned by POST /sweep/estimate</span></div>
+<section class="screen" id="s30">
+<div class="sh"><span class="num">30</span><span class="name">How much memory do I have left</span><span class="badge b-prop">PROPOSED</span><span class="src">every field below is already returned by POST /sweep/estimate</span></div>
 <p class="purpose">
 <b>You asked for this screen by name and it does not exist.</b> The server computes the whole answer on every
 sweep. The client reads one boolean out of the reply and throws the rest away
@@ -1288,11 +1198,13 @@ sweep. The client reads one boolean out of the reply and throws the rest away
 <div class="ok"><b>Two honesty details worth keeping.</b> <code>net new</code> exists because a re-sweep of an unchanged repo ingests nothing, so pricing the whole repo against a namespace that already holds it would refuse every sweep after the first. And <code>exact</code> flips to false as soon as ONE file was sized from bytes rather than counted, so the screen must be able to say <i>estimated</i> instead of <i>measured</i>.</div>
 <div class="ask"><b>Where does it live?</b> <code>/sweep</code> before it ingests is the obvious moment. But <i>how much memory do I have left</i> is a question people ask at other times, which argues for <code>/memory</code> or a row in <code>/me</code>.</div>
 </section>
-<section class="screen" id="s33">
-<div class="sh"><span class="num">33</span><span class="name">Usage</span><span class="badge b-ship">SHIPPED</span><span class="src">commands.rs · renders into the transcript, has no screen</span></div>
+<section class="screen" id="s31">
+<div class="sh"><span class="num">31</span><span class="name">Spend, and what ctrl+s opens</span><span class="badge b-ship">SHIPPED</span><span class="src">commands.rs · renders into the transcript, has no screen</span></div>
 <p class="purpose">
-<code>/usage</code> today. Requests and tokens by day, printed as transcript lines. It answers what you spent
-and never what you have left.</p>
+🔴 <b><kbd>ctrl+s</kbd> shows you the spend instead of naming a shortcut.</b> "This session you spent $5.46",
+in words, with the per-model breakdown behind it and the turn split into input, output and cache. What ships
+today is <code>/usage</code>: requests and tokens by day, printed as transcript lines, answering what you
+spent and never what you have left.</p>
 <div class="frame"><pre><span class="b">❯</span> <span class="b">/usage</span>
 
 <span class="m">7 days  |  3,292 requests  |  1,184,220 tokens</span>
@@ -1305,7 +1217,33 @@ and never what you have left.</p>
 <span class="m">2026-09-01  |  419 requests  |  145,984 tokens</span></pre></div>
 <p class="keys"><code>/usage</code> · <code>/activity</code> for the same by endpoint · <kbd>ctrl+s</kbd> spend</p>
 <div class="ok"><b>Every cell can say <code>not returned</code> independently.</b> <code>requests not returned</code> and <code>tokens not returned</code> are separate strings, so a day with one and not the other does not print a zero.</div>
-<div class="ask"><b>Your mock <code>5 · Spend, click it</code> is the version worth building.</b> Collapsed it is one segment on the status line, <code>~/estelle · main · $0.104 · ⚙ affinity</code>; expanded it breaks into input, output, <code>cached … already warm</code>, this turn, your priciest available model, and saved. The annotation says the receipts are real and <i>the gap is that no CLI prints it</i>.</div>
+<div class="ask"><b>Collapsed, this is one segment on the status line.</b> <code>~/estelle · main · $0.104 · ⚙ affinity</code>, and <kbd>ctrl+s</kbd> opens what you see above. Confirm that is the split you want: the receipts are real and the gap has always been that no CLI prints them.</div>
+</section>
+<section class="screen" id="s32">
+<div class="sh"><span class="num">32</span><span class="name">The costing panel</span><span class="badge b-prop">PROPOSED</span><span class="src">33b-model-cost &middot; 130x34</span></div>
+<p class="purpose">
+<b>The panel you said you miss the most</b>, answering all four questions on one screen: what each
+model costs, what this run is spending, what is left in the plan, and how much memory is used. The
+model lock is <b>per role</b> &mdash; keep one model for planning and let affinity pick the solver
+&mdash; and an unlocked role reads <code>affinity</code>, never a blank.</p>
+<div class="frame"><pre>frame</pre></div>
+<p class="keys"><kbd>&uarr;&darr;</kbd> walk the pool &middot; <kbd>enter</kbd> locks the highlighted model to its role</p>
+<div class="ok"><b>The mechanism is the one you described, and it is on the screen.</b> Input and output tokens are counted per model and multiplied by that model's published per-million price. <code>in/M</code> and <code>out/M</code> are that price; <code>run spend</code> is the multiplication. A local model shows a dash in all three plus <code>this machine, no bill</code>, because a number there would be a guess.</div>
+<div class="ok"><b>Two bills, and they are never added together.</b> The footnote is the rule in one line: <i>run spend is YOUR key billed by YOUR vendor; memory is the Estelle plan; they are two bills.</i> Under BYOK Estelle invoices nothing per token, so one blended figure would be wrong in both directions. A provider that publishes no price gets a dash &mdash; <b>an unknown cost is never drawn as <code>$0.00</code></b>.</div>
+<div class="rule"><b>What the wire does not carry yet.</b> No per-model cost breakdown comes back on a reply, so the numbers above are a design fixture and the screen says exactly that when you open it without <code>--demo</code>. The prices are public and stable; the missing half is the join from <i>this turn</i> to <i>this model</i>.</div>
+</section>
+<section class="screen" id="s33">
+<div class="sh"><span class="num">33</span><span class="name">Stats and activity: where the time and the tokens went</span><span class="badge b-prop">PROPOSED</span><span class="src">42-stats-activity &middot; 130x48</span></div>
+<p class="purpose">
+<b>The costing panel's other half.</b> The three screens before this one answer <i>what did it
+cost</i>. This one answers <i>what did it go to</i>: wall clock split across startup, prefill, first
+token, generation, reasoning, tools and compaction, and 25.7M tokens split by what each kind is
+priced at.</p>
+<div class="frame"><pre>frame</pre></div>
+<p class="keys"><code>/activity</code> &middot; <kbd>ctrl+s</kbd> spend</p>
+<div class="ok"><b>The one number here that is already measured, and it is the big one.</b> 24.7M prompt tokens read from cache against 768k computed is a <b>32x</b> difference in what a BYOK user pays for the same run. <code>token_usage::TokenUsage::cached_input_tokens</code> has carried it all along and nothing has ever rendered it.</div>
+<div class="rule"><b>The frame names which of its own numbers were counted.</b> The cache split is measured. The per-phase clock is not &mdash; no timer wraps prefill, generation, reasoning or tools. The per-tool tallies are not &mdash; tool calls are drawn and never counted for a run. Those three sentences are printed on the screen rather than kept in this note, because the person reading the screen is the one who needs them.</div>
+<div class="ask"><b>Reasoning is counted twice on purpose, and I want a ruling.</b> Reasoning sits INSIDE generation, so the phase rows do not sum to wall clock and the frame says so. The alternative is to subtract it and show generation-minus-reasoning, which sums cleanly and answers a question nobody asks.</div>
 </section>
 <section class="screen" id="s34">
 <div class="sh"><span class="num">34</span><span class="name">The answer itself: a table, and a diagram</span><span class="badge b-spec">SPEC</span><span class="src">founder's design book 2026-08-24 §17 · nothing renders markdown in the CLI today</span></div>
@@ -1338,12 +1276,12 @@ printed, and a citation stays clickable inside a rendered table.</p>
 <section class="screen" id="s35">
 <div class="sh"><span class="num">35</span><span class="name">Session tabs</span><span class="badge b-ship">SHIPPED</span><span class="src">live_renderer.rs:114 · has no gallery frame</span></div>
 <p class="purpose">
-Several sessions in one terminal. This is the shipped half of screen 25, and no test renders it, because the
-gallery's fixture has no tabs.</p>
+Several sessions in one terminal, each carrying its repo, its state and its spend. This is the shipped half
+of screen 23, and it has a rendered frame for the first time.</p>
 <div class="frame"><pre><span class="d">sessions</span>  <span class="sel"> + s-4a19 </span> <span class="d"> · s-77c2 </span> <span class="d"> · s-0b3e </span>  <span class="d">Alt+Left/Right switch · Ctrl+W close view</span></pre></div>
 <p class="keys"><kbd>ctrl+tab</kbd> / <kbd>ctrl+shift+tab</kbd> cycle · <kbd>alt+←</kbd> <kbd>alt+→</kbd> switch · <kbd>ctrl+w</kbd> close</p>
 <div class="rule"><b>Tabs are labelled with session IDs.</b> <code>s-4a19</code> tells you nothing. The mock labels them by what the agent is doing (<code>scope</code>, <code>implement</code>, <code>review</code>, <code>gate</code>) with a status dot. The server already sends a session title; this strip does not read it.</div>
-<div class="rule"><b>The footer advertises <kbd>Alt+Left/Right</kbd>, and the binding beside it warns against alt-chords on macOS.</b> Arrows survive where letters do not, so this one probably works. It has never been in a rendered frame, so nobody has checked.</div>
+<div class="rule"><b>The footer advertises <kbd>Alt+Left/Right</kbd> and the binding you should be told about is <kbd>ctrl+tab</kbd>.</b> Both are bound. Option+Arrow does survive macOS where Option+letter does not, so the alt one is not broken &mdash; but by your own rule it is the wrong thing to PRINT, because control is the only modifier a Windows reader and a Mac reader both have. <b>The footer should lead with <kbd>ctrl+tab</kbd> / <kbd>ctrl+shift+tab</kbd></b> and mention the arrows second, if at all.</div>
 </section>
 <section class="screen" id="s36">
 <div class="sh"><span class="num">36</span><span class="name">Doctor, failing</span><span class="badge b-spec">SPEC</span><span class="src">founder's design book 2026-08-24 §7 · doctor.rs exists, has no screen</span></div>
@@ -1396,8 +1334,8 @@ to either a synchronous upload or a background ingest.</p>
 <span class="d">nothing has been sent that .estelleignore excludes</span></pre></div>
 <p class="keys"><code>/sweep</code> · <code>--dry-run</code> collects and sends nothing</p>
 <div class="ok"><b>No fantasy ETA, by rule.</b> <code>ingest_progress.py:14</code> reads <i>never a fantasy constant</i>, and the percentages above are phase boundaries, not a prediction.</div>
-<div class="rule"><b>The capacity check is the screen 32 gap in one line.</b> <code>checking account capacity</code> is a step the user watches go past, and the reply it reads holds every number they wanted. Today the step reports a percentage and discards the answer.</div>
-<div class="ask"><b>When it does NOT fit, the client dumps the raw JSON reply into the error string.</b> <code>this sweep does not fit the account capacity: {concise_value(&amp;estimate)}</code>. That is the one moment the user most needs screen 32 and instead they get a serialised object.</div>
+<div class="rule"><b>The capacity check is the screen 30 gap in one line.</b> <code>checking account capacity</code> is a step the user watches go past, and the reply it reads holds every number they wanted. Today the step reports a percentage and discards the answer.</div>
+<div class="ask"><b>When it does NOT fit, the client dumps the raw JSON reply into the error string.</b> <code>this sweep does not fit the account capacity: {concise_value(&amp;estimate)}</code>. That is the one moment the user most needs screen 30 and instead they get a serialised object.</div>
 </section>
 <h2 class="sec">J. Three more the mocks specify and the CLI has not built</h2>
 <section class="screen" id="s39">
@@ -1433,7 +1371,7 @@ Every tool call is one collapsed row. Open it and you get the last twelve lines 
 <span class="d">c copies the command · r re-runs it</span></pre></div>
 <p class="keys"><kbd>▸</kbd> or click expands · <kbd>c</kbd> copies the command · <kbd>r</kbd> re-runs it · <kbd>ctrl+o</kbd> all lines</p>
 <div class="ok"><b>The rule printed under this mock is the one I would hold you to.</b> <i>A bash step that printed 400 lines shows the last 12 and a count, never a silent truncation.</i> A capped read means <i>cannot answer</i>, never <i>that is all there is</i>, and this is that rule applied to a scrollback.</div>
-<div class="rule"><b>This mock draws boxes too</b> (<code>┌ │ └</code> around the shell output). Same conflict as screens 12 and 25. If the no-box rule holds, the shell block needs a different container: an indent plus a <code>│</code> rail is already exempt and would read almost identically.</div>
+<div class="rule"><b>The mock drew boxes around the shell output</b> (<code>┌ │ └</code>) and this frame does not. Screens 12 and 23 had the same conflict and were resolved the same way: an indent plus a <code>│</code> rail, which is exempt because it is a gutter rather than a border, and which reads almost identically. The no-box rule holds on all three.</div>
 <div class="ask"><b>Tool output defaults to collapsed.</b> Confirm that is what you want as the default, because it is the difference between a transcript you can scan and one you scroll.</div>
 </section>
 <section class="screen" id="s40">
@@ -1457,7 +1395,7 @@ exportable. <b>The data exists; this is a renderer over it.</b></p>
 <span class="d">↑↓ walk · enter opens · b blast radius · / filter · x export dot</span></pre></div>
 <p class="keys"><kbd>↑↓</kbd> walk · <kbd>enter</kbd> opens · <kbd>b</kbd> blast radius · <kbd>/</kbd> filter · <kbd>x</kbd> export dot</p>
 <div class="ok"><b>The read path is real.</b> <code>/graph nodes</code>, <code>blast_radius</code>, <code>chokepoints</code>, <code>core_files</code>, <code>subsystems</code>, <code>import_cycles</code> and <code>refactor_order</code> all answer today. None of them has a screen; they print lines.</div>
-<div class="rule"><b>The half that is not wired is the half that matters.</b> Your annotation: <i>editing and retracting from the CLI is not wired, and a memory the customer cannot correct is the failure this section exists to close.</i> <code>/memories</code> lists with trust tiers and supersession works on the server. There is no CLI door to correct one.</div>
+<div class="rule"><b>The half that is not wired is the walking.</b> Every read this screen needs already answers; what does not exist is a surface that lets you MOVE through the result &mdash; select a node, open it, take its blast radius, filter, export. Today each of those is a command that prints a list, so following one edge means typing the next question by hand. <i>(This note used to be about editing and retracting a memory, which is screen 41's subject and is argued there. A note on the wrong screen is a note nobody acts on.)</i></div>
 <div class="ask"><b>Guardian owns the graph, so Guardian owns this screen.</b> That is your line and it means this one is not a CLI-lane build.</div>
 </section>
 <section class="screen" id="s41">
@@ -1494,12 +1432,6 @@ is one value, <b><code>#CA92AF</code></b> (hue 328.9, saturation 0.28, value 0.7
 <code>skill.png</code>, 2,798 in each of the other two, and everything else in that hue band is antialiasing
 of it. <code>skill 3.png</code>, the panels mock, contains no pink at all, which is consistent with it having
 no skill on it.
-<<<<<<< HEAD
-<br><br>That value is already pinned in <code>cli-rs/tui/src/theme.rs</code> with the same provenance, so this
-is an independent confirmation rather than a new finding. Worth saying why it is pinned: it shipped as
-<code>#D48FB0</code> for months and nobody could say where that came from. The cream variant,
-<code>#B06A8C</code>, is honestly unmeasured, because there is no cream skills mock to sample.</p>
-=======
 <br><br>🔴 <b>This paragraph used to claim that value was &ldquo;already pinned in <code>theme.rs</code>&rdquo;,
 and the code has never held it.</b> <code>theme.rs</code> ships <code>#D48FB0</code> &mdash; the value this
 same paragraph calls the one nobody could explain &mdash; and the skills frame renders 21 cells of it. The
@@ -1510,47 +1442,57 @@ dark pink the product ships is <code>#D48FB0</code>, and the table below says so
 <br><br>The cream pink is no longer unmeasured. It was <code>#B06A8C</code>, <b>2.8:1</b> against the cream
 ground where the dark pink gets <b>7.4:1</b> against its own. It is <code>#6F2046</code> at <b>7.6:1</b> now
 &mdash; the dark maroon you asked for. Five other cream accents came down with it; see screen 5.</p>
->>>>>>> f55b86ec3 (fix(cli): the hint row on every frame advertised a key that is carriage return)
 
 <h3 style="font-size:15px;margin:26px 0 4px">The dark palette</h3>
-<table><thead><tr><th>token</th><th>value</th><th>what it means</th></tr></thead><tbody><tr><td><code>ground</code></td><td><span class="sw" style="background:#16130F"></span><code>#16130F</code></td><td>the terminal ground</td></tr><tr><td><code>tint</code></td><td><span class="sw" style="background:#241F19"></span><code>#241F19</code></td><td>one step off the ground: the selected row, the active plan step</td></tr><tr><td><code>dim</code></td><td><span class="sw" style="background:#6F6A5E"></span><code>#6F6A5E</code></td><td>rules, hints, absent facts, anything you are not meant to read first</td></tr><tr><td><code>mid</code></td><td><span class="sw" style="background:#948E81"></span><code>#948E81</code></td><td>body text</td></tr><tr><td><code>bright</code></td><td><span class="sw" style="background:#E9E6DC"></span><code>#E9E6DC</code></td><td>the thing on the row that matters</td></tr><tr><td><code>red</code></td><td><span class="sw" style="background:#C52416"></span><code>#C52416</code></td><td>refused</td></tr><tr><td><code>green</code></td><td><span class="sw" style="background:#5F9E6E"></span><code>#5F9E6E</code></td><td>landed, healthy, done</td></tr><tr><td><code>warn</code></td><td><span class="sw" style="background:#C9A227"></span><code>#C9A227</code></td><td>blocked, needs a human</td></tr><tr><td><code>cite</code></td><td><span class="sw" style="background:#7FB3C8"></span><code>#7FB3C8</code></td><td>a file:line citation, and the in-flight mark</td></tr><tr><td><code>plan</code></td><td><span class="sw" style="background:#9FC4E0"></span><code>#9FC4E0</code></td><td>plan surfaces</td></tr><tr><td><code>skill</code></td><td><span class="sw" style="background:#CA92AF"></span><code>#CA92AF</code></td><td>THE PINK. the offered skill name, the typed palette's selected row</td></tr><tr><td><code>diff_add</code></td><td><span class="sw" style="background:#1B2E1D"></span><code>#1B2E1D</code></td><td>added line ground</td></tr><tr><td><code>diff_del</code></td><td><span class="sw" style="background:#361A18"></span><code>#361A18</code></td><td>removed line ground</td></tr></tbody></table>
+<table><thead><tr><th>token</th><th>value</th><th>what it means</th></tr></thead><tbody><tr><td><code>ground</code></td><td><span class="sw" style="background:#16130F"></span><code>#16130F</code></td><td>the terminal ground</td></tr><tr><td><code>tint</code></td><td><span class="sw" style="background:#241F19"></span><code>#241F19</code></td><td>one step off the ground: the selected row, the active plan step</td></tr><tr><td><code>dim</code></td><td><span class="sw" style="background:#6F6A5E"></span><code>#6F6A5E</code></td><td>rules, hints, absent facts, anything you are not meant to read first</td></tr><tr><td><code>mid</code></td><td><span class="sw" style="background:#948E81"></span><code>#948E81</code></td><td>body text</td></tr><tr><td><code>bright</code></td><td><span class="sw" style="background:#E9E6DC"></span><code>#E9E6DC</code></td><td>the thing on the row that matters</td></tr><tr><td><code>red</code></td><td><span class="sw" style="background:#C52416"></span><code>#C52416</code></td><td>refused</td></tr><tr><td><code>green</code></td><td><span class="sw" style="background:#5F9E6E"></span><code>#5F9E6E</code></td><td>landed, healthy, done</td></tr><tr><td><code>warn</code></td><td><span class="sw" style="background:#C9A227"></span><code>#C9A227</code></td><td>blocked, needs a human</td></tr><tr><td><code>cite</code></td><td><span class="sw" style="background:#7FB3C8"></span><code>#7FB3C8</code></td><td>a file:line citation, and the in-flight mark</td></tr><tr><td><code>plan</code></td><td><span class="sw" style="background:#9FC4E0"></span><code>#9FC4E0</code></td><td>plan surfaces</td></tr><tr><td><code>skill</code></td><td><span class="sw" style="background:#D48FB0"></span><code>#D48FB0</code></td><td>THE PINK. the offered skill name, the typed palette's selected row. <b>This table said <code>#CA92AF</code> and the product ships <code>#D48FB0</code></b> &mdash; see the paragraph above.</td></tr><tr><td><code>diff_add</code></td><td><span class="sw" style="background:#1B2E1D"></span><code>#1B2E1D</code></td><td>added line ground</td></tr><tr><td><code>diff_del</code></td><td><span class="sw" style="background:#361A18"></span><code>#361A18</code></td><td>removed line ground</td></tr></tbody></table>
 
 <h3 style="font-size:15px;margin:26px 0 4px">The cream palette</h3>
-<table><thead><tr><th>token</th><th>value</th><th></th></tr></thead><tbody><tr><td><code>ground</code></td><td><span class="sw" style="background:#E9E6DC"></span><code>#E9E6DC</code></td><td></td></tr><tr><td><code>tint</code></td><td><span class="sw" style="background:#DCD7C9"></span><code>#DCD7C9</code></td><td></td></tr><tr><td><code>dim</code></td><td><span class="sw" style="background:#8B8578"></span><code>#8B8578</code></td><td></td></tr><tr><td><code>mid</code></td><td><span class="sw" style="background:#575043"></span><code>#575043</code></td><td></td></tr><tr><td><code>bright</code></td><td><span class="sw" style="background:#1F1C17"></span><code>#1F1C17</code></td><td></td></tr><tr><td><code>red</code></td><td><span class="sw" style="background:#B0210F"></span><code>#B0210F</code></td><td></td></tr><tr><td><code>green</code></td><td><span class="sw" style="background:#3D7550"></span><code>#3D7550</code></td><td></td></tr><tr><td><code>warn</code></td><td><span class="sw" style="background:#96751A"></span><code>#96751A</code></td><td></td></tr><tr><td><code>cite</code></td><td><span class="sw" style="background:#38708C"></span><code>#38708C</code></td><td></td></tr><tr><td><code>plan</code></td><td><span class="sw" style="background:#356A8C"></span><code>#356A8C</code></td><td></td></tr><tr><td><code>skill</code></td><td><span class="sw" style="background:#B06A8C"></span><code>#B06A8C</code></td><td>NOT MEASURED — no cream skills mock exists</td></tr><tr><td><code>diff_add</code></td><td><span class="sw" style="background:#D2DFCC"></span><code>#D2DFCC</code></td><td></td></tr><tr><td><code>diff_del</code></td><td><span class="sw" style="background:#EBD3CF"></span><code>#EBD3CF</code></td><td></td></tr></tbody></table>
+<table><thead><tr><th>token</th><th>value</th><th></th></tr></thead><tbody><tr><td><code>ground</code></td><td><span class="sw" style="background:#DDDAD1"></span><code>#DDDAD1</code></td><td></td></tr><tr><td><code>tint</code></td><td><span class="sw" style="background:#D1CCBE"></span><code>#D1CCBE</code></td><td></td></tr><tr><td><code>dim</code></td><td><span class="sw" style="background:#645F56"></span><code>#645F56</code></td><td></td></tr><tr><td><code>mid</code></td><td><span class="sw" style="background:#575043"></span><code>#575043</code></td><td></td></tr><tr><td><code>bright</code></td><td><span class="sw" style="background:#1F1C17"></span><code>#1F1C17</code></td><td></td></tr><tr><td><code>red</code></td><td><span class="sw" style="background:#B0210F"></span><code>#B0210F</code></td><td></td></tr><tr><td><code>green</code></td><td><span class="sw" style="background:#2D553A"></span><code>#2D553A</code></td><td></td></tr><tr><td><code>warn</code></td><td><span class="sw" style="background:#5C4810"></span><code>#5C4810</code></td><td></td></tr><tr><td><code>cite</code></td><td><span class="sw" style="background:#264B5E"></span><code>#264B5E</code></td><td></td></tr><tr><td><code>plan</code></td><td><span class="sw" style="background:#1B3247"></span><code>#1B3247</code></td><td></td></tr><tr><td><code>skill</code></td><td><span class="sw" style="background:#6F2046"></span><code>#6F2046</code></td><td>the dark maroon &mdash; 7.6:1 on cream, where <code>#B06A8C</code> was 2.8:1</td></tr><tr><td><code>diff_add</code></td><td><span class="sw" style="background:#B1C8A7"></span><code>#B1C8A7</code></td><td></td></tr><tr><td><code>diff_del</code></td><td><span class="sw" style="background:#E4C3BE"></span><code>#E4C3BE</code></td><td></td></tr></tbody></table>
 
-<h3 style="font-size:15px;margin:26px 0 4px">The two colour defects, and the token each should become</h3>
-<table><thead><tr><th>screen</th><th>value</th><th>cells</th><th>what it paints</th><th>why it is wrong</th><th>proposed</th></tr></thead><tbody>
+<h3 style="font-size:15px;margin:26px 0 4px">The colours that were not ours &mdash; all three closed</h3>
+<p class="purpose"><b>Why this mattered:</b> a colour we do not own is whatever the reader's own terminal theme
+decides it is. On somebody else's colour scheme the file path they are meant to click, or the row they are
+looking at, can come out unreadable &mdash; and no test we had would ever have seen it, because nothing
+compared a rendered cell to a token.
+<br><br>Every cell of every frame in this book is now matched against the palette, and the count of cells
+matching no token is <b>zero</b>. The table below is kept as the record of what was wrong, because the reason
+each one survived is more useful than the fact that it did. The <code>how much</code> column was the size of
+the patch, never the size of the problem.</p>
+<table><thead><tr><th>screen</th><th>value</th><th>how much</th><th>what it paints</th><th>why it is wrong</th><th>proposed</th></tr></thead><tbody>
 <tr><td>7 · waiting for an answer</td><td><span class="sw" style="background:#65A8FF"></span><code>#65A8FF</code></td><td>17</td>
 <td><code>billing/charge.rs</code> in the session gap</td>
-<td>raw <code>Color::Blue</code>. In a real terminal it takes the user's own blue, which is the exact thing the
-palette module exists to prevent. Thirty-one cells of the correct token are on the same frame.</td>
-<td><code>cite #7FB3C8</code></td></tr>
-<tr><td>17 · slash palette</td><td><span class="sw" style="background:#70C6CC"></span><code>#70C6CC</code></td><td>51</td>
+<td>bare ANSI blue: the terminal picks it, not us. The correct citation colour is already on this same frame,
+on every other path.</td>
+<td><b>fixed</b> &mdash; <code>cite #7FB3C8</code></td></tr>
+<tr><td>15 · slash palette</td><td><span class="sw" style="background:#70C6CC"></span><code>#70C6CC</code></td><td>51</td>
 <td>the selected row, <code>/me</code> plus its description</td>
 <td>raw <code>Color::Cyan</code> bold via <code>accent_style_for</code>. That function already has a measured
 branch for light backgrounds; only the dark branch was never given a token.</td>
-<td><code>plan #9FC4E0</code>, or drop the accent and use <code>bright</code> on <code>tint</code> like the other four pickers</td></tr>
+<td><b>fixed</b> &mdash; it is <code>cite</code> in both themes now, which is one selection language instead of two</td></tr>
 <tr><td>1 · boot</td><td><span class="sw" style="background:#D6D1C5"></span><span class="sw" style="background:#C91A0C"></span><span class="sw" style="background:#605A4E"></span><span class="sw" style="background:#17140F"></span></td><td>1,019</td>
 <td>the entire splash</td>
-<td>Not previously flagged. Boot reads none of <code>theme.rs</code>: four near-miss values where four tokens
-already exist. Nobody notices because they are close.</td>
-<td><code>bright</code> · <code>red</code> · <code>dim</code> · <code>ground</code></td></tr>
+<td>Not previously flagged. Boot read none of <code>theme.rs</code>: four near-miss values where four tokens
+already existed. Nobody notices because they are close &mdash; which is exactly why it took a machine
+comparing cells to tokens to find it.</td>
+<td><b>fixed</b> &mdash; <code>bright</code> · <code>red</code> · <code>dim</code> · <code>ground</code></td></tr>
 </tbody></table>
 
-<h3 style="font-size:15px;margin:26px 0 4px">The status glyphs. There are supposed to be five.</h3>
+<h3 style="font-size:15px;margin:26px 0 4px">The status glyphs. There are six, and the file used to say five.</h3>
 <p class="purpose">Two vocabularies are written down and defended, and they should not be merged: a plan step
 is a thing you WILL do, so not-started is a box you can imagine ticking; a rail row is a thing that IS, so idle
 is a hollow circle. <code>▲</code> means the same in both. <b>But the product ships two more sets that nobody
 wrote down.</b></p>
 <table><thead><tr><th>vocabulary</th><th>glyphs</th><th>defined where</th></tr></thead><tbody>
-<tr><td>rail rows and headlines</td><td><code>● landed</code> · <code>▲ blocked</code> · <code>◐ in flight</code> · <code>○ queued</code> · <code>■ refused</code></td><td><code>marks.rs Mark</code>, with the rule "five marks, five meanings, no synonyms"</td></tr>
+<tr><td>rail rows and headlines</td><td><code>● landed</code> · <code>▲ blocked</code> · <code>◐ in flight</code> · <code>○ queued</code> · <code>■ refused</code></td><td><code>marks.rs Mark</code>, plus <code>? unknown</code> &mdash; six marks, six meanings, no synonyms</td></tr>
 <tr><td>plan steps</td><td><code>✓ done</code> · <code>▶ active</code> · <code>▲ blocked</code> · <code>□ not started</code></td><td><code>marks.rs StepMark</code></td></tr>
-<tr><td>todo ledger</td><td><code>✓</code> · <code>●</code> · <code>○</code> · <code>?</code></td><td>nowhere. <code>?</code> is undefined in either enum and is the most honest glyph on the screen</td></tr>
-<tr><td>orchestra workers</td><td><code>✓</code> · <code>◐</code> · <code>·</code> · <code>?</code></td><td>nowhere</td></tr>
+<tr><td>todo ledger</td><td><code>✓</code> · <code>●</code> · <code>○</code> · <code>?</code></td><td><code>marks.rs Mark</code> &mdash; <code>?</code> was undefined in either enum for months and is <code>Mark::Unknown</code> now</td></tr>
+<tr><td>orchestra workers</td><td><code>✓</code> · <code>◐</code> · <code>·</code> · <code>?</code></td><td><code>orchestra_view::glyph</code> &mdash; still its own mapping, still not <code>Mark</code></td></tr>
 </tbody></table>
-<div class="ask"><b>The ask:</b> promote <code>?</code> to a sixth <code>Mark</code>, coloured <code>warn</code>,
-meaning <i>not measured</i>. It is already doing that job on two screens and the rule that says there are five
-is currently false.</div>
+<div class="ok"><b>Done, and one row left.</b> <code>?</code> is <code>Mark::Unknown</code> &mdash; coloured
+<code>mid</code> rather than <code>warn</code>, because unknown is the absence of a signal and <code>warn</code>
+already means a human is needed. <b>The orchestra worker table still maps its own glyphs</b> in
+<code>orchestra_view</code> instead of going through <code>Mark</code>, which is the last place two vocabularies
+can drift apart.</div>
 
 <h3 style="font-size:15px;margin:26px 0 4px">Why the Rust version will line up, and where the mocks will not</h3>
 <p class="purpose">You said the JavaScript was aligning with hard-coded spaces and Rust would do it with maths.
@@ -1583,9 +1525,6 @@ indent plus a <code>│</code> rail is already exempt and reads almost identical
 <p class="purpose">Everything else in the mocks is fixed-width columns with consistent gutters and ports
 straight across. The skills browse panel in screen 14 is the cleanest case: four columns, the cost column
 right-aligned, no hand-placed spaces anywhere.</p>
-<<<<<<< HEAD
-<h2 class="sec">L. Features with no screen at all</h2><p class="lede">This is the list you most need to see. Every row is a capability that exists on the server or in the mocks and has nowhere to appear in the terminal. The middle column says where in this book I drew a proposal for it, or <code>none</code> if I did not.</p><table><thead><tr><th>capability</th><th>drawn at</th><th>what exists today</th></tr></thead><tbody><tr><td><b>How much memory is left</b></td><td><code>screen 32</code></td><td><code>POST /sweep/estimate</code> returns cap, held, remaining, net-new, blocked, overflow cost, a suggested plan, the largest paths and a written sentence. The client reads <code>fits</code> and drops the rest. This is the question you asked by name.</td></tr><tr><td><b>Correcting a memory</b></td><td><code>screen 41</code></td><td><code>/memories</code> lists with trust tiers and supersession works. Nothing in the CLI can edit or retract one. Your own annotation: a memory the customer cannot correct is the failure that section exists to close.</td></tr><tr><td><b>The code graph</b></td><td><code>screen 40</code></td><td><code>/graph nodes</code>, <code>blast_radius</code>, <code>chokepoints</code>, <code>core_files</code>, <code>subsystems</code>, <code>import_cycles</code> and <code>refactor_order</code> all answer. None of them draws anything; they print lines.</td></tr><tr><td><b><code>/apply</code> and <code>/undo</code></b></td><td><code>screen 21</code></td><td>The moment a patch enters your working tree, and the moment it comes back out. Both print one line. Your brief asked for diff, propose, apply and undo as ONE visual story.</td></tr><tr><td><b><code>/doctor</code> failing</b></td><td><code>screen 36</code></td><td>It can exit non-zero now and there is no design for the failing row.</td></tr><tr><td><b>Resume</b></td><td><code>screen 37</code></td><td><code>resume_picker.rs</code> is vendored and unwired. <code>/resume</code> and <code>/sessions</code> print lists.</td></tr><tr><td><b>Markdown and mermaid in an answer</b></td><td><code>screen 34</code></td><td>Nothing renders a table as a table or a diagram as a diagram. Your production screen asked for mermaid; one renderer serves both.</td></tr><tr><td><b>Tool call output</b></td><td><code>screen 39</code></td><td>There is no collapsed tool row and no expand. A 400-line test run is 400 lines.</td></tr><tr><td><b>Split panes</b></td><td><code>screen 25</code></td><td><code>ctrl+\</code>, a draggable divider, clicking a tab, <code>+ new</code>, per-tab phase dots and closing a view are all unbuilt. One fixed two-pane layout ships.</td></tr><tr><td><b>Spend, per turn</b></td><td><code>screen 33</code></td><td>Your <code>5 · Spend, click it</code> mock. The receipts are real and no CLI prints them. <kbd>ctrl+s</kbd> is advertised on every frame's hint row.</td></tr><tr><td><b>Compaction refusing</b></td><td><code>screen 11</code></td><td>Five blocked reasons return the original transcript as a normal 200. The CLI says nothing.</td></tr><tr><td><b>Signed out</b></td><td><code>none</code></td><td>There is no frame for <i>no credential yet</i> anywhere in the gallery. The only shipped copy is <code>Live Monitor unavailable. / Run /login here.</code> in the production pane.</td></tr><tr><td><b>Rate limited, 402, provider down</b></td><td><code>none</code></td><td>No screen. A provider raise becomes a clean 402 or 502 on the server; the CLI has no design for either.</td></tr><tr><td><b>The 22 top-level commands</b></td><td><code>none</code></td><td>Everything you can type before entering the session: <code>estelle login</code> · <code>estelle doctor</code> · <code>estelle init</code> · <code>estelle sweep</code> · <code>estelle reindex</code> · <code>estelle serve</code> · <code>estelle connect</code> · <code>estelle remove</code> · <code>estelle github</code> · <code>estelle monitor</code> · <code>estelle research</code> · <code>estelle memory</code> · <code>estelle ask</code> · <code>estelle recall</code> · <code>estelle verify</code> · <code>estelle gate</code> · <code>estelle hook</code> · <code>estelle install-hooks</code> · <code>estelle uninstall-hooks</code> · <code>estelle acp</code> · <code>estelle mcp</code> · <code>estelle mcp-server</code>. <code>/help</code> inside the session names none of them.</td></tr><tr><td><b><code>/theme</code></b></td><td><code>screen 5</code></td><td>Both themes ship and the mock says <code>/theme toggles</code>, but <code>theme</code> is in <code>DROPPED_COMMANDS</code> and never resolves. Only <code>/settings</code> can switch it.</td></tr><tr><td><b><code>/logout</code></b></td><td><code>screen 18</code></td><td>Advertised in <code>/help</code> and refused by the resolver. Not a missing screen: a screen that lies.</td></tr></tbody></table><hr class="big"><p class="foot">Estelle CLI design book &middot; built 2026-09-02 from origin/main 95160cb9 and cli-rs 03c98bab &middot; shipped frames regenerated from the production renderer, not redrawn.</p></div></body></html>
-=======
 <h2 class="sec">L. Features with no screen at all</h2><p class="lede">This is the list you most need to see. Every row is a capability that exists on the server or in the mocks and has nowhere to appear in the terminal. The middle column says where in this book I drew a proposal for it, or <code>none</code> if I did not.</p><table><thead><tr><th>capability</th><th>drawn at</th><th>what exists today</th></tr></thead><tbody><tr><td><b>How much memory is left</b></td><td><code>screen 30</code></td><td><code>POST /sweep/estimate</code> returns cap, held, remaining, net-new, blocked, overflow cost, a suggested plan, the largest paths and a written sentence. The client reads <code>fits</code> and drops the rest. This is the question you asked by name.</td></tr><tr><td><b>Correcting a memory</b></td><td><code>screen 41</code></td><td><code>/memories</code> lists with trust tiers and supersession works. Nothing in the CLI can edit or retract one. Your own annotation: a memory the customer cannot correct is the failure that section exists to close.</td></tr><tr><td><b>The code graph</b></td><td><code>screen 40</code></td><td><code>/graph nodes</code>, <code>blast_radius</code>, <code>chokepoints</code>, <code>core_files</code>, <code>subsystems</code>, <code>import_cycles</code> and <code>refactor_order</code> all answer. None of them draws anything; they print lines.</td></tr><tr><td><b><code>/apply</code> and <code>/undo</code></b></td><td><code>screen 19</code></td><td>The moment a patch enters your working tree, and the moment it comes back out. Both print one line. Your brief asked for diff, propose, apply and undo as ONE visual story.</td></tr><tr><td><b><code>/doctor</code> failing</b></td><td><code>screen 36</code></td><td>It can exit non-zero now and there is no design for the failing row.</td></tr><tr><td><b>Resume</b></td><td><code>screen 37</code></td><td><code>resume_picker.rs</code> is vendored and unwired. <code>/resume</code> and <code>/sessions</code> print lists.</td></tr><tr><td><b>Markdown and mermaid in an answer</b></td><td><code>screen 34</code></td><td>Nothing renders a table as a table or a diagram as a diagram. Your production screen asked for mermaid; one renderer serves both.</td></tr><tr><td><b>Tool call output</b></td><td><code>screen 39</code></td><td>There is no collapsed tool row and no expand. A 400-line test run is 400 lines.</td></tr><tr><td><b>Split panes</b></td><td><code>screen 23</code></td><td><code>ctrl+\</code>, a draggable divider, clicking a tab, <code>+ new</code>, per-tab phase dots and closing a view are all unbuilt. One fixed two-pane layout ships.</td></tr><tr><td><b>Spend, per turn</b></td><td><code>screen 31</code></td><td>Your <code>5 · Spend, click it</code> mock. The receipts are real and no CLI prints them. <kbd>ctrl+s</kbd> is advertised on every frame's hint row.</td></tr><tr><td><b>Compaction refusing</b></td><td><code>screen 11</code></td><td>Five blocked reasons return the original transcript as a normal 200. The CLI says nothing.</td></tr><tr><td><b>Signed out</b></td><td><code>none</code></td><td>There is no frame for <i>no credential yet</i> anywhere in the gallery. The only shipped copy is <code>Live Monitor unavailable. / Run /login here.</code> in the production pane.</td></tr><tr><td><b>Rate limited, 402, provider down</b></td><td><code>none</code></td><td>No screen. A provider raise becomes a clean 402 or 502 on the server; the CLI has no design for either.</td></tr><tr><td><b>The 22 top-level commands</b></td><td><code>none</code></td><td>Everything you can type before entering the session: <code>estelle login</code> · <code>estelle doctor</code> · <code>estelle init</code> · <code>estelle sweep</code> · <code>estelle reindex</code> · <code>estelle serve</code> · <code>estelle connect</code> · <code>estelle remove</code> · <code>estelle github</code> · <code>estelle monitor</code> · <code>estelle research</code> · <code>estelle memory</code> · <code>estelle ask</code> · <code>estelle recall</code> · <code>estelle verify</code> · <code>estelle gate</code> · <code>estelle hook</code> · <code>estelle install-hooks</code> · <code>estelle uninstall-hooks</code> · <code>estelle acp</code> · <code>estelle mcp</code> · <code>estelle mcp-server</code>. <code>/help</code> inside the session names none of them.</td></tr><tr><td><b>Time and tokens, per run</b></td><td><code>screen 33</code></td><td>The cache split is on the wire already and nothing renders it &mdash; 24.7M prompt tokens read from cache against 768k computed, a 32x difference in a BYOK bill. The per-phase clock and the per-tool tallies do not exist: no timer wraps prefill, generation, reasoning or tools, and tool calls are drawn without ever being counted.</td></tr><tr><td><b><code>/logout</code></b></td><td><code>screen 16</code></td><td>Advertised in <code>/help</code> and refused by the resolver. Not a missing screen: a screen that lies.</td></tr></tbody></table><h3 style="font-size:15px;margin:34px 0 4px">Drawn only as it ships today &mdash; no new design exists</h3>
 <p class="lede">The table above is <i>capability with no screen</i>. This is the other half, and it fell out of
 reconciling the duplicates: <b>surfaces where the only picture in this book is the one the binary already
@@ -1608,4 +1547,3 @@ nobody has been asked for it.</p>
 <tr><td>29 &middot; autonomy</td><td>four rungs, each saying what the previous could not do</td><td>The kill switch and the audit trail are invisible. A dial with no visible brake is a dial nobody turns.</td></tr>
 </tbody></table>
 <hr class="big"><p class="foot">Estelle CLI design book &middot; built 2026-09-02 from origin/main 95160cb9 and cli-rs 03c98bab &middot; shipped frames regenerated from the production renderer, not redrawn.</p></div></body></html>
->>>>>>> f55b86ec3 (fix(cli): the hint row on every frame advertised a key that is carriage return)
