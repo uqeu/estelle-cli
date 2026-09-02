@@ -22,18 +22,13 @@ pub(super) fn render_transcript_with_citations(
         {
             // ONE construction site, which is why the three roles the struct's own docstring
             // listed as "needs a role this struct does not carry" could finally be wired.
-            let screen = theme.screen_palette();
-            TranscriptPalette {
-                primary: theme.primary(),
-                ghost: theme.ghost(),
-                semantic: theme.semantic(),
-                user_background: user_turn_background(theme),
-                warn: screen.warn,
-                cite: screen.cite,
-                failure: screen.red,
-                grounded: screen.green,
-                ungrounded: screen.dim,
-            }
+            //
+            // ⚠️ The eight screen-derived roles now come from `TranscriptPalette::from_screen`
+            // rather than being spelled out here, because the DESIGN BOOK needs the same eight to
+            // draw screen 10 through the production renderer. Written out twice they would be two
+            // owners of the transcript's colour vocabulary; `user_turn_background` stays here
+            // because it reads the `Theme`, not the palette, and is the only role that does.
+            TranscriptPalette::from_screen(&theme.screen_palette(), user_turn_background(theme))
         },
         width,
         Path::new("."),

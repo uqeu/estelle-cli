@@ -173,6 +173,30 @@ const NAV_ROWS: [(&str, &str); 3] = [
     ("your working tree", "75557c7f · 214 files changed"),
 ];
 
+/// The `code_currency` block `/memory/chat` attaches, as the server sends it.
+///
+/// 🔴 **FULL-LENGTH HEADS, NOT THE EIGHT CHARACTERS THIS SCREEN USED TO DRAW.** The frame's SHAs
+/// were literals typed at eight characters, and the shipped renderer shortens with
+/// [`estelle_client::CodeCurrency::short`], which cuts at **twelve**. So the old frame showed a
+/// reader something the product never draws, and the difference was invisible because the two
+/// renderers were different code. These are the real 40-character heads of the two commits the
+/// screen names (`git rev-parse 6ff03b18 75557c7f` in this repo's parent), passed whole so the
+/// frame shows the product's own truncation rather than a shorter guess at it.
+///
+/// ⚠️ `status` is the string the verdict line prints uppercased — it is not a literal on the frame
+/// any more, and `is_stale()` reads it too, so a fixture spelling it anything but `stale` would
+/// change the headline and fail `the_stale_verdict_is_the_shipped_renderers_own_rows`.
+fn nav_currency() -> estelle_client::CodeCurrency {
+    estelle_client::CodeCurrency {
+        status: "stale".to_string(),
+        indexed_head: "6ff03b186acd940fdb3409fcb43587f30785d6d6".to_string(),
+        current_head: "75557c7f9453d32e9b878793356bd5892a36bf55".to_string(),
+        depends_on_code: "yes".to_string(),
+        cited_paths: 5,
+        detail: "a stale index does not fail loudly — it answers with a plausible citation into code that has moved.".to_string(),
+    }
+}
+
 const NAV_STEPS: [Step; 4] = [
     (Done, "refused", "no citation was invented"),
     (Done, "remembered", "the sweep is behind HEAD"),
@@ -187,43 +211,41 @@ const NAV_STEPS: [Step; 4] = [
 /// fluently, with a citation into code that has moved — the exact failure Estelle exists to
 /// prevent. So the screen says the refusal is CORRECT, rather than leaving the reader to assume
 /// something broke.
-pub(crate) fn navigation_stale(palette: &Palette, tick: u64, pulse: bool) -> Vec<Line<'static>> {
+///
+/// ⚠️ **`tick` AND `pulse` ARE UNUSED HERE, AND THAT IS A FINDING RATHER THAN AN OVERSIGHT.** This
+/// screen used to pulse its refusal mark, which is the module's stated rule — but it pulsed because
+/// the BOOK drew the headline. The shipped renderer, [`crate::transcript::stale_lines`], draws a
+/// static `⛔`; nothing in the product animates a staleness verdict. Keeping the animation here
+/// would mean the book showing a motion the product does not have, on a screen badged `LIVE DATA`.
+/// The frame now matches the product and **the missing pulse is reported as a gap in the product**,
+/// not hidden by a book that draws it anyway.
+pub(crate) fn navigation_stale(palette: &Palette, _tick: u64, _pulse: bool) -> Vec<Line<'static>> {
     let columns = [Col::l(1), Col::l(20), Col::l(38)];
     let labels = ["", "what was asked", "against which tree"];
-    let mut lines = vec![
-        opening("navigation", "stale index", palette),
-        blank(),
-        headline(
-            Mark::Blocked,
-            "Index is behind your tree",
-            "find_definition · no answer given",
-            palette,
-            tick,
-            pulse,
-        ),
-        blank(),
-        // The verdict in the server's own words, built from spans rather than a column: a clipped
-        // SHA is a wrong SHA, and `cols` would clip it without saying so.
-        Line::from(vec![
-            Span::raw("  "),
-            Span::styled("STALE", Style::default().fg(palette.warn)),
-            Span::styled(" — indexed at ", Style::default().fg(palette.dim)),
-            Span::styled("6ff03b18", Style::default().fg(palette.warn)),
-            Span::styled(", repo is now ", Style::default().fg(palette.dim)),
-            Span::styled("75557c7f", Style::default().fg(palette.cite)),
-        ]),
-        blank(),
-        note(
-            palette,
-            "a stale index does not fail loudly — it answers with a plausible citation into code that has moved.",
-        ),
-        note(
-            palette,
-            "refusing is the correct behaviour, and the only one that cannot be confidently wrong.",
-        ),
-        blank(),
-        head(&columns, &labels, palette.dim, 2),
-    ];
+    let mut lines = vec![opening("navigation", "stale index", palette), blank()];
+
+    // 🔴 THE SHIPPED RENDERER DRAWS THE VERDICT — headline, SHA line and the server's sentence.
+    //
+    // This screen carried a `LIVE DATA` badge from 2026-09-02 while every one of those three rows
+    // was a literal typed here: a `"STALE"` string where the product prints `currency.status`, two
+    // eight-character SHAs where the product prints twelve, and `palette.dim` where the product
+    // uses `ghost`. The badge was promoted in the commit that BUILT `transcript::stale_lines`
+    // (`33613ca19`, whose subject says "screen 10 now reads the server's verdict") and that commit
+    // never touched this file. **Two renderers, one screen, and a badge asserting the pair of them
+    // were the same code.** They now are: the only thing this module still owns is the fixture
+    // `CodeCurrency`, which is DATA, and the frame is whatever `transcript.rs` draws from it.
+    lines.extend(crate::transcript::stale_lines(
+        &nav_currency(),
+        crate::transcript::TranscriptPalette::from_screen(palette, None),
+    ));
+
+    lines.push(blank());
+    lines.push(note(
+        palette,
+        "refusing is the correct behaviour, and the only one that cannot be confidently wrong.",
+    ));
+    lines.push(blank());
+    lines.push(head(&columns, &labels, palette.dim, 2));
     lines.extend(NAV_ROWS.iter().enumerate().map(|(index, (asked, tree))| {
         let cells = [
             (marker(index), palette.warn),
@@ -385,6 +407,83 @@ mod tests {
                 .find(|span| span.content == "Gate refused")
                 .expect("the headline lost its text span");
             assert_eq!(reason.style.fg, Some(palette.red), "tick {tick}");
+        }
+    }
+
+    /// 🔴 **THE BADGE'S PROOF: SCREEN 10'S VERDICT IS THE SHIPPED RENDERER'S OWN OUTPUT, SPAN FOR
+    /// SPAN, COLOUR FOR COLOUR.**
+    ///
+    /// `10-navigation-stale` carries `LIVE DATA`. A badge on a frame the book drew itself is a
+    /// claim about nothing — and that is exactly what this screen was: the promoting commit built
+    /// `transcript::stale_lines` and never opened `design_book/loops.rs`, so the badge sat over two
+    /// independent renderers that had already drifted in three places.
+    ///
+    /// ⚠️ **THIS ASSERTS A SUBSEQUENCE, NOT A `contains` ON TEXT.** A text-level check would pass
+    /// on a book that re-typed the same words in different colours, which is precisely the drift
+    /// that existed. Every span's CONTENT **and** FOREGROUND must appear in the frame, contiguous
+    /// and in order.
+    ///
+    /// ⚠️ **AND THE POSITIVE CONTROL IS THE SECOND HALF.** A subsequence search for an EMPTY needle
+    /// passes over any frame, so a `stale_lines` that returned nothing would satisfy the first
+    /// assertion silently — this repo's vacuity shape. The needle is asserted non-empty, and a
+    /// deliberately WRONG currency is asserted ABSENT, so the search is shown able to fail.
+    #[test]
+    fn the_stale_verdict_is_the_shipped_renderers_own_rows() {
+        for theme in [ScreenTheme::Dark, ScreenTheme::Cream] {
+            let palette = theme.palette();
+            let frame = spans(&navigation_stale(&palette, 0, true));
+            let shipped = spans(&crate::transcript::stale_lines(
+                &nav_currency(),
+                crate::transcript::TranscriptPalette::from_screen(&palette, None),
+            ));
+            assert!(
+                !shipped.is_empty(),
+                "the shipped renderer drew nothing — the needle would match any frame"
+            );
+            assert!(
+                frame.windows(shipped.len()).any(|window| window == shipped),
+                "screen 10 is not drawing the shipped renderer's rows\nwanted {shipped:#?}\ngot {frame:#?}"
+            );
+
+            // The control: a DIFFERENT verdict must not be found in this frame. Without it the
+            // window search above is only evidence that some contiguous run matched something.
+            let mut other = nav_currency();
+            other.indexed_head = "0000000000000000000000000000000000000000".to_string();
+            let absent = spans(&crate::transcript::stale_lines(
+                &other,
+                crate::transcript::TranscriptPalette::from_screen(&palette, None),
+            ));
+            assert!(
+                !frame.windows(absent.len()).any(|window| window == absent),
+                "a verdict this screen never rendered was found in it — the search cannot fail"
+            );
+        }
+    }
+
+    /// 🔴 **THE TWO CONSTRUCTION SITES OF `TranscriptPalette` ARE ONE FUNCTION, PROVEN.**
+    ///
+    /// The book reaches the transcript's colours through `TranscriptPalette::from_screen`; so does
+    /// `live_renderer::render_transcript_with_citations`. If those ever diverge, the book draws a
+    /// transcript in colours no user sees, and every span-level assertion above still passes
+    /// because both halves would move together. This pins the mapping to `theme::Palette` BY VALUE
+    /// so a re-typed role fires here by name.
+    ///
+    /// ⚠️ `user_background` is deliberately not covered: it is the one role that comes from the
+    /// `Theme` rather than the palette, and the book has no user turn to band.
+    #[test]
+    fn book_and_product_agree_on_every_transcript_role() {
+        for theme in [ScreenTheme::Dark, ScreenTheme::Cream] {
+            let screen = theme.palette();
+            let built = crate::transcript::TranscriptPalette::from_screen(&screen, None);
+            assert_eq!(built.primary, screen.bright);
+            assert_eq!(built.ghost, screen.mid);
+            assert_eq!(built.semantic, screen.cite);
+            assert_eq!(built.warn, screen.warn);
+            assert_eq!(built.cite, screen.cite);
+            assert_eq!(built.failure, screen.red);
+            assert_eq!(built.grounded, screen.green);
+            assert_eq!(built.ungrounded, screen.dim);
+            assert_eq!(built.user_background, None);
         }
     }
 

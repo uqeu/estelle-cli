@@ -100,6 +100,43 @@ pub(crate) struct TranscriptPalette {
     pub(crate) ungrounded: Color,
 }
 
+impl TranscriptPalette {
+    /// Every transcript role, derived from the 13-role screen palette by MEANING.
+    ///
+    /// 🔴 **THIS EXISTS SO THE DESIGN BOOK CANNOT DRAW A TRANSCRIPT IN COLOURS THE PRODUCT DOES
+    /// NOT USE.** Screen 10 of the book is a transcript entry — the staleness verdict — and until
+    /// this function it was hand-built spans in `design_book/loops.rs` picking `palette.dim` where
+    /// the shipped renderer picks `ghost`. Two renderers, two colour vocabularies, one screen, and
+    /// a `LIVE DATA` badge over the pair of them.
+    ///
+    /// ⚠️ **EIGHT OF THE NINE FIELDS WERE ALREADY THIS FUNCTION, WRITTEN OUT LONGHAND AT THE CALL
+    /// SITE.** `Theme::primary`, `Theme::ghost` and `Theme::semantic` are each a one-line read of
+    /// `screen_palette()` (`main.rs:257,266,285`), so every role except `user_background` was
+    /// already a pure function of the screen palette. Moving them here changes no rendered colour
+    /// — asserted by `book_and_product_agree_on_every_transcript_role` — and makes the book's
+    /// access to them the SAME code rather than a second copy that happens to match today.
+    ///
+    /// `user_background` is the one role that is NOT derivable: it depends on the `Theme`, not the
+    /// palette, so it stays a parameter. The book passes `None` because a book frame has no user
+    /// turn to band.
+    pub(crate) fn from_screen(
+        screen: &crate::theme::Palette,
+        user_background: Option<Color>,
+    ) -> Self {
+        Self {
+            primary: screen.bright,
+            ghost: screen.mid,
+            semantic: screen.cite,
+            user_background,
+            warn: screen.warn,
+            cite: screen.cite,
+            failure: screen.red,
+            grounded: screen.green,
+            ungrounded: screen.dim,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ToolClickTarget {
     pub(crate) entry: usize,
@@ -163,7 +200,7 @@ pub(crate) fn handle_mouse(
     }
 }
 
-/// The staleness verdict, drawn the way screen 10 of the design book draws it.
+/// The staleness verdict — the ONE renderer, which screen 10 of the design book also calls.
 ///
 /// 🔴 **THE SERVER'S SENTENCE, NOT A SECOND ONE.** `detail` comes from `GraphHealth.describe()`,
 /// which is also what the navigation tools refuse with — so the CLI cannot date a repo differently
@@ -174,7 +211,14 @@ pub(crate) fn handle_mouse(
 /// ⚠️ **`detail` MAY BE EMPTY AND THAT IS A REAL STATE**, not a bug: `_describe` falls back to an
 /// empty string when the health record cannot render itself. An empty sentence draws no row rather
 /// than a row saying nothing.
-fn stale_lines(
+///
+/// 🔴 **`pub(crate)` BECAUSE THE DESIGN BOOK'S SCREEN 10 CALLS IT.** The docstring above used to
+/// open *"drawn the way screen 10 of the design book draws it"* — a claim of agreement between two
+/// functions that nothing compared, and they had already drifted (the book drew `palette.dim`
+/// where this draws `ghost`, and the book's `STALE` came from a literal rather than
+/// `currency.status`). The book now calls THIS function, so the sentence is a fact about one
+/// renderer instead of a hope about two.
+pub(crate) fn stale_lines(
     currency: &estelle_client::CodeCurrency,
     palette: TranscriptPalette,
 ) -> Vec<Line<'static>> {
