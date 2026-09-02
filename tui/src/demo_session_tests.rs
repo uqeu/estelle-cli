@@ -555,8 +555,11 @@ fn a_wrapped_cell_never_starts_left_of_its_column() {
     let film = script::film(1).expect("film 1");
     let total = runtime_ms(&cue_sheet(film, true, PANE));
     let mut checked = 0usize;
-    for fraction in 1..8 {
-        let frame = frame_at(film, total * fraction / 8, true);
+    // ⚠️ **SIXTEENTHS, NOT EIGHTHS.** The floor below is a vacuity guard, and when the film's
+    // content changed the honest fix was to inspect MORE of it, never to lower the number that
+    // says the guard looked at something.
+    for fraction in 1..16 {
+        let frame = frame_at(film, total * fraction / 16, true);
         let session: Vec<String> = frame
             .lines()
             .map(|row| {

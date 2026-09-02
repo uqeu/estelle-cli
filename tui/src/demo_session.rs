@@ -399,6 +399,21 @@ fn plan_say(steps: &mut Vec<Step>, say: &'static Say, start: u32, pane: usize) -
                 });
             }
         }
+        Say::LocalFleet => {
+            clock += CHUNK_MS * 2;
+            steps.push(Step {
+                at_ms: clock,
+                cue: Cue::OpenCommand("models"),
+            });
+            // Measured on the machine the film is recorded on, at plan time, once.
+            for line in session::local_fleet_lines(pane) {
+                clock += CHUNK_MS * 2;
+                steps.push(Step {
+                    at_ms: clock,
+                    cue: Cue::CommandLine(line),
+                });
+            }
+        }
         Say::Gate => {
             clock += CHUNK_MS * 2;
             steps.push(Step {

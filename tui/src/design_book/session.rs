@@ -54,7 +54,6 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
         if word_cols > width {
             if !line.is_empty() {
                 out.push(std::mem::take(&mut line));
-                line_cols = 0;
             }
             let mut rest = word.chars().collect::<Vec<_>>();
             while rest.len() > width {
@@ -127,6 +126,11 @@ fn fitted(columns: &[Col], width: usize) -> Vec<Col> {
 /// [`crate::cols::row`] — so a continuation cannot start at the left margin, and a column that does
 /// not line up is a `cols` test failure rather than something a reader notices on camera.
 pub(crate) fn table_lines(columns: &[Col], rows: &[&'static str], width: usize) -> Vec<String> {
+    owned_table(columns, rows, width)
+}
+
+/// The same layout, for rows computed at runtime rather than written in the script.
+pub(crate) fn owned_table(columns: &[Col], rows: &[&str], width: usize) -> Vec<String> {
     let columns = fitted(columns, width);
     let mut out = Vec::new();
     for source in rows {
@@ -187,6 +191,18 @@ pub(crate) enum Say {
     /// The gate refusing, drawn by [`crate::gate_refusal`] itself at the REAL pane width — one
     /// owner, and the only way its cells wrap inside their columns.
     Gate,
+    /// 🔴 **THE ONE BEAT IN ANY FILM THAT IS NOT A FIXTURE.** Every row is measured on the machine
+    /// the film is being recorded on, live, by [`estelle_machine`] — the same `machine()`,
+    /// `named_model()` and `fit()` that `local_provider.rs` already ships. On the founder's laptop
+    /// that reads *Apple M5 Max · 128.0 GB RAM · 18 CPU cores · 107.5 GB Metal limit*, and a viewer
+    /// who knows hardware can check every number.
+    ///
+    /// ⚠️ **`tok/s` IS AN ESTIMATE AND THE SCREEN SAYS SO IN THE LIBRARY'S OWN WORDS.** `fit`
+    /// returns `estimate_notice` — *"Estimate-based output using current llmfit fit/speed
+    /// heuristics; not an exact benchmark."* — and it is printed verbatim under the table rather
+    /// than paraphrased. A speed number with no basis beside it is the kind of claim this film
+    /// exists to refuse.
+    LocalFleet,
     /// A system note.
     System(&'static str),
     /// The product's own three-line refusal banner, painted by the one owner of that colour.
@@ -243,6 +259,71 @@ pub(crate) const MAX_FILM_MS: u32 = 6 * 60 * 1000;
 
 /// The narrowest session pane a film lays out against, used when the terminal cannot be measured.
 pub(crate) const FALLBACK_PANE: usize = 88;
+
+/// The local models the fleet beat reports on, by their exact catalogue names.
+///
+/// ⚠️ **EXACT NAMES, BECAUSE `named_model` REFUSES ANYTHING ELSE.** It does no fuzzy matching and
+/// no ranking by design — the server's Affinity owns model SELECTION, and the client only reports
+/// what a machine can run for a model somebody already named. Each of these was verified to resolve
+/// to exactly one row of the bundled catalogue; `the_local_fleet_still_resolves` fails if a
+/// catalogue update takes one away, rather than the film quietly losing a row on camera.
+pub(crate) const LOCAL_FLEET: &[&str] = &[
+    "openai/gpt-oss-120b",
+    "zai-org/GLM-4.5-Air",
+    "meta-llama/Llama-3.3-70B-Instruct",
+    "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+    "Qwen/Qwen2.5-Coder-14B-Instruct",
+    "Qwen/Qwen2.5-Coder-7B-Instruct",
+];
+
+/// The fleet beat's columns.
+static FLEET: &[Col] = &[Col::l(38), Col::l(9), Col::r(9), Col::r(11)];
+
+/// Measure this machine and what it can actually run, live.
+///
+/// Rows for models the catalogue no longer carries are DROPPED rather than faked, and the count is
+/// stated on the last line, so a film that lost a model says how many it is reporting instead of
+/// silently showing fewer.
+pub(crate) fn local_fleet_lines(width: usize) -> Vec<String> {
+    let machine = estelle_machine::machine();
+    let mut rows = vec!["model | fit | memory | est tok/s".to_string()];
+    let mut notice = None;
+    let mut found = 0usize;
+    for name in LOCAL_FLEET {
+        let Ok(model) = estelle_machine::named_model(name) else {
+            continue;
+        };
+        let Ok(fit) = estelle_machine::fit(&model, &machine) else {
+            continue;
+        };
+        found += 1;
+        notice.get_or_insert_with(|| fit.estimate_notice.clone());
+        rows.push(format!(
+            "{} | {} | {:.1} GB | {:.1}",
+            name,
+            fit.fit_level.label(),
+            fit.memory_required_gb,
+            fit.estimated_tokens_per_second
+        ));
+    }
+    let borrowed = rows.iter().map(String::as_str).collect::<Vec<_>>();
+    // ⚠️ **THE SUMMARY IS PROSE AND IT IS LONGER THAN THE PANE.** Pushed whole it wrapped to
+    // column 0 and left the word `limit` alone on a line — the same defect as an unwrapped cell,
+    // in the one beat whose whole job is to be checkable by a viewer who knows hardware.
+    let mut out = wrap(&machine.summary_line(), width);
+    out.push(String::new());
+    out.extend(owned_table(FLEET, &borrowed, width));
+    out.push(String::new());
+    out.push(format!(
+        "{found} of {} models measured on this machine, just now.",
+        LOCAL_FLEET.len()
+    ));
+    if let Some(notice) = notice {
+        out.push(notice);
+    }
+    out
+}
 
 #[cfg(test)]
 mod tests {

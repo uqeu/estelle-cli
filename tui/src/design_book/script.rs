@@ -35,7 +35,7 @@ use crate::design_book::session::{Beat, Film, Key, Say};
 pub(crate) const FIXTURE_NEEDLES: &[&str] = &[
     "claims/upstream.py:141",
     "0009-upstream-retry-budget.md:31",
-    "moonshotai/kimi-k2.7-code",
+    "PR #412",
 ];
 
 /// 🔴 **WHAT A BEAT SAYS WHEN NOBODY ASKED FOR FIXTURES.**
@@ -66,7 +66,9 @@ static DECISION: &[Col] = &[Col::l(8), Col::l(8), Col::l(52)];
 static CHOICE: &[Col] = &[Col::l(4), Col::l(60)];
 static SPEND: &[Col] = &[Col::l(22), Col::r(10), Col::l(30)];
 static DOCTOR: &[Col] = &[Col::l(12), Col::l(10), Col::l(52)];
-static PROVIDERS: &[Col] = &[Col::l(22), Col::l(18), Col::r(8), Col::r(8)];
+static PLAN: &[Col] = &[Col::l(2), Col::l(10), Col::l(58)];
+static DIFF: &[Col] = &[Col::l(2), Col::l(64)];
+static LOGIN: &[Col] = &[Col::l(2), Col::l(8), Col::l(28), Col::l(34)];
 
 /// 🔴 **THE FIXTURE CREDENTIAL, AND EVERY WORD OF THIS CHOICE WAS MEASURED.**
 ///
@@ -121,25 +123,51 @@ const SABLE: &[Beat] = &[
         ],
         read_ms: 4_200,
     },
-    // ── 2 · THE BEAT THE FILM EXISTS FOR. The gate refuses, names the package and the registry,
-    //       and then the loop CONTINUES — a refusal is a step, not a stop.
+    // ── 2 · THE BEAT THE FILM EXISTS FOR, AND IT IS ONE CONTINUOUS ACTION.
+    //       He asks for a change; the plan appears, the diff appears, the gate refuses it, and the
+    //       repair lands — four surfaces, no page turns, no second prompt. A refusal is a STEP.
     Beat {
         typed: &[
             Key::Type("ok add exponential backoff with jitter to the "),
             Key::Pause(700),
             Key::Type("second one"),
         ],
-        think_ms: 5_200,
+        think_ms: 4_200,
         reply: &[
+            Say::Table {
+                name: "plan",
+                columns: PLAN,
+                rows: &[
+                    "\u{2713} | read      | claims/upstream.py \u{b7} the hand-rolled loop at 141",
+                    "\u{2713} | decided   | keep the loop, add jitter, cap the delay",
+                    "\u{25b6} | writing   | claims/upstream.py \u{b7} 1 hunk",
+                    "\u{25a1} | gate      | the diff goes to the gate before your tree",
+                ],
+            },
+            Say::Wait(1_600),
+            Say::Table {
+                name: "diff",
+                columns: DIFF,
+                rows: &[
+                    "claims/upstream.py:141 | ",
+                    "- | for attempt in range(5):",
+                    "- |     time.sleep(0.5)",
+                    "+ | from fastapi_turbo import backoff_jitter",
+                    "+ | for attempt in range(5):",
+                    "+ |     time.sleep(backoff_jitter(attempt))",
+                ],
+            },
+            Say::Wait(1_900),
             Say::Gate,
-            Say::Wait(2_600),
+            Say::Wait(2_400),
             Say::Answer {
-                text: "Repaired and re-gated. Round 2 of 3, zero findings: no invented symbols, \
-                       no arity mismatches, no vulnerable dependencies.",
+                text: "Repaired and re-gated. The jitter is computed in-repo now, no new dependency. \
+                       Round 2 of 3, zero findings: no invented symbols, no arity mismatches, no \
+                       vulnerable dependencies.",
                 grounded: true,
             },
         ],
-        read_ms: 4_800,
+        read_ms: 4_600,
     },
     // ── 3 · THE CREDENTIAL BLOCK. Instant, on purpose: every other beat takes seconds, and the
     //       contrast is the point. `think_ms` is ZERO because this refusal happens BEFORE the
@@ -206,59 +234,80 @@ const SABLE: &[Beat] = &[
         ],
         read_ms: 4_400,
     },
-    // ── 5 · it says WHICH provider is unhealthy rather than retrying into the dark.
+    // ── 5 · he signs out of the provider that fell over. The work is untouched.
     Beat {
-        typed: &[Key::Type("whats up with anthropic")],
-        think_ms: 2_600,
-        reply: &[Say::Table {
-            name: "doctor",
-            columns: DOCTOR,
-            rows: &[
-                "check | state | detail",
-                "anthropic | degraded | 529 overloaded on 3 of 4 probes in the last 2 minutes",
-                "openrouter | ready | key on file \u{b7} 214 models reachable",
-                "local | ready | 3 models installed on this machine",
-                "repo graph | current | swept 6 minutes ago \u{b7} 1,284 files",
+        typed: &[Key::Type("/logout anthropic")],
+        think_ms: 1_400,
+        reply: &[Say::Command {
+            name: "logout",
+            lines: &[
+                "Signed out of Anthropic. The key is gone from this machine.",
+                "The plan, the context and the two changed files are untouched.",
             ],
         }],
-        read_ms: 4_600,
+        read_ms: 2_800,
     },
-    // ── 6 · one line swaps the model, INCLUDING a local one, and the run resumes from the plan.
+    // ── 6 · he signs into his Codex PLAN. Two stages, and the second is the one that matters.
+    //
+    //       🔴 **A PLAN IS A LOCAL-CLI CREDENTIAL AND THE SCREEN SAYS SO.** The two-door model is
+    //       not decoration here: a consumer subscription cannot be spent server-side, so a plan
+    //       buys reasoning IN THIS TERMINAL and nothing else. Saying that out loud is what lets the
+    //       next beat be true — the work runs on his machine because it has to, not as a flourish.
     Beat {
-        typed: &[
-            Key::Burst("use kimi for implement "),
-            Key::Type("and keep opus on review"),
-        ],
-        think_ms: 3_200,
+        typed: &[Key::Burst("/login "), Key::Type("codex")],
+        think_ms: 2_600,
         reply: &[
             Say::Table {
-                name: "models",
-                columns: PROVIDERS,
+                name: "login",
+                columns: LOGIN,
                 rows: &[
-                    "provider | credential | in | out",
-                    "anthropic | api key on file | $5.00 | $25.00",
-                    "openrouter | api key on file | varies | varies",
-                    "local \u{b7} this machine | none needed | $0.00 | $0.00",
+                    "\u{2713} | stage 1 | who you are | device code accepted",
+                    "\u{25b6} | stage 2 | who pays for model tokens | Codex plan \u{b7} your subscription",
                 ],
             },
-            Say::Wait(1_700),
+            Say::Wait(1_500),
+            Say::System(
+                "A plan is spent by this CLI, on this machine. It is never spent on a server \u{2014} that is what an API key is for.",
+            ),
+        ],
+        read_ms: 3_600,
+    },
+    // ── 7 · THE BEAT THAT REPLACED A SERVER FLEET, AND IS STRONGER FOR IT.
+    //
+    //       ⛔ There is no Orchestra view here and there must not be: `/orchestra` runs ONE SERVER
+    //       TASK (`commands.rs:518`), a plan cannot be spent server-side, and the fleet view is a
+    //       surface production does not emit yet. Claiming otherwise in the one film whose argument
+    //       is that we refuse what we cannot prove would have been the exact failure it advertises.
+    //
+    //       🔴 What replaces it is MEASURED: `Say::LocalFleet` reads this machine and what it can
+    //       really run, live, with the library's own estimate notice under the table.
+    Beat {
+        typed: &[
+            Key::Burst("plan and review on codex, "),
+            Key::Type("implement on my own machine"),
+        ],
+        think_ms: 3_000,
+        reply: &[
             Say::Table {
                 name: "models",
                 columns: ROLES,
                 rows: &[
-                    "role       | model                       | why",
-                    "plan       | claude-opus-4-8             | complete, untouched",
-                    "implement  | moonshotai/kimi-k2.7-code   | healthy \u{b7} 256K",
-                    "review     | claude-opus-4-8             | cross-model on purpose",
+                    "role | model | where it runs",
+                    "plan | codex \u{b7} your plan | this CLI",
+                    "implement | Qwen2.5-Coder-32B | this machine",
+                    "review | codex \u{b7} your plan | this CLI \u{b7} cross-model on purpose",
                 ],
             },
+            Say::Wait(1_400),
+            Say::LocalFleet,
+            Say::Wait(1_200),
             Say::Answer {
-                text: "Resumed from the existing plan, not from scratch. The plan, the context and \
-                       the two files already changed are unchanged.",
+                text: "Resumed from the existing plan, not from scratch. Implement is running on \
+                       your hardware; nothing left this machine.",
                 grounded: true,
             },
         ],
-        read_ms: 4_400,
+        read_ms: 5_200,
     },
     // ── 7 · THE PEAK. The code compiles either way; the team decided otherwise three weeks ago.
     Beat {
@@ -307,7 +356,7 @@ const SABLE: &[Beat] = &[
                 lines: &[
                     "capped     2 attempts \u{b7} claims/upstream.py:141",
                     "re-gated   0 findings",
-                    "reviewed   claude-opus-4-8 \u{b7} the implementer was kimi",
+                    "reviewed   codex \u{b7} your plan \u{b7} the implementer was Qwen2.5-Coder-32B, locally",
                 ],
             },
             Say::Wait(1_300),
@@ -333,17 +382,20 @@ const SABLE: &[Beat] = &[
             Say::Table {
                 name: "spend",
                 columns: SPEND,
+                // 🔴 **THE RECEIPT HAS TO MATCH THE BEAT THAT CAME BEFORE IT.** He is on a Codex
+                // PLAN and his own hardware by this point, not an API key, so a line reading
+                // "your key · zero per token" would be a receipt for a run that did not happen.
                 rows: &[
-                    "prompt tokens         | count      | how it is billed",
+                    "where it ran          | tokens     | what it cost",
+                    "codex \u{b7} your plan      | 41.2k      | included in your subscription",
+                    "this machine \u{b7} Qwen   | 128.4k     | no vendor, no meter",
                     "read from cache       | 24.7M      | at the cache rate",
-                    "computed              | 768k       | in full",
-                    "vendor list price     | $0.0550    | what the provider charges",
-                    "billed by Estelle     | $0.0000    | your key \u{b7} zero per token",
+                    "billed by Estelle     | $0.0000    | zero per token, on every plan",
                 ],
             },
             Say::Answer {
-                text: "32x of this turn's prompt tokens came off cache. Team plan, 100M memory, \
-                       $99 per seat.",
+                text: "The bulk of that ran on your own hardware. Team plan, 100M memory, \
+                       $99 per seat \u{2014} Estelle meters memory, never tokens.",
                 grounded: true,
             },
         ],
@@ -588,6 +640,8 @@ mod tests {
                 Say::Command { name, lines } => format!("{name} {}", lines.join(" ")),
                 Say::Table { name, rows, .. } => format!("{name} {}", rows.join(" ")),
                 Say::Gate => "gate refused fastapi_turbo".to_string(),
+                // Measured live, so it carries no script text to audit.
+                Say::LocalFleet => "local fleet measured on this machine".to_string(),
                 Say::Wait(_) => String::new(),
             })
             .collect::<Vec<_>>()
@@ -636,15 +690,16 @@ mod tests {
     fn film_one_stands_alone_with_the_sound_off() {
         let text = spoken();
         for statement in [
-            "claims/upstream.py:141",         // 1 · cited answers about your own code
-            "fastapi_turbo",                  // 2 · it refuses what it cannot ground
-            "blocked this prompt",            // 3 · the credential fence
-            "529",                            // 4 · the provider dies
-            "529 overloaded on 3 of 4",       // 5 · it says WHICH provider is unhealthy
-            "Resumed from the existing plan", // 6 · the work survives the swap
-            "Your team decided otherwise",    // 7 · team memory contradicts him
-            "Nothing merged",                 // 8 · propose-only
-            "billed by Estelle",              // 9 · what it cost
+            "claims/upstream.py:141",      // 1 · cited answers about your own code
+            "fastapi_turbo",               // 2 · it refuses what it cannot ground
+            "blocked this prompt",         // 3 · the credential fence
+            "529",                         // 4 · the provider dies
+            "Provider returned 529",       // 5 · the provider names its own failure
+            "on your hardware",            // 6 · the work moves to HIS machine
+            "Codex plan",                  // 6b · a plan is spent by this CLI, never a server
+            "Your team decided otherwise", // 7 · team memory contradicts him
+            "Nothing merged",              // 8 · propose-only
+            "billed by Estelle",           // 9 · what it cost
         ] {
             assert!(
                 text.contains(statement),
