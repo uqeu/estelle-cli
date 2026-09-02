@@ -366,25 +366,88 @@ fn context_hook_offline(payload: &HookPayload, gate_disabled: bool) -> Option<Ve
     }
 }
 
-async fn context_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>, String> {
-    let gate_disabled = std::env::var_os("ESTELLE_GATE_DISABLED").is_some();
-    if let Some(lines) = context_hook_offline(payload, gate_disabled) {
-        return Ok(lines);
-    }
-    let ContextPrecheck::Search(query) = context_precheck(&payload.prompt, gate_disabled) else {
-        return Ok(Vec::new());
-    };
-    // Same scoping rule as `ground` — the hook reads the namespace the sync hook writes.
-    // Any failure at all (no credentials, offline, slow server, no memory yet) is total
-    // silence: never a stall and never an error on the hot path of every send.
-    let Ok(api) = Api::resolve() else {
-        return Ok(Vec::new());
-    };
-    let Ok(result) = api
-        .post_scoped(Endpoint::Search, repo, &json!({"query": query}))
-        .await
-    else {
-        return Ok(Vec::new());
+/// How long the `UserPromptSubmit` context hook may spend before giving up and injecting nothing.
+///
+/// 🔴 IT IS DERIVED, NOT TYPED. [`CONTEXT_HOOK_HOST_TIMEOUT_SECS`] is the host's kill — the same
+/// number [`HOOK_TABLE`]'s `UserPromptSubmit` row writes into all three doors — and this is that
+/// number minus a named margin. Before the derivation existed the two were independent: the
+/// budget's own docstring reasoned against the plugin manifest's 30 s while a CLI-door customer's
+/// host kill was 10 s, so the client waited twice as long as the host would allow. **A deadline
+/// justified against a number the customer's host does not use is not a deadline.**
+///
+/// ⚠️ 20 s IS A JUDGEMENT CALL ON A MEASURED DISTRIBUTION, AND HERE IS ITS LIMIT. It was chosen
+/// (`03c98bab5`, 2026-09-01) against four numbers measured that afternoon: `POST /search` with
+/// `{"code": false}` has an observed floor of **5.93 s** (n=15, median 6.11 s, max 22.83 s), of
+/// which the server's own `timings.total_s` is only 2.06–2.19 s; the server lane's independent
+/// whole-request floor was ~8.2 s; the observed max was 22.83 s; the host kills at 30 s. It
+/// clears 14 of 15 samples and drops the 22.83 s outlier, which is the deadline doing its job.
+/// **n=15 on one machine against one loaded production server on one afternoon is a thin basis
+/// for a hot-path constant, and a hostile reader should say so out loud.** The durable fix is the
+/// server's floor, not this number — no client deadline can make a 6 s call fast, it can only
+/// choose between waiting and giving up. Re-measure before moving it, and move it DOWN the day
+/// the server does.
+///
+/// 🚫 AND AT 4 s IT COULD NEVER SUCCEED — 0 OF 15 PROMPTS ENRICHED. The first version of this
+/// constant was 4 s, picked to sit under a 10 s host budget and never checked against the server
+/// it calls: measured end to end at 4.01–4.03 s with **0/15** injections. Four seconds a message,
+/// delivering nothing, and looking fast while doing it. Silence is indistinguishable from
+/// working, which makes it worse than the timeout it replaced. That 4 s version never reached a
+/// customer — it is not in v0.2.31 (it postdates the build) and it is not in v0.2.32 (it was
+/// never merged to `main`), so **the artifact people are running has no client bound at all**.
+const CONTEXT_HOOK_BUDGET: Duration =
+    Duration::from_secs(CONTEXT_HOOK_HOST_TIMEOUT_SECS - CONTEXT_HOOK_MARGIN_SECS);
+
+/// The exact body the context hook puts on the wire, as one named function, so the shape is
+/// assertable without a network and pinned by a test that reads the real request bytes.
+///
+/// 🔴 `"code": false` IS THE WHOLE FIX, AND OMITTING IT IS NOT THE SAME AS SENDING IT.
+/// The server reads `body.get("code", True)` — an ABSENT key means TRUE, so the previous body
+/// `{"query": …}` asked for the full code branch on every keystroke. Measured against production
+/// on 2026-09-01 with this hook's exact wire shape: `{"query": Q}` = 133.4 s
+/// (`code_terms` 94.6 s over 200 terms · `code_search` 21.0 s returning ZERO matches ·
+/// `graph_lookup` 3.2 s · `recall` 12.7 s) against `{"query": Q, "code": false}` = 8.4 s —
+/// **15.9×**, with the `recall` field BYTE-IDENTICAL between them.
+/// [`context_recall_lines`] reads ONLY `recall`, so 89% of that work was computed and discarded
+/// unread — the hook paid for citations it then threw away, and the founder's prompt was killed
+/// mid-flight and dropped for it.
+///
+/// ⚠️ THE LIMIT, SAID OUT LOUD: this makes the hook stop ASKING for code. It does not make the
+/// server fast, and it is not the deadline — [`CONTEXT_HOOK_BUDGET`] is. Both are needed: a
+/// cheaper request still has no bound on it, and a bound alone still wastes 89% of the work.
+///
+/// ⛔ DO NOT COPY THIS INTO THE SIBLING CALL SITES. `Endpoint::Search` has five callers in this
+/// workspace and they do not agree on what they read. `recall` (`top_level.rs`) and the TUI's
+/// `memory.search` dispatch (`main.rs`) both render `reply["code"]`; `/grep`
+/// (`commands.rs`) asks for `"code": true` outright. Only the two callers that read `recall` and
+/// nothing else may suppress it. The rule is not "the hook is fast", it is **"ask only for the
+/// fields you read"**.
+fn context_search_body(query: &str) -> Value {
+    json!({"query": query, "code": false})
+}
+
+/// The NETWORK half of the context hook, bounded, taking its client and its budget as arguments.
+///
+/// 🔬 IT IS SPLIT OUT SO THE BOUND CAN BE DEMONSTRATED FIRING. A `tokio::time::timeout` is only
+/// a bound on a future that YIELDS — wrapped around anything that blocks the thread it never
+/// fires at all, and reads as a deadline in review while being decoration at runtime. The only
+/// way to know which one this is, is to make a server slow and watch it give up:
+/// `context_hook_budget_fires_against_a_slow_server` stands up a real HTTP server that delays
+/// past the budget, drives this function through the real `reqwest` client, and asserts both
+/// that it returned NOTHING and that it returned EARLY.
+async fn context_recall_lines(
+    client: &Client,
+    cancel: &CancellationToken,
+    repo: &Repo,
+    query: &str,
+    budget: Duration,
+) -> Vec<String> {
+    let body = context_search_body(query);
+    let request = client.post_scoped::<Value, Value>(Endpoint::Search, repo, &body, cancel);
+    let Ok(Ok(result)) = tokio::time::timeout(budget, request).await else {
+        // Expired or errored: return NOTHING, exit 0. Silence is the correct outcome — the model
+        // simply does not get the extra context this turn, and the human sees no error, because a
+        // failure to enrich is not a failure of their prompt.
+        return Vec::new();
     };
     let recall = result
         .get("recall")
@@ -395,14 +458,39 @@ async fn context_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>,
     // the context. The event name MUST be UserPromptSubmit: Claude Code ignores
     // additionalContext whose hookEventName does not match the event that fired.
     if recall.is_empty() {
-        Ok(Vec::new())
+        Vec::new()
     } else {
-        Ok(vec![hook_message(
+        vec![hook_message(
             None,
             Some(recall.to_string()),
             "UserPromptSubmit",
-        )])
+        )]
     }
+}
+
+async fn context_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>, String> {
+    let gate_disabled = std::env::var_os("ESTELLE_GATE_DISABLED").is_some();
+    if let Some(lines) = context_hook_offline(payload, gate_disabled) {
+        return Ok(lines);
+    }
+    let ContextPrecheck::Search(query) = context_precheck(&payload.prompt, gate_disabled) else {
+        return Ok(Vec::new());
+    };
+    // Same scoping rule as `ground` — the hook reads the namespace the sync hook writes.
+    // Any failure at all (no credentials, offline, slow server, no memory yet) is total
+    // silence: never an error on the hot path of every send.
+    //
+    // ⚠️ THE HALF THIS DEADLINE DOES NOT COVER, NAMED RATHER THAN HIDDEN. `Api::resolve` is
+    // SYNCHRONOUS — it reads the credential store and builds the reqwest client. It is
+    // deliberately NOT inside the timeout below, because wrapping a blocking call in
+    // `tokio::time::timeout` produces a deadline that CANNOT FIRE, which is worse than no
+    // deadline: it reads as a bound in review. The stdin read and repo discovery are outside it
+    // too. If any of them ever stops being negligible the answer is `spawn_blocking`, not a
+    // decorative wrapper.
+    let Ok(api) = Api::resolve() else {
+        return Ok(Vec::new());
+    };
+    Ok(context_recall_lines(&api.client, &api.cancel, repo, &query, CONTEXT_HOOK_BUDGET).await)
 }
 
 /// SessionStart: the returning-customer brief, from local evidence only (session_gap makes no
@@ -1157,8 +1245,9 @@ fn read_json_object_or_empty(path: &Path) -> Result<Value, String> {
     Ok(value)
 }
 
-/// The host a hook file is written for. One table, two renderings — the per-host deltas are
-/// enumerated in `estelle_hook_groups` / `hook_timeout` and pinned by the contract tests.
+/// The host a hook file is written for. One table, THREE renderings — the per-host deltas are
+/// enumerated in `estelle_hook_groups` / `hook_timeout` / [`plugin_hooks_manifest`] and pinned by
+/// the contract tests.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum HookHost {
     Claude,
@@ -1172,25 +1261,78 @@ struct HookRow {
     event: &'static str,
     matcher: Option<&'static str>,
     mode: &'static str,
+    /// 🔴 THE ONE OWNER OF THIS ROW'S HOST BUDGET. Every door reads THIS field: the Claude
+    /// settings file, the Codex hooks file, and the plugin manifest shipped in
+    /// `estelle-plugin/hooks/hooks.json` (rendered by [`plugin_hooks_manifest`] and pinned
+    /// byte-for-byte by `the_plugin_manifest_is_generated_from_the_one_hook_table`). It used to
+    /// own only two of the three, and the third drifted for exactly as long as nobody compared
+    /// them — see that test's docstring for the four rows that disagreed.
     timeout: u64,
     /// Claude Code only. Codex skips async handlers WITH A WARNING (vendored codex
     /// hooks/src/engine/discovery.rs:480-506), so the Codex file never carries the key — an
     /// async marker there would mean "installed but cannot fire".
     claude_async: bool,
+    /// Whether this row ships to the PLUGIN door as well as the two `install-hooks` doors.
+    ///
+    /// Read only by [`plugin_hooks_manifest`], which is a verification artifact rather than a
+    /// runtime path — hence the `dead_code` allowance, whose reason is exactly that: the shipped
+    /// manifest is a checked-in file, and this field is what makes the check possible.
+    ///
+    /// ⚠️ A DECLARED EXEMPTION, NOT A SILENT ONE. `shift` is `false` because the shipped
+    /// manifest has never carried it: `estelle-plugin/hooks/hooks.json` is inside a per-version
+    /// SHA-256 cache contract (`scripts/test-plugin-identity.py`), and adding a hook that fires
+    /// on every `Read` is a product decision with a release attached, not a drift fix. It is
+    /// written down here so the guard can enforce the absence instead of being blind to it.
+    #[cfg_attr(not(test), allow(dead_code))]
+    plugin: bool,
+    /// Plugin door only. The manifest marks BOTH long-running writers async; the Claude
+    /// settings door marks only `Stop` (see [`HookRow::claude_async`] — Codex would skip an
+    /// async `sync` row with a warning, and `install-hooks` writes both hosts from one shape).
+    #[cfg_attr(not(test), allow(dead_code))]
+    plugin_async: bool,
 }
 
-/// THE hook contract — every row `install-hooks` writes, for both hosts, from one table.
+/// The host's kill for the `UserPromptSubmit` context hook, in seconds — and the ONE place it is
+/// written down.
 ///
-/// The async PostToolUse sync row the JS hook ships is DROPPED on purpose (founder's order):
-/// on Codex it is skipped with a warning, i.e. an installed hook that cannot fire. `async`
-/// survives only on the Stop checkpoint row, Claude side.
+/// 🔴 IT IS A NAMED CONSTANT BECAUSE TWO THINGS READ IT AND THEY MUST NEVER DISAGREE:
+/// [`HOOK_TABLE`]'s `UserPromptSubmit` row (which becomes the host budget on all three doors) and
+/// [`CONTEXT_HOOK_BUDGET`] (the client's own give-up, derived below by subtraction). Before this
+/// constant existed the two doors said 10 s and 30 s while the client budget was justified in
+/// prose against the 30 — so a CLI-door user had a client budget sitting ABOVE the host's kill,
+/// which is the exact configuration in which the work completes and the answer is thrown away
+/// with the user's prompt.
+const CONTEXT_HOOK_HOST_TIMEOUT_SECS: u64 = 30;
+
+/// How far under the host's kill the client gives up on its own.
+///
+/// The margin is the point: being killed by the host is the original defect, because the host
+/// discards the hook's output AND the prompt with it. Giving up ourselves returns exit 0 with an
+/// empty enrichment, which costs the model some context and costs the human nothing.
+const CONTEXT_HOOK_MARGIN_SECS: u64 = 10;
+
+/// THE hook contract — every row `install-hooks` writes, for both hosts, plus the plugin
+/// manifest, from one table.
+///
+/// The async PostToolUse sync row the JS hook ships is DROPPED on the `install-hooks` doors
+/// (founder's order): on Codex it is skipped with a warning, i.e. an installed hook that cannot
+/// fire. `async` survives only on the Stop checkpoint row, Claude side.
+///
+/// 🔴 THE THREE SERVER-BOUND BUDGETS ARE 30 s BECAUSE THAT IS WHAT WAS MEASURED, AND THIS TABLE
+/// USED TO SAY OTHERWISE THAN THE ARTIFACT CUSTOMERS RUN. `ground` was 15 s against a measured
+/// 16.6 s call (`416f6d6ac`); `context` was 10 s against a measured 93.6 s median at the
+/// founder's prompt lengths; `sync` was 20 s. v0.2.32 raised all three to 30 s **in the plugin
+/// manifest only**, so the same hook got 30 s through the plugin door and 10–20 s through
+/// `estelle install-hooks` — measured off the shipped 0.2.32 binary, four rows disagreed.
 const HOOK_TABLE: &[HookRow] = &[
     HookRow {
         event: "PreToolUse",
         matcher: Some("Write|Edit"),
         mode: "ground",
-        timeout: 15,
+        timeout: 30,
         claude_async: false,
+        plugin: true,
+        plugin_async: false,
     },
     HookRow {
         event: "PreToolUse",
@@ -1198,6 +1340,8 @@ const HOOK_TABLE: &[HookRow] = &[
         mode: "guard",
         timeout: 10,
         claude_async: false,
+        plugin: true,
+        plugin_async: false,
     },
     HookRow {
         event: "PostToolUse",
@@ -1205,13 +1349,17 @@ const HOOK_TABLE: &[HookRow] = &[
         mode: "shift",
         timeout: 5,
         claude_async: false,
+        plugin: false,
+        plugin_async: false,
     },
     HookRow {
         event: "PostToolUse",
         matcher: Some("Write|Edit"),
         mode: "sync",
-        timeout: 20,
+        timeout: 30,
         claude_async: false,
+        plugin: true,
+        plugin_async: true,
     },
     HookRow {
         event: "PostToolUse",
@@ -1219,6 +1367,8 @@ const HOOK_TABLE: &[HookRow] = &[
         mode: "distil",
         timeout: 10,
         claude_async: false,
+        plugin: true,
+        plugin_async: false,
     },
     HookRow {
         event: "Stop",
@@ -1226,6 +1376,8 @@ const HOOK_TABLE: &[HookRow] = &[
         mode: "checkpoint",
         timeout: 30,
         claude_async: true,
+        plugin: true,
+        plugin_async: true,
     },
     HookRow {
         event: "PreCompact",
@@ -1233,6 +1385,8 @@ const HOOK_TABLE: &[HookRow] = &[
         mode: "checkpoint",
         timeout: 30,
         claude_async: false,
+        plugin: true,
+        plugin_async: false,
     },
     HookRow {
         event: "SessionEnd",
@@ -1240,6 +1394,8 @@ const HOOK_TABLE: &[HookRow] = &[
         mode: "checkpoint",
         timeout: 30,
         claude_async: false,
+        plugin: true,
+        plugin_async: false,
     },
     HookRow {
         event: "SessionStart",
@@ -1247,13 +1403,17 @@ const HOOK_TABLE: &[HookRow] = &[
         mode: "welcome",
         timeout: 5,
         claude_async: false,
+        plugin: true,
+        plugin_async: false,
     },
     HookRow {
         event: "UserPromptSubmit",
         matcher: None,
         mode: "context",
-        timeout: 10,
+        timeout: CONTEXT_HOOK_HOST_TIMEOUT_SECS,
         claude_async: false,
+        plugin: true,
+        plugin_async: false,
     },
 ];
 
@@ -1299,6 +1459,89 @@ fn estelle_hook_groups(host: HookHost, runner: &str) -> Vec<(String, Value)> {
             (row.event.to_string(), group)
         })
         .collect()
+}
+
+#[cfg(test)]
+/// The runner the PLUGIN door invokes. It is `npx`, not the installed binary, because a plugin
+/// customer may never have run `estelle` at all — and it is pinned to a major (ADR 0015).
+const PLUGIN_HOOK_RUNNER: &str = "npx -y @fatelabs/estelle@0";
+
+#[cfg(test)]
+/// The `description` field of the shipped plugin manifest, quoted verbatim.
+///
+/// ⚠️ TWO SENTENCES IN HERE ARE FALSE AND ARE **NOT** BEING CORRECTED IN THIS COMMIT, ON PURPOSE.
+/// There is no `plugin-hooks` subcommand and no `cli/bin/hook.js` in this repository — grep both.
+/// The file is nonetheless byte-frozen: `scripts/test-plugin-identity.py` hashes every byte under
+/// `estelle-plugin/` into a SHA-256 keyed by the workspace version, and its own rule is *"never
+/// rewrite an existing version's digest to bless changed bytes under a cache key customers
+/// already hold"*. v0.2.32 is published (npm `latest`, 2026-09-02T04:47Z), so correcting this
+/// string costs a version bump, and a release is the founder's to cut. **The name overclaims its
+/// body; the body is the truth; the defect is recorded here rather than left for a reader to
+/// discover.** Fix the sentence in the same commit that bumps the version.
+const PLUGIN_MANIFEST_DESCRIPTION: &str = "Estelle — memory + the grounding gate, always on. \
+    GENERATED from the CLI's installer (`npx -y @fatelabs/estelle@0 plugin-hooks`); do not edit \
+    — edit cli/bin/hook.js and regenerate. These hooks execute commands on the customer's \
+    machine: the runner is pinned to a major (ADR 0015), every settings write is \
+    backup-before-write and refuses an unparseable file.";
+
+#[cfg(test)]
+/// The PLUGIN door's manifest — `estelle-plugin/hooks/hooks.json` — rendered from [`HOOK_TABLE`].
+///
+/// 🔴 THIS EXISTS BECAUSE THE TIMEOUT HAD TWO OWNERS AND ONLY ONE OF THEM EVER MOVED. v0.2.32
+/// raised `ground`, `sync` and `context` to 30 s by hand-editing the manifest; [`HOOK_TABLE`],
+/// which is what `estelle install-hooks` writes, still said 15 / 20 / 10. Same product, same
+/// hook, a different budget decided by which door the customer came through. Two owners that
+/// agree are indistinguishable from one until they drift, and this pair had drifted twice.
+///
+/// The per-door deltas are DATA on the row, not a second list: `plugin` says whether the row
+/// ships here at all, `plugin_async` carries the manifest's own async marking, and the command
+/// shape (no `--event`, `statusMessage` including the word `hook`) is written once, here. The
+/// timeout is read from `row.timeout` and from nowhere else.
+///
+/// Returns the exact bytes of the file, trailing newline included, so the guard can compare
+/// bytes rather than a shape — a structural comparison would pass over reordered keys and over a
+/// description nobody is reading.
+fn plugin_hooks_manifest() -> Result<String, serde_json::Error> {
+    let mut events: Vec<(String, Vec<Value>)> = Vec::new();
+    for row in HOOK_TABLE.iter().filter(|row| row.plugin) {
+        let mut handler = serde_json::Map::new();
+        handler.insert("type".to_string(), json!("command"));
+        handler.insert(
+            "command".to_string(),
+            json!(format!("{PLUGIN_HOOK_RUNNER} hook {}", row.mode)),
+        );
+        handler.insert("timeout".to_string(), json!(row.timeout));
+        if row.plugin_async {
+            handler.insert("async".to_string(), json!(true));
+        }
+        handler.insert(
+            "statusMessage".to_string(),
+            json!(format!("Estelle hook {}", row.mode)),
+        );
+        let mut group = serde_json::Map::new();
+        if let Some(matcher) = row.matcher {
+            group.insert("matcher".to_string(), json!(matcher));
+        }
+        group.insert("hooks".to_string(), json!([Value::Object(handler)]));
+        let group = Value::Object(group);
+        match events.iter_mut().find(|(name, _)| name == row.event) {
+            Some((_, groups)) => groups.push(group),
+            None => events.push((row.event.to_string(), vec![group])),
+        }
+    }
+    let mut hooks = serde_json::Map::new();
+    for (event, groups) in events {
+        hooks.insert(event, Value::Array(groups));
+    }
+    let mut root = serde_json::Map::new();
+    root.insert(
+        "description".to_string(),
+        json!(PLUGIN_MANIFEST_DESCRIPTION),
+    );
+    root.insert("hooks".to_string(), Value::Object(hooks));
+    let mut text = serde_json::to_string_pretty(&Value::Object(root))?;
+    text.push('\n');
+    Ok(text)
 }
 
 fn merge_estelle_hooks(settings: &mut Value, host: HookHost, runner: &str) -> Result<(), String> {
@@ -4379,19 +4622,27 @@ tests/test_serve.py:88: AssertionError\n\
         merge_estelle_hooks(&mut value, HookHost::Claude, "estelle").expect("hook declaration");
         let hooks = &value["hooks"];
 
-        // (event, matcher, mode, timeout) — the contract, row for row. `async` is asserted
-        // separately because it may appear on exactly one row of the whole table.
+        // (event, matcher, mode, timeout) — the contract, row for row, WRITTEN OUT rather than
+        // derived: a list built from HOOK_TABLE could never catch a regression in HOOK_TABLE.
+        // `async` is asserted separately because it may appear on exactly one row of the table.
+        //
+        // 🔴 ground/sync/context READ 15/20/10 UNTIL 2026-09-02 AND THAT WAS THE DEFECT, NOT THE
+        // GUARD. v0.2.32 raised those three to 30 s in the plugin manifest only; this test then
+        // sat green over the numbers its own sibling commit had declared wrong, because nothing
+        // compared the two doors. `the_plugin_manifest_is_generated_from_the_one_hook_table` is
+        // the comparison that was missing; these literals are the second, independent statement
+        // of the same contract, and they are meant to be edited deliberately, together.
         let expected: [(&str, Option<&str>, &str, u64); 10] = [
-            ("PreToolUse", Some("Write|Edit"), "ground", 15),
+            ("PreToolUse", Some("Write|Edit"), "ground", 30),
             ("PreToolUse", Some("Bash"), "guard", 10),
             ("PostToolUse", Some("Read|Write|Edit"), "shift", 5),
-            ("PostToolUse", Some("Write|Edit"), "sync", 20),
+            ("PostToolUse", Some("Write|Edit"), "sync", 30),
             ("PostToolUse", Some("Bash"), "distil", 10),
             ("Stop", None, "checkpoint", 30),
             ("PreCompact", None, "checkpoint", 30),
             ("SessionEnd", None, "checkpoint", 30),
             ("SessionStart", None, "welcome", 5),
-            ("UserPromptSubmit", None, "context", 10),
+            ("UserPromptSubmit", None, "context", 30),
         ];
         assert_eq!(
             hooks.as_object().expect("events").len(),
@@ -4445,17 +4696,17 @@ tests/test_serve.py:88: AssertionError\n\
         let hooks = &value["hooks"];
 
         let expected: [(&str, Option<&str>, &str, u64); 10] = [
-            ("PreToolUse", Some("Write|Edit"), "ground", 15),
+            ("PreToolUse", Some("Write|Edit"), "ground", 30),
             ("PreToolUse", Some("Bash"), "guard", 10),
             ("PostToolUse", Some("Read|Write|Edit"), "shift", 5),
-            ("PostToolUse", Some("Write|Edit"), "sync", 20),
+            ("PostToolUse", Some("Write|Edit"), "sync", 30),
             ("PostToolUse", Some("Bash"), "distil", 10),
             ("Stop", None, "checkpoint", 30),
             ("PreCompact", None, "checkpoint", 30),
             // Codex clamps SessionEnd to 3s — say 3 rather than be silently rewritten.
             ("SessionEnd", None, "checkpoint", 3),
             ("SessionStart", None, "welcome", 5),
-            ("UserPromptSubmit", None, "context", 10),
+            ("UserPromptSubmit", None, "context", 30),
         ];
         assert_eq!(hooks.as_object().expect("events").len(), 7);
         for (event, matcher, mode, timeout) in expected {
@@ -4486,6 +4737,176 @@ tests/test_serve.py:88: AssertionError\n\
                 "Codex never carries async ({event} {mode})"
             );
         }
+    }
+
+    /// The manifest a PLUGIN customer installs, read off disk at compile time. `include_str!`
+    /// rather than a runtime read: the bytes that ship are the bytes this test compares, and a
+    /// test that reads a file at runtime silently passes when the file has moved.
+    const SHIPPED_PLUGIN_MANIFEST: &str = include_str!("../../estelle-plugin/hooks/hooks.json");
+
+    /// 🔴 THE TIMEOUT HAD TWO OWNERS AND NOTHING COMPARED THEM.
+    ///
+    /// v0.2.32 raised three hook budgets to 30 s by editing `estelle-plugin/hooks/hooks.json`.
+    /// [`HOOK_TABLE`] — which is what `estelle install-hooks` writes — was not touched, and no
+    /// guard anywhere in this repository read both files. Measured off the SHIPPED v0.2.32
+    /// binary (`install-hooks` into a sandboxed `HOME`) against the SHIPPED manifest, **four**
+    /// rows disagreed, not the three that were reported:
+    ///
+    /// ```text
+    ///   event/matcher/mode                      CLI door      plugin door
+    ///   PreToolUse  Write|Edit        ground    15            30
+    ///   PostToolUse Write|Edit        sync      20            30 + async
+    ///   PostToolUse Read|Write|Edit   shift      5            ABSENT
+    ///   UserPromptSubmit              context   10            30
+    /// ```
+    ///
+    /// So this asserts BYTE EQUALITY between the shipped manifest and [`plugin_hooks_manifest`].
+    /// Bytes, not shape: a structural comparison passes over reordered keys, over a description
+    /// nobody reads, and over whitespace that changes the SHA-256 in
+    /// `scripts/test-plugin-identity.py` — which is a per-version cache contract, so a byte that
+    /// moves without a version bump is itself a defect this test must surface.
+    ///
+    /// ⚠️ WHAT IT DOES NOT PROVE. It pins the two doors to one table; it does not prove either
+    /// number is *right*. The 30 s figures are the plugin lane's measurement (`5fa67c32d`), and
+    /// `shift`'s absence from the plugin door is a DECLARED exemption (`HookRow::plugin`), not a
+    /// verdict that the plugin door should never have it.
+    ///
+    /// ▶ TO REGENERATE, DO NOT COPY-PASTE THE DIFF — run the generator, the way `insta` blesses a
+    /// snapshot: `ESTELLE_REGENERATE_PLUGIN_HOOKS=1 cargo test -p estelle-tui --bin estelle
+    /// the_plugin_manifest_is_generated`. A hand-copied expectation is a second list again, and
+    /// this whole commit exists because a number was typed in two places. The write is behind an
+    /// explicit environment variable so an ordinary run can never move the file.
+    ///
+    /// 🔗 AND THE REGENERATION IS SUPPOSED TO BREAK SOMETHING. `estelle-plugin/**` is inside a
+    /// per-version SHA-256 in `scripts/test-plugin-identity.py`, so regenerating after a table
+    /// change turns THAT guard red until the workspace version is bumped and a new digest is
+    /// registered. The two guards compose on purpose: you cannot change a shipped hook budget
+    /// without also admitting that customers holding the old version have the old one.
+    #[test]
+    fn the_plugin_manifest_is_generated_from_the_one_hook_table() {
+        let generated = plugin_hooks_manifest().expect("the manifest serialises");
+        if std::env::var_os("ESTELLE_REGENERATE_PLUGIN_HOOKS").is_some() {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../estelle-plugin/hooks/hooks.json");
+            std::fs::write(&path, &generated).expect("regenerate the plugin manifest");
+            panic!(
+                "REGENERATED {} from HOOK_TABLE. Re-run without \
+                 ESTELLE_REGENERATE_PLUGIN_HOOKS, and expect \
+                 scripts/test-plugin-identity.py to demand a version bump if the bytes moved.",
+                path.display()
+            );
+        }
+        assert_eq!(
+            generated, SHIPPED_PLUGIN_MANIFEST,
+            "estelle-plugin/hooks/hooks.json has drifted from HOOK_TABLE. It is GENERATED — \
+             re-run with ESTELLE_REGENERATE_PLUGIN_HOOKS=1, or change the table. Do not hand-edit \
+             one door."
+        );
+    }
+
+    /// The plugin door and the `install-hooks` doors must never disagree about a row they share.
+    ///
+    /// Byte equality above already implies this, and it is asserted separately anyway because the
+    /// two failures read completely differently: a byte diff says "the file moved", this says
+    /// "the two doors give the same hook a different budget", which is the defect. It also names
+    /// the rows the plugin door does not carry, so an exemption cannot grow silently.
+    #[test]
+    fn both_doors_give_every_shared_hook_the_same_budget() {
+        let manifest: Value =
+            serde_json::from_str(SHIPPED_PLUGIN_MANIFEST).expect("the shipped manifest is JSON");
+        let mut shipped: Vec<(String, String, u64)> = Vec::new();
+        for (event, groups) in manifest["hooks"].as_object().expect("hooks object") {
+            for group in groups.as_array().expect("event groups") {
+                for handler in group["hooks"].as_array().expect("handlers") {
+                    let command = handler["command"].as_str().expect("command");
+                    let mode = command
+                        .rsplit(" hook ")
+                        .next()
+                        .expect("every plugin command names its mode");
+                    let timeout = handler["timeout"].as_u64().expect("timeout");
+                    shipped.push((event.clone(), mode.to_string(), timeout));
+                }
+            }
+        }
+        assert!(
+            !shipped.is_empty(),
+            "parsed nothing out of the shipped manifest — this guard would pass over an empty \
+             file, so the vacuity check is the assertion"
+        );
+
+        let mut exempt: Vec<&str> = Vec::new();
+        for row in HOOK_TABLE {
+            let found = shipped
+                .iter()
+                .find(|(event, mode, _)| event == row.event && mode == row.mode);
+            match (row.plugin, found) {
+                (true, Some((_, _, timeout))) => assert_eq!(
+                    *timeout, row.timeout,
+                    "{}/{}: the plugin door says {timeout}s and HOOK_TABLE says {}s — one hook, \
+                     one budget, whichever door the customer came through",
+                    row.event, row.mode, row.timeout
+                ),
+                (true, None) => panic!(
+                    "{}/{} is declared plugin:true and is missing from the shipped manifest",
+                    row.event, row.mode
+                ),
+                (false, Some(_)) => panic!(
+                    "{}/{} is declared plugin:false but the shipped manifest carries it",
+                    row.event, row.mode
+                ),
+                (false, None) => exempt.push(row.mode),
+            }
+        }
+        assert_eq!(
+            exempt,
+            vec!["shift"],
+            "the plugin door's exemptions are enumerated, not inferred — a new one needs a \
+             written reason on HookRow::plugin before it lands here"
+        );
+        assert_eq!(
+            shipped.len(),
+            HOOK_TABLE.iter().filter(|row| row.plugin).count(),
+            "the shipped manifest carries a handler HOOK_TABLE does not declare"
+        );
+    }
+
+    /// 🔴 THE CLIENT'S OWN DEADLINE MUST SIT UNDER THE HOST'S KILL — ON **EVERY** DOOR.
+    ///
+    /// This is the third form of the two-owners defect and the worst one. [`CONTEXT_HOOK_BUDGET`]
+    /// was justified in prose against the plugin manifest's 30 s while a CLI-door user's host
+    /// budget was [`HOOK_TABLE`]'s 10 s — a 20 s client budget sitting ABOVE the host's kill, in
+    /// exactly the configuration where the work completes and the answer is discarded with the
+    /// user's prompt. Prose cannot hold that invariant; arithmetic can, so the constant is now
+    /// derived by subtraction and this asserts the derivation against BOTH doors' real numbers.
+    #[test]
+    fn the_context_budget_sits_under_the_host_kill_on_every_door() {
+        let row = HOOK_TABLE
+            .iter()
+            .find(|row| row.event == "UserPromptSubmit" && row.mode == "context")
+            .expect("the table declares the context hook");
+        assert_eq!(
+            row.timeout, CONTEXT_HOOK_HOST_TIMEOUT_SECS,
+            "the table row and the constant the budget is derived from are one owner"
+        );
+
+        let manifest: Value =
+            serde_json::from_str(SHIPPED_PLUGIN_MANIFEST).expect("the shipped manifest is JSON");
+        let plugin_kill = manifest["hooks"]["UserPromptSubmit"][0]["hooks"][0]["timeout"]
+            .as_u64()
+            .expect("the plugin door declares a context timeout");
+
+        for (door, kill) in [("install-hooks", row.timeout), ("plugin", plugin_kill)] {
+            assert!(
+                CONTEXT_HOOK_BUDGET < Duration::from_secs(kill),
+                "{door} door kills the context hook at {kill}s but the client waits \
+                 {CONTEXT_HOOK_BUDGET:?} — the work finishes and is thrown away with the prompt"
+            );
+        }
+        assert_eq!(
+            CONTEXT_HOOK_BUDGET,
+            Duration::from_secs(CONTEXT_HOOK_HOST_TIMEOUT_SECS - CONTEXT_HOOK_MARGIN_SECS),
+            "the budget is derived from the host kill, never typed independently"
+        );
     }
 
     #[test]
@@ -4729,6 +5150,199 @@ tests/test_serve.py:88: AssertionError\n\
             context_hook_offline(&payload, false)
                 .expect("silent before any network")
                 .is_empty()
+        );
+    }
+
+    /// A client whose OWN transport deadline is the 120 s floor `Client::new` enforces, so any
+    /// give-up faster than that in these tests can ONLY be [`CONTEXT_HOOK_BUDGET`]. This is the
+    /// negative control for the deadline test: without it, a fast return could be reqwest timing
+    /// out and the tokio bound could still be inert.
+    fn hook_client(base_uri: &str) -> (Client, CancellationToken) {
+        let key = estelle_client::ApiKey::new("test-key").expect("key");
+        let client = Client::new(
+            &format!("{base_uri}/"),
+            key,
+            estelle_client::MINIMUM_TIMEOUT,
+        )
+        .expect("client");
+        (client, CancellationToken::new())
+    }
+
+    /// 🔴 THE ONE-WORD FIX, ASSERTED ON THE BYTES THAT LEAVE THE PROCESS.
+    ///
+    /// Reading the source cannot distinguish "we send `code:false`" from "we omit `code` and the
+    /// server defaults it TRUE" — those are the same source until you look at the wire. So this
+    /// captures the real request the real client sent and asserts the KEY IS PRESENT AND FALSE.
+    /// An absent key fails here, which is the whole point: absence was the defect.
+    #[tokio::test]
+    async fn context_hook_asks_for_recall_without_the_code_branch_it_never_reads() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/search"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
+                json!({"recall": "the retry policy lives in serve/backend.py", "code": []}),
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let (client, cancel) = hook_client(&server.uri());
+        let repo = Repo::new("fatelabs/estelle").expect("repo");
+        let lines = context_recall_lines(
+            &client,
+            &cancel,
+            &repo,
+            "where is the retry policy set?",
+            CONTEXT_HOOK_BUDGET,
+        )
+        .await;
+
+        let requests = server
+            .received_requests()
+            .await
+            .expect("the mock server records requests");
+        assert_eq!(requests.len(), 1, "exactly one search per prompt");
+        let body: Value = serde_json::from_slice(&requests[0].body).expect("request body JSON");
+        assert_eq!(
+            body.get("code"),
+            Some(&json!(false)),
+            "the `code` key must be PRESENT and FALSE on the wire — the server reads \
+             body.get(\"code\", True), so omitting it asks for the 133 s branch: {body}"
+        );
+        assert_eq!(body["query"], json!("where is the retry policy set?"));
+
+        // And the response half is unchanged: it still reads `recall`, and ONLY `recall`.
+        assert_eq!(lines.len(), 1);
+        let envelope: Value = serde_json::from_str(&lines[0]).expect("envelope JSON");
+        assert_eq!(
+            envelope["hookSpecificOutput"]["additionalContext"],
+            json!("the retry policy lives in serve/backend.py")
+        );
+    }
+
+    /// A real HTTP server that answers `delay` late with a real recall payload. Shared by the
+    /// two deadline tests so they differ in EXACTLY ONE variable — the budget — and nothing else.
+    async fn slow_search_server(delay: Duration) -> wiremock::MockServer {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/search"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_delay(delay)
+                    .set_body_json(json!({"recall": "the retry policy lives in serve/backend.py"})),
+            )
+            .mount(&server)
+            .await;
+        server
+    }
+
+    /// 🔬 THE DEADLINE, DEMONSTRATED FIRING — a bound nobody has watched fire is decoration.
+    ///
+    /// `tokio::time::timeout` only bounds a future that YIELDS; around a thread-blocking call it
+    /// never fires at all and still reads as a deadline in review. Reasoning cannot tell those two
+    /// apart, so this drives the REAL `reqwest` client against a REAL HTTP server that answers
+    /// three seconds late, with a 300 ms budget, and asserts both halves of the contract:
+    ///   1. the hook returns NOTHING (silence, never an error on the user's hot path), and
+    ///   2. it returns EARLY — well under the server's delay, which is what "bounded" means.
+    ///
+    /// ⚠️ ITS OWN NEGATIVE CONTROL. The client's transport timeout is the 120 s `MINIMUM_TIMEOUT`
+    /// floor that `Client::new` enforces, so a give-up at ~300 ms cannot be reqwest's and cannot be
+    /// the server's. Only the tokio bound can produce this result.
+    #[tokio::test]
+    async fn context_hook_budget_fires_against_a_slow_server() {
+        const BUDGET: Duration = Duration::from_millis(300);
+        const SERVER_DELAY: Duration = Duration::from_secs(3);
+
+        let server = slow_search_server(SERVER_DELAY).await;
+        let (client, cancel) = hook_client(&server.uri());
+        let repo = Repo::new("fatelabs/estelle").expect("repo");
+
+        let started = Instant::now();
+        let lines =
+            context_recall_lines(&client, &cancel, &repo, "a prompt worth enriching", BUDGET).await;
+        let elapsed = started.elapsed();
+
+        assert!(
+            lines.is_empty(),
+            "an expired budget injects NOTHING, never a partial or an error: {lines:?} — THIS \
+             MUST NEVER BE INJECTED"
+        );
+        assert!(
+            elapsed < SERVER_DELAY,
+            "the budget must give up before the server answers — {elapsed:?} >= {SERVER_DELAY:?} \
+             means the deadline did not fire"
+        );
+    }
+
+    /// 🔬 AND THE DEADLINE DEMONSTRATED **NOT** FIRING — the other half, and the half that is
+    /// usually missing.
+    ///
+    /// A deadline only ever seen firing is indistinguishable from a client that is simply broken:
+    /// `context_recall_lines` returning `Vec::new()` unconditionally would satisfy the test above
+    /// forever. Same server, same client, same call — one variable changed, the budget widened
+    /// past the delay — and now the recall MUST arrive. Together the two pin the bound as a
+    /// decision rather than an outcome.
+    #[tokio::test]
+    async fn context_hook_budget_does_not_fire_against_a_fast_server() {
+        const BUDGET: Duration = Duration::from_secs(8);
+        const SERVER_DELAY: Duration = Duration::from_secs(3);
+
+        let server = slow_search_server(SERVER_DELAY).await;
+        let (client, cancel) = hook_client(&server.uri());
+        let repo = Repo::new("fatelabs/estelle").expect("repo");
+
+        let started = Instant::now();
+        let lines =
+            context_recall_lines(&client, &cancel, &repo, "a prompt worth enriching", BUDGET).await;
+        let elapsed = started.elapsed();
+
+        assert_eq!(
+            lines.len(),
+            1,
+            "a budget wider than the delay must deliver the recall, not silence"
+        );
+        let envelope: Value = serde_json::from_str(&lines[0]).expect("envelope JSON");
+        assert_eq!(
+            envelope["hookSpecificOutput"]["additionalContext"],
+            json!("the retry policy lives in serve/backend.py"),
+            "and it must be the SERVER's recall, not a placeholder"
+        );
+        assert!(
+            elapsed >= SERVER_DELAY,
+            "it really waited for the slow server ({elapsed:?}); if this is instant the mock is \
+             not delaying and neither test is measuring a deadline"
+        );
+    }
+
+    /// ⛔ THE TRAP, PINNED. The sibling `/search` callers — the `estelle recall` command and the
+    /// TUI's `memory.search` dispatch — send the same endpoint and READ `reply["code"]`. Copying
+    /// `code: false` there would silently delete every citation they print, with no test going
+    /// red anywhere near them. So this asserts the two bodies are DIFFERENT SHAPES on purpose:
+    /// the hook suppresses code because it never reads it; `recall` must not.
+    #[test]
+    fn only_the_caller_that_ignores_code_is_allowed_to_suppress_it() {
+        let hook_body = context_search_body("where is the retry policy set?");
+        assert_eq!(hook_body.get("code"), Some(&json!(false)));
+
+        // `recall`'s body, quoted from its call site. If that call site ever grows `code: false`,
+        // this expectation is what says the citations went with it.
+        let recall_body = json!({"query": "where is the retry policy set?"});
+        assert_ne!(
+            recall_body.get("code"),
+            Some(&json!(false)),
+            "`estelle recall` renders reply[\"code\"] via append_citations — suppressing the code \
+             branch there deletes its citations silently"
+        );
+
+        // And the reader half is real: given a `code` array, `append_citations` emits lines.
+        let mut lines = Vec::new();
+        append_citations(
+            &mut lines,
+            Some(&json!([{"file": "serve/backend.py", "line": 585}])),
+        );
+        assert!(
+            !lines.is_empty(),
+            "append_citations must consume reply[\"code\"] — if this is empty the trap is gone \
+             and this test is decoration"
         );
     }
 
