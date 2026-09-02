@@ -32,7 +32,7 @@ fn film_app(film: &'static Film) -> App {
     });
     app.branch = Some(film.branch.to_string());
     app.theme = Theme::Dark;
-    script::dress(&mut app, true);
+    script::dress(&mut app, film, true);
     // The boot scene owns the frame until its own clock finishes; these guards are about the
     // SESSION, so they start after it, exactly as the run loop does.
     app.boot = None;
@@ -58,7 +58,7 @@ fn frame_at_width(film: &'static Film, at_ms: u32, fixtures: bool, width: u16) -
                 repo: Some(film.repo.to_string()),
             });
             bare.branch = Some(film.branch.to_string());
-            script::dress(&mut bare, false);
+            script::dress(&mut bare, film, false);
             bare.boot = None;
             bare
         };
@@ -410,7 +410,7 @@ fn transcript_text(film: &'static Film, fixtures: bool) -> String {
             command: None,
             repo: Some(film.repo.to_string()),
         });
-        script::dress(&mut app, false);
+        script::dress(&mut app, film, false);
     }
     let now = Instant::now();
     for step in cue_sheet(film, fixtures, PANE) {

@@ -522,7 +522,7 @@ pub(crate) async fn run(
     });
     app.branch = Some(film.branch.to_string());
     app.theme = theme;
-    script::dress(&mut app, fixtures);
+    script::dress(&mut app, film, fixtures);
 
     let mut events = EventStream::new();
     let mut ticker = tokio::time::interval(TICK);

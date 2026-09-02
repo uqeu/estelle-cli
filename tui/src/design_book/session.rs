@@ -280,13 +280,25 @@ pub(crate) const LOCAL_FLEET: &[&str] = &[
 /// The fleet beat's columns.
 static FLEET: &[Col] = &[Col::l(38), Col::l(9), Col::r(9), Col::r(11)];
 
+/// The detected machine, once per process.
+///
+/// ⚠️ **`SystemSpecs::detect()` IS NOT FREE AND THIS IS CALLED FROM CUE-SHEET CONSTRUCTION**, which
+/// the guards build dozens of times. Detecting per call took the suite from 25 s to 48 s and pushed
+/// the frame-budget test — a 50 ms perf assertion in a different module — over its limit under
+/// parallel load. **A slow helper that only shows up as someone else's flaky test is the worst kind
+/// of slow**, so the fact is derived once. The hardware does not change mid-recording.
+fn detected_machine() -> &'static estelle_machine::Machine {
+    static MACHINE: std::sync::OnceLock<estelle_machine::Machine> = std::sync::OnceLock::new();
+    MACHINE.get_or_init(estelle_machine::machine)
+}
+
 /// Measure this machine and what it can actually run, live.
 ///
 /// Rows for models the catalogue no longer carries are DROPPED rather than faked, and the count is
 /// stated on the last line, so a film that lost a model says how many it is reporting instead of
 /// silently showing fewer.
 pub(crate) fn local_fleet_lines(width: usize) -> Vec<String> {
-    let machine = estelle_machine::machine();
+    let machine = detected_machine();
     let mut rows = vec!["model | fit | memory | est tok/s".to_string()];
     let mut notice = None;
     let mut found = 0usize;
@@ -294,7 +306,7 @@ pub(crate) fn local_fleet_lines(width: usize) -> Vec<String> {
         let Ok(model) = estelle_machine::named_model(name) else {
             continue;
         };
-        let Ok(fit) = estelle_machine::fit(&model, &machine) else {
+        let Ok(fit) = estelle_machine::fit(&model, machine) else {
             continue;
         };
         found += 1;
