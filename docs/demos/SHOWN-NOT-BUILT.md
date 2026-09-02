@@ -44,23 +44,27 @@ stated flatly** — the whole point of the file is that the founder can trust it
 | 6 | **The memory catch: code that compiles, that the gate passes, that a team decision forbids** | ⛔ **Not built** — the catch itself. ✅ The gate half is real. | repo doc |
 | 8 | Slack + Linear + GitHub in one turn, replying **inside a teammate's own thread** | ✅ The Slack → PR loop is live and proven. ⛔ **Threading a reply into a specific teammate's earlier thread, and the Linear write, are not.** | repo doc |
 
-## Film 3 · `uqeu/estelle` · production, and the gate refusing
+## Film 3 · `cartwheel/storefront` · the night checkout went down
 
 | beat | depicted | status | confidence |
 |---|---|---|---|
-| 1 | **"While you were gone" rollup** | `list_sessions` and team activity are built; **the narrative rollup is not.** | repo doc |
-| 1 | **A decision extracted from a teammate's revert** | ⛔ **Not built.** | repo doc |
-| 4 | The stale-index refusal, with both SHAs | ✅ Built — the server produces the verdict and the design-book lane wired the CLI to read it. | probed |
-| 8 | 41,934 labelled snippets, 100.0% / 0.0%, offline | ✅ Measured 2026-09-02. 🔴 **The limit is on screen, not in the voiceover**: it measures invented repository APIs, in Python, and 12 of 23 languages block. | repo doc |
-
----
+| 1–2 | Cited answers about the sweep budget, and real sweep statistics | ✅ Built — navigation and stats. | probed |
+| 3 | 🔴 **Estelle INTERRUPTS mid-sentence, unprompted, with a reason** | ⛔ **Not built.** Nothing in the product speaks unless spoken to. This is the beat the film exists for. | probed |
+| 3 | **His half-typed line is parked and given back to the character** | ⛔ **Not built.** The composer holds one draft; a draft parked across an interruption and restored later is not a shape we have. | probed |
+| 3 | `142 checkouts failed since 23:04. 38 retried and failed again.` | ⛔ **Not built as a sentence.** Monitor holds the counts; translating them into what a CUSTOMER experienced is not a surface. | repo doc |
+| 4–5 | Root cause to `file:line`, tied to a vendor API version | ✅ Monitor, issue detection and vendor-drift detection are built. **The consolidated view is design-book.** | repo doc |
+| 6 | 🔴 **The gate REFUSES our own repair, at 23:11, before production** | ✅ **Built.** `gate_refusal::lines` is the live modal's own renderer, called here at the real pane width, and the refusal is deterministic with no model call. | probed |
+| 7 | Sandboxed repro, 1,204 tests, cross-model review | ✅ Built — sandboxed repro and cross-family review. | repo doc |
+| 8 | **Recovery watched on the rail after he applies the fix** | ⛔ The rail is real and reads real endpoints; **the film feeds it a scripted incident.** Post-deploy watch-and-confirm is not a surface. | probed |
+| 9 | **The parked sentence returns and he finishes it** | ⛔ **Not built.** Same mechanism as beat 3. |
+| 10 | `/spend` including **what the refused repair cost** | Per-role receipts are real. **Pricing a REFUSED attempt separately is not a shipped view.** | repo doc |
 
 ## Cross-cutting, and these are the ones most likely to be asked about
 
 | depicted | status |
 |---|---|
-| **The production rail ticking** — latency drifting, counters climbing, agents changing state | ⛔ **Not built into the films.** `dress()` sets one static JSON per film and no beat touches the rail again. The rail is a real surface reading real endpoints; the films feed it fixtures. |
-| **Estelle interrupting mid-typing** | ⛔ **Not built.** The player has no cue that fires during a typing phase. |
+| **The production rail ticking** — latency drifting, counters climbing, agents changing state | ✅ **Built in the films** (`design_book/rail.rs`, ticked every frame). The rail is a real surface reading real endpoints; **the films feed it a scripted incident.** |
+| **Estelle interrupting mid-typing** | ⛔ **Not built in the product.** The PLAYER can now do it (`Key::Interrupt`, `Key::Park`, `Key::Restore`), which is what film 3 uses; the product has no unprompted-speech path. |
 | **Closing the production rail by asking in plain English** | ⛔ **Not possible today, and this is a product gap, not a film gap.** The design gives production a permanent home: `live_renderer.rs:2515-2523` computes `prod_as_rail` from the pane width alone, and `prod_panel_visible` is only consulted on the narrow path. **There is no flag that closes the rail on a wide terminal.** |
 
 ## The honesty line every film keeps

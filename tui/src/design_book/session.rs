@@ -217,7 +217,12 @@ pub(crate) enum Say {
     },
     /// The gate refusing, drawn by [`crate::gate_refusal`] itself at the REAL pane width — one
     /// owner, and the only way its cells wrap inside their columns.
-    Gate,
+    ///
+    /// ⚠️ **IT CARRIES ITS CONTENT.** It was a bare variant with the refusal hard-coded in the
+    /// player, which meant film 3's Stripe outage would have refused an invented FastAPI import.
+    /// **Reuse the shape, never the content** — the shape is `gate_refusal`'s renderer and it stays
+    /// one owner; what each film feeds it is that film's business.
+    Gate(&'static GateFixture),
     /// 🔴 **THE ONE BEAT IN ANY FILM THAT IS NOT A FIXTURE.** Every row is measured on the machine
     /// the film is being recorded on, live, by [`estelle_machine`] — the same `machine()`,
     /// `named_model()` and `fit()` that `local_provider.rs` already ships. On the founder's laptop
@@ -238,6 +243,18 @@ pub(crate) enum Say {
     Wait(u32),
 }
 
+/// What the gate refused, in one film's own terms.
+pub(crate) struct GateFixture {
+    /// The headline's second half: `round 1 of 3 · no model call`.
+    pub detail: &'static str,
+    /// One sentence under the headline, saying what happened to the user's action.
+    pub note: &'static str,
+    /// `(the claim the diff made, what the graph found)`.
+    pub blockers: &'static [(&'static str, &'static str)],
+    /// `(path, changed lines)` for the blast radius.
+    pub files: &'static [(&'static str, u64)],
+}
+
 // ── what a person does at the keyboard ───────────────────────────────────────────────────────
 
 /// One instruction to the hands.
@@ -253,6 +270,22 @@ pub(crate) enum Key {
     Burst(&'static str),
     /// Hands off the keyboard, thinking about the next word.
     Pause(u32),
+    /// 🔴 **ESTELLE SPEAKS WHILE HE IS STILL TYPING.** Not after enter — mid-word, with the cursor
+    /// still in his line.
+    ///
+    /// It is a `Key` rather than a field on [`Beat`] for one reason: **"mid-sentence" is a POSITION
+    /// in the keystroke stream**, and a field would have to carry a millisecond offset that drifts
+    /// every time a word in front of it changes. Here it sits between the two halves of what he
+    /// types, and it cannot drift because it is a neighbour of the words it interrupts.
+    Interrupt(&'static [Say]),
+    /// His half-typed line lifts out of the composer and is held.
+    ///
+    /// ⚠️ **THE PARK IS THE HALF THAT SELLS THE INTERRUPT.** An interrupt that costs him his
+    /// sentence is an interruption; one that gives the sentence back is an assistant. The founder
+    /// asked for the line to come back, and [`Key::Restore`] is where it does.
+    Park,
+    /// The parked line returns to the composer, exactly as he left it.
+    Restore,
 }
 
 // ── one beat ─────────────────────────────────────────────────────────────────────────────────

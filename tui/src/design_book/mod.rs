@@ -42,8 +42,8 @@ pub(crate) mod rail;
 pub(crate) mod script;
 /// Film 2 · Cartwheel, as data.
 pub(crate) mod script_cartwheel;
-/// Film 3 · this repo, as data.
-pub(crate) mod script_estelle;
+/// Film 3 · the night checkout went down, as data.
+pub(crate) mod script_incident;
 /// Film 1 · a solo developer and his own machine, as data.
 pub(crate) mod script_solo;
 /// The vocabulary a scripted session is written in.

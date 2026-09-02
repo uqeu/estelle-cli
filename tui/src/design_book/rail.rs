@@ -67,14 +67,19 @@ fn profile(film: &Film) -> Profile {
             latency: [104.0, 71.0, 143.0],
             incident: None,
         },
-        // 🔴 THE SAME STOREFRONT, THE NIGHT IT GOES DOWN. The ramp starts at 12 s, while he is
-        // typing about something else, and recovers at 150 s once the repair lands.
+        // 🔴 THE SAME STOREFRONT, THE NIGHT IT GOES DOWN.
+        //
+        // **THE WINDOW IS TIED TO THE SCRIPT, NOT PICKED.** The ramp starts at 20 s and the
+        // interrupt fires at about 39 s, so the rail climbs for roughly twenty seconds WHILE HE
+        // TYPES and he does not react to it — the founder's own note that the wait is the beat. It
+        // recovers at 118 s, which is where beat 8 applies the fix, so the rail comes back on
+        // camera rather than after the cut.
         _ => Profile {
             services: ["checkout", "catalog", "webhooks"],
             agents: ["cart-worker", "fulfilment"],
             base_requests: 794,
             latency: [109.0, 74.0, 138.0],
-            incident: Some((12, 150)),
+            incident: Some((20, 118)),
         },
     }
 }

@@ -40,7 +40,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 use crate::design_book::script;
-use crate::design_book::session::{self, Beat, Film, Key, Say};
+use crate::design_book::session::{self, Beat, Film, GateFixture, Key, Say};
 use crate::gate_refusal::{Blocker, Refusal};
 use crate::transcript::TranscriptEntry;
 use crate::{App, Args, Theme, live_renderer};
@@ -147,8 +147,13 @@ fn cue_sheet(film: &'static Film, fixtures: bool, pane: usize) -> Vec<Step> {
     );
     let mut steps = Vec::new();
     let mut clock = 0u32;
+    // 🔴 **THE PARKED LINE OUTLIVES THE BEAT THAT PARKED IT, AND IT HAS TO.** It was a local in
+    // `plan_typing`, so it reset on every beat and `Key::Restore` handed back an empty string —
+    // the film would have played the whole interrupt and then restored nothing, which is the one
+    // detail the founder said sells it. The draft belongs to the SESSION, not to a beat.
+    let mut parked = String::new();
     for beat in film.beats {
-        clock = plan_beat(&mut steps, beat, clock, fixtures, pane);
+        clock = plan_beat(&mut steps, beat, clock, fixtures, pane, &mut parked);
     }
     steps
 }
@@ -160,13 +165,14 @@ fn plan_beat(
     start: u32,
     fixtures: bool,
     pane: usize,
+    parked: &mut String,
 ) -> u32 {
-    let mut clock = plan_typing(steps, beat, start);
+    let (mut clock, typed) = plan_typing(steps, beat, start, pane, parked);
 
     clock += SUBMIT_MS;
     steps.push(Step {
         at_ms: clock,
-        cue: Cue::Submit(typed_text(beat)),
+        cue: Cue::Submit(typed),
     });
     steps.push(Step {
         at_ms: clock,
@@ -192,16 +198,22 @@ fn plan_beat(
 }
 
 /// The keystrokes, and the two scripted stumbles that make the rate lumpy.
-fn plan_typing(steps: &mut Vec<Step>, beat: &'static Beat, start: u32) -> u32 {
+fn plan_typing(
+    steps: &mut Vec<Step>,
+    beat: &'static Beat,
+    start: u32,
+    pane: usize,
+    parked: &mut String,
+) -> (u32, String) {
     let mut clock = start;
     let mut typed = String::new();
     let mut strokes = 0usize;
-    let mut press = |clock: &mut u32,
-                     steps: &mut Vec<Step>,
-                     typed: &mut String,
-                     base: u32,
-                     character: char,
-                     strokes: &mut usize| {
+    let press = |clock: &mut u32,
+                 steps: &mut Vec<Step>,
+                 typed: &mut String,
+                 base: u32,
+                 character: char,
+                 strokes: &mut usize| {
         *clock = clock.saturating_add_signed(gap(base, character, *strokes));
         *strokes += 1;
         typed.push(character);
@@ -213,6 +225,28 @@ fn plan_typing(steps: &mut Vec<Step>, beat: &'static Beat, start: u32) -> u32 {
     for key in beat.typed {
         match key {
             Key::Pause(ms) => clock += ms,
+            // 🔴 THE CURSOR STAYS IN HIS LINE. Nothing here touches `typed`, so the composer keeps
+            // whatever he had half-written while the transcript grows underneath it.
+            Key::Interrupt(says) => {
+                for say in *says {
+                    clock = plan_say(steps, say, clock, pane);
+                }
+            }
+            Key::Park => {
+                *parked = std::mem::take(&mut typed);
+                steps.push(Step {
+                    at_ms: clock,
+                    cue: Cue::Compose(String::new()),
+                });
+            }
+            Key::Restore => {
+                typed = std::mem::take(parked);
+                clock += NOTICE_MS;
+                steps.push(Step {
+                    at_ms: clock,
+                    cue: Cue::Compose(typed.clone()),
+                });
+            }
             Key::Type(text) => {
                 for character in text.chars() {
                     press(
@@ -262,19 +296,7 @@ fn plan_typing(steps: &mut Vec<Step>, beat: &'static Beat, start: u32) -> u32 {
             }
         }
     }
-    clock
-}
-
-/// What the composer holds when enter is pressed — the stumbles already corrected.
-fn typed_text(beat: &Beat) -> String {
-    let mut text = String::new();
-    for key in beat.typed {
-        match key {
-            Key::Type(part) | Key::Burst(part) => text.push_str(part),
-            Key::Oops(_) | Key::Pause(_) => {}
-        }
-    }
-    text
+    (clock, typed)
 }
 
 /// The gate refusal, drawn by its own owner at the REAL pane width, flattened to plain rows.
@@ -285,37 +307,25 @@ fn typed_text(beat: &Beat) -> String {
 /// transcript, which knows nothing about columns and starts each continuation at the left margin.
 /// `gate_refusal::lines` has taken a `width` all along and wraps its own cells correctly — it was
 /// simply never handed the width that mattered.
-fn gate_lines(pane: usize) -> Vec<String> {
-    const BLOCKERS: [(&str, &str); 2] = [
-        (
-            "import fastapi_turbo",
-            "no such package on PyPI; nearest is fastapi (0.115.6). The import would fail at load, \
-             not at test time.",
-        ),
-        (
-            "claims/upstream.py:141",
-            "the repo graph holds zero definition sites for this module in any version the \
-             lockfile resolves.",
-        ),
-    ];
-    let blockers = BLOCKERS
+fn gate_lines(pane: usize, fixture: &'static GateFixture) -> Vec<String> {
+    let blockers = fixture
+        .blockers
         .iter()
         .map(|(claim, finding)| Blocker {
             claim,
             finding: Some(finding),
         })
         .collect::<Vec<_>>();
-    let files = [
-        ("claims/upstream.py".to_string(), 14u64),
-        ("claims/fetcher.py".to_string(), 3u64),
-    ];
+    let files = fixture
+        .files
+        .iter()
+        .map(|(path, lines)| ((*path).to_string(), *lines))
+        .collect::<Vec<_>>();
     let palette = crate::theme::ScreenTheme::Dark.palette();
     crate::gate_refusal::lines(
         &Refusal {
-            detail: "round 1 of 3 \u{b7} no model call",
-            note: Some(
-                "A deterministic check against this repo's symbol graph. No model was asked, and no model can overrule it.",
-            ),
+            detail: fixture.detail,
+            note: Some(fixture.note),
             blockers: &blockers,
             files: &files,
         },
@@ -420,13 +430,13 @@ fn plan_say(steps: &mut Vec<Step>, say: &'static Say, start: u32, pane: usize) -
                 });
             }
         }
-        Say::Gate => {
+        Say::Gate(fixture) => {
             clock += CHUNK_MS * 2;
             steps.push(Step {
                 at_ms: clock,
                 cue: Cue::OpenCommand("gate"),
             });
-            for line in gate_lines(pane) {
+            for line in gate_lines(pane, fixture) {
                 clock += CHUNK_MS * 2;
                 steps.push(Step {
                     at_ms: clock,
@@ -681,16 +691,30 @@ pub(crate) fn timeline(film: &'static Film) -> String {
     out.push(String::new());
     out.push("  in      out     typed".to_string());
     let mut clock = 0u32;
+    let mut parked = String::new();
     for beat in film.beats {
         let mut steps = Vec::new();
         let start = clock;
-        clock = plan_beat(&mut steps, beat, clock, true, session::FALLBACK_PANE);
-        out.push(format!(
-            "  {}  {}  {}",
-            stamp(start),
-            stamp(clock),
-            typed_text(beat)
-        ));
+        clock = plan_beat(
+            &mut steps,
+            beat,
+            clock,
+            true,
+            session::FALLBACK_PANE,
+            &mut parked,
+        );
+        // 🔴 THE SHOT LIST READS THE SUBMIT CUE, NOT A SECOND SIMULATION OF THE KEYBOARD.
+        // `typed_text` used to re-walk `beat.typed` with its own rules, and the moment `Park` and
+        // `Restore` arrived it disagreed with the composer about what he actually sent. One owner:
+        // whatever `plan_typing` puts in the `Submit` cue IS the line.
+        let typed = steps
+            .iter()
+            .find_map(|step| match &step.cue {
+                Cue::Submit(text) => Some(text.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        out.push(format!("  {}  {}  {typed}", stamp(start), stamp(clock)));
     }
     out.push(String::new());
     out.push(format!(

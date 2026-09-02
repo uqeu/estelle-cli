@@ -518,6 +518,99 @@ fn no_film_frame_ever_says_saved() {
     }
 }
 
+/// 🔴 **ESTELLE SPEAKS WHILE THE CURSOR IS STILL IN HIS LINE.**
+///
+/// The founder asked for an interrupt MID-SENTENCE, not after enter. This walks film 3's cue sheet
+/// and requires that at least one transcript cue fires at a moment when the composer holds a
+/// NON-EMPTY, UNSUBMITTED line — which is exactly what "mid-sentence" means and what a cue firing
+/// between beats would not satisfy.
+#[test]
+fn film_three_interrupts_while_he_is_still_typing() {
+    let film = script::film(3).expect("film 3");
+    let mut composer = String::new();
+    let mut submitted_since_typing = true;
+    let mut interrupted_mid_line = 0usize;
+    for step in cue_sheet(film, true, PANE) {
+        match &step.cue {
+            Cue::Compose(text) => {
+                composer = text.clone();
+                submitted_since_typing = false;
+            }
+            Cue::Submit(_) => {
+                composer.clear();
+                submitted_since_typing = true;
+            }
+            // Anything that writes to the transcript while a half-typed line is on screen.
+            Cue::Failure(_) | Cue::System(_) | Cue::OpenCommand(_) | Cue::OpenAnswer { .. } => {
+                if !composer.is_empty() && !submitted_since_typing {
+                    interrupted_mid_line += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    assert!(
+        interrupted_mid_line > 0,
+        "nothing reaches the transcript while he is mid-line \u{2014} the interrupt fires after enter"
+    );
+}
+
+/// 🔴 **HIS SENTENCE COMES BACK, TO THE CHARACTER.**
+///
+/// ⚠️ **THIS IS THE HALF THAT SELLS THE INTERRUPT.** An interrupt that costs him his sentence is an
+/// interruption; one that gives the sentence back is an assistant. So the guard is not "a Restore
+/// cue exists" — it is that the text which reappears in the composer is BYTE-IDENTICAL to the text
+/// that was parked, and that he then finishes it and sends the whole thing.
+#[test]
+fn the_parked_line_comes_back_exactly_as_he_left_it() {
+    let film = script::film(3).expect("film 3");
+    let mut composer = String::new();
+    let mut parked: Option<String> = None;
+    let mut restored: Option<String> = None;
+    let mut last_submit = String::new();
+    for step in cue_sheet(film, true, PANE) {
+        match &step.cue {
+            Cue::Compose(text) => {
+                // The park empties the composer mid-sentence.
+                if text.is_empty() && composer.chars().count() > 40 && parked.is_none() {
+                    parked = Some(composer.clone());
+                }
+                // ⚠️ THE RESTORE IS THE COMPOSER BECOMING THE PARKED LINE AGAIN, IN ONE STEP.
+                // My first version took the next non-empty Compose after the park, which is the
+                // `f` of `fix it` — he types a REPLY before his sentence comes back. A guard that
+                // matches the wrong event passes on a film that never restores anything.
+                if let Some(parked) = parked.as_ref()
+                    && restored.is_none()
+                    && text == parked
+                    && composer != *parked
+                {
+                    restored = Some(text.clone());
+                }
+                composer = text.clone();
+            }
+            Cue::Submit(text) => last_submit = text.clone(),
+            _ => {}
+        }
+    }
+    let parked = parked.expect("film 3 must park his half-typed line");
+    let restored = restored.expect("film 3 must give the parked line back");
+    assert!(
+        parked.len() > 40,
+        "the parked line is only {:?} \u{2014} too short to read as an interrupted sentence",
+        parked
+    );
+    assert_eq!(
+        restored, parked,
+        "the line that came back is not the line he lost"
+    );
+    // And he finishes it: the last thing he sends starts with the sentence he began before the
+    // outage, so a viewer sees the question completed rather than merely redisplayed.
+    assert!(
+        last_submit.starts_with(&parked) || last_submit.contains("what did that cost"),
+        "he never finished the restored sentence: {last_submit:?}"
+    );
+}
+
 /// 🔴 **THE WATERMARK IS GONE.**
 ///
 /// He asked directly: *"why are you writing 'design fixture · the numbers on this screen were NOT

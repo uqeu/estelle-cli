@@ -27,7 +27,7 @@
 
 use crate::design_book::rail;
 use crate::design_book::script_cartwheel::CARTWHEEL;
-use crate::design_book::script_estelle::ESTELLE_REPO;
+use crate::design_book::script_incident::INCIDENT;
 use crate::design_book::script_solo::SOLO;
 use crate::design_book::session::{Film, Say};
 
@@ -76,7 +76,7 @@ pub(crate) const FILMS: &[Film] = &[
         number: 3,
         repo: "cartwheel/storefront",
         branch: "main",
-        beats: ESTELLE_REPO,
+        beats: INCIDENT,
     },
 ];
 
@@ -101,6 +101,15 @@ pub(crate) fn film(number: u8) -> Option<&'static Film> {
 /// the code-graph view (`live_renderer.rs:2061`), and a non-empty `citations` replaces the rail with
 /// the citation pane (`live_renderer.rs:2510`). Both are real product surfaces and both would take
 /// the rail off screen, which is the defect this function exists to fix.
+/// The plan a film's account is on. **One owner**, because the header and the account both print
+/// it and they drifted apart the moment film 3 changed company.
+fn plan_of(film: &Film) -> &'static str {
+    match film.number {
+        1 => "ultra",
+        _ => "team",
+    }
+}
+
 pub(crate) fn dress(app: &mut crate::App, film: &Film, fixtures: bool) {
     use serde_json::json;
 
@@ -110,29 +119,25 @@ pub(crate) fn dress(app: &mut crate::App, film: &Film, fixtures: bool) {
     if !fixtures {
         return;
     }
-    app.header.plan = Some(
-        match film.number {
-            3 => "ultra",
-            _ => "team",
-        }
-        .to_string(),
-    );
+    // ⚠️ The header's plan and the account's plan are TWO READS OF ONE FACT, and they disagreed:
+    // film 3 rendered `ultra` in the header over a Cartwheel TEAM account. One source now.
+    app.header.plan = Some(plan_of(film).to_string());
     app.header.indexed = Some(true);
     app.header.files = Some(1_284);
-    // 🔴 **THE RAIL BELONGS TO THE COMPANY THE FILM IS SET AT.** A Cartwheel session showing
-    // Sable's `claims-api` on the right would be a continuity error a viewer catches before any
-    // of the copy lands — and film 3 is on Ultra, which is a different plan with no team at all.
+    // 🔴 **THE RAIL BELONGS TO THE COMPANY THE FILM IS SET AT.** A Cartwheel session showing a
+    // solo developer's services on the right is a continuity error a viewer catches before any of
+    // the copy lands.
     let (email, plan, seats, team) = match film.number {
-        1 => ("you@saltbox.dev", "ultra", 1, None),
+        1 => ("you@saltbox.dev", plan_of(film), 1, None),
         2 => (
             "you@cartwheel.shop",
-            "team",
+            plan_of(film),
             6,
             Some(("team-cartwheel", "Cartwheel")),
         ),
         _ => (
             "you@cartwheel.shop",
-            "team",
+            plan_of(film),
             6,
             Some(("team-cartwheel", "Cartwheel")),
         ),
@@ -269,17 +274,38 @@ mod tests {
 
     /// Everything Estelle says in a film, as one string.
     fn spoken() -> String {
+        // 🔴 **THE INTERRUPT'S LINES LIVE IN `typed`, NOT IN `reply`, AND THIS SWEEP MISSED THEM.**
+        // `Key::Interrupt` carries the most important sentence in film 3 — "142 checkouts failed
+        // since 23:04" and the trust line under it — and because it sits in the KEYSTROKE stream
+        // rather than the reply, every prose guard here was blind to it: the AI-speak ban, the
+        // "saved" ban and the stands-alone needles all swept past the one beat the film exists for.
+        // A guard that covers the shape it expects and not the shape that exists is the third
+        // species of green.
         FILMS
             .iter()
             .flat_map(|film| film.beats.iter())
-            .flat_map(|beat| beat.reply.iter())
+            .flat_map(|beat| {
+                beat.reply
+                    .iter()
+                    .chain(beat.typed.iter().flat_map(|key| match key {
+                        crate::design_book::session::Key::Interrupt(says) => says.iter(),
+                        _ => [].iter(),
+                    }))
+            })
             .map(|say| match say {
                 Say::Answer { text, .. } => (*text).to_string(),
                 Say::System(text) => (*text).to_string(),
                 Say::Failure(lines) => lines.join(" "),
                 Say::Command { name, lines } => format!("{name} {}", lines.join(" ")),
                 Say::Table { name, rows, .. } => format!("{name} {}", rows.join(" ")),
-                Say::Gate => "gate refused fastapi_turbo".to_string(),
+                // The gate's own blockers ARE user-facing prose, so they belong in the sweep.
+                Say::Gate(fixture) => {
+                    let mut text = format!("{} {}", fixture.detail, fixture.note);
+                    for (claim, finding) in fixture.blockers {
+                        text.push_str(&format!(" {claim} {finding}"));
+                    }
+                    text
+                }
                 // Measured live, so it carries no script text to audit.
                 Say::LocalFleet => "local fleet measured on this machine".to_string(),
                 Say::Wait(_) => String::new(),
@@ -377,6 +403,33 @@ mod tests {
             assert!(
                 text.contains(statement),
                 "film 2 lost the beat carrying {statement:?} \u{2014} it no longer stands alone"
+            );
+        }
+    }
+
+    /// 🔴 **FILM 3 ARGUES ONE THING: HE FOUND OUT FROM ESTELLE, NOT FROM A DASHBOARD.**
+    ///
+    /// Its centre is an interrupt he did not ask for, a refusal of our OWN repair at the worst
+    /// possible moment, and a recovery on camera. Each needle is a beat a silent viewer has to see.
+    #[test]
+    fn film_three_stands_alone_with_the_sound_off() {
+        let text = spoken();
+        for statement in [
+            "serve/sweep.py:112", // 1 · ordinary work, cited, before anything breaks
+            "142 checkouts failed since 23:04", // 2 · 🔴 the user-visible fact, not a metric
+            "I would not normally interrupt", // 3 · the trust line
+            "put it back when this is over", // 4 · his sentence is held, and he is told so
+            "Nobody bought anything", // 5 · what the outage means to the business
+            "2026-09-01",         // 6 · the cause, to the version
+            "no such method in stripe 12.4.0", // 7 · 🔴 the gate refuses OUR repair
+            "nothing left the sandbox", // 8 · the refusal cost nothing
+            "recovered 23:15",    // 9 · it comes back, on camera
+            "held it while we worked", // 10 · the sentence returns
+            "billed by Estelle",  // 11 · the bill
+        ] {
+            assert!(
+                text.contains(statement),
+                "film 3 lost the beat carrying {statement:?} \u{2014} it no longer stands alone"
             );
         }
     }

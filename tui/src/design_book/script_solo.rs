@@ -28,7 +28,7 @@
 //! believes and own it.
 
 use crate::cols::Col;
-use crate::design_book::session::{Beat, Key, Say};
+use crate::design_book::session::{Beat, GateFixture, Key, Say};
 
 static PLAN: &[Col] = &[Col::l(2), Col::l(26), Col::l(24), Col::l(20)];
 static STEP: &[Col] = &[Col::l(2), Col::l(30), Col::l(40)];
@@ -53,6 +53,23 @@ static QUEUE: &[Col] = &[Col::l(4), Col::l(30), Col::l(22), Col::l(22)];
 /// 2026-09-02: this value returns `Some(("an sk- API key", 1))`. It carries TWO of the Python
 /// scanner's markers, so it is inert to every source scanner in the parent repo and still blocked by
 /// the binary this film is recorded from. ⛔ Do not shorten it without re-running that measurement.
+/// What the gate refuses in film 1: the local model reaches for a package that is not there.
+static INVENTED_IMPORT: GateFixture = GateFixture {
+    detail: "round 1 of 3 \u{b7} no model call",
+    note: "A deterministic check against this repo's symbol graph. This check asks no model, and no model can overrule it.",
+    blockers: &[
+        (
+            "import fastapi_turbo",
+            "no such package on PyPI; nearest is fastapi (0.115.6). The import would fail at load, not at test time.",
+        ),
+        (
+            "billing/portal.py:44",
+            "the repo graph holds zero definition sites for this module in any version the lockfile resolves.",
+        ),
+    ],
+    files: &[("billing/portal.py", 14), ("billing/hooks.py", 3)],
+};
+
 pub(crate) const FIXTURE_KEY: &str = "sk-ant-api03-notarealkey-demo-fixture-0000000000";
 
 pub(crate) const SOLO: &[Beat] = &[
@@ -441,7 +458,7 @@ pub(crate) const SOLO: &[Beat] = &[
                 ],
             },
             Say::Wait(2_000),
-            Say::Gate,
+            Say::Gate(&INVENTED_IMPORT),
             Say::Wait(2_600),
             Say::Command {
                 name: "work",
