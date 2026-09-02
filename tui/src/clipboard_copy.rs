@@ -37,7 +37,7 @@ static STDERR_SUPPRESSION_MUTEX: std::sync::OnceLock<std::sync::Mutex<()>> =
 /// copy, if needed.
 ///
 /// OSC 52 is supported by kitty, WezTerm, iTerm2, Ghostty, and others.
-pub(crate) fn copy_to_clipboard(text: &str) -> Result<Option<ClipboardLease>, String> {
+pub fn copy_to_clipboard(text: &str) -> Result<Option<ClipboardLease>, String> {
     copy_to_clipboard_with(
         text,
         CopyEnvironment {
@@ -60,7 +60,7 @@ pub(crate) fn copy_to_clipboard(text: &str) -> Result<Option<ClipboardLease>, St
 /// the handle lives as long as the TUI does. On non-Linux native paths and OSC 52
 /// paths the lease is `None` — those backends do not require process-lifetime
 /// ownership.
-pub(crate) struct ClipboardLease {
+pub struct ClipboardLease {
     #[cfg(target_os = "linux")]
     _clipboard: Option<arboard::Clipboard>,
 }

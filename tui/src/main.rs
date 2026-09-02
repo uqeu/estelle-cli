@@ -1975,6 +1975,12 @@ struct App {
     /// The walkable code graph, when it is open. `None` is closed — there is no third state, and
     /// the loading and refused states live INSIDE the walk so the pane owns its own honesty.
     graph_walk: Option<graph_walk::Walk>,
+    /// Held for as long as the copied text must stay on the clipboard.
+    ///
+    /// ⚠️ **DROPPING THE LEASE CAN DROP THE CLIPBOARD.** On the X11 path the process that owns a
+    /// selection must stay alive to serve it; `ClipboardLease` is what keeps it. Storing it is not
+    /// bookkeeping — a copy whose lease was dropped on the next line pastes nothing.
+    clipboard_lease: Option<estelle_tui::clipboard_copy::ClipboardLease>,
     graph_walk_in_flight: bool,
     affinity_costs: affinity_cli::CostLedger,
     shell_timeout: Duration,
@@ -2324,6 +2330,7 @@ impl App {
             gate_refusals: 0,
             affinity_surface: None,
             graph_walk: None,
+            clipboard_lease: None,
             graph_walk_in_flight: false,
             affinity_costs: affinity_cli::CostLedger::default(),
             shell_timeout: shell_timeout_from_value(
@@ -3008,6 +3015,113 @@ impl App {
             );
         }
         None
+    }
+
+    /// Expand or collapse the NEWEST tool call.
+    ///
+    /// 🔴 **"NEWEST" IS THE HONEST WORD FOR WHAT THIS SELECTS, AND THE HINT SAYS IT.** The design
+    /// book asks for "the selected call", and this transcript has no keyboard cursor over tool
+    /// rows — the only selection it has ever had is a MOUSE CLICK on an exact row
+    /// (`transcript::toggle_tool_at`). Calling the newest row "selected" would be a word that
+    /// means one thing in the footer and another in the code. It is also the row a reader is
+    /// looking at: the transcript is pinned to the bottom while a command runs.
+    fn toggle_newest_tool(&mut self) {
+        let newest = self
+            .transcript
+            .iter_mut()
+            .rev()
+            .find(|entry| matches!(entry, TranscriptEntry::Tool { .. }));
+        match newest {
+            Some(TranscriptEntry::Tool { expanded, .. }) => *expanded = !*expanded,
+            // ⚠️ SAYS SO RATHER THAN DOING NOTHING. A chord that silently no-ops is a chord the
+            // user concludes is broken; `ctrl+t` sets the precedent two arms below.
+            _ => self.transcript.push(TranscriptEntry::System(
+                "No tool call in this session yet. ctrl+r opens the newest one when there is."
+                    .to_string(),
+            )),
+        }
+    }
+
+    /// Expand every tool call, or collapse every one when they are all already open.
+    ///
+    /// ⚠️ **ONE KEY, ONE MEANING, DECIDED BY WHAT IS ON SCREEN.** A key that always expanded would
+    /// have no way back; a key that toggled each row independently would leave a transcript half
+    /// open and half shut with no state a reader can name.
+    fn toggle_every_tool(&mut self) {
+        let mut tools = 0usize;
+        let mut open = 0usize;
+        for entry in &self.transcript {
+            if let TranscriptEntry::Tool { expanded, .. } = entry {
+                tools += 1;
+                open += usize::from(*expanded);
+            }
+        }
+        if tools == 0 {
+            self.transcript.push(TranscriptEntry::System(
+                "No tool call in this session yet. ctrl+e opens every one when there are.".to_string(),
+            ));
+            return;
+        }
+        let target = open < tools;
+        for entry in &mut self.transcript {
+            if let TranscriptEntry::Tool { expanded, .. } = entry {
+                *expanded = target;
+            }
+        }
+    }
+
+    /// Copy the newest tool call's WHOLE output to the clipboard.
+    ///
+    /// 🔴 **THE WHOLE OUTPUT, NOT WHAT IS ON SCREEN.** The point of copying a 400-line test run is
+    /// the 388 lines the collapsed row is not showing. A copy that matched the pane would hand the
+    /// user the tail they could already read and silently drop the part they wanted.
+    ///
+    /// ⚠️ The receipt names the LINE COUNT, because a clipboard write is invisible and a copy that
+    /// reports nothing is indistinguishable from one that failed.
+    fn copy_newest_tool(&mut self) {
+        self.copy_newest_tool_with(estelle_tui::clipboard_copy::copy_to_clipboard);
+    }
+
+    /// Split from [`Self::copy_newest_tool`] so a test can assert WHAT was handed to the
+    /// clipboard without writing to the developer's actual clipboard.
+    ///
+    /// ⚠️ **A TEST THAT DROVE THE REAL COPY WOULD BE UNRUNNABLE ON CI AND RUDE LOCALLY**, so the
+    /// interesting half — is it the whole output or the visible tail? — would have gone unasserted.
+    /// `chatwidget::interaction::copy_last_agent_markdown_with` is the same shape for the same
+    /// reason.
+    fn copy_newest_tool_with(
+        &mut self,
+        copy: impl FnOnce(
+            &str,
+        )
+            -> Result<Option<estelle_tui::clipboard_copy::ClipboardLease>, String>,
+    ) {
+        let newest = self.transcript.iter().rev().find_map(|entry| match entry {
+            TranscriptEntry::Tool { label, lines, .. } => Some((label.clone(), lines.clone())),
+            _ => None,
+        });
+        let Some((label, lines)) = newest else {
+            self.transcript.push(TranscriptEntry::System(
+                "No tool call to copy yet.".to_string(),
+            ));
+            return;
+        };
+        let count = lines.len();
+        // Masked on the way out, for the same reason the pane masks on the way in: a shell that
+        // printed a key must not put it on the clipboard either.
+        let body = lines
+            .iter()
+            .map(|line| mask_secret(line))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let message = match copy(&body) {
+            Ok(lease) => {
+                self.clipboard_lease = lease;
+                format!("Copied {count} lines of {label} to the clipboard.")
+            }
+            Err(error) => format!("Could not copy {label}: {error}"),
+        };
+        self.transcript.push(TranscriptEntry::System(message));
     }
 
     fn toggle_context_panel(&mut self) {
@@ -6810,6 +6924,27 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
         app.toggle_terminal_selection();
         return false;
     }
+    // 🔴 **THREE CHORDS, NOT THE BOOK'S `ctrl+o` AND `c`, AND BOTH SUBSTITUTIONS ARE FORCED.**
+    //
+    // The book asks for `ctrl+r` expand-one, `ctrl+o` expand-all and `c` copy.
+    //   · `ctrl+o` IS ALREADY BOUND, to the terminal-selection toggle, and it is advertised on
+    //     every frame of the hint row (`ctrl+o selection`). Two owners of one chord is the defect
+    //     this file names most often, so expand-all is `ctrl+e`.
+    //   · `c` cannot be a global binding: an unmodified letter reaches the composer, so binding it
+    //     would mean a `c` typed at the prompt copied a tool call instead of writing a character.
+    //     Copy is `ctrl+y` - yank - which nothing in this handler or the composer keymap takes.
+    if control_letter(&key, 'r') {
+        app.toggle_newest_tool();
+        return false;
+    }
+    if control_letter(&key, 'e') {
+        app.toggle_every_tool();
+        return false;
+    }
+    if control_letter(&key, 'y') {
+        app.copy_newest_tool();
+        return false;
+    }
     if key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL) {
         if app.todo.is_some() {
             app.todo_visible = true;
@@ -9353,9 +9488,14 @@ mod tests {
         let body = handle_key_body();
 
         // NEGATIVE CONTROL. The detector must be able to say NO, or every line below is decoration.
+        //
+        // ⚠️ **THIS WAS `ctrl+y` UNTIL 2026-09-02 AND `ctrl+y` IS NOW THE TOOL-CALL COPY.** The
+        // control moved because the chord got a job, which is exactly the instruction the previous
+        // version of this line carried. `ctrl+q` is free: `handle_key` binds c/s/r/e/y/g/o/t/w/x
+        // and nothing takes q.
         assert!(
-            !body.contains("control_letter(&key, 'y')"),
-            "control chord ctrl+y is bound; pick another unbound chord for the control"
+            !body.contains("control_letter(&key, 'q')"),
+            "control chord ctrl+q is bound; pick another unbound chord for the control"
         );
         // POSITIVE CONTROL. The detector must be able to say YES on a chord known to be bound.
         assert!(
@@ -10696,6 +10836,166 @@ mod tests {
         absent.header.indexed = Some(false);
         let drawn = rendered_frame_at_size(&absent, Instant::now(), 200, 30);
         assert!(drawn.contains("repo graph absent"), "{drawn}");
+    }
+
+    fn tool_entry(label: &str, lines: usize) -> TranscriptEntry {
+        TranscriptEntry::Tool {
+            label: label.to_string(),
+            lines: (0..lines).map(|index| format!("line {index:03}")).collect(),
+            expanded: false,
+        }
+    }
+
+    fn tool_states(app: &App) -> Vec<bool> {
+        app.transcript
+            .iter()
+            .filter_map(|entry| match entry {
+                TranscriptEntry::Tool { expanded, .. } => Some(*expanded),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 🔴 **THREE CHORDS, EACH PRESSED THROUGH `handle_key`, EACH ASSERTED ON WHAT MOVED.**
+    ///
+    /// The book asks for `ctrl+r` / `ctrl+o` / `c`. Two of the three could not be taken:
+    /// `ctrl+o` is the terminal-selection toggle and is printed on every frame of the live hint
+    /// row, and `c` is an unmodified letter that reaches the composer. The substitutions are
+    /// `ctrl+e` and `ctrl+y`, and the book's own screen-39 footer was changed to match — a picture
+    /// that names a chord the binary drops is the defect this pass exists to close.
+    #[test]
+    fn the_tool_call_chords_expand_one_expand_all_and_copy_all() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let now = Instant::now();
+        let mut app = test_app();
+        app.transcript.push(tool_entry("!cargo build", 4));
+        app.transcript.push(tool_entry("!cargo test", 30));
+
+        // NEGATIVE CONTROL: an unbound chord leaves every row exactly as it was.
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL), &tx);
+        assert_eq!(tool_states(&app), vec![false, false]);
+
+        // The three chords are read from the slice the footer prints, so a chord that moves in one
+        // place and not the other cannot pass this test.
+        let chord = |index: usize| {
+            transcript::TOOL_CALL_KEYS[index]
+                .0
+                .strip_prefix("ctrl+")
+                .and_then(|rest| rest.chars().next())
+                .expect("a tool-call chord is spelled ctrl+<letter>")
+        };
+        assert_eq!((chord(0), chord(1), chord(2)), ('r', 'e', 'y'));
+
+        // ctrl+r takes the NEWEST call, and only that one.
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char(chord(0)), KeyModifiers::CONTROL), &tx);
+        assert_eq!(
+            tool_states(&app),
+            vec![false, true],
+            "ctrl+r must open the newest call and leave the older one shut"
+        );
+        let frame = rendered_frame_at_size(&app, now, 100, 60);
+        assert!(
+            frame.contains("18 lines hidden"),
+            "an expanded 30-line call must count the 18 it did not draw:\n{frame}"
+        );
+        assert!(
+            frame.contains("line 029"),
+            "an expanded call shows the END of its output:\n{frame}"
+        );
+        assert!(
+            !frame.contains("line 000"),
+            "a counted-hidden line was drawn anyway:\n{frame}"
+        );
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL), &tx);
+        assert_eq!(tool_states(&app), vec![false, false], "ctrl+r does not close");
+
+        // ctrl+e opens every call, and a second press shuts every one.
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL), &tx);
+        assert_eq!(tool_states(&app), vec![true, true]);
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL), &tx);
+        assert_eq!(tool_states(&app), vec![false, false]);
+
+        // 🔴 THE COPY IS THE WHOLE OUTPUT, NOT THE VISIBLE TAIL. That is the entire reason the
+        // hidden-count row names this key: a copy that matched the pane would hand the reader the
+        // twelve lines they could already see and drop the eighteen they wanted.
+        let copied = std::cell::RefCell::new(String::new());
+        app.copy_newest_tool_with(|text| {
+            copied.borrow_mut().push_str(text);
+            Ok(None)
+        });
+        let body = copied.into_inner();
+        assert_eq!(
+            body.lines().count(),
+            30,
+            "ctrl+y copied the visible tail rather than the whole output"
+        );
+        assert!(body.starts_with("line 000"), "{body}");
+        assert!(body.ends_with("line 029"), "{body}");
+    }
+
+    /// A chord with nothing to act on says so instead of doing nothing.
+    #[test]
+    fn a_tool_chord_with_no_tool_call_answers_rather_than_no_opping() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        for chord in ['r', 'e', 'y'] {
+            let mut app = test_app();
+            handle_key(&mut app, KeyEvent::new(KeyCode::Char(chord), KeyModifiers::CONTROL), &tx);
+            assert!(
+                matches!(app.transcript.last(), Some(TranscriptEntry::System(_))),
+                "ctrl+{chord} did nothing and said nothing"
+            );
+        }
+    }
+
+    /// 🔴 **THE BOOK'S SCREEN-39 FOOTER IS RENDERED FROM THE KEYMAP'S OWN SLICE.**
+    ///
+    /// The first version of this scanned the drawn footer for `ctrl+<letter>` and asked
+    /// `handle_key` whether that letter was bound. Its mutant — restoring the book's original
+    /// `ctrl+o expands every call` — **SURVIVED**, because `ctrl+o` really is bound: to the
+    /// terminal-selection toggle. A guard that can see a chord with NO job and cannot see a chord
+    /// with the WRONG job is the `tab repo` defect wearing a test's clothes.
+    ///
+    /// The footer now comes from `transcript::TOOL_CALL_KEYS`, so this asserts the identity rather
+    /// than a spelling, and the behaviour of each chord is pressed in
+    /// `the_tool_call_chords_expand_one_expand_all_and_copy_all`.
+    #[test]
+    fn the_tool_call_screen_prints_the_keymaps_own_chords_and_no_others() {
+        let drawn = design_book::answers::tool_calls(&Theme::Dark.screen_palette(), 0, false)
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            drawn.contains(&transcript::tool_call_keys_line()),
+            "the footer is not the keymap's own row:\n{drawn}"
+        );
+        // Every chord the FRAME names must be one of the three, whatever it says beside it.
+        let letters: Vec<char> = drawn
+            .match_indices("ctrl+")
+            .filter_map(|(at, _)| drawn[at + 5..].chars().next())
+            .collect();
+        assert!(letters.len() >= 3, "the scan found {} chords", letters.len());
+        for letter in letters {
+            assert!(
+                transcript::TOOL_CALL_KEYS
+                    .iter()
+                    .any(|(key, _)| *key == format!("ctrl+{letter}")),
+                "screen 39 names ctrl+{letter}, which is not one of the tool-call chords"
+            );
+        }
+        // NEGATIVE CONTROL: the membership test must be able to REJECT something.
+        assert!(
+            !transcript::TOOL_CALL_KEYS
+                .iter()
+                .any(|(key, _)| *key == "ctrl+o"),
+            "ctrl+o is the terminal-selection toggle and may not be a tool-call chord"
+        );
     }
 
     fn walk_fixture() -> graph_walk::Fetched {

@@ -29,6 +29,38 @@ use serde_json::Value;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
+/// The chords that act on a tool call, in the order screen 39's footer prints them.
+///
+/// 🔴 **ONE OWNER, BECAUSE A FOOTER THAT MERELY NAMES A *BOUND* CHORD IS NOT ENOUGH.** The first
+/// guard here scanned the drawn footer for `ctrl+<letter>` and asked `handle_key` whether that
+/// letter was bound. Its mutant — putting the book's original `ctrl+o expands every call` back —
+/// **SURVIVED**, because `ctrl+o` really is bound: to the terminal-selection toggle. The check
+/// could see a chord with no job and could not see a chord with the WRONG job, which is the
+/// defect already on the record for `tab repo`.
+///
+/// So the footer is rendered from this slice and `handle_key` dispatches on the same letters, and
+/// `the_tool_call_chords_expand_one_expand_all_and_copy_all` presses each one and asserts the
+/// effect this table names.
+///
+/// ⚠️ **TWO OF THE THREE ARE NOT THE BOOK'S CHORDS.** The book asks for `ctrl+o` and `c`.
+/// `ctrl+o` is the terminal-selection toggle and is printed on every frame of the live hint row;
+/// `c` is an unmodified letter and reaches the composer, so binding it would mean a `c` typed at
+/// the prompt copied a tool call. The picture moved rather than the binding.
+pub(crate) const TOOL_CALL_KEYS: &[(&str, &str)] = &[
+    ("ctrl+r", "expands the selected call"),
+    ("ctrl+e", "expands every call"),
+    ("ctrl+y", "copies all of it"),
+];
+
+/// The footer line screen 39 draws, from [`TOOL_CALL_KEYS`].
+pub(crate) fn tool_call_keys_line() -> String {
+    TOOL_CALL_KEYS
+        .iter()
+        .map(|(key, label)| format!("{key} {label}"))
+        .collect::<Vec<_>>()
+        .join(" \u{b7} ")
+}
+
 pub(crate) enum TranscriptEntry {
     SessionHandoff(Vec<String>),
     User(String),

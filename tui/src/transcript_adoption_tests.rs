@@ -30,18 +30,36 @@ fn rendered_frame_at_size(app: &App, now: Instant, width: u16, height: u16) -> S
     format!("{}", terminal.backend())
 }
 
+/// 🔴 **CLICK STILL TOGGLES THE EXACT ROW, AND EXPANDING NOW COUNTS WHAT IT DID NOT DRAW.**
+///
+/// This test's body was one line long, so it could not tell "expanded" from "the whole output
+/// fits". It is twenty lines now: the first is the one the tail must NOT show, the last is the one
+/// it must, and the count between them is the founder's rule — *a bash step printing 400 lines
+/// shows the last 12 and a COUNT.*
 #[test]
 fn tool_output_stays_collapsed_until_its_exact_row_is_clicked() {
     let mut app = test_app();
+    let mut body = vec!["hidden tool body".to_string()];
+    body.extend((1..20).map(|index| format!("line {index:02} of the run")));
     app.transcript.push(TranscriptEntry::Tool {
         label: "!cargo test".to_string(),
-        lines: vec!["hidden tool body".to_string()],
+        lines: body,
         expanded: false,
     });
 
-    let collapsed = rendered_frame_at_size(&app, Instant::now(), 100, 24);
+    // ⚠️ TALL ENOUGH THAT THE EXPANDED BODY DOES NOT PUSH THE HEADER OFF THE TOP. At 40 rows the
+    // 20-line body scrolled `⏺ !cargo test` out of view and the assertion below failed on a
+    // correct render - a test that measures the terminal size instead of the behaviour.
+    let collapsed = rendered_frame_at_size(&app, Instant::now(), 100, 60);
     assert!(collapsed.contains("⏺ !cargo test"));
-    assert!(!collapsed.contains("hidden tool body"));
+    assert!(
+        !collapsed.contains("hidden tool body"),
+        "the first line is 29 rows above the tail and must not be shown:\n{collapsed}"
+    );
+    assert!(
+        !collapsed.contains("line 19 of the run"),
+        "a collapsed call is one row and must draw no output:\n{collapsed}"
+    );
     let target = app.tool_click_targets.borrow()[0];
 
     handle_mouse(
@@ -70,9 +88,20 @@ fn tool_output_stays_collapsed_until_its_exact_row_is_clicked() {
             modifiers: KeyModifiers::NONE,
         },
     );
-    let expanded = rendered_frame_at_size(&app, Instant::now(), 100, 24);
+    let expanded = rendered_frame_at_size(&app, Instant::now(), 100, 60);
     assert!(expanded.contains("⏺ !cargo test"));
-    assert!(expanded.contains("hidden tool body"));
+    assert!(
+        !expanded.contains("hidden tool body"),
+        "the first of twenty lines is above the tail and must not be drawn:\n{expanded}"
+    );
+    assert!(
+        expanded.contains("line 19 of the run"),
+        "the expanded row must show the END of the output:\n{expanded}"
+    );
+    assert!(
+        expanded.contains("8 lines hidden"),
+        "what is hidden must be counted:\n{expanded}"
+    );
 }
 
 /// 🔴 THIS TEST USED TO PIN THE DEFECT.

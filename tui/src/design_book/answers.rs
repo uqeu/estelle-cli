@@ -239,12 +239,18 @@ pub(crate) fn tool_calls(palette: &Palette, tick: u64, pulse: bool) -> Vec<Line<
 
     // 🔴 THE COUNT OF WHAT IS NOT SHOWN, IN THE FIRST OUTPUT LINE. A capped read means "cannot
     // answer", never "that's all there is" — so the hidden lines are counted before the tail that
-    // survived, and the key that shows them sits on the same line.
+    // survived, and the key that hands the reader ALL of them sits on the same line.
+    //
+    // ⚠️ **IT SAID `ctrl+r expands` AND THAT WAS THE ONE KEY THAT COULD NOT DELIVER THIS.** `ctrl+r`
+    // is the expand toggle, and this row is what an EXPANDED call draws — pressing it here
+    // collapses the row rather than revealing the 212. The escape hatch for the hidden lines is
+    // the clipboard: `ctrl+y` copies the WHOLE output, not what is on screen. Same sentence as
+    // `public_widgets::history_transcript`, which is the renderer that prints it in production.
     lines.push(row(
         OUTPUT,
         &[
             Cell("⎿", palette.dim),
-            Cell("212 lines hidden · ctrl+r expands", palette.warn),
+            Cell("212 lines hidden · ctrl+y copies all 224", palette.warn),
             Cell("", palette.dim),
         ],
         2,
@@ -284,7 +290,12 @@ pub(crate) fn tool_calls(palette: &Palette, tick: u64, pulse: bool) -> Vec<Line<
 
     lines.push(blank());
     let mut foot = |text: &str| lines.push(note(palette, text));
-    foot("ctrl+r expands the selected call · ctrl+o expands every call · c copies this output");
+    // 🔴 **TWO OF THE THREE CHORDS MOVED, AND BOTH SUBSTITUTIONS WERE FORCED — SEE `handle_key`.**
+    // `ctrl+o` is the terminal-selection toggle and is advertised on every frame of the live hint
+    // row; `c` is an unmodified letter and reaches the composer, so binding it would mean a `c`
+    // typed at the prompt copied a tool call. A book footer naming a chord the binary drops is the
+    // defect this whole pass exists to close, so the picture moved rather than the binding.
+    foot(&crate::transcript::tool_call_keys_line());
     foot("a collapsed call is one row. nothing is dropped silently: what is hidden is counted.");
     lines
 }

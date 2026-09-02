@@ -116,7 +116,12 @@ mod box_glyphs;
 mod branch_summary;
 mod chatwidget;
 mod cli;
-mod clipboard_copy;
+// 🔴 **EXPORTED SO THE BINARY CAN COPY, AND FOR NO OTHER REASON.** `main.rs` is a separate crate
+// root and cannot see a private module of this library, so `ctrl+y` on a tool call had a working
+// implementation it could not reach. Re-implementing the copy in the binary would have made two
+// owners of "how does this product reach the clipboard" — and one of them would not have known
+// about SSH, tmux or OSC 52, which is the half this one exists for.
+pub mod clipboard_copy;
 mod clipboard_paste;
 mod collaboration_modes;
 mod color;

@@ -20,6 +20,25 @@ const TOOL_MARKER: &str = "⏺ ";
 const TOOL_CONTINUATION: &str = "  ⎿  ";
 const TOOL_INDENT: &str = "     ";
 
+/// How many lines of a tool's output an EXPANDED row draws.
+///
+/// 🔴 **THE FOUNDER'S RULE, IN A CONSTANT: A BASH STEP PRINTING 400 LINES SHOWS THE LAST 12 AND A
+/// COUNT.** Expanding used to mean *print all 400 into the scrollback*, which is not disclosure —
+/// it is the same wall of text with an extra keypress in front of it, and it pushes every earlier
+/// turn off the screen. The TAIL is what a reader wants: a shell command says what happened at the
+/// end.
+///
+/// ⚠️ **AND IT IS THE EXPANDED ROW, NOT THE COLLAPSED ONE.** The design book's own screen 39
+/// footer reads *"a collapsed call is one row"*, and its expanded frame is headed
+/// *"expanded, tail first"* over `212 lines hidden` and exactly twelve rows of output. A first
+/// pass here put the tail in the COLLAPSED row and broke that sentence; the book is canonical.
+///
+/// 🔴 **NEVER A SILENT TRUNCATION, AND THE ESCAPE HATCH IS NAMED.** The count of what is not drawn
+/// is its own row, and it names the key that hands the reader ALL of it — `ctrl+y`, which copies
+/// the whole output rather than what is on screen. An output that fits hides nothing and prints no
+/// such row: absent and zero are different bytes here too.
+const TOOL_TAIL_LINES: usize = 12;
+
 /// One committed transcript item rendered by the maintained history-cell machinery.
 pub enum HistoryTranscriptItem {
     /// A user turn with the native filled, wrapped user-message treatment.
@@ -150,7 +169,7 @@ pub fn render_interactive_history_transcript(
             HistoryTranscriptItem::Tool {
                 id,
                 label,
-                lines,
+                mut lines,
                 expanded,
                 semantic_color,
             } => {
@@ -172,8 +191,24 @@ pub fn render_interactive_history_transcript(
                     .dark_gray(),
                 ])];
                 if expanded {
-                    tool_lines.extend(lines.into_iter().enumerate().map(|(index, line)| {
-                        let lead = if index == 0 {
+                    let total = lines.len();
+                    let hidden = total.saturating_sub(TOOL_TAIL_LINES);
+                    if hidden > 0 {
+                        tool_lines.push(Line::from(vec![
+                            ratatui::text::Span::from(TOOL_CONTINUATION),
+                            format!(
+                                "{hidden} line{} hidden \u{b7} ctrl+y copies all {total}",
+                                if hidden == 1 { "" } else { "s" }
+                            )
+                            .dark_gray(),
+                        ]));
+                    }
+                    let shown = lines.split_off(hidden);
+                    tool_lines.extend(shown.into_iter().enumerate().map(|(index, line)| {
+                        // The `⎿` elbow opens the BODY. When a hidden-count row is present it has
+                        // already taken the elbow, so the first visible line indents like the
+                        // rest — two elbows under one call would read as two calls.
+                        let lead = if index == 0 && hidden == 0 {
                             TOOL_CONTINUATION
                         } else {
                             TOOL_INDENT
@@ -465,46 +500,76 @@ mod tests {
         assert!(rendered.contains("cited  src/lib.rs:4"));
     }
 
+    /// 🔴 **A COLLAPSED CALL IS ONE ROW; AN EXPANDED ONE IS THE TAIL PLUS A COUNT.**
+    ///
+    /// Expanding used to print all 400 lines into the scrollback, which is the same wall of text
+    /// with a keypress in front of it. It draws the last `TOOL_TAIL_LINES` now, over a row saying
+    /// how many it did not draw and which key hands the reader all of them.
+    ///
+    /// ⚠️ **THE FIXTURE IS SIZED FROM THE CONSTANT, NOT FROM 12.** A test that wrote `12` would go
+    /// red for the wrong reason the day the constant moved, and green for the wrong reason if
+    /// someone changed the constant to match a broken render.
     #[test]
-    fn tool_output_is_one_interactive_line_until_expanded() {
-        let collapsed = render_interactive_history_transcript(
-            vec![HistoryTranscriptItem::Tool {
-                id: 7,
-                label: "!cargo test".to_string(),
-                lines: vec![Line::from("first"), Line::from("second")],
-                expanded: false,
-                semantic_color: Color::Blue,
-            }],
-            80,
-            Path::new("."),
-        );
+    fn an_expanded_tool_call_shows_its_tail_and_counts_what_it_hid() {
+        let body = |count: usize| {
+            (0..count)
+                .map(|index| Line::from(format!("line {index:03}")))
+                .collect::<Vec<_>>()
+        };
+        let render = |lines: Vec<Line<'static>>, expanded: bool| {
+            render_interactive_history_transcript(
+                vec![HistoryTranscriptItem::Tool {
+                    id: 7,
+                    label: "!cargo test".to_string(),
+                    lines,
+                    expanded,
+                    semantic_color: Color::Blue,
+                }],
+                80,
+                Path::new("."),
+            )
+        };
+
+        let long = TOOL_TAIL_LINES + 6;
+
+        // COLLAPSED IS STILL ONE ROW. The book's own screen-39 footer says so, and a first pass
+        // here put the tail in this state and broke that sentence.
+        let collapsed = render(body(long), false);
         let collapsed_debug = format!("{:?}", collapsed.text);
-        // ⚠️ THE GLYPH NO LONGER CARRIES THE DISCLOSURE STATE, AND THAT IS A DELIBERATE LOSS.
-        // The design opens every tool call with `⏺` in both states; what distinguishes them is
-        // the `⎿` BODY, which is present only when expanded. The `▸`/`▾` triangle belonged to
-        // the boxed language this renderer no longer speaks.
         assert!(collapsed_debug.contains("⏺ "), "{collapsed_debug}");
         assert!(!collapsed_debug.contains("⎿"), "{collapsed_debug}");
-        assert!(!collapsed_debug.contains("first"));
+        assert!(
+            !collapsed_debug.contains("line 0"),
+            "a collapsed call drew output:\n{collapsed_debug}"
+        );
         assert_eq!(
             collapsed.interactive_rows,
             vec![InteractiveHistoryRow { id: 7, line: 0 }]
         );
 
-        let expanded = render_interactive_history_transcript(
-            vec![HistoryTranscriptItem::Tool {
-                id: 7,
-                label: "!cargo test".to_string(),
-                lines: vec![Line::from("first"), Line::from("second")],
-                expanded: true,
-                semantic_color: Color::Blue,
-            }],
-            80,
-            Path::new("."),
-        );
+        let expanded = render(body(long), true);
         let expanded_debug = format!("{:?}", expanded.text);
-        assert!(expanded_debug.contains("⏺ "), "{expanded_debug}");
         assert!(expanded_debug.contains("⎿"), "{expanded_debug}");
-        assert!(expanded_debug.contains("first"));
+        assert!(
+            expanded_debug.contains(&format!("6 lines hidden \u{b7} ctrl+y copies all {long}")),
+            "what is hidden must be counted, and the key that hands it over must be named:\n{expanded_debug}"
+        );
+        assert!(
+            !expanded_debug.contains("line 000"),
+            "a hidden line was drawn, so the count is wrong:\n{expanded_debug}"
+        );
+        assert!(
+            expanded_debug.contains(&format!("line {:03}", long - 1)),
+            "the LAST line is the one an expanded row exists to show:\n{expanded_debug}"
+        );
+
+        // An output that fits hides nothing, so it counts nothing. Absent and zero stay apart.
+        let short = render(body(2), true);
+        let short_debug = format!("{:?}", short.text);
+        assert!(short_debug.contains("line 000"), "{short_debug}");
+        assert!(
+            !short_debug.contains("hidden"),
+            "an output that fits must not claim it hid rows:\n{short_debug}"
+        );
     }
 }
