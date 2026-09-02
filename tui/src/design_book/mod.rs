@@ -36,6 +36,10 @@ pub(crate) mod kit;
 pub(crate) mod loops;
 pub(crate) mod panel;
 pub(crate) mod panes;
+/// The three films, as data. Reorder a beat here and nowhere else.
+pub(crate) mod script;
+/// The vocabulary a scripted session is written in.
+pub(crate) mod session;
 pub(crate) mod skills;
 pub(crate) mod stats;
 pub(crate) mod surfaces;

@@ -10,6 +10,15 @@ mod commands;
 #[cfg(test)]
 mod composer_band_tests;
 mod copilot_login;
+/// 🎬 `estelle demo --session N` — the design book's screens reassembled into ONE continuous
+/// working session, played unattended in the real renderer.
+///
+/// The gallery above is a product tour: a full-frame render per screen, advanced by a keypress.
+/// The founder watched it and asked for the other thing — *"one minute of this guy just working in
+/// the CLI"* — so this module owns a transcript that only ever grows. It is a separate module
+/// rather than a flag on `run_demo` because the two have opposite invariants: the gallery REPLACES
+/// the frame every beat and the session may never reset it.
+mod demo_session;
 /// 🔴 THE DESIGN BOOK'S SCREENS, AND WHY THEY SHIP NOW.
 ///
 /// They used to be `#[cfg(test)]`, on the argument that compiling fixture data into the binary
@@ -339,6 +348,20 @@ enum Command {
         /// Render on the cream ground rather than the dark one.
         #[arg(long)]
         cream: bool,
+        /// 🎬 Play one scripted SESSION instead of paging the gallery: `--session 1`.
+        ///
+        /// One continuous transcript in the real renderer, typed character by character, played
+        /// unattended, exiting on its own. `--session 0` lists the films and their real runtimes.
+        #[arg(long, value_name = "FILM")]
+        session: Option<u8>,
+        /// Playback speed for `--session`. `1` is the rehearsed pace; `0.75` plays at three
+        /// quarters speed and runs LONGER, which is what a voiceover wants.
+        ///
+        /// A named multiplier rather than a literal buried in the timing loop: every duration in
+        /// the film is divided by it, so the whole rhythm stretches together instead of only the
+        /// typing.
+        #[arg(long, default_value_t = 1.0, value_name = "MULTIPLIER")]
+        speed: f32,
     },
     /// Scan your own ~/.claude and ~/.codex for exposed credentials. Fully offline: no network,
     /// no account; prints rule + fingerprint + path + line, never the value.
@@ -6983,6 +7006,79 @@ fn demo_chrome(
     ]
 }
 
+/// 🎬 `estelle demo --session N` — play one film, unattended, and come back with the terminal
+/// exactly as it was found.
+///
+/// ⚠️ **THE TERMINAL IS CLAIMED AND RELEASED HERE, NOT IN THE PLAYER.** `TerminalSession` restores
+/// raw mode and leaves the alternate screen on `Drop`, and it is dropped on EVERY path out of this
+/// function including the error ones. The founder had to Ctrl-C repeatedly out of an earlier
+/// attempt at this; a player that owned the session could return an error before its own cleanup
+/// and leave him in raw mode with no cursor.
+async fn run_session(film: u8, speed: f32, demo: bool, cream: bool, list: bool) -> ExitCode {
+    let fixtures = design_book::fixtures_allowed(demo);
+    // `--session 0` is the listing. It draws no fixture data — a film's NAME and RUNTIME are safe
+    // with the gate shut, the same reason `--list` is the one demo path that does not consult it.
+    if film == 0 {
+        let mut stdout = tokio::io::stdout();
+        let ok = stdout
+            .write_all(format!("{}\n", demo_session::listing()).as_bytes())
+            .await
+            .is_ok();
+        return if ok {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
+    if let (Some(found), true) = (design_book::script::film(film), list) {
+        let mut stdout = tokio::io::stdout();
+        let ok = stdout
+            .write_all(format!("{}\n", demo_session::timeline(found)).as_bytes())
+            .await
+            .is_ok();
+        return if ok {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
+    if design_book::script::film(film).is_none() {
+        // 🔴 A FILM THAT IS NOT WRITTEN SAYS SO. It does not play a shortened stand-in, and it does
+        // not play film 1 under another number: footage that silently substitutes a different story
+        // is exactly the class of quiet wrong answer this product exists to refuse.
+        let mut stdout = tokio::io::stdout();
+        let _ = stdout
+            .write_all(
+                format!(
+                    "no film {film}. written today:\n\n{}\n",
+                    demo_session::listing()
+                )
+                .as_bytes(),
+            )
+            .await;
+        return ExitCode::FAILURE;
+    }
+
+    let theme = if cream { Theme::CreamInk } else { Theme::Dark };
+    let session = match TerminalSession::enter() {
+        Ok(session) => session,
+        Err(error) => return demo_failure(&error).await,
+    };
+    let outcome = demo_session::run(
+        film,
+        speed,
+        fixtures,
+        theme.screen_palette(),
+        theme.background(),
+    )
+    .await;
+    drop(session);
+    match outcome {
+        Ok(code) => code,
+        Err(error) => demo_failure(&error).await,
+    }
+}
+
 async fn demo_failure(error: &impl std::fmt::Display) -> ExitCode {
     let mut stdout = tokio::io::stdout();
     let _ = stdout
@@ -7049,8 +7145,13 @@ async fn main() -> ExitCode {
         list,
         demo,
         cream,
+        session,
+        speed,
     }) = &args.command
     {
+        if let Some(film) = session {
+            return run_session(*film, *speed, *demo, *cream, *list).await;
+        }
         return run_demo(screen.as_deref(), *list, *demo, *cream).await;
     }
     if matches!(args.command, Some(Command::Doctor)) {
