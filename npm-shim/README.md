@@ -132,9 +132,11 @@ Read the limit in the same breath, because it is the part that decides whether t
 
 ## Bring your own key
 
-Estelle routes to whichever model you configure: Anthropic, OpenAI, Google, DeepSeek, Moonshot, or a local
-model on your own hardware. Your key, your provider, your bill. Estelle owns the routing, the grounding,
-and the memory. It does not own your model.
+Estelle routes to whichever model you configure. `estelle login --provider <name>` knows fourteen:
+a Claude subscription, Anthropic, OpenAI, Google Gemini, GitHub Copilot, Azure OpenAI, AWS Bedrock,
+OpenRouter, DeepSeek, Fireworks, MiniMax, LM Studio, Ollama, and any OpenAI-compatible endpoint, which
+covers a model running on your own hardware. Your key, your provider, your bill. Estelle owns the routing,
+the grounding, and the memory. It does not own your model.
 
 Fixes are proposed, not merged. The default writes to a sandbox and opens a pull request a human reviews.
 Auto-merge is opt-in, off by default, and gated on the fix being proved green in a sandbox first. There is
