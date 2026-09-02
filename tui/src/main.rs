@@ -7064,14 +7064,7 @@ async fn run_session(film: u8, speed: f32, demo: bool, cream: bool, list: bool) 
         Ok(session) => session,
         Err(error) => return demo_failure(&error).await,
     };
-    let outcome = demo_session::run(
-        film,
-        speed,
-        fixtures,
-        theme.screen_palette(),
-        theme.background(),
-    )
-    .await;
+    let outcome = demo_session::run(film, speed, fixtures, theme).await;
     drop(session);
     match outcome {
         Ok(code) => code,

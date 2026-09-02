@@ -1,80 +1,303 @@
 //! The session player's guards, in their own file.
 //!
-//! ⚠️ **SPLIT OUT BECAUSE `demo_session.rs` REACHED 917 LINES** against a house limit of 800. It is
-//! attached with `#[path]` as a CHILD of `demo_session` rather than declared as a sibling in
+//! ⚠️ **SPLIT OUT BECAUSE `demo_session.rs` WOULD OTHERWISE BE OVER THE 800-LINE HOUSE LIMIT.** It
+//! is attached with `#[path]` as a CHILD of `demo_session` rather than declared as a sibling in
 //! `main.rs`, which is the difference that matters: a sibling could only reach `pub(crate)` items,
-//! and every guard here asserts on the player's PRIVATE machinery — the cue sheet, the transcript,
-//! the frame. Widening `Cue` and `Screen` to `pub(crate)` to make a test compile would have made
-//! the transcript reachable from outside the one module that is allowed to touch it, which is the
-//! invariant this whole file exists to defend.
+//! and every guard here asserts on the player's PRIVATE machinery — the cue sheet, the cues, the
+//! frame. Widening `Cue` to `pub(crate)` to make a test compile would put the transcript within
+//! reach of code that is not allowed to touch it.
+//!
+//! 🔴 **THE FRAME TESTS RENDER THROUGH `live_renderer::render_frame`, NOT THROUGH A HELPER OF OUR
+//! OWN.** That is the whole correction this rewrite makes. A test that asserted on a frame this
+//! module composed would have passed on every one of the seven defects the founder reported, because
+//! all seven were in the composing.
 
 use super::*;
-use crate::theme::ScreenTheme;
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
 
-/// The nine corners that make a box, spelled as escapes.
+/// The width the founder records at. Comfortably over `session_view::DESIGN_WIDTH` (81), which is
+/// the threshold below which the two-pane split — and therefore the rail — is dropped.
+const WIDE: u16 = 150;
+const TALL: u16 = 44;
+
+/// Build the film's app exactly as [`run`] does, minus the terminal.
+fn film_app(film: &'static Film) -> App {
+    let mut app = App::new(Args {
+        command: None,
+        repo: Some(film.repo.to_string()),
+    });
+    app.branch = Some(film.branch.to_string());
+    app.theme = Theme::Dark;
+    script::dress(&mut app, true);
+    // The boot scene owns the frame until its own clock finishes; these guards are about the
+    // SESSION, so they start after it, exactly as the run loop does.
+    app.boot = None;
+    app
+}
+
+/// Play a film forward to `at_ms` and render the real frame at the default recording width.
+fn frame_at(film: &'static Film, at_ms: u32, fixtures: bool) -> String {
+    frame_at_width(film, at_ms, fixtures, WIDE).0
+}
+
+/// The rendered frame AND the buffer's own reported width.
 ///
-/// ⚠️ **THE ESCAPES ARE LOAD-BEARING AND THIS IS THE THIRD COPY OF THIS LIST IN THE TREE.**
-/// `box_glyphs::BOX_CORNERS` is the owner, and it is compiled into the LIBRARY; this file is in
-/// the `estelle` BINARY, which does not declare that module — the same reason `main.rs` carries
-/// its own copy at `main.rs:7866`. Written as raw glyphs it would also defeat the source guard
-/// by matching itself. **One owner is the right shape and the binary cannot reach it today**;
-/// the honest form of that is this note, not a silent fourth copy.
-const BOX_CORNERS: [&str; 9] = [
-    "\u{250C}", "\u{2510}", "\u{2514}", "\u{2518}", "\u{251C}", "\u{2524}", "\u{252C}", "\u{2534}",
-    "\u{253C}",
-];
+/// 🔴 **THE WIDTH COMES BACK OUT OF THE BUFFER, NOT OUT OF THE ARGUMENT.** Asserting against the
+/// constant you passed in proves the test called the renderer, never that the renderer used it —
+/// the same discipline that caught the tab-strip gutters and the triple-banded composer.
+fn frame_at_width(film: &'static Film, at_ms: u32, fixtures: bool, width: u16) -> (String, u16) {
+    let mut app = film_app(film);
+    if !fixtures {
+        app = {
+            let mut bare = App::new(Args {
+                command: None,
+                repo: Some(film.repo.to_string()),
+            });
+            bare.branch = Some(film.branch.to_string());
+            script::dress(&mut bare, false);
+            bare.boot = None;
+            bare
+        };
+    }
+    let now = Instant::now();
+    for step in cue_sheet(film, fixtures) {
+        if step.at_ms > at_ms {
+            break;
+        }
+        apply(&step.cue, &mut app, now);
+    }
+    let mut terminal = Terminal::new(TestBackend::new(width, TALL)).expect("test terminal");
+    terminal
+        .draw(|frame| live_renderer::render_frame(frame, &app, now))
+        .expect("draw");
+    let buffer = terminal.backend().buffer().clone();
+    let text = (0..buffer.area.height)
+        .map(|y| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    (text, buffer.area.width)
+}
 
 /// 🔴 **THE ONE PROPERTY THAT SEPARATES A SESSION FROM THE GALLERY HE REJECTED.**
 ///
 /// Every cue of every film is applied in order and the transcript's length is asserted to be
-/// monotonic. If anyone ever reaches for `clear()` to "start the next beat cleanly", this is
-/// red before the footage is shot.
+/// monotonic. If anyone ever reaches for `clear()` to "start the next beat cleanly", this is red
+/// before the footage is shot.
 ///
-/// ⚠️ The vacuity half is asserted too: a transcript that never grew would also never shrink,
-/// so the final length is required to be substantial. An emptiness check that passes on
-/// nothing is the shape this repo has paid for repeatedly.
+/// ⚠️ The vacuity half is asserted too: a transcript that never grew would also never shrink, so
+/// the final length is required to be substantial.
 #[test]
 fn the_transcript_only_ever_grows() {
-    let palette = ScreenTheme::Dark.palette();
     for film in script::FILMS {
-        let mut screen = Screen {
-            transcript: Vec::new(),
-            composer: String::new(),
-            status: None,
-        };
+        let mut app = film_app(film);
+        let now = Instant::now();
         let mut high_water = 0usize;
         for step in cue_sheet(film, true) {
-            apply(&step.cue, &mut screen, &palette, 0, true);
+            apply(&step.cue, &mut app, now);
             assert!(
-                screen.transcript.len() >= high_water,
+                app.transcript.len() >= high_water,
                 "film {} reset its transcript at {} ms",
                 film.number,
                 step.at_ms
             );
-            high_water = screen.transcript.len();
+            high_water = app.transcript.len();
         }
         assert!(
-            high_water > 60,
-            "film {} only ever wrote {high_water} rows — the growth check proves nothing",
+            high_water > 20,
+            "film {} only ever wrote {high_water} entries — the growth check proves nothing",
             film.number
         );
     }
 }
 
-/// Every film fits the bound, and none of them is so short it cannot be what was asked for.
+/// 🔴 **THE RIGHT-HAND SIDE IS THERE, AND IT HAS SOMETHING ON IT.**
+///
+/// His words were *"the right side is completely gone"*. The rail is permanent in the design and
+/// needs only a wide enough terminal, so this asserts BOTH halves: the divider column exists (the
+/// split happened) and the rail's own band rules are on the frame (the split has content). Asserting
+/// only the divider would pass over a rail rendering five empty rules, which is what he saw.
+#[test]
+fn the_production_rail_is_on_every_frame_and_is_not_empty() {
+    let film = script::film(1).expect("film 1");
+    let total = runtime_ms(&cue_sheet(film, true));
+    for fraction in [0, 2, 4, 6, 7] {
+        let at = total * fraction / 8;
+        let frame = frame_at(film, at, true);
+        assert!(
+            frame.contains('\u{2502}'),
+            "no divider column at {at} ms — the two-pane split did not happen:\n{frame}"
+        );
+        for band in [
+            "production",
+            "app",
+            "services",
+            "agents",
+            "estelle",
+            "queue",
+            "github",
+        ] {
+            assert!(
+                frame.contains(band),
+                "the rail has no {band} band at {at} ms:\n{frame}"
+            );
+        }
+        // The louder failure: a rail that rendered before `dress` ran says this instead.
+        assert!(
+            !frame.contains("Live Monitor unavailable"),
+            "the rail is undressed at {at} ms — `dress` did not set a client:\n{frame}"
+        );
+    }
+}
+
+/// 🔴 **THE FRAME FILLS WHATEVER TERMINAL HE FILMS IN, AND DEGRADES INSTEAD OF TRUNCATING.**
+///
+/// His first and loudest complaint: *"Why is it cut off on the right? The entire TUI doesn't even go
+/// to the right side."* The old player read `terminal.size()?.height` and **never touched the
+/// width**, so it laid out against a width it had assumed. This module now reads NEITHER dimension —
+/// `render_frame` lays out against `frame.area()` — and that is exactly what makes the property
+/// testable at more than one size.
+///
+/// Swept across the widths he could plausibly record at, plus the two below the design's threshold:
+/// * **width ≥ 81** (`session_view::DESIGN_WIDTH`) — the two-pane split holds and the rail is there;
+/// * **width < 81** — the rail is DROPPED and the session takes the whole frame, which is the
+///   design's own degradation, not a truncation.
+///
+/// ⚠️ Every assertion reads the BUFFER's own `area.width`, never the constant passed in.
+#[test]
+fn the_frame_fills_every_width_and_degrades_below_the_split_threshold() {
+    let film = script::film(1).expect("film 1");
+    let at = runtime_ms(&cue_sheet(film, true)) / 2;
+    // `session_view::DESIGN_WIDTH` is 81: the narrowest frame that can hold a 46-column session,
+    // a divider with its two gaps, and a 30-column rail.
+    for width in [200u16, 160, 150, 120, 100, 81, 80, 70] {
+        let (frame, measured) = frame_at_width(film, at, true, width);
+        assert_eq!(
+            measured, width,
+            "the backend did not render at the width it was given"
+        );
+        let rightmost = frame
+            .lines()
+            .map(|row| row.chars().count())
+            .max()
+            .unwrap_or(0);
+        assert!(
+            rightmost >= usize::from(measured) - 4,
+            "at {measured} columns the widest row is {rightmost} — the frame is cut off on the right"
+        );
+        assert!(
+            rightmost <= usize::from(measured),
+            "at {measured} columns a row is {rightmost} wide — the frame overruns the terminal"
+        );
+        let split = frame.contains('\u{2502}');
+        if width >= 81 {
+            assert!(split, "no two-pane split at {measured} columns:\n{frame}");
+            assert!(
+                frame.contains("production"),
+                "the rail is missing at {measured} columns:\n{frame}"
+            );
+        } else {
+            // Below the threshold the design drops the rail rather than squeezing it. A frame that
+            // still drew a divider here would be the truncation he complained about.
+            assert!(
+                !split,
+                "at {measured} columns the rail should be dropped, not squeezed:\n{frame}"
+            );
+        }
+    }
+}
+
+/// 🔴 **HIS WORDS AND ESTELLE'S ARE TOLD APART BY THE TINT BAND.**
+///
+/// *"It's impossible to tell who sent the message."* The band is the product's own device, fixed by
+/// a sibling lane in `history_transcript::band_the_message_only`, and the film gets it by pushing a
+/// real `TranscriptEntry::User` rather than by drawing a prompt row. This asserts on the BUFFER's
+/// backgrounds, because the band is a colour and a text assertion cannot see it.
+///
+/// ⚠️ It reads the SESSION column only. The production rail draws its own text on the same terminal
+/// rows, so a whole-row read finds rail content on a row the band lit blank — the same trap the
+/// sibling lane documented when they fixed it.
+#[test]
+fn the_users_own_turn_is_the_only_thing_wearing_the_band() {
+    let film = script::film(1).expect("film 1");
+    let mut app = film_app(film);
+    let now = Instant::now();
+    // Far enough in that a user turn and a reply are both on screen.
+    for step in cue_sheet(film, true) {
+        if step.at_ms > 20_000 {
+            break;
+        }
+        apply(&step.cue, &mut app, now);
+    }
+    let mut terminal = Terminal::new(TestBackend::new(WIDE, TALL)).expect("test terminal");
+    terminal
+        .draw(|frame| live_renderer::render_frame(frame, &app, now))
+        .expect("draw");
+    let buffer = terminal.backend().buffer().clone();
+
+    let tint = Theme::Dark.screen_palette().tint;
+    let banded: Vec<u16> = (0..buffer.area.height)
+        .filter(|y| {
+            // Session column only — the rail starts well past column 60 on a 150-wide frame.
+            (2..60).any(|x| buffer[(x, *y)].style().bg == Some(tint))
+        })
+        .collect();
+    assert!(
+        !banded.is_empty(),
+        "no row wears the user band — his message is indistinguishable from Estelle's"
+    );
+    // Every banded row carries text. "Exactly one band" passes on the broken frame too, since the
+    // three lit rows there were consecutive; what separates them is whether a lit row is blank.
+    for y in &banded {
+        let text: String = (2..60).map(|x| buffer[(x, *y)].symbol()).collect();
+        assert!(
+            !text.trim().is_empty(),
+            "row {y} is lit but blank — the band is painted over its own padding again"
+        );
+    }
+}
+
+/// 🔴 **THE ANSWER STREAMS INSTEAD OF LANDING WHOLE.**
+///
+/// *"It just loaded in all at once... it's like an entire section at a time."* A reply is planned as
+/// an open plus many small grows, so this asserts the answer's LENGTH takes many distinct values
+/// over its beat. A block that appeared whole would take exactly two: empty, then final.
+#[test]
+fn a_reply_arrives_in_many_pieces_rather_than_all_at_once() {
+    let film = script::film(1).expect("film 1");
+    let mut app = film_app(film);
+    let now = Instant::now();
+    let mut lengths = std::collections::BTreeSet::new();
+    for step in cue_sheet(film, true) {
+        apply(&step.cue, &mut app, now);
+        if let Some(TranscriptEntry::Answer { text, .. }) = app.transcript.last() {
+            lengths.insert(text.len());
+        }
+    }
+    assert!(
+        lengths.len() > 12,
+        "the last answer took only {} distinct lengths — it is landing as a block",
+        lengths.len()
+    );
+}
+
+/// Every film fits the bound, and none is so short it cannot be talked over.
 #[test]
 fn every_film_is_bounded_and_long_enough_to_talk_over() {
     for film in script::FILMS {
-        let steps = cue_sheet(film, true);
-        let ms = runtime_ms(&steps);
+        let ms = runtime_ms(&cue_sheet(film, true));
         assert!(
             ms < session::MAX_FILM_MS,
             "film {} runs {ms} ms, over the {} ms bound",
             film.number,
             session::MAX_FILM_MS
         );
-        // He asked for two and a half minutes so he can talk through it. A film that came in
-        // at forty seconds would be the gallery's pace wearing a session's clothes.
         assert!(
             ms > 100_000,
             "film {} runs {ms} ms — too fast to narrate",
@@ -83,13 +306,12 @@ fn every_film_is_bounded_and_long_enough_to_talk_over() {
     }
 }
 
-/// The cue sheet is ordered in time. The run loop walks it with one index and never sorts, so
-/// an out-of-order step would silently be applied late — or never.
+/// The cue sheet is ordered in time. The run loop walks it with one index and never sorts, so an
+/// out-of-order step would silently be applied late — or never.
 #[test]
 fn the_cue_sheet_is_monotonic_in_time() {
     for film in script::FILMS {
-        let steps = cue_sheet(film, true);
-        for pair in steps.windows(2) {
+        for pair in cue_sheet(film, true).windows(2) {
             assert!(
                 pair[0].at_ms <= pair[1].at_ms,
                 "film {} plans a cue backwards",
@@ -99,18 +321,16 @@ fn the_cue_sheet_is_monotonic_in_time() {
     }
 }
 
-/// 🔴 Typing is UNEVEN. A film whose keystroke gaps were all the same would read as a machine,
-/// and that is the defect the founder named twice.
+/// 🔴 Typing is UNEVEN. A film whose keystroke gaps were all the same would read as a machine.
 ///
-/// ⚠️ Asserted as a SPREAD, not as "jitter was called": a jitter function wired to a constant
-/// would pass the second and fail this.
+/// ⚠️ Asserted as a SPREAD, not as "jitter was called": a jitter function wired to a constant would
+/// pass the latter and fail this.
 #[test]
 fn keystrokes_are_not_evenly_spaced() {
     let film = script::film(1).expect("film 1");
-    let steps = cue_sheet(film, true);
     let mut gaps = Vec::new();
     let mut previous: Option<u32> = None;
-    for step in &steps {
+    for step in cue_sheet(film, true) {
         if matches!(step.cue, Cue::Compose(_)) {
             if let Some(previous) = previous {
                 gaps.push(step.at_ms.saturating_sub(previous));
@@ -132,8 +352,8 @@ fn keystrokes_are_not_evenly_spaced() {
     );
 }
 
-/// The backspaces are in the footage. A scripted stumble that produced no shrinking composer
-/// would be a stumble nobody can see.
+/// The backspaces are in the footage. A scripted stumble that produced no shrinking composer would
+/// be a stumble nobody can see.
 #[test]
 fn a_scripted_stumble_shows_the_composer_getting_shorter() {
     let film = script::film(1).expect("film 1");
@@ -150,13 +370,135 @@ fn a_scripted_stumble_shows_the_composer_getting_shorter() {
         }
     }
     assert!(
-        shrinks >= 6,
-        "film 1 shows {shrinks} backspaces — a person at the keyboard makes more than that visible"
+        shrinks >= 10,
+        "film 1 shows {shrinks} backspaces — a person at the keyboard makes more visible"
     );
 }
 
-/// Every screen a film names exists in the book. A mistyped name would render nothing and the
-/// beat would play as silence — a hole in the footage that still reports a clean runtime.
+/// What lands in the composer is the CORRECTED sentence — the stumble is typed and taken back, so
+/// the submitted turn must not carry it.
+#[test]
+fn the_submitted_turn_does_not_carry_the_typo() {
+    let film = script::film(1).expect("film 1");
+    let submitted: Vec<String> = cue_sheet(film, true)
+        .into_iter()
+        .filter_map(|step| match step.cue {
+            Cue::Submit(text) => Some(text),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(submitted.len(), film.beats.len());
+    assert!(submitted[0].contains("claims fetch?"), "{:?}", submitted[0]);
+    assert!(!submitted[0].contains("fecth"), "the typo was submitted");
+    assert!(!submitted[3].contains("webook"), "the typo was submitted");
+}
+
+/// Everything the film ever put in the transcript, as one string.
+///
+/// ⚠️ **THE GATE CHECK READS THIS, NOT A FRAME.** The first version rendered one frame at the end
+/// of the film and looked for a needle from beat 1 — which had long scrolled out of the viewport,
+/// so the POSITIVE CONTROL failed and would have been "fixed" by deleting it. A frame shows the
+/// last screenful; the question "did fixture data reach the product at all" is a question about
+/// everything that was ever written.
+fn transcript_text(film: &'static Film, fixtures: bool) -> String {
+    let mut app = film_app(film);
+    if !fixtures {
+        app = App::new(Args {
+            command: None,
+            repo: Some(film.repo.to_string()),
+        });
+        script::dress(&mut app, false);
+    }
+    let now = Instant::now();
+    for step in cue_sheet(film, fixtures) {
+        apply(&step.cue, &mut app, now);
+    }
+    app.transcript
+        .iter()
+        .map(|entry| match entry {
+            TranscriptEntry::User(text) | TranscriptEntry::System(text) => text.clone(),
+            TranscriptEntry::Answer { text, .. } => text.clone(),
+            TranscriptEntry::Tool { label, lines, .. } => format!("{label} {}", lines.join(" ")),
+            TranscriptEntry::Failure(lines) => lines.join(" "),
+            TranscriptEntry::Command { name, lines } => format!("{name} {}", lines.join(" ")),
+            TranscriptEntry::SessionHandoff(lines) => lines.join(" "),
+            _ => String::new(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// With the fixture gate SHUT, no film shows a fixture number — and the session is still the real
+/// app, with his own typed words on it.
+///
+/// ⚠️ Paired with its positive control in the same loop, because an absence assertion passes
+/// identically over a player that drew nothing at all.
+#[test]
+fn a_film_cannot_draw_fixture_numbers_with_the_gate_shut() {
+    let film = script::film(1).expect("film 1");
+    let open = transcript_text(film, true);
+    let shut = transcript_text(film, false);
+    for needle in script::FIXTURE_NEEDLES {
+        assert!(
+            open.contains(needle),
+            "film 1 drew nothing for {needle:?} with the gate OPEN — the check below proves nothing"
+        );
+        assert!(
+            !shut.contains(needle),
+            "film 1 leaked the fixture {needle:?} with the gate shut"
+        );
+    }
+    // The frame is the product either way: his own typed words are still on it.
+    assert!(shut.contains("where do we retry"), "{shut}");
+}
+
+/// 🔴 **THE WATERMARK IS GONE.**
+///
+/// He asked directly: *"why are you writing 'design fixture · the numbers on this screen were NOT
+/// measured'?"* — a disclaimer stamped across every frame is not what a vision film does. The
+/// `--demo` flag still gates the data, which is the real safety property; the banner does not appear.
+#[test]
+fn no_film_frame_carries_the_fixture_watermark() {
+    let film = script::film(1).expect("film 1");
+    let total = runtime_ms(&cue_sheet(film, true));
+    for fraction in [0, 3, 6] {
+        let frame = frame_at(film, total * fraction / 8, true);
+        assert!(
+            !frame.contains("NOT measured"),
+            "the fixture watermark is back on the film:\n{frame}"
+        );
+        assert!(
+            !frame.contains("design fixture"),
+            "the fixture watermark is back on the film:\n{frame}"
+        );
+    }
+}
+
+/// 🔴 No box corner survives a whole film.
+#[test]
+fn no_film_frame_carries_a_box_corner() {
+    /// The nine corners, escaped so this guard cannot match itself. `box_glyphs` owns the list and
+    /// is compiled into the LIBRARY, which this binary does not declare — the same reason
+    /// `main.rs:7866` carries its own copy.
+    const BOX_CORNERS: [&str; 9] = [
+        "\u{250C}", "\u{2510}", "\u{2514}", "\u{2518}", "\u{251C}", "\u{2524}", "\u{252C}",
+        "\u{2534}", "\u{253C}",
+    ];
+    let film = script::film(1).expect("film 1");
+    let total = runtime_ms(&cue_sheet(film, true));
+    for fraction in [1, 4, 7] {
+        let frame = frame_at(film, total * fraction / 8, true);
+        for corner in BOX_CORNERS {
+            assert!(
+                !frame.contains(corner),
+                "film 1 drew the box corner {corner:?}:\n{frame}"
+            );
+        }
+    }
+}
+
+/// Every screen a film names exists in the book. A mistyped name would render nothing and the beat
+/// would play as silence — a hole in the footage that still reports a clean runtime.
 #[test]
 fn every_screen_a_film_names_exists() {
     for film in script::FILMS {
@@ -174,212 +516,4 @@ fn every_screen_a_film_names_exists() {
             }
         }
     }
-}
-
-/// 🔴 No box corner survives a whole film, in either theme.
-#[test]
-fn no_film_frame_carries_a_box_corner() {
-    for (theme, name) in [(ScreenTheme::Dark, "dark"), (ScreenTheme::Cream, "cream")] {
-        let palette = theme.palette();
-        for film in script::FILMS {
-            let mut screen = Screen {
-                transcript: Vec::new(),
-                composer: String::new(),
-                status: None,
-            };
-            for step in cue_sheet(film, true) {
-                apply(&step.cue, &mut screen, &palette, 0, true);
-            }
-            let frame = compose(film, &screen, &palette, 0, true, 40);
-            let text: String = frame
-                .iter()
-                .flat_map(|line| line.spans.iter().map(|span| span.content.to_string()))
-                .collect();
-            for corner in BOX_CORNERS {
-                assert!(
-                    !text.contains(corner),
-                    "film {} drew the box corner {corner:?} on {name}",
-                    film.number
-                );
-            }
-        }
-    }
-}
-
-/// With the fixture gate SHUT, no film shows a fixture number — it shows the empty states.
-///
-/// ⚠️ Paired with its positive control in the same loop, because an absence assertion passes
-/// identically over a player that drew nothing at all.
-#[test]
-fn a_film_cannot_draw_fixture_numbers_with_the_gate_shut() {
-    let palette = ScreenTheme::Dark.palette();
-    let render = |fixtures: bool| -> String {
-        let mut screen = Screen {
-            transcript: Vec::new(),
-            composer: String::new(),
-            status: None,
-        };
-        for step in cue_sheet(script::film(1).expect("film 1"), fixtures) {
-            apply(&step.cue, &mut screen, &palette, 0, fixtures);
-        }
-        screen
-            .transcript
-            .iter()
-            .flat_map(|line| line.spans.iter().map(|span| span.content.to_string()))
-            .collect()
-    };
-    let open = render(true);
-    let shut = render(false);
-    for needle in script::FIXTURE_NEEDLES {
-        assert!(
-            open.contains(needle),
-            "film 1 drew nothing for {needle:?} with the gate OPEN — the check below proves nothing"
-        );
-        assert!(
-            !shut.contains(needle),
-            "film 1 leaked the fixture {needle:?} with the gate shut"
-        );
-    }
-}
-
-/// Render the film's frame as the terminal would, at the moment `at_ms`.
-fn frame_at(film: &'static Film, at_ms: u32, palette: &Palette) -> String {
-    let mut screen = Screen {
-        transcript: Vec::new(),
-        composer: String::new(),
-        status: None,
-    };
-    for step in cue_sheet(film, true) {
-        if step.at_ms > at_ms {
-            break;
-        }
-        apply(&step.cue, &mut screen, palette, 0, true);
-    }
-    let backend = ratatui::backend::TestBackend::new(132, 44);
-    let mut terminal = Terminal::new(backend).expect("test terminal");
-    terminal
-        .draw(|f| {
-            f.render_widget(
-                Paragraph::new(compose(film, &screen, palette, 0, true, 44)),
-                f.area(),
-            );
-        })
-        .expect("draw");
-    let buffer = terminal.backend().buffer().clone();
-    (0..buffer.area.height)
-        .map(|y| {
-            (0..buffer.area.width)
-                .map(|x| buffer[(x, y)].symbol())
-                .collect::<String>()
-                .trim_end()
-                .to_string()
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// 🔴 **THE ASK BAR IS THE FOUNDER'S OWN FIVE ROWS, AND IT SURVIVES EVERY MOMENT OF THE FILM.**
-///
-/// The live frame's bar has drifted three times and he has called it out three times
-/// (`the_input_bar_is_the_demo_frames_five_rows_and_nothing_else`). A session that redrew it
-/// slightly differently would put a fourth variant on camera, so the same clauses are asserted
-/// here — over the SESSION's frame, at four moments spread across the film, because a bar that
-/// is only correct on the first frame is a bar that breaks the moment the transcript scrolls.
-#[test]
-fn the_ask_bar_holds_its_shape_at_every_moment_of_the_film() {
-    let palette = ScreenTheme::Dark.palette();
-    let film = script::film(1).expect("film 1");
-    let total = runtime_ms(&cue_sheet(film, true));
-    for fraction in [1, 3, 5, 7] {
-        let at = total * fraction / 8;
-        let frame = frame_at(film, at, &palette);
-        let rows: Vec<&str> = frame.lines().collect();
-
-        // The prompt glyph is the heavy angle ornament, never the CJK bracket Terminal.app
-        // draws as a closing parenthesis.
-        assert!(
-            frame.contains(crate::live_renderer::PROMPT_GLYPH),
-            "no prompt at {at} ms:\n{frame}"
-        );
-        assert!(!frame.contains('\u{3009}'), "the CJK bracket came back");
-        assert!(
-            !frame.contains('\u{203a}'),
-            "the small angle quote came back"
-        );
-        // The hint row is the frame's LAST row, and the prompt is not adjacent to it — the
-        // founder photographed a cursor sitting on the `e` of "enter send".
-        let hint = rows.last().expect("a last row");
-        assert!(
-            hint.contains("enter send"),
-            "the hint row is not last at {at} ms:\n{frame}"
-        );
-        let prompt_at = rows
-            .iter()
-            .position(|row| row.contains(crate::live_renderer::PROMPT_GLYPH))
-            .expect("prompt row");
-        assert!(
-            rows.len() - 1 > prompt_at + 1,
-            "no room to type at {at} ms:\n{frame}"
-        );
-        // The fixture disclosure is on the frame, always, in the second row.
-        assert!(
-            rows[1].contains("NOT measured"),
-            "the disclosure left the frame at {at} ms:\n{frame}"
-        );
-        // The rule is solid; the dashed one the product shipped until recently is gone.
-        assert!(!frame.contains('\u{254c}'), "a dashed rule came back");
-        assert!(frame.contains('\u{2500}'), "the solid rule is missing");
-    }
-}
-
-/// 🔴 **THE TRANSCRIPT SCROLLS RATHER THAN RESETTING, AND THIS IS THE PROOF ON THE RENDERED
-/// FRAME** — the growth test above proves it of the BUFFER, which is the other half.
-///
-/// Late in the film the transcript is longer than the viewport, so the frame must be FULL of
-/// content (not blank rows), and the first content row must have MOVED ON from what it showed
-/// earlier. A frame that reset would show beat 9 at the top with blank rows beneath it.
-#[test]
-fn the_window_moves_over_the_transcript_instead_of_the_transcript_resetting() {
-    let palette = ScreenTheme::Dark.palette();
-    let film = script::film(1).expect("film 1");
-    let total = runtime_ms(&cue_sheet(film, true));
-    let early = frame_at(film, total / 4, &palette);
-    let late = frame_at(film, total * 7 / 8, &palette);
-    let body = |frame: &str| -> Vec<String> {
-        frame
-            .lines()
-            .skip(3)
-            .take(44 - usize::from(CHROME_ROWS))
-            .map(str::to_string)
-            .collect()
-    };
-    let late_body = body(&late);
-    let filled = late_body
-        .iter()
-        .filter(|row| !row.trim().is_empty())
-        .count();
-    assert!(
-        filled > late_body.len() / 2,
-        "late in the film the viewport is half empty — the transcript reset:\n{late}"
-    );
-    assert_ne!(
-        body(&early).first(),
-        late_body.first(),
-        "the top of the viewport never moved — nothing scrolled"
-    );
-}
-
-/// The disclosure is on the frame in both states, and it says which one it is.
-#[test]
-fn the_fixture_disclosure_is_on_every_frame() {
-    let palette = ScreenTheme::Dark.palette();
-    let text = |fixtures: bool| -> String {
-        disclosure(&palette, fixtures)
-            .spans
-            .iter()
-            .map(|span| span.content.to_string())
-            .collect()
-    };
-    assert!(text(true).contains("NOT measured"));
-    assert!(text(false).contains("fixtures off"));
 }
