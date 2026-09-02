@@ -18,6 +18,30 @@ pub(crate) fn write_frame(output: &Path, name: &str, buffer: &Buffer) {
         .expect("write actual SVG frame");
 }
 
+/// 🔴 **THE BOOK'S BADGE IS DERIVED FROM THE CODE, NOT TYPED INTO THE HTML.**
+///
+/// A screen in the design book carries one of two badges: SHIPPED (the binary renders it from live
+/// state) or DESIGN (the layout is the production renderer's and the DATA is a fixture, because the
+/// contract named on the screen does not exist yet). Until 2026-09-02 every screen said SHIPPED,
+/// including one whose own note read *"until `/skills` returns tokens per skill, the honest screen
+/// is 15, not this one"* — a note and a badge contradicting each other on the same screen, which is
+/// what the founder found.
+///
+/// The distinction already had exactly one owner: `design_book::BookScreen::contract`, which starts
+/// with `shipped ·` when live state exists. So this file writes that field out beside the frames and
+/// `scripts/design_book.py` reads it. **The alternative was a hand-maintained badge table in Python,
+/// i.e. a second owner of a fact this repo has already paid three times for duplicating.**
+pub(crate) fn write_contracts(output: &Path, rows: &[(&str, &str)]) {
+    let mut manifest = String::from(
+        "# name\\tcontract — written by actual_renderer_gallery from design_book::SCREENS.\n\
+         # A contract beginning `shipped ·` means the live app renders this from real state.\n",
+    );
+    for (name, contract) in rows {
+        let _ = writeln!(manifest, "{name}\t{contract}");
+    }
+    fs::write(output.join("contracts.tsv"), manifest).expect("write the gallery contract manifest");
+}
+
 pub(crate) fn write_index(output: &Path, names: &[&str]) {
     let mut index = String::from(
         "<!doctype html><meta charset=\"utf-8\"><title>Estelle actual TUI gallery</title>\

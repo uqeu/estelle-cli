@@ -137,7 +137,7 @@ pub(crate) fn typed(palette: &Palette, tick: u64, pulse: bool) -> Vec<Line<'stat
     ]));
     lines.push(blank());
     for footnote in [
-        "enter preloads the skill · you never type a slash",
+        "enter binds the skill to your next message · you never finish typing its name",
         "esc closes the dropdown · it docks above the composer, it is not a page you leave",
         "no frame, on purpose: the band says WHICH row, which a border never did",
     ] {

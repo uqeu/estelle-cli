@@ -51,7 +51,12 @@ pub(crate) fn model_cost(palette: &Palette, _tick: u64, _pulse: bool) -> Vec<Lin
     let mut lines = vec![
         rule(
             "cost",
-            "ctrl+m locks a role",
+            // 🔴 THIS SAID `ctrl+m locks a role` AND `ctrl+m` CANNOT EXIST IN THIS BINARY:
+            // Ctrl+M is carriage return, so the chord arrives as `Enter` with no modifier (see
+            // `ASK_HINTS_NOT_BOUND`). A design frame advertising a key that can never be bound is
+            // the same defect as a caption describing a panel that is not drawn. `enter` is what
+            // the screen's own footnote already says, and it is the key that works.
+            "enter locks a role",
             118,
             palette.dim,
             palette.mid,

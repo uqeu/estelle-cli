@@ -1,0 +1,26 @@
+# name\tcontract — written by actual_renderer_gallery from design_book::SCREENS.
+# A contract beginning `shipped ·` means the live app renders this from real state.
+02-login-two-stage	shipped · login::run stages these one at a time
+06-no-repository-here	shipped · live_renderer.rs:997
+09-gate-refused	shipped · gate_refusal::render_gate_modal
+10-navigation-stale	no CLI surface reads the staleness verdict yet
+11-compaction-refused	no CLI surface reads the compaction refusal yet
+12-skills-typed	shipped · the popup does not preload on enter yet
+13-skills-offered	the offer does not fire on send yet
+14-skills-browse	no per-skill token cost on the wire
+18-every-command	shipped · help_lines()
+19-shell-mode	shipped · !cmd
+25-panels-one-terminal	per-worker model + cost · no server contract
+30-provider-keys	shipped · provider_catalog
+32-memory-remaining	POST /sweep/estimate · top_level.rs:2314 reads 1 of its 14 fields
+33-usage-spend	no per-session spend total on the wire
+33b-model-cost	no per-model cost breakdown on the wire
+34-answer-table-diagram	no markdown table or diagram renderer in this client
+35-session-tabs	shipped · live_renderer.rs:114
+36-doctor-failing	shipped · doctor::lines_with_binding
+37-resume-session	shipped · resume_picker
+38-sweep-running	shipped · top_level::sweep_with_progress
+39-tool-calls	no collapsed/expanded tool-call view yet
+40-code-graph	no walkable graph surface yet
+42-stats-activity	no per-phase clock and no per-tool tally in this client
+41-memory-correct	nothing edits or retracts a memory from the terminal

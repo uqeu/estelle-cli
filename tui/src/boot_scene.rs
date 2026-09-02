@@ -122,7 +122,7 @@ impl BootPalette {
     pub fn ghost(self) -> Color {
         match self {
             Self::Dark => Color::from_u32(0x6F_6A_5E),
-            Self::Light => Color::from_u32(0x8B_85_78),
+            Self::Light => Color::from_u32(0x64_5F_56),
         }
     }
 

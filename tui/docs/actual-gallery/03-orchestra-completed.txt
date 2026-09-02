@@ -1,6 +1,6 @@
 ESTELLE  ·  uqeu/estelle  ·  repo graph current  ·  1,993 files
 
-── session · uqeu/estelle ───────────────────────────────────────────────────────────────────────────────────  │  ── context · alt+m · /context ────────────────────────────────────
+── session · uqeu/estelle ───────────────────────────────────────────────────────────────────────────────────  │  ── context · ctrl+g · /context ───────────────────────────────────
    uqeu/estelle · main                                                                                         │  Repo graph · team's swept copy
 ● Task(Trace checkout failures · 8 workers)                                                                    │  1,993 files indexed
   models · Claude Opus 4.1 · GPT-5.5 · Gemini 2.5 Pro                                                          │  billing/charge.rs:82
@@ -12,7 +12,7 @@ ESTELLE  ·  uqeu/estelle  ·  repo graph current  ·  1,993 files
 ✓   w3    [3/3] Grouped the production events                                                     4m        —  │  billing/charge.rs · local, not pushed
 ✓   w4    [2/2] Checked the proposed repair                                                       4m        —  │  billing/retry.rs · local, not pushed
 ✓   w5    [4/4] Resolved the symbol range                                                         3m        —  │
-✓   w6    [3/3] Compared the proposed patch                                                       2m        —  │  Alt+M or /context closes
+✓   w6    [3/3] Compared the proposed patch                                                       2m        —  │  ctrl+g or /context closes
 ✓   w7    [2/2] Verified the worker result                                                       75s        —  │
 ✓   w8    [2/2] Checked the regression suite                                                     22s        —  │
 per-worker model + cost · no server contract                                                                   │

@@ -2004,8 +2004,28 @@ const ASK_HINTS: &[(&str, &str)] = &[
 /// Test-only because it is a LEDGER, not a switch: nothing reads it to change what renders, and
 /// wiring it into the renderer would be the first step towards quietly hiding the three hints
 /// instead of binding the three keys.
+///
+/// 🔴 **`ctrl+m` IS NOT "UNBOUND YET". IT IS UNBINDABLE, AND THE WORD "YET" WAS THE DEFECT.**
+///
+/// Measured 2026-09-02, on the founder's own note that a hint and its binding must agree.
+/// `Ctrl+M` is ASCII carriage return (0x0D). This binary never calls
+/// `PushKeyboardEnhancementFlags` — that lives in `tui/keyboard_modes.rs`, on the Codex path
+/// `main.rs` cannot reach — so input takes crossterm's legacy byte parser, where the `b'\r'` arm
+/// shadows the `\x01..=\x1A` control-character arm and yields `KeyCode::Enter` with NO modifier.
+/// Binding it would swallow every Enter before the composer submits, i.e. it would break sending
+/// a message. **The other two are debts; this one is a promise that cannot be kept**, and saying
+/// "not bound yet" about it is the understating-the-system defect: it reads as caution and nobody
+/// audits caution.
+///
+/// ▶ **A DECISION FOR THE FOUNDER, NOT FOR THIS FILE.** The row is his, verbatim, picked three
+/// times. Either `models` moves to a chord that can exist, or the pair comes off the row. Nothing
+/// here changes his words on a guess.
 #[cfg(test)]
 const ASK_HINTS_NOT_BOUND: &[&str] = &["tab", "ctrl+s", "ctrl+m"];
+
+/// The hints in [`ASK_HINTS_NOT_BOUND`] that can never be bound, whatever anybody decides.
+#[cfg(test)]
+const ASK_HINTS_UNBINDABLE: &[&str] = &["ctrl+m"];
 
 fn estelle_composer() -> ComposerInput {
     let mut composer = ComposerInput::with_commands(
@@ -2618,6 +2638,11 @@ impl App {
             "diff" => self.toggle_diff_panel(),
             "todo" => self.toggle_todo_surface(),
             "settings" => self.picker = Some(PickerSurface::settings(self)),
+            // 🔴 **`/theme` EXISTS BECAUSE THE FOUNDER ASKED WHY IT DID NOT** (2026-09-02). It
+            // opens the SAME `PickerSurface::themes` that `/settings` row 2 opens, so the palette
+            // has one owner and one save path; a second theme surface would be a second answer to
+            // "which theme is in force" within a week.
+            "theme" => self.picker = Some(PickerSurface::themes(self)),
             "apply" => {
                 if let Some(refusal) = self.write_refusal() {
                     self.transcript.push(TranscriptEntry::System(refusal));
@@ -2922,7 +2947,7 @@ impl App {
         self.transcript.push(TranscriptEntry::Command {
             name: "context".to_string(),
             lines: vec![format!(
-                "Grounding context side panel {}. Alt+M or /context toggles it.",
+                "Grounding context side panel {}. ctrl+g or /context toggles it.",
                 if self.context_panel_visible {
                     "opened"
                 } else {
@@ -6279,7 +6304,26 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
         app.focus = FocusSurface::Composer;
         return false;
     }
-    if key.code == KeyCode::Char('m') && key.modifiers.contains(KeyModifiers::ALT) {
+    // 🔴 **THIS WAS `alt+m` UNTIL 2026-09-02, DIRECTLY ABOVE THE COMMENT FORBIDDING IT.**
+    //
+    // The rule below names `alt+m → µ` as its own worked example, and the binding it forbids sat
+    // four lines above it for the life of the file. Nobody read them together, which is the whole
+    // lesson: a rule written next to its own violation is a rule that reads as being obeyed.
+    //
+    // The founder's instruction is the general form: *"Windows users don't have an option/command
+    // key. Mac users don't have an alt key. We both have control."* **`ctrl` is the only modifier
+    // both platforms share**, so this is `ctrl+g` on every platform and the hint row says the same
+    // thing everywhere — no per-platform label to keep in sync with a per-platform binding.
+    //
+    // ⚠️ **IT IS `ctrl+g` AND NOT `ctrl+m`, AND THE REASON IS NOT PREFERENCE.** `Ctrl+M` is ASCII
+    // carriage return. This binary never calls `PushKeyboardEnhancementFlags` — that lives in
+    // `tui/keyboard_modes.rs`, on the Codex path `main.rs` cannot reach — so input takes crossterm's
+    // legacy byte parser, where the `b'\r'` arm shadows the `\x01..=\x1A` control-char arm and
+    // emits `KeyCode::Enter` with NO modifier. A `ctrl+m` guard here would swallow every Enter
+    // before the composer ever submits, i.e. it would break sending a message. `ctrl+g` is free:
+    // `handle_key` binds only c/o/t/w/x/Tab, and the `open_external_editor: ctrl+g` default in
+    // `keymap.rs` is dispatched solely by `app/input.rs` on the private Codex path.
+    if key.code == KeyCode::Char('g') && key.modifiers.contains(KeyModifiers::CONTROL) {
         app.toggle_context_panel();
         return false;
     }
@@ -8045,6 +8089,40 @@ mod tests {
             "Ask about uqeu/estelle",
         );
 
+        // 🔴 **THE GROUNDING PANE, AS ITS OWN FRAME.** The design book's screen 8 is *"Grounding
+        // context: what the answer was built on"* and it had no frame of its own — it cited
+        // `02-orchestra-active right pane`, so the generator spliced the WHOLE orchestra picture
+        // into it and the book carried the same image under two different screens. The founder
+        // read that and said there were duplicates.
+        //
+        // ⚠️ A pane shown as a sliver of another screen is not the same claim as a pane shown as
+        // the subject. This is the same `render_context_panel` the live app calls, with no fleet
+        // beside it, so the reader is looking at what the pane is FOR rather than at where it sits.
+        let mut grounding = test_app();
+        grounding.prod_panel_visible = false;
+        grounding.context_panel_visible = true;
+        grounding.header.indexed = Some(true);
+        grounding.header.files = Some(1_993);
+        grounding.citations = vec![Source {
+            file: "billing/charge.rs".to_string(),
+            line: Some(82),
+            extra: serde_json::Map::from_iter([(
+                "symbol".to_string(),
+                Value::String("charge_card".to_string()),
+            )]),
+        }];
+        grounding.working_memory_paths = vec![
+            "billing/charge.rs · local, not pushed".to_string(),
+            "billing/retry.rs · local, not pushed".to_string(),
+        ];
+        capture(
+            "08-grounding-context",
+            &grounding,
+            130,
+            30,
+            "Working memory · local request context",
+        );
+
         // 🔴 THE FIXTURE USED TO DATE EVERY WORKER IN THE YEAR 2100, SO THE `last seen` COLUMN SAID
         // `clock ahead` ON ALL EIGHT ROWS AND THE FOUNDER READ A COLUMN OF ONE REPEATED WORD.
         //
@@ -8436,7 +8514,10 @@ mod tests {
         // screen is a decision somebody makes on purpose.
         assert_eq!(
             names.len(),
-            18 + design_book::SCREENS.len(),
+            // 19 live-renderer states plus one frame per book screen. It was 18 until
+            // `08-grounding-context` was given a frame of its own — screen 8 had been pointing at
+            // `02-orchestra-active`'s right pane, so the book drew one picture under two screens.
+            19 + design_book::SCREENS.len(),
             "the gallery changed size: {names:?}"
         );
 
@@ -8447,6 +8528,13 @@ mod tests {
 
         if let Some(output) = output.as_deref() {
             test_gallery::write_index(output, &names);
+            // The book's badge, derived from the one owner of "does live state exist for this
+            // screen" rather than hand-typed into the HTML. See `test_gallery::write_contracts`.
+            let contracts = design_book::SCREENS
+                .iter()
+                .map(|screen| (screen.name, screen.contract))
+                .collect::<Vec<_>>();
+            test_gallery::write_contracts(output, &contracts);
         }
     }
 
@@ -8561,6 +8649,28 @@ mod tests {
         // `enter` and `esc` are NOT on the list because they really are handled.
         assert!(!ASK_HINTS_NOT_BOUND.contains(&"enter"));
         assert!(!ASK_HINTS_NOT_BOUND.contains(&"esc"));
+
+        // 🔴 THE DEBT AND THE IMPOSSIBILITY ARE DIFFERENT LEDGERS.
+        //
+        // `tab` and `ctrl+s` are unbound and can be bound. `ctrl+m` is carriage return in this
+        // binary's input path and can never be, so filing all three under "not yet" made one of
+        // them a promise that cannot be kept. Every unbindable key must also be listed as unbound,
+        // and it must never quietly acquire a binding — a `ctrl+m` arm in `handle_key` would
+        // swallow Enter, and this is where that discovery is written down.
+        for key in ASK_HINTS_UNBINDABLE {
+            assert!(
+                ASK_HINTS_NOT_BOUND.contains(key),
+                "{key} cannot be bound, so it cannot be missing from the unbound ledger"
+            );
+        }
+        assert!(
+            !include_str!("main.rs")
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("//"))
+                .any(|line| line.contains("KeyCode::Char('m')")
+                    && line.contains("KeyModifiers::CONTROL")),
+            "something bound ctrl+m: it is carriage return here, so that arm eats every Enter"
+        );
     }
 
     /// 🔴 RED FOR DELETIONS, GREEN FOR ADDITIONS — IN BOTH THEMES.
@@ -9174,6 +9284,75 @@ mod tests {
         );
     }
 
+    /// 🔴 **`/theme` REACHES THE SAME PICKER `/settings` ROW 2 REACHES, AND THAT IS THE POINT.**
+    ///
+    /// The founder, 2026-09-02: *"There's no slash theme command. Well shouldn't you make a theme
+    /// command then?"* It had been on `DROPPED_COMMANDS` as a Codex-only name, which was wrong —
+    /// the CLI ships two first-class palettes.
+    ///
+    /// ⚠️ **THE TEST DRIVES THE COMMAND THROUGH `submit`, NOT `handle_local_command`.** A dispatch
+    /// arm can be present and unreachable: that is exactly how `/logout` came to be advertised and
+    /// refused for months, with its 40-line implementation dead. So this goes through the resolver
+    /// the user's keystrokes go through, and asserts the picker that OPENS is the same surface —
+    /// same rows, same actions — that the settings row opens. Two theme surfaces would be two
+    /// answers to "which theme is in force" inside a week.
+    #[test]
+    fn slash_theme_opens_the_one_theme_picker_the_settings_row_opens() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        // The resolver must know the name at all. `/theme` answered "unknown command" before this.
+        assert_eq!(commands::resolve_session_name("theme"), Some("theme"));
+
+        let mut typed = test_app();
+        typed.submit("/theme".to_string(), &tx);
+        let opened = typed.picker.as_ref().expect("/theme opened no picker");
+
+        let reference = PickerSurface::themes(&test_app());
+        assert_eq!(opened.title, reference.title);
+        assert_eq!(
+            opened
+                .rows
+                .iter()
+                .map(|row| row.label.clone())
+                .collect::<Vec<_>>(),
+            reference
+                .rows
+                .iter()
+                .map(|row| row.label.clone())
+                .collect::<Vec<_>>(),
+            "/theme opened a different list from the settings row"
+        );
+
+        // And it actually switches the renderer, driven from the command rather than from a
+        // hand-placed `app.theme = …`.
+        assert_eq!(typed.theme, Theme::Dark);
+        handle_key(
+            &mut typed,
+            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+            &tx,
+        );
+        handle_key(
+            &mut typed,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &tx,
+        );
+        assert_eq!(
+            typed.theme,
+            Theme::CreamInk,
+            "/theme did not change the theme"
+        );
+
+        // 🔴 THE HALF THAT IS NOT ABOUT `/theme`. A command that resolves but is advertised
+        // nowhere is discoverable only by someone who already knows it exists — the inverse of
+        // the `/logout` defect and just as invisible.
+        assert!(
+            commands::help_lines()
+                .iter()
+                .any(|line| line.starts_with("/theme")),
+            "/theme resolves but /help does not list it"
+        );
+    }
+
     #[test]
     fn cream_theme_never_paints_visible_text_in_its_background_colour() {
         let mut app = test_app();
@@ -9455,13 +9634,13 @@ mod tests {
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 30);
 
         assert!(
-            rendered.contains("── context · alt+m · /context"),
+            rendered.contains("── context · ctrl+g · /context"),
             "{rendered}"
         );
         assert!(rendered.contains("Repo graph"));
         assert!(rendered.contains("billing.py:88"));
         assert!(rendered.contains("charge_card"));
-        assert!(rendered.contains("Alt+M"));
+        assert!(rendered.contains("ctrl+g"));
         assert!(rendered.contains("/context"));
     }
 
@@ -9699,7 +9878,7 @@ mod tests {
     /// label is the best word for that state.
     #[test]
     fn every_advertised_key_is_a_binding_the_live_tui_actually_handles() {
-        let hints = "tab focus · shift+tab autonomy · ctrl+t tasks · alt+m context · / commands";
+        let hints = "tab focus · shift+tab autonomy · ctrl+t tasks · ctrl+g context · / commands";
         let (tx, _rx) = mpsc::unbounded_channel();
 
         assert!(hints.contains("tab focus"), "{hints}");
@@ -9742,17 +9921,17 @@ mod tests {
         );
         assert!(app.todo_visible, "ctrl+t did not open tasks");
 
-        assert!(hints.contains("alt+m context"), "{hints}");
+        assert!(hints.contains("ctrl+g context"), "{hints}");
         let mut app = test_app();
         let before = app.context_panel_visible;
         handle_key(
             &mut app,
-            KeyEvent::new(KeyCode::Char('m'), KeyModifiers::ALT),
+            KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
             &tx,
         );
         assert_ne!(
             app.context_panel_visible, before,
-            "alt+m did not toggle the context panel"
+            "ctrl+g did not toggle the context panel"
         );
 
         assert!(hints.contains("/ commands"), "{hints}");
@@ -12633,6 +12812,67 @@ mod tests {
                 "the suspended row dropped a demo hint: {suspended}"
             );
         }
+    }
+
+    /// 🔴 **THE `alt+<letter>` RULE, ENFORCED INSTEAD OF COMMENTED.**
+    ///
+    /// `handle_key` carried a rule reading *"NEVER BIND `alt+<letter>` IN THIS BINARY"* and, four
+    /// lines above it, an `alt+m` binding — with `alt+m → µ` named in the rule's own worked example.
+    /// The founder found it by reading the design book, not the code. **A rule beside its own
+    /// violation reads as being obeyed**, which is why this one is now a check that can go red.
+    ///
+    /// It scans this file's own source with comments stripped, so the rule's prose (which must keep
+    /// saying `alt+m` — it is the example) cannot trip it and cannot satisfy it either.
+    ///
+    /// ⚠️ **`alt+<arrow>` IS DELIBERATELY NOT CAUGHT.** Option+Arrow is not composed into a
+    /// character on macOS; it arrives as a modified key event, and `main.rs` binds it for session
+    /// switching. The defect is Option-as-COMPOSE, which only affects letters, so the guard is
+    /// scoped to `KeyCode::Char` — a guard scoped to "any ALT" would be red on correct code and
+    /// suppressed inside a week.
+    ///
+    /// ⚠️ **LIMIT, STATED:** this proves no such binding is WRITTEN. It cannot prove a terminal
+    /// delivers `ctrl+g`, which is the same gap that let `alt+s` ship.
+    #[test]
+    fn no_alt_letter_chord_is_bound_anywhere_in_this_binary() {
+        const SOURCE: &str = include_str!("main.rs");
+
+        let code: Vec<&str> = SOURCE
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect();
+
+        // A positive test for ALT — `!key.modifiers.contains(..)` is an EXCLUSION and is fine.
+        let binds_alt = |line: &str| {
+            line.contains("modifiers.contains(KeyModifiers::ALT)")
+                && !line.contains("!key.modifiers.contains(KeyModifiers::ALT)")
+                && !line.contains("!chord.modifiers.contains(KeyModifiers::ALT)")
+        };
+
+        let mut positive = 0_usize;
+        for (index, line) in code.iter().enumerate() {
+            if !binds_alt(line) {
+                continue;
+            }
+            positive += 1;
+            // The condition may wrap; a chord is a small statement, so a four-line window around
+            // the modifier test covers both `A && B` orders without reaching the next binding.
+            let window = code[index.saturating_sub(2)..(index + 2).min(code.len())].join(" ");
+            assert!(
+                !window.contains("KeyCode::Char("),
+                "an alt+<letter> chord is bound at main.rs line {}: macOS composes it into a \
+                 character and sends no key event at all — use a ctrl chord\n{window}",
+                index + 1
+            );
+        }
+
+        // 🔴 THE POSITIVE CONTROL. With zero positive ALT sites the loop above passes over a file
+        // that binds nothing, which is the vacuity shape this repo has paid for repeatedly. There
+        // is exactly one legitimate ALT binding today (alt+left/right, session switching); if that
+        // ever goes away this floor is the thing that says the guard stopped measuring anything.
+        assert!(
+            positive >= 1,
+            "no ALT binding was examined at all — this guard measured nothing"
+        );
     }
 
     /// 🔴 **THE TOGGLE IS A CONTROL CHORD, AND THAT IS THE WHOLE POINT OF THIS TEST.**

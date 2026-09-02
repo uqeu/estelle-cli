@@ -1200,7 +1200,7 @@ pub(super) fn render_context_panel(frame: &mut Frame<'_>, area: Rect, app: &App)
     }
     lines.push(Line::from(""));
     lines.push(Line::styled(
-        "Alt+M or /context closes",
+        "ctrl+g or /context closes",
         Style::default().fg(palette.dim),
     ));
     // ⚠️ This box was the one that rendered BESIDE the new language in a single row:
@@ -1211,7 +1211,7 @@ pub(super) fn render_context_panel(frame: &mut Frame<'_>, area: Rect, app: &App)
         .split(area);
     frame.render_widget(
         Paragraph::new(session_view::title_rule(
-            "context · alt+m · /context",
+            "context · ctrl+g · /context",
             usize::from(rows[0].width),
             &palette,
             if app.focus == FocusSurface::Auxiliary {
