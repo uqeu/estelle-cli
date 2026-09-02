@@ -1424,7 +1424,7 @@ async fn live_app_server_model_verification_renders_warning() {
     assert_eq!(cells.len(), 1);
     let rendered = lines_to_single_string(&cells[0]);
     assert!(rendered.contains("multiple flags for possible cybersecurity risk"));
-    assert!(rendered.contains("extra safety checks are on"));
+    assert!(rendered.contains("extra safety checks run"));
     assert!(rendered.contains("Trusted Access for Cyber"));
     assert!(rendered.contains("https://chatgpt.com/cyber"));
 }

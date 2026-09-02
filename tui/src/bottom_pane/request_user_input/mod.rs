@@ -52,7 +52,7 @@ use codex_protocol::user_input::TextElement;
 use unicode_width::UnicodeWidthStr;
 
 const NOTES_PLACEHOLDER: &str = "Add notes";
-const ANSWER_PLACEHOLDER: &str = "Type your answer (optional)";
+const ANSWER_PLACEHOLDER: &str = "Type an answer (optional)";
 // Keep in sync with ChatComposer's minimum composer height.
 const MIN_COMPOSER_HEIGHT: u16 = 3;
 const SELECT_OPTION_PLACEHOLDER: &str = "Select an option to add notes";
@@ -3752,7 +3752,7 @@ mod tests {
           Question 1/1 (1 unanswered)
           Share details.
 
-          › Type your answer (optional)
+          › Type an answer (optional)
 
 
 

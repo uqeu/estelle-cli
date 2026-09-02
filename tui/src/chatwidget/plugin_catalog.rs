@@ -189,7 +189,7 @@ const REMOTE_MARKETPLACE_SECTIONS: [RemoteMarketplaceSection; 2] = [
         ],
         show_empty_tab: false,
         empty_item_name: "No shared plugins available",
-        empty_item_description: "No plugins have been shared with you.",
+        empty_item_description: "No plugins are shared with this account.",
         tab_order: SHARED_WITH_ME_SECTION_TAB_ORDER,
     },
 ];
@@ -914,8 +914,7 @@ impl ChatWidget {
             let header = if self.newly_installed_marketplace_tab_id.as_deref() == Some(&tab_id) {
                 plugins_header(
                     format!("{label} installed successfully."),
-                    "Select the plugins you want to use and press Enter to install or view details."
-                        .to_string(),
+                    "Select plugins, then press Enter to install or view details.".to_string(),
                 )
             } else {
                 plugins_header(
@@ -1046,9 +1045,7 @@ impl ChatWidget {
             if plugin.summary.install_policy == PluginInstallPolicy::InstalledByDefault {
                 items.push(SelectionItem {
                     name: "Installed by admin".to_string(),
-                    description: Some(
-                        "This plugin is installed by your workspace admin.".to_string(),
-                    ),
+                    description: Some("Installed by the workspace admin.".to_string()),
                     is_disabled: true,
                     ..Default::default()
                 });
@@ -1084,7 +1081,7 @@ impl ChatWidget {
         } else if plugin.summary.availability == PluginAvailability::DisabledByAdmin {
             items.push(SelectionItem {
                 name: "Install plugin".to_string(),
-                description: Some("This plugin is disabled by your workspace admin.".to_string()),
+                description: Some("Disabled by the workspace admin.".to_string()),
                 is_disabled: true,
                 ..Default::default()
             });

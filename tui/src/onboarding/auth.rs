@@ -393,7 +393,7 @@ impl AuthModeWidget {
         let mut lines: Vec<Line> = vec![
             Line::from(vec![
                 "  ".into(),
-                "Sign in with ChatGPT to use Codex as part of your paid plan".into(),
+                "Sign in with ChatGPT to use Codex on a paid plan".into(),
             ]),
             Line::from(vec![
                 "  ".into(),
@@ -460,8 +460,8 @@ impl AuthModeWidget {
                     lines.extend(create_mode_item(
                         idx,
                         option,
-                        "Provide your own API key",
-                        "Pay for what you use",
+                        "Provide an API key",
+                        "Pay per use",
                     ));
                 }
             }
@@ -498,11 +498,11 @@ impl AuthModeWidget {
             self.request_frame
                 .schedule_frame_in(std::time::Duration::from_millis(100));
             spans.extend(shimmer_text(
-                "Finish signing in via your browser",
+                "Finish signing in in the browser",
                 MotionMode::Animated,
             ));
         } else {
-            spans.push("Finish signing in via your browser".into());
+            spans.push("Finish signing in in the browser".into());
         }
         let mut lines = vec![spans.into(), "".into()];
 
@@ -553,7 +553,7 @@ impl AuthModeWidget {
             Some("https://developers.openai.com/codex/security"),
         );
         let mut preferences_line =
-            HyperlinkLine::new(Line::from("  Uses your plan's rate limits and ").dim());
+            HyperlinkLine::new(Line::from("  Uses the plan's rate limits and ").dim());
         preferences_line.push_span(
             "training data preferences".underlined(),
             Some("https://chatgpt.com/#settings"),
@@ -561,14 +561,14 @@ impl AuthModeWidget {
 
         let lines = vec![
             HyperlinkLine::new(
-                "✓ Signed in with your ChatGPT account"
+                "✓ Signed in with the ChatGPT account"
                     .fg(Color::Green)
                     .into(),
             ),
             "".into(),
-            "  Before you start:".into(),
+            "  Before starting:".into(),
             "".into(),
-            "  Decide how much autonomy you want to grant Codex".into(),
+            "  Decide how much autonomy Codex gets".into(),
             docs_line,
             "".into(),
             "  Codex can make mistakes".into(),
@@ -578,7 +578,7 @@ impl AuthModeWidget {
                     .into(),
             ),
             "".into(),
-            "  Powered by your ChatGPT account".into(),
+            "  Powered by the ChatGPT account".into(),
             preferences_line,
             "".into(),
             HyperlinkLine::new(Line::from(vec![
@@ -596,7 +596,7 @@ impl AuthModeWidget {
 
     fn render_chatgpt_success(&self, area: Rect, buf: &mut Buffer) {
         let lines = vec![
-            "✓ Signed in with your ChatGPT account"
+            "✓ Signed in with the ChatGPT account"
                 .fg(Color::Green)
                 .into(),
         ];
@@ -610,7 +610,7 @@ impl AuthModeWidget {
         let lines = vec![
             "✓ API key configured".fg(Color::Green).into(),
             "".into(),
-            "  Codex will use usage-based billing with your API key.".into(),
+            "  Codex bills usage against this API key.".into(),
         ];
 
         Paragraph::new(lines)
@@ -629,16 +629,16 @@ impl AuthModeWidget {
         let mut intro_lines: Vec<Line> = vec![
             Line::from(vec![
                 "> ".into(),
-                "Use your own OpenAI API key for usage-based billing".bold(),
+                "Use an OpenAI API key for usage-based billing".bold(),
             ]),
             "".into(),
-            "  Paste or type your API key below. It will be stored locally in auth.json.".into(),
+            "  Paste or type the API key below. It is stored locally in auth.json.".into(),
             "".into(),
         ];
         if state.prepopulated_from_env {
             intro_lines.push("  Detected OPENAI_API_KEY environment variable.".into());
             intro_lines.push(
-                "  Paste a different key if you prefer to use another account."
+                "  Paste a different key to use another account."
                     .dim()
                     .into(),
             );
@@ -649,7 +649,7 @@ impl AuthModeWidget {
             .render(intro_area, buf);
 
         let content_line: Line = if state.value.is_empty() {
-            vec!["Paste or type your API key".dim()].into()
+            vec!["Paste or type the API key".dim()].into()
         } else {
             Line::from(state.value.clone())
         };
@@ -1280,10 +1280,12 @@ mod tests {
             ]
             .concat()
         );
+        // 34, not 35: the lead-in on this row lost one column when `Uses your plan's` became
+        // `Uses the plan's`. The link's own width is unchanged, which is what this asserts.
         assert_eq!(
-            (0..60).map(|x| buf[(x, 11)].modifier).collect::<Vec<_>>(),
+            (0..59).map(|x| buf[(x, 11)].modifier).collect::<Vec<_>>(),
             [
-                vec![Modifier::DIM; 35],
+                vec![Modifier::DIM; 34],
                 vec![Modifier::DIM | Modifier::UNDERLINED; 25],
             ]
             .concat()
@@ -1301,18 +1303,18 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         insta::assert_snapshot!(visible, @r###"
-        ✓ Signed in with your ChatGPT account
+        ✓ Signed in with the ChatGPT account
 
-          Before you start:
+          Before starting:
 
-          Decide how much autonomy you want to grant Codex
+          Decide how much autonomy Codex gets
           For more details see the Codex docs
 
           Codex can make mistakes
           Review the code it writes and commands it runs
 
-          Powered by your ChatGPT account
-          Uses your plan's rate limits and training data preferences
+          Powered by the ChatGPT account
+          Uses the plan's rate limits and training data preferences
 
           Press enter to continue
         "###);

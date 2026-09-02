@@ -152,7 +152,7 @@ impl ChatWidget {
         let mut header = ColumnRenderable::new();
         header.push(Line::from("Apps".bold()));
         header.push(Line::from(
-            "Use $ to insert an installed app into your prompt.".dim(),
+            "Type $ to insert an installed app into the prompt.".dim(),
         ));
         header.push(Line::from(
             format!("Installed {installed} of {total} available apps.").dim(),
@@ -186,9 +186,9 @@ impl ChatWidget {
             };
             let missing_label = format!("{status_label}. App link unavailable.");
             let instructions = if connector.is_accessible {
-                "Manage this app in your browser."
+                "Manage this app in the browser."
             } else {
-                "Install this app in your browser, then reload Codex."
+                "Install this app in the browser, then reload Codex."
             };
             if let Some(install_url) = connector.install_url.clone() {
                 let app_id = connector.id.clone();

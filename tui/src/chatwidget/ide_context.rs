@@ -103,14 +103,14 @@ impl ChatWidget {
                     self.add_info_message(
                         "IDE context is on.".to_string(),
                         Some(
-                            "Future messages will include your current IDE selection and open tabs."
+                            "Future messages include the open IDE tabs and the current selection."
                                 .to_string(),
                         ),
                     );
                 } else {
                     self.add_info_message(
                         "IDE context is on.".to_string(),
-                        Some("Connected to your IDE.".to_string()),
+                        Some("Connected to the IDE.".to_string()),
                     );
                 }
             }

@@ -303,7 +303,7 @@ fn keymap_debug_tab() -> SelectionTab {
         id: KEYMAP_DEBUG_TAB_ID.to_string(),
         label: "Debug".to_string(),
         header: keymap_header(
-            "Inspect keypresses from your terminal.".to_string(),
+            "Inspect keypresses from the terminal.".to_string(),
             "See the key Codex detects and any shortcuts assigned to it.".to_string(),
         ),
         items: vec![SelectionItem {

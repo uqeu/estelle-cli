@@ -1366,7 +1366,7 @@ mod tests {
         view.show_delayed_hint_for_test();
 
         let rendered = render_debug(&view, /*width*/ 100);
-        assert!(rendered.contains("Still waiting?"));
+        assert!(rendered.contains("If nothing changes on a keypress"));
         assert_snapshot!("keymap_debug_view_delayed_hint", rendered);
     }
 
@@ -1378,7 +1378,7 @@ mod tests {
         view.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
 
         let rendered = render_debug(&view, /*width*/ 100);
-        assert!(!rendered.contains("Still waiting?"));
+        assert!(!rendered.contains("Only received keys can be assigned as shortcuts"));
         assert_snapshot!("keymap_debug_view_match", rendered);
     }
 

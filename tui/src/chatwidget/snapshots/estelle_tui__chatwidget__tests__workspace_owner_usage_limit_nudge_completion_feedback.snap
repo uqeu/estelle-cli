@@ -8,4 +8,4 @@ expression: "rendered_cases.join(\"\\n---\\n\")"
 • A limit increase was already requested recently.
 
 ---
-• Could not request a limit increase. Please try again.
+• Could not request a limit increase. Run it again.

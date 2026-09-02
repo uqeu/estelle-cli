@@ -163,6 +163,10 @@ mod notifications;
 pub(crate) mod onboarding;
 mod pager_overlay;
 mod permission_compat;
+/// The house voice, enforced over the inherited Codex surfaces. Test-only: it reads the shipped
+/// source and fails on the constructions the founder banned, so the count cannot climb back.
+#[cfg(test)]
+mod plain_english;
 pub(crate) mod public_widgets;
 mod render;
 mod resize_reflow_cap;
