@@ -27,6 +27,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::Command;
 use crate::commands;
+use estelle_tui::ground_block;
+use estelle_tui::ground_block::FlaggedOutcome;
 use estelle_tui::session_gap;
 
 const SOURCE_EXTENSIONS: &[&str] = &[
@@ -185,6 +187,47 @@ enum GroundKind {
 struct GroundVerdict {
     kind: GroundKind,
     detail: String,
+}
+
+/// What the grounding hook says, and — separately — whether it REFUSES.
+///
+/// 🔴 **`deny_reason` IS THE FIELD THAT DID NOT EXIST.** Every branch used to produce a message
+/// and a context and nothing else, so a flagged hallucination and a clean pass were identical to
+/// the only consumer that matters: the host's permission decision. Its `Some`/`None` is the whole
+/// difference between a guard and theatre, which is why it is a separate field rather than a
+/// substring somebody has to notice in the prose.
+#[derive(Debug, Eq, PartialEq)]
+struct GroundOutput {
+    /// The line for the human.
+    message: String,
+    /// The finding fed back to the model.
+    context: Option<String>,
+    /// `Some` exactly when the hook refuses the edit. **Must be non-empty**: the host treats
+    /// `permissionDecision: "deny"` with an empty reason as an invalid envelope and does NOT
+    /// block, so an empty reason here would be a refusal that silently passes.
+    deny_reason: Option<String>,
+}
+
+impl GroundOutput {
+    /// The shape every non-refusing branch takes. Named so a branch cannot become advisory by
+    /// forgetting a field.
+    fn advisory(message: String, context: Option<String>) -> Self {
+        Self {
+            message,
+            context,
+            deny_reason: None,
+        }
+    }
+
+    /// The one JSON object this hook writes to stdout.
+    fn envelope(self) -> String {
+        hook_envelope(
+            Some(self.message),
+            self.context,
+            "PreToolUse",
+            self.deny_reason.as_deref(),
+        )
+    }
 }
 
 /// 🔴 "UNREACHABLE" WAS ONE WORD FOR FOUR OPPOSITE FACTS, AND IT NAMED THE WRONG ONE.
@@ -392,7 +435,7 @@ async fn run_hook_with(
     // Every arm here is a mode the installer table can declare — the dispatch test walks the
     // table so a declared mode can never error "unknown mode" at runtime.
     let result = match mode {
-        "ground" => ground_hook(&payload, repo).await,
+        "ground" => ground_hook(&payload, repo, root).await,
         "guard" => Ok(guard_hook(&payload)),
         "shift" => Ok(file_shift_hook(&payload, repo, root).await),
         "sync" => sync_hook(&payload, repo, root).await,
@@ -1043,44 +1086,107 @@ fn ground_request_body(code: &str) -> Value {
 ///
 /// Split out of `ground_hook` so the wording is checked without a socket or a credential: the
 /// hook itself now only decides WHICH verdict, and this decides how it reads.
+///
+/// ⚠️ `outcome` is consulted on the `Flagged` arm ONLY — the other three verdicts cannot refuse,
+/// so there is nothing for it to decide there. Callers that have no flagged finding pass
+/// `NotOptedIn`, and `the_customer_facing_lines_state_the_subject_once` pins that it is ignored.
 fn ground_report(
     verdict: &GroundVerdict,
+    outcome: FlaggedOutcome,
     name: &str,
     path: &str,
     repo: &Repo,
-) -> (String, Option<String>) {
+) -> GroundOutput {
     let detail = verdict.detail.as_str();
     match verdict.kind {
-        GroundKind::Unreachable => (
+        GroundKind::Unreachable => GroundOutput::advisory(
             format!("Estelle did not check {name}: {detail}. Edit not blocked."),
             None,
         ),
         // ADVISORY, AND IT SAYS SO. This branch lets the edit through, which is a real decision
         // and not an oversight — but "could not verify" printed as a bare warning was the worst
         // of both: loud enough to look like a guard, silent about the fact that nothing stopped.
-        GroundKind::Unverified => (
+        //
+        // ⚠️ THIS IS ALSO WHERE AN OUT-OF-SCOPE FILE LANDS (a `.ts` write, an empty edit). It used
+        // to land nowhere at all — `ground_hook` returned an empty vector, which the host cannot
+        // tell apart from a clean pass. "Cannot answer" now has words; silence does not.
+        GroundKind::Unverified => GroundOutput::advisory(
             format!("Estelle could not verify {name}: {detail}. Edit not blocked."),
             Some(format!(
                 "Estelle's grounding gate ABSTAINED on this edit to {path}: {detail}. This is NOT a pass - no symbol in this edit was checked, and the edit was ALLOWED to proceed anyway. Do not treat any API used here as confirmed to exist."
             )),
         ),
-        GroundKind::Flagged => (
-            format!("Estelle flagged {name}: {detail}. Edit not blocked."),
-            Some(format!(
-                "Estelle's grounding gate flagged this edit to {path}: {detail}. NOT BLOCKED, and the reason is freshness rather than doubt about the finding: the server does not yet attest that the index is current for this file, so a flagged symbol may be one it has not seen yet. Treat it as unverified, not as absent."
-            )),
-        ),
-        GroundKind::Clean => (
+        // 🔴 THE ONE BRANCH WHERE ESTELLE KNOWS SOMETHING IS WRONG. Which of the three it takes is
+        // decided by `FlaggedOutcome` — never re-derived here, so the wording and the decision
+        // cannot drift apart.
+        GroundKind::Flagged => match outcome {
+            FlaggedOutcome::Blocked => GroundOutput {
+                message: format!("Estelle blocked the edit to {name}: {detail}."),
+                context: Some(format!(
+                    "Estelle's deterministic grounding gate flagged this edit to {path}: {detail}. THE EDIT WAS BLOCKED - this is a refusal, not a warning. Estelle's index is current for this repo, so each flagged symbol genuinely does not exist. Fix the reference before retrying."
+                )),
+                deny_reason: Some(format!(
+                    "Estelle's grounding gate refuses this edit to {path}: {detail}. Estelle's index is current for this repo, so the flagged symbol does not exist in it. Correct the reference and retry; run `estelle sweep` first if you believe the symbol is real but unindexed."
+                )),
+            },
+            // ALLOWED, AND THE REASON IS THE OPERATOR'S SETTING RATHER THAN DOUBT ABOUT THE
+            // FINDING. Naming which of the two it was is the whole point: "we chose not to stop"
+            // and "we could not be sure" send a reader to different places.
+            FlaggedOutcome::NotOptedIn => GroundOutput::advisory(
+                format!(
+                    "Estelle flagged {name}: {detail}. Refusing is off ({block_env} is not set), so the edit was not blocked.",
+                    block_env = ground_block::BLOCK_ENV
+                ),
+                Some(format!(
+                    "Estelle's grounding gate flagged this edit to {path}: {detail}. NOT BLOCKED, and the reason is configuration rather than doubt: refusing edits is opt-in and {block_env} is not set on this install. The finding itself stands - treat the flagged symbol as one Estelle could not find.",
+                    block_env = ground_block::BLOCK_ENV
+                )),
+            ),
+            // FLAGGED, BUT MY INDEX IS BEHIND THIS REPO. An honest "cannot be sure", which is what
+            // it actually is — and it is why the gate never refuses a real symbol just because we
+            // have not caught up.
+            FlaggedOutcome::IndexBehind => GroundOutput::advisory(
+                format!(
+                    "Estelle flagged {name}: {detail}. The index is behind this repo, so the edit was not blocked."
+                ),
+                Some(format!(
+                    "Estelle's grounding gate flagged this edit to {path}: {detail}. NOT BLOCKED, and the reason is freshness rather than doubt about the finding: this repo has changed since Estelle last indexed it, so a flagged symbol may simply be one it has not seen yet. Treat it as unverified, not as absent."
+                )),
+            ),
+        },
+        GroundKind::Clean => GroundOutput::advisory(
             format!("Estelle checked {name}: grounded against {repo}."),
             None,
         ),
     }
 }
 
-async fn ground_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>, String> {
+async fn ground_hook(
+    payload: &HookPayload,
+    repo: &Repo,
+    root: &Path,
+) -> Result<Vec<String>, String> {
     let (path, code) = edited_file(payload);
-    if !path.ends_with(".py") || code.trim().is_empty() {
-        return Ok(Vec::new());
+    // 🔴 OUT OF SCOPE IS AN ANSWER, NOT A SILENCE. This used to `return Ok(Vec::new())`, which the
+    // host cannot distinguish from a clean pass — while the installed matcher is `Write|Edit`, so
+    // every TypeScript, Go and Rust write got exit 0 and empty stdout. The analysis really does
+    // only understand Python, so the fix is to SAY that, not to pretend otherwise.
+    if let ground_block::GroundScope::Abstain(detail) = ground_block::ground_scope(&path, &code) {
+        let (name, path) = display_names(&path);
+        let verdict = GroundVerdict {
+            kind: GroundKind::Unverified,
+            detail,
+        };
+        // An abstention never refuses, so the freshness closure is never reached — asserted, not
+        // assumed: `ground_envelope` only consults it on the flagged branch.
+        return Ok(vec![ground_envelope(
+            &verdict,
+            name,
+            path,
+            repo,
+            false,
+            || unreachable!("an abstention must never consult the index freshness signal"),
+        )]);
     }
     let name = Path::new(&path)
         .file_name()
@@ -1105,8 +1211,89 @@ async fn ground_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>, 
             },
         },
     };
-    let (message, context) = ground_report(&verdict, name, &path, repo);
-    Ok(vec![hook_message(Some(message), context, "PreToolUse")])
+    Ok(vec![ground_envelope(
+        &verdict,
+        name,
+        &path,
+        repo,
+        ground_block::blocking_enabled(),
+        || index_is_current_for(repo, root),
+    )])
+}
+
+/// Verdict → the one JSON object on stdout, with no credential and no socket in the way.
+///
+/// **FLAGGED IS TWO SIGNALS, NOT ONE**: the symbol is absent from the index, AND how fresh that
+/// index is. Only the pair justifies refusing a customer's edit; the first alone refuses real code
+/// whenever we have simply not caught up.
+///
+/// `index_current` is a closure because reading it walks the tree, and the common paths must not
+/// pay for a guard they cannot use: a clean, abstaining or unreachable verdict never calls it, and
+/// neither does a flagged one on an install that has not opted in. That is asserted by
+/// `the_freshness_walk_is_never_paid_for_on_a_verdict_that_cannot_block`, not assumed.
+fn ground_envelope(
+    verdict: &GroundVerdict,
+    name: &str,
+    path: &str,
+    repo: &Repo,
+    opted_in: bool,
+    index_current: impl FnOnce() -> bool,
+) -> String {
+    let outcome = if verdict.kind == GroundKind::Flagged {
+        ground_block::flagged_outcome(opted_in, opted_in && index_current())
+    } else {
+        FlaggedOutcome::NotOptedIn
+    };
+    ground_report(verdict, outcome, name, path, repo).envelope()
+}
+
+/// The key the freshness stamp may be filed under, or `None` when no repository was identified.
+///
+/// 🔴 **`Repo::default()` IS `"unknown/repo"`, NOT EMPTY, AND THAT ALMOST BOUGHT A FALSE BLOCK.**
+/// `ground_block`'s own guard only refuses a blank key, so an unidentified caller would have
+/// stamped and read a shared `unknown/repo` entry — two different unrecognised trees agreeing that
+/// each other's index is current, in the one direction that REFUSES REAL CODE. `repo.rs:34` states
+/// the rule that catches this: *"one owner for that question, because the alternative is every rule
+/// comparing against the placeholder string itself and one of them getting it wrong."* This is that
+/// one owner for the freshness signal, and `Repo::is_unresolved` is the only thing it asks.
+fn freshness_key(repo: &Repo) -> Option<&str> {
+    (!repo.is_unresolved()).then(|| repo.as_str())
+}
+
+/// Whether Estelle's index is current for THIS repo. An unidentified repo is never current.
+fn index_is_current_for(repo: &Repo, root: &Path) -> bool {
+    let Some(stamp) = ground_block::stamp_path() else {
+        return false;
+    };
+    index_is_current_at_for(&stamp, repo, root)
+}
+
+/// The testable half — the stamp path is a parameter so the placeholder guard is proven with a
+/// real stamp on disk rather than by reading the call site.
+fn index_is_current_at_for(stamp: &Path, repo: &Repo, root: &Path) -> bool {
+    freshness_key(repo).is_some_and(|key| ground_block::index_is_current_at(stamp, key, root))
+}
+
+/// Record that this repo's index just became current. Silent for an unidentified repo, because a
+/// stamp under the placeholder is a licence to refuse edits in a tree we could not name.
+fn mark_index_current(repo: &Repo) {
+    if let Some(key) = freshness_key(repo) {
+        ground_block::mark_indexed(key);
+    }
+}
+
+/// The subject of the abstention sentences when the payload named no file. An empty `{name}` reads
+/// as a broken message; naming the absence reads as an answer.
+fn display_names(path: &str) -> (&str, &str) {
+    if path.trim().is_empty() {
+        ("the edited file", "the edited file")
+    } else {
+        let name = Path::new(path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(path);
+        (name, path)
+    }
 }
 
 fn hook_session_socket_path() -> Option<PathBuf> {
@@ -1220,7 +1407,15 @@ async fn sync_hook(payload: &HookPayload, repo: &Repo, root: &Path) -> Result<Ve
         .post_scoped(Endpoint::Reindex, repo, &json!({"files": files}))
         .await
     {
-        Ok(_) => Ok(Vec::new()),
+        // 🔑 THE FRESHNESS SIGNAL IS WRITTEN HERE AND NOWHERE ELSE ON THIS PATH. The grounding
+        // gate may only refuse an edit when it can also say the index is current, and this is the
+        // one moment we know a change reached the server. It is stamped ONLY on success: a failed
+        // reindex that stamped would make a stale index look current, which is a false block on
+        // real code. Best-effort — a stamp we cannot write costs a block, never causes one.
+        Ok(_) => {
+            mark_index_current(repo);
+            Ok(Vec::new())
+        }
         Err(error) => Ok(vec![hook_message(
             Some(format!("Estelle did not reindex {path}: {error}.")),
             None,
@@ -1252,15 +1447,73 @@ fn edited_file(payload: &HookPayload) -> (String, String) {
 /// PreToolUse envelope on UserPromptSubmit would inject nothing and say nothing. A `None`
 /// message tells the human nothing.
 fn hook_message(message: Option<String>, context: Option<String>, event: &str) -> String {
+    hook_envelope(message, context, event, None)
+}
+
+/// The reason substituted if a refusal ever reaches the wire without one. It cannot happen —
+/// `ground_report` always supplies one — which is exactly why it is asserted rather than assumed:
+/// `permissionDecision: "deny"` with an empty reason is an INVALID envelope, and the host's
+/// response to an invalid envelope is to run the tool. A refusal that degrades into a pass is the
+/// defect this whole module exists to remove.
+const DENY_REASON_FALLBACK: &str = "Estelle's grounding gate refused this edit but could not render its reason; treat the edit as unverified.";
+
+/// One hook envelope, with the optional PreToolUse **refusal**.
+///
+/// 🔑 **WHICH HOST CONTRACT, AND WHY THIS ONE.** Claude Code accepts two ways to block a
+/// `PreToolUse` tool call: exit **2** with the reason on stderr, or exit **0** with
+/// `hookSpecificOutput.permissionDecision: "deny"` plus a non-empty `permissionDecisionReason` on
+/// stdout. This emits the JSON, for three reasons that are checkable rather than stylistic:
+///
+/// 1. It is the documented structured path (`code.claude.com/docs/en/hooks.md`: "Use exit 2 to
+///    block with a stderr message, or exit 0 with JSON for structured control"), and
+///    `additionalContext` is listed for `PreToolUse` while `systemMessage` is a common field for
+///    every event — so one object carries the human line, the model's context AND the refusal.
+/// 2. **The other host we install into DISCARDS stdout on exit 2.** `estelle install-hooks` writes
+///    the same runner into `~/.claude/settings.json` and `~/.codex/hooks.json`, and this repo's own
+///    hook engine — `hooks/src/events/pre_tool_use.rs`, the `Some(2)` arm — reads ONLY stderr on
+///    exit 2 and reports `Failed` when stderr is empty. Exit 2 would therefore throw away the
+///    warning and the context on the one branch where they matter most. The `Some(0)` arm honours
+///    `systemMessage`, `additionalContext` and the deny together, in that order.
+/// 3. It needs no new exit status. `top_level::run` returns `Result<Vec<String>, String>` and
+///    `main` maps `Err` to exit **1**; making the refusal a status would have meant a third
+///    outcome threaded through every command, and a `2` from any unrelated failure would then read
+///    as a block. **The refusal is data, not a status** — one owner, one place it can be produced.
+///
+/// The event name is PER-EVENT, never defaulted silently at the call site — Claude Code ignores
+/// `additionalContext` whose `hookEventName` does not match the event that fired, so reusing a
+/// PreToolUse envelope on UserPromptSubmit would inject nothing and say nothing. A `None` message
+/// tells the human nothing.
+fn hook_envelope(
+    message: Option<String>,
+    context: Option<String>,
+    event: &str,
+    deny_reason: Option<&str>,
+) -> String {
+    // A refusal is only expressible on PreToolUse; anywhere else the host has no tool call to
+    // stop, and shipping the field would produce an envelope it rejects wholesale.
+    debug_assert!(
+        deny_reason.is_none() || event == "PreToolUse",
+        "a permission decision is only meaningful on PreToolUse, not on {event}"
+    );
     let mut output = json!({});
     if let Some(message) = message {
         output["systemMessage"] = json!(message);
     }
-    if let Some(context) = context {
-        output["hookSpecificOutput"] = json!({
-            "hookEventName": event,
-            "additionalContext": context,
-        });
+    if context.is_some() || deny_reason.is_some() {
+        let mut specific = json!({ "hookEventName": event });
+        if let Some(context) = context {
+            specific["additionalContext"] = json!(context);
+        }
+        if let Some(reason) = deny_reason {
+            let reason = reason.trim();
+            specific["permissionDecision"] = json!("deny");
+            specific["permissionDecisionReason"] = json!(if reason.is_empty() {
+                DENY_REASON_FALLBACK
+            } else {
+                reason
+            });
+        }
+        output["hookSpecificOutput"] = specific;
     }
     serde_json::to_string(&output).unwrap_or_else(|_| {
         "{\"systemMessage\":\"Estelle hook output could not be encoded\"}".to_string()
@@ -2564,6 +2817,15 @@ async fn reindex(
             &with_measured_head(json!({"files": files, "removed": deleted_set}), root),
         )
         .await?;
+    // Same rule as the sync hook: the stamp is the grounding gate's licence to refuse, and it is
+    // only written once the server has accepted the change. `?` above means a failed reindex never
+    // reaches this line, which is the point.
+    //
+    // ⚠️ STATED LIMIT: `estelle sweep` does NOT stamp. A sweep is a batched ingest whose parts can
+    // fail independently, so "the sweep returned" is not "the index holds this repo". After a
+    // sweep the gate stays advisory until a reindex lands — the direction that costs a block
+    // rather than causing one.
+    mark_index_current(repo);
     lines.push("Memory current. Untouched files kept their symbols.".to_string());
     lines.extend(dropped_lines(&response));
     Ok(lines)
@@ -4308,48 +4570,78 @@ mod tests {
             kind: GroundKind::Unreachable,
             detail,
         };
-        let (message, context) = ground_report(&verdict, "billing.py", "src/billing.py", &repo);
-        for line in [Some(message), context].into_iter().flatten() {
+        let output = ground_report(
+            &verdict,
+            FlaggedOutcome::NotOptedIn,
+            "billing.py",
+            "src/billing.py",
+            &repo,
+        );
+        for line in [Some(output.message), output.context, output.deny_reason]
+            .into_iter()
+            .flatten()
+        {
             assert!(!line.contains("secret-account-id"), "leaked URL: {line}");
             assert!(!line.contains("127.0.0.1"), "leaked host: {line}");
             assert!(!line.contains("http://"), "leaked scheme: {line}");
         }
     }
 
-    /// The four customer-facing lines, whole. One sentence each, sentence case, no emoji, and the
-    /// subject stated exactly once — "Estelle UNREACHABLE - billing.py was NOT grounded: …" said
-    /// the same thing three times and named the wrong fact.
+    /// The six customer-facing lines, whole. Sentence case, no emoji, and the subject stated
+    /// exactly once — "Estelle UNREACHABLE - billing.py was NOT grounded: …" said the same thing
+    /// three times and named the wrong fact.
+    ///
+    /// 🔴 THE THREE FLAGGED ROWS ARE THE POINT. One of them refuses; two allow, and each names
+    /// WHICH of the two reasons it was. Before this, all three were one line that ended
+    /// "Edit not blocked." with no way to tell a policy decision from an uncertainty.
     #[test]
     fn the_customer_facing_lines_state_the_subject_once() {
         let repo = Repo::new("acme/widgets").expect("repo");
         let cases = [
             (
                 GroundKind::Unreachable,
+                FlaggedOutcome::NotOptedIn,
                 "answered and declined (http 429) — the server is reachable",
                 "Estelle did not check billing.py: answered and declined (http 429) — the server is reachable. Edit not blocked.",
             ),
             (
                 GroundKind::Unverified,
+                FlaggedOutcome::NotOptedIn,
                 "grounding surface too thin",
                 "Estelle could not verify billing.py: grounding surface too thin. Edit not blocked.",
             ),
             (
                 GroundKind::Flagged,
+                FlaggedOutcome::NotOptedIn,
                 "not defined in this repo: frobnicate",
-                "Estelle flagged billing.py: not defined in this repo: frobnicate. Edit not blocked.",
+                "Estelle flagged billing.py: not defined in this repo: frobnicate. Refusing is off (ESTELLE_HOOK_BLOCK is not set), so the edit was not blocked.",
+            ),
+            (
+                GroundKind::Flagged,
+                FlaggedOutcome::IndexBehind,
+                "not defined in this repo: frobnicate",
+                "Estelle flagged billing.py: not defined in this repo: frobnicate. The index is behind this repo, so the edit was not blocked.",
+            ),
+            (
+                GroundKind::Flagged,
+                FlaggedOutcome::Blocked,
+                "not defined in this repo: frobnicate",
+                "Estelle blocked the edit to billing.py: not defined in this repo: frobnicate.",
             ),
             (
                 GroundKind::Clean,
+                FlaggedOutcome::NotOptedIn,
                 "",
                 "Estelle checked billing.py: grounded against acme/widgets.",
             ),
         ];
-        for (kind, detail, expected) in cases {
+        for (kind, outcome, detail, expected) in cases {
             let verdict = GroundVerdict {
                 kind,
                 detail: detail.to_string(),
             };
-            let (message, _) = ground_report(&verdict, "billing.py", "src/billing.py", &repo);
+            let message =
+                ground_report(&verdict, outcome, "billing.py", "src/billing.py", &repo).message;
             assert_eq!(message, expected);
             assert_eq!(
                 message.matches("Estelle").count(),
@@ -4364,6 +4656,379 @@ mod tests {
                 "no emoji and no warning glyph: {message}"
             );
         }
+    }
+
+    /// 🔴 **THE ONE ASYMMETRY IN THE FRESHNESS PROXY, ENFORCED RATHER THAN COMMENTED.**
+    ///
+    /// The freshness walk asks "is anything under this root newer than the last successful
+    /// reindex". Skipping a directory the INGEST indexes hides a newly-written file, which makes a
+    /// stale index look current — a FALSE BLOCK on real code, the exact inverse of the product's
+    /// promise. Failing to skip one the ingest skips only makes a current index look behind, which
+    /// degrades to advisory. So the walk's skip list must stay a **subset** of the ingest's, and
+    /// this is the line that enforces it. Found by a surviving mutant: adding `"src"` to the walk's
+    /// list broke nothing, and `"src"` is where the customer's code lives.
+    #[test]
+    fn the_freshness_walk_never_skips_a_directory_the_ingest_indexes() {
+        let indexed_away: Vec<&str> = ground_block::FRESHNESS_SKIP_DIRECTORIES
+            .iter()
+            .copied()
+            .filter(|directory| !SKIP_DIRECTORIES.contains(directory))
+            .collect();
+        assert!(
+            indexed_away.is_empty(),
+            "these directories are swept into the index but hidden from the freshness walk, so a \
+             new file in one of them would make a stale index look current and refuse real code: \
+             {indexed_away:?}"
+        );
+        assert!(
+            !ground_block::FRESHNESS_SKIP_DIRECTORIES.is_empty(),
+            "an empty skip list would make this guard vacuous"
+        );
+    }
+
+    /// 🔴 **AN UNIDENTIFIED REPO MUST NEVER READ AS "CURRENT".** `Repo::default()` is the
+    /// placeholder `"unknown/repo"`, not an empty string, so the freshness layer's own blank-key
+    /// guard does not catch it: without this, two different unrecognised trees would share one
+    /// stamp entry and each would vouch for the other's index — a refusal of REAL code in a repo
+    /// Estelle could not even name. Proven with a real, deliberately future-dated stamp on disk,
+    /// so the test cannot pass by the walk failing for some unrelated reason.
+    #[test]
+    fn an_unidentified_repo_is_never_current_even_with_a_future_stamp() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let root = home.path().join("repo");
+        fs::create_dir_all(&root).expect("root");
+        fs::write(root.join("module.py"), b"def go(): pass\n").expect("write");
+        let stamp = home.path().join("reindex-stamp.json");
+        let far_future = 4_102_444_800.0_f64; // 2100-01-01, newer than any mtime here
+        let named = Repo::new("acme/widgets").expect("repo");
+        let unresolved = Repo::default();
+
+        assert_eq!(freshness_key(&named), Some("acme/widgets"));
+        assert_eq!(
+            freshness_key(&unresolved),
+            None,
+            "the placeholder {unresolved} must never become a stamp key"
+        );
+
+        // The POSITIVE CONTROL first: if a named repo did not read as current here, the negative
+        // below would pass for the wrong reason and this guard would prove nothing.
+        ground_block::mark_indexed_at(&stamp, named.as_str(), far_future).expect("stamp");
+        assert!(index_is_current_at_for(&stamp, &named, &root));
+
+        // Now plant the placeholder key by hand — the only way it could ever exist — and confirm
+        // the guard refuses to read it.
+        ground_block::mark_indexed_at(&stamp, unresolved.as_str(), far_future).expect("stamp");
+        assert!(
+            !index_is_current_at_for(&stamp, &unresolved, &root),
+            "a repo we could not identify must stay advisory whatever the stamp says"
+        );
+    }
+
+    /// The generated PreToolUse output contract, read off disk rather than off my memory of it.
+    ///
+    /// `hooks/schema/generated/pre-tool-use.command.output.schema.json` is generated from the host
+    /// engine's own wire types and carries `additionalProperties: false`, so a field name we
+    /// invent is a field the host will reject. Using it as the oracle is the difference between
+    /// "the envelope matches what I believe the contract is" and "the envelope matches the
+    /// contract".
+    fn pre_tool_use_output_schema() -> Value {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../hooks/schema/generated/pre-tool-use.command.output.schema.json");
+        let schema: Value = serde_json::from_slice(
+            &fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display())),
+        )
+        .expect("the generated PreToolUse schema must parse");
+        // 🔴 NON-EMPTY IS NOT CORRECTLY-PARSED. Assert the SHAPE before trusting the oracle — a
+        // schema that moved or was regenerated into something else would otherwise let every
+        // assertion below pass vacuously.
+        assert_eq!(
+            schema["additionalProperties"],
+            json!(false),
+            "the oracle only constrains anything if unknown fields are refused"
+        );
+        assert_eq!(
+            schema["definitions"]["PreToolUsePermissionDecisionWire"]["enum"],
+            json!(["allow", "deny", "ask"]),
+            "the decision vocabulary moved; re-read the contract before trusting this test"
+        );
+        schema
+    }
+
+    fn schema_declares(schema: &Value, pointer: &str, field: &str) -> bool {
+        schema
+            .pointer(pointer)
+            .and_then(|properties| properties.get(field))
+            .is_some()
+    }
+
+    /// 🔴 **D2, ON THE WIRE.** The refusal is not a phrase inside a warning — it is
+    /// `permissionDecision: "deny"` with a non-empty reason, which is the only thing the host
+    /// reads as a block. Every key emitted is checked against the generated schema, so a typo or
+    /// an invented field fails here rather than silently no-op'ing in production.
+    #[test]
+    fn the_refusal_envelope_is_exactly_the_hosts_deny_contract() {
+        let schema = pre_tool_use_output_schema();
+        let repo = Repo::new("acme/widgets").expect("repo");
+        let verdict = GroundVerdict {
+            kind: GroundKind::Flagged,
+            detail:
+                "signature mismatch: tokenize() takes at most 1 positional argument(s), 6 given"
+                    .to_string(),
+        };
+
+        let envelope = ground_envelope(&verdict, "probe.py", "src/probe.py", &repo, true, || true);
+        let parsed: Value = serde_json::from_str(&envelope).expect("envelope JSON");
+        let specific = &parsed["hookSpecificOutput"];
+
+        assert_eq!(specific["hookEventName"], json!("PreToolUse"));
+        assert_eq!(
+            specific["permissionDecision"],
+            json!("deny"),
+            "without this field the host runs the tool: {envelope}"
+        );
+        let reason = specific["permissionDecisionReason"]
+            .as_str()
+            .expect("a deny carries a reason");
+        assert!(
+            !reason.trim().is_empty(),
+            "an empty reason is an INVALID deny — the host reports the hook failed and lets the \
+             edit through"
+        );
+        assert!(
+            reason.contains("tokenize()"),
+            "the refusal must name the finding, not just refuse: {reason}"
+        );
+        // The human line and the model's context survive alongside the refusal. This is the whole
+        // reason the JSON envelope beats exit 2, which discards stdout.
+        assert!(
+            parsed["systemMessage"]
+                .as_str()
+                .is_some_and(|line| line.contains("blocked the edit")),
+            "the human must be told: {envelope}"
+        );
+        assert!(
+            specific["additionalContext"]
+                .as_str()
+                .is_some_and(|line| line.contains("THE EDIT WAS BLOCKED")),
+            "the model must be told it was a refusal, not a warning: {envelope}"
+        );
+
+        for key in parsed.as_object().expect("object").keys() {
+            assert!(
+                schema_declares(&schema, "/properties", key),
+                "top-level field {key:?} is not in the host's generated contract"
+            );
+        }
+        for key in specific.as_object().expect("object").keys() {
+            assert!(
+                schema_declares(
+                    &schema,
+                    "/definitions/PreToolUseHookSpecificOutputWire/properties",
+                    key
+                ),
+                "hookSpecificOutput field {key:?} is not in the host's generated contract"
+            );
+        }
+    }
+
+    /// 🔴 THE OTHER HALF, AND THE HALF THAT IS USUALLY MISSING. A gate only ever seen refusing is
+    /// indistinguishable from one that refuses everything. Every branch that must NOT block is
+    /// enumerated here, and each carries NO permission decision at all — an absent field, not a
+    /// `"deny"` the host might read anyway.
+    #[test]
+    fn no_advisory_branch_can_reach_the_wire_carrying_a_refusal() {
+        let repo = Repo::new("acme/widgets").expect("repo");
+        let cases: [(GroundKind, bool, bool, &str); 6] = [
+            (GroundKind::Clean, true, true, "a clean verdict"),
+            (GroundKind::Unreachable, true, true, "an unreachable server"),
+            (GroundKind::Unverified, true, true, "an abstention"),
+            (
+                GroundKind::Flagged,
+                false,
+                true,
+                "a flagged finding on an install that never opted in",
+            ),
+            (
+                GroundKind::Flagged,
+                true,
+                false,
+                "a flagged finding while the index is behind",
+            ),
+            (
+                GroundKind::Flagged,
+                false,
+                false,
+                "a flagged finding with neither signal",
+            ),
+        ];
+        for (kind, opted_in, current, what) in cases {
+            let verdict = GroundVerdict {
+                kind,
+                detail: "not defined in this repo: frobnicate".to_string(),
+            };
+            let envelope = ground_envelope(
+                &verdict,
+                "probe.py",
+                "src/probe.py",
+                &repo,
+                opted_in,
+                || current,
+            );
+            let parsed: Value = serde_json::from_str(&envelope).expect("envelope JSON");
+            assert!(
+                parsed["hookSpecificOutput"]
+                    .get("permissionDecision")
+                    .is_none(),
+                "{what} must not refuse: {envelope}"
+            );
+            assert!(
+                parsed["hookSpecificOutput"]
+                    .get("permissionDecisionReason")
+                    .is_none(),
+                "a reason without a decision is an INVALID envelope the host rejects: {envelope}"
+            );
+        }
+    }
+
+    /// The two allow-branches of a FLAGGED finding must not be one message. "We chose not to stop"
+    /// and "we could not be sure" send a reader to different places, and the twin's single line
+    /// blamed freshness for both.
+    #[test]
+    fn the_two_allowed_flagged_branches_name_which_reason_it_was() {
+        let repo = Repo::new("acme/widgets").expect("repo");
+        let verdict = GroundVerdict {
+            kind: GroundKind::Flagged,
+            detail: "not defined in this repo: frobnicate".to_string(),
+        };
+        let not_opted_in: Value = serde_json::from_str(&ground_envelope(
+            &verdict,
+            "probe.py",
+            "src/probe.py",
+            &repo,
+            false,
+            || true,
+        ))
+        .expect("envelope JSON");
+        let behind: Value = serde_json::from_str(&ground_envelope(
+            &verdict,
+            "probe.py",
+            "src/probe.py",
+            &repo,
+            true,
+            || false,
+        ))
+        .expect("envelope JSON");
+
+        assert_ne!(
+            not_opted_in["systemMessage"], behind["systemMessage"],
+            "one line for two different reasons is the defect being fixed"
+        );
+        assert!(
+            not_opted_in["systemMessage"]
+                .as_str()
+                .is_some_and(|line| line.contains(ground_block::BLOCK_ENV)),
+            "the not-opted-in line must name the switch that would change it"
+        );
+        assert!(
+            behind["systemMessage"]
+                .as_str()
+                .is_some_and(|line| line.contains("index is behind")),
+            "the stale-index line must say it is freshness, not doubt"
+        );
+    }
+
+    /// A hook that walks the tree on every clean edit is a hang in the editor. The freshness
+    /// signal is only reachable from the one branch that can spend it.
+    #[test]
+    fn the_freshness_walk_is_never_paid_for_on_a_verdict_that_cannot_block() {
+        let repo = Repo::new("acme/widgets").expect("repo");
+        for (kind, opted_in) in [
+            (GroundKind::Clean, true),
+            (GroundKind::Unreachable, true),
+            (GroundKind::Unverified, true),
+            (GroundKind::Flagged, false),
+        ] {
+            let verdict = GroundVerdict {
+                kind,
+                detail: "whatever".to_string(),
+            };
+            let _ = ground_envelope(
+                &verdict,
+                "probe.py",
+                "src/probe.py",
+                &repo,
+                opted_in,
+                || panic!("{kind:?} (opted_in={opted_in}) must not read the freshness signal"),
+            );
+        }
+    }
+
+    /// 🔴 A REFUSAL WITH AN EMPTY REASON IS A REFUSAL THAT PASSES. The host treats
+    /// `permissionDecision: "deny"` without a non-empty `permissionDecisionReason` as an invalid
+    /// envelope and runs the tool, so the impossible state is converted into a still-blocking one
+    /// rather than trusted not to happen.
+    #[test]
+    fn a_refusal_that_lost_its_reason_still_refuses() {
+        let envelope = hook_envelope(None, None, "PreToolUse", Some("   \n  "));
+        let parsed: Value = serde_json::from_str(&envelope).expect("envelope JSON");
+        assert_eq!(parsed["hookSpecificOutput"]["permissionDecision"], "deny");
+        assert_eq!(
+            parsed["hookSpecificOutput"]["permissionDecisionReason"],
+            json!(DENY_REASON_FALLBACK)
+        );
+    }
+
+    /// 🔴 **D3, END TO END.** A non-Python write used to produce exit 0 and EMPTY stdout — byte
+    /// identical to a clean pass — while the installed matcher is `Write|Edit`. This drives the
+    /// whole dispatch (`hook ground`) with a real host payload and asserts an answer comes back.
+    /// It reaches no network: the scope check runs before any credential is resolved.
+    #[tokio::test]
+    async fn a_non_python_write_answers_cannot_check_instead_of_saying_nothing() {
+        let repo = Repo::new("acme/widgets").expect("repo");
+        let payload = json!({
+            "session_id": "s",
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Write",
+            "tool_input": {
+                "file_path": "/repo/web/app.ts",
+                "content": "export const total = sum([1, 2]);\n",
+            },
+        })
+        .to_string();
+
+        let lines = run_hook_with(
+            "ground",
+            Some("PreToolUse"),
+            &payload,
+            &repo,
+            Path::new("/repo"),
+        )
+        .await
+        .expect("the ground hook must answer");
+
+        assert_eq!(lines.len(), 1, "silence is the defect: {lines:?}");
+        let parsed: Value = serde_json::from_str(&lines[0]).expect("envelope JSON");
+        let message = parsed["systemMessage"].as_str().expect("a human line");
+        assert!(message.contains("could not verify"), "{message}");
+        assert!(message.contains("app.ts"), "{message}");
+        assert!(
+            message.contains(".py"),
+            "must name what IS covered: {message}"
+        );
+        assert!(
+            parsed["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .is_some_and(|line| line.contains("This is NOT a pass")),
+            "the model must be told this was an abstention: {}",
+            lines[0]
+        );
+        assert!(
+            parsed["hookSpecificOutput"]
+                .get("permissionDecision")
+                .is_none(),
+            "an abstention never refuses: {}",
+            lines[0]
+        );
     }
 
     /// A missing credential is not an outage. It used to print the same "Estelle UNREACHABLE"

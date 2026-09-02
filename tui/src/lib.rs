@@ -137,6 +137,9 @@ mod get_git_diff;
 mod git_action_directives;
 mod goal_display;
 mod goal_files;
+/// The refusal half of the grounding gate, and the abstention that stops "not checked" reading
+/// as "clean". Lives in the LIBRARY so the binary's `top_level` and the tests share one owner.
+pub mod ground_block;
 mod history_cell;
 mod hooks_rpc;
 mod ide_context;
