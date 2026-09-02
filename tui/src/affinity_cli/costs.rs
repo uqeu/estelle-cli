@@ -416,7 +416,9 @@ fn cost_line(row: &CostRow, columns: &[cols::Col; 5], theme: Theme) -> Line<'sta
     let tokens_in = token_text(row.tokens_in);
     let tokens_out = token_text(row.tokens_out);
     let vendor = row.vendor.display();
-    cols::row(
+    // `cols::row` BORROWS its cells and three of these are locals, so the row is `Line<'_>`.
+    // `cols::owned` re-owns the spans; it exists for exactly this call shape.
+    cols::owned(cols::row(
         columns,
         &[
             cols::Cell(&row.role, theme.primary()),
@@ -433,7 +435,7 @@ fn cost_line(row: &CostRow, columns: &[cols::Col; 5], theme: Theme) -> Line<'sta
             ),
         ],
         1,
-    )
+    ))
 }
 
 fn append_live_fleet(

@@ -6382,6 +6382,21 @@ fn failure_lines(error: &Error) -> [String; 3] {
     failure_lines_for(&FailureView::from(error))
 }
 
+/// A `ctrl+<letter>` chord, matched case-insensitively.
+///
+/// 🔴 THIS IS DELIBERATELY NOT USABLE FOR `ctrl+m`. `Ctrl+M` is ASCII 0x0D - the SAME BYTES as
+/// `enter` - and this binary does not enable the keyboard protocol that separates them, so the
+/// terminal delivers `KeyCode::Enter` with NO modifier. A `ctrl+m` arm in [`handle_key`] therefore
+/// cannot fire on its own chord and CAN swallow every Enter the user presses. The affinity models
+/// surface was bound to it until this integration; the binding was removed rather than moved,
+/// because choosing its replacement chord is a design decision the founder has open on screen 10.
+fn control_letter(key: &KeyEvent, letter: char) -> bool {
+    debug_assert!(letter != 'm', "ctrl+m is carriage return and can never be a chord");
+    debug_assert!(letter.is_ascii_lowercase(), "chords are written lowercase");
+    key.modifiers.contains(KeyModifiers::CONTROL)
+        && matches!(key.code, KeyCode::Char(c) if c.eq_ignore_ascii_case(&letter))
+}
+
 fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>) -> bool {
     if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
         return false;
@@ -6393,18 +6408,6 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
         // the mechanism by which an echoed turn waits forever.
         app.start_next(tx);
         return true;
-    }
-    if control_letter(&key, 'm') {
-        if app
-            .affinity_surface
-            .as_ref()
-            .is_some_and(affinity_cli::Surface::is_models)
-        {
-            app.affinity_surface = None;
-        } else {
-            app.open_affinity_models(tx);
-        }
-        return false;
     }
     if control_letter(&key, 's') {
         if app

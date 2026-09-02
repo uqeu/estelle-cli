@@ -224,7 +224,8 @@ impl ModelsScreen {
         for (index, role) in ROLES.iter().enumerate() {
             let selection = &self.selections[index];
             let label = selection.label();
-            let line = cols::row(
+            // `label` is a local; `cols::row` borrows its cells, so re-own before pushing.
+            let line = cols::owned(cols::row(
                 &columns,
                 &[
                     cols::Cell(role, theme.primary()),
@@ -239,7 +240,7 @@ impl ModelsScreen {
                     cols::Cell(&label, theme.primary()),
                 ],
                 2,
-            );
+            ));
             lines.push(highlight(line, index == self.role_index, theme));
         }
         lines.extend([
