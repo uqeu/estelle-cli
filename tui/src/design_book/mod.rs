@@ -330,7 +330,11 @@ pub(crate) const SCREENS: &[BookScreen] = &[
     },
     BookScreen {
         name: "40-code-graph",
-        contract: "shipped · graph_view · files not symbols, no keys to walk it",
+        // ✅ **"no keys to walk it" WAS TRUE UNTIL `graph_walk` AND IS THE KIND OF LINE THAT ROTS.**
+        // The badge is a claim about TODAY; `/graph walk` binds ↑↓/enter/space/b///x/esc, and each
+        // is pressed by a test. `files not symbols` STAYS, because `fan_out` still does not exist
+        // anywhere in the server and binding keys does not conjure a measurement.
+        contract: "shipped · graph_view · files not symbols; /graph walk walks it",
         width: 130,
         height: 32,
         needle: "chokepoint",
@@ -346,7 +350,11 @@ pub(crate) const SCREENS: &[BookScreen] = &[
     },
     BookScreen {
         name: "41-memory-correct",
-        contract: "edit_memory + POST /facts exist; no CLI surface, and no kind/trust",
+        // ✅ **BOTH HALVES OF THIS LINE WERE FALSE AND THE SECOND WAS FALSIFIED BY A PROBE.**
+        // `/memories` is a walkable pane with a retract key now, so "no CLI surface" is stale; and
+        // `GET /memories` returns `kind` AND `trust` on the live wire, for asserted facts too, so
+        // "no kind/trust" was a note nobody re-measured. What IS still missing is named instead.
+        contract: "/memories walks and retracts; no date, no citation count, no edit",
         width: 130,
         height: 32,
         needle: "supersedes",
