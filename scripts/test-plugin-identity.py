@@ -19,6 +19,7 @@ import hashlib
 import json
 import pathlib
 import re
+import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -42,6 +43,7 @@ REPOSITORY = "https://github.com/uqeu/estelle-cli"
 PLUGIN_CONTRACT_SHA256_BY_VERSION = {
     "0.2.31": "9d806279081abab96dc19d3aaae4a4c84f955df0458a5668afcf31f5c21ad472",
     "0.2.32": "c811c073c806387d49b310b0be98cdc0a5be07eadf26e12141632258fe3b3f5d",
+    "0.2.33": "43fb1636cf921f54353ae0ea398959e627919a2daaba918762877c8b0df1124f",
 }
 
 #: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.
@@ -106,6 +108,21 @@ readme = (PLUGIN / "README.md").read_text(encoding="utf-8")
 hooks_path = PLUGIN / "hooks" / "hooks.json"
 owner_version = workspace_version()
 
+# The marketplace file is generated from the Rust installer owner.  A row-count
+# assertion would miss a replacement or timeout drift, so read back the complete
+# rendered artifact before checking individual high-risk clauses below.
+renderer = subprocess.run(
+    [sys.executable, str(ROOT / "scripts" / "render-plugin-hooks.py"), "--check"],
+    capture_output=True,
+    text=True,
+    check=False,
+)
+check(
+    "shipping hook bundle is byte-exact output of the Rust HOOK_TABLE owner",
+    renderer.returncode == 0,
+    (renderer.stderr or renderer.stdout).strip(),
+)
+
 # ── identity ──────────────────────────────────────────────────────────────────
 check("plugin name is the pinned skill namespace",
       manifest["name"] == PLUGIN_NAME, f"{manifest['name']!r} != {PLUGIN_NAME!r}")
@@ -166,12 +183,17 @@ if hooks_path.is_file():
         for hook in matcher.get("hooks", [])
         if hook.get("command")
     }
+    check("shipping hook table contains all ten owner rows", len(commands) == 10, str(len(commands)))
+    check(
+        "shipping hook table carries the dispatched shift mode",
+        "npx -y @fatelabs/estelle@0 hook shift --event PostToolUse" in commands,
+    )
     for command in (
-        "npx -y @fatelabs/estelle@0 hook ground",
-        "npx -y @fatelabs/estelle@0 hook sync",
-        "npx -y @fatelabs/estelle@0 hook context",
+        "npx -y @fatelabs/estelle@0 hook ground --event PreToolUse",
+        "npx -y @fatelabs/estelle@0 hook sync --event PostToolUse",
+        "npx -y @fatelabs/estelle@0 hook context --event UserPromptSubmit",
     ):
-        check(f"shipping timeout is 30 seconds ({command.rsplit(' ', 1)[-1]})",
+        check(f"shipping timeout is 30 seconds ({command.split(' hook ', 1)[1].split()[0]})",
               commands.get(command, {}).get("timeout") == 30,
               f"timeout={commands.get(command, {}).get('timeout')!r}")
 

@@ -1062,7 +1062,7 @@ fn install_hooks() -> Result<Vec<String>, String> {
     install_hooks_at(&claude_path, HookHost::Claude, &runner)?;
     install_hooks_at(&codex_path, HookHost::Codex, &runner)?;
     Ok(vec![
-        "Estelle hooks installed for the full session lifecycle (ground, guard, sync, distil, checkpoint, welcome, context).".to_string(),
+        "Estelle hooks installed for the full session lifecycle (ground, guard, shift, sync, distil, checkpoint, welcome, context).".to_string(),
         format!("Claude Code settings: {}", claude_path.display()),
         format!("Codex hooks: {}", codex_path.display()),
         "Both files were generated from one hook table. Existing settings and non-Estelle hooks were preserved.".to_string(),
@@ -1189,7 +1189,7 @@ const HOOK_TABLE: &[HookRow] = &[
         event: "PreToolUse",
         matcher: Some("Write|Edit"),
         mode: "ground",
-        timeout: 15,
+        timeout: 30,
         claude_async: false,
     },
     HookRow {
@@ -1210,7 +1210,7 @@ const HOOK_TABLE: &[HookRow] = &[
         event: "PostToolUse",
         matcher: Some("Write|Edit"),
         mode: "sync",
-        timeout: 20,
+        timeout: 30,
         claude_async: false,
     },
     HookRow {
@@ -1252,7 +1252,7 @@ const HOOK_TABLE: &[HookRow] = &[
         event: "UserPromptSubmit",
         matcher: None,
         mode: "context",
-        timeout: 10,
+        timeout: 30,
         claude_async: false,
     },
 ];
@@ -4382,16 +4382,16 @@ tests/test_serve.py:88: AssertionError\n\
         // (event, matcher, mode, timeout) — the contract, row for row. `async` is asserted
         // separately because it may appear on exactly one row of the whole table.
         let expected: [(&str, Option<&str>, &str, u64); 10] = [
-            ("PreToolUse", Some("Write|Edit"), "ground", 15),
+            ("PreToolUse", Some("Write|Edit"), "ground", 30),
             ("PreToolUse", Some("Bash"), "guard", 10),
             ("PostToolUse", Some("Read|Write|Edit"), "shift", 5),
-            ("PostToolUse", Some("Write|Edit"), "sync", 20),
+            ("PostToolUse", Some("Write|Edit"), "sync", 30),
             ("PostToolUse", Some("Bash"), "distil", 10),
             ("Stop", None, "checkpoint", 30),
             ("PreCompact", None, "checkpoint", 30),
             ("SessionEnd", None, "checkpoint", 30),
             ("SessionStart", None, "welcome", 5),
-            ("UserPromptSubmit", None, "context", 10),
+            ("UserPromptSubmit", None, "context", 30),
         ];
         assert_eq!(
             hooks.as_object().expect("events").len(),
@@ -4445,17 +4445,17 @@ tests/test_serve.py:88: AssertionError\n\
         let hooks = &value["hooks"];
 
         let expected: [(&str, Option<&str>, &str, u64); 10] = [
-            ("PreToolUse", Some("Write|Edit"), "ground", 15),
+            ("PreToolUse", Some("Write|Edit"), "ground", 30),
             ("PreToolUse", Some("Bash"), "guard", 10),
             ("PostToolUse", Some("Read|Write|Edit"), "shift", 5),
-            ("PostToolUse", Some("Write|Edit"), "sync", 20),
+            ("PostToolUse", Some("Write|Edit"), "sync", 30),
             ("PostToolUse", Some("Bash"), "distil", 10),
             ("Stop", None, "checkpoint", 30),
             ("PreCompact", None, "checkpoint", 30),
             // Codex clamps SessionEnd to 3s — say 3 rather than be silently rewritten.
             ("SessionEnd", None, "checkpoint", 3),
             ("SessionStart", None, "welcome", 5),
-            ("UserPromptSubmit", None, "context", 10),
+            ("UserPromptSubmit", None, "context", 30),
         ];
         assert_eq!(hooks.as_object().expect("events").len(), 7);
         for (event, matcher, mode, timeout) in expected {
