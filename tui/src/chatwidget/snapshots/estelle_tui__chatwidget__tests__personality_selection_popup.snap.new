@@ -1,8 +1,0 @@
----
-source: tui/src/chatwidget/tests/popups_and_settings.rs
-assertion_line: 3123
-expression: popup
----
-› Ask Codex to do anything
-
-  gpt-5.4 default · /tmp/project
