@@ -393,7 +393,7 @@ mod tests {
 
         assert!(lines.contains("Local fit  Fu01978/Nano-H"));
         assert!(lines.contains("estimated"));
-        assert!(lines.contains("Estimate-based"));
+        assert!(lines.contains(estelle_machine::ESTIMATE_NOTICE));
         assert!(lines.contains("Server Affinity still decides"));
     }
 }
