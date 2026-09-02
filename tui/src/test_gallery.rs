@@ -70,7 +70,7 @@ pub(crate) fn buffer_text(buffer: &Buffer) -> String {
         output.push_str(row.trim_end());
         output.push('\n');
     }
-    output
+    format!("{}\n", output.trim_end_matches('\n'))
 }
 
 fn buffer_svg(buffer: &Buffer) -> String {

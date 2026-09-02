@@ -1933,6 +1933,23 @@ fn collect_files(
     Ok((files, skipped))
 }
 
+/// Measure the same bounded, git-visible inventory `/sweep` would send, but retain only path and byte
+/// count for the read-only capacity endpoint. Content never leaves this function.
+pub(crate) fn sweep_estimate_payload(root: &Path) -> Result<Vec<Value>, String> {
+    let (files, _skipped) = collect_files(root, &[])?;
+    let payload = files
+        .into_iter()
+        .map(|file| json!({"path": file.path, "bytes": file.content.len()}))
+        .collect::<Vec<_>>();
+    assert!(payload.len() <= INGEST_MAX_FILES);
+    assert!(
+        payload
+            .iter()
+            .all(|row| row.get("path").is_some() && row.get("bytes").is_some())
+    );
+    Ok(payload)
+}
+
 fn bounded_inventory(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     if paths.len() <= INGEST_MAX_FILES {
         return paths;

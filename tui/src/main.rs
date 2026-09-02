@@ -1,5 +1,6 @@
 #![deny(clippy::print_stderr, clippy::print_stdout)]
 
+mod affinity_cli;
 mod agent_brief;
 #[cfg(test)]
 mod answer_currency_tests;
@@ -818,6 +819,12 @@ enum UiEvent {
     Credential(Result<(Client, AuthContext), Error>),
     Account(Result<AccountResponse, Error>),
     Overview(Result<OverviewResponse, Error>),
+    AffinityModelsLoaded {
+        presets: Box<Result<CommandReply, Error>>,
+        providers: Box<Result<CommandReply, Error>>,
+    },
+    AffinityModelsSaved(Result<CommandReply, Error>),
+    AffinityCapacity(Result<Value, String>),
     Repos(Result<ReposResponse, Error>),
     Scope(Result<CommandReply, Error>),
     Settings(Result<CommandReply, Error>),
@@ -1953,6 +1960,8 @@ struct App {
     /// How many times the gate has refused an edit in THIS session — counted where the refusal
     /// modal is opened, so it is a fact about what the user was actually shown.
     gate_refusals: u64,
+    affinity_surface: Option<affinity_cli::Surface>,
+    affinity_costs: affinity_cli::CostLedger,
     shell_timeout: Duration,
     gate_modal: Option<GateModal>,
     fleet: Option<estelle_client::FleetSnapshot>,
@@ -2291,6 +2300,8 @@ impl App {
             work_progress: None,
             session_spend_usd: None,
             gate_refusals: 0,
+            affinity_surface: None,
+            affinity_costs: affinity_cli::CostLedger::default(),
             shell_timeout: shell_timeout_from_value(
                 std::env::var(SHELL_TIMEOUT_ENV).ok().as_deref(),
             ),
@@ -4003,6 +4014,105 @@ impl App {
         )));
     }
 
+    fn open_affinity_models(&mut self, tx: &mpsc::UnboundedSender<UiEvent>) {
+        self.affinity_surface = Some(affinity_cli::Surface::models_loading());
+        self.picker = None;
+        self.resume_picker = None;
+        let Some(client) = self.client.clone() else {
+            if let Some(models) = self
+                .affinity_surface
+                .as_mut()
+                .and_then(affinity_cli::Surface::models_mut)
+            {
+                models.fail(
+                    "Models are unavailable until an Estelle account is connected".to_string(),
+                );
+            }
+            return;
+        };
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let cancel = CancellationToken::new();
+            let query = serde_json::json!({});
+            let (presets, providers) = tokio::join!(
+                client.get(estelle_client::Endpoint::AgentPresets, &query, &cancel),
+                client.get(estelle_client::Endpoint::Providers, &query, &cancel),
+            );
+            let _ = tx.send(UiEvent::AffinityModelsLoaded {
+                presets: Box::new(presets),
+                providers: Box::new(providers),
+            });
+        });
+    }
+
+    fn open_affinity_costs(&mut self, tx: &mpsc::UnboundedSender<UiEvent>) {
+        self.affinity_surface = Some(affinity_cli::Surface::Costs);
+        self.picker = None;
+        self.resume_picker = None;
+        self.affinity_costs.capacity_loading();
+        let (Some(client), root) = (self.client.clone(), self.root.clone()) else {
+            self.affinity_costs.apply_capacity(Err(
+                "an Estelle account is required for the capacity read".to_string(),
+            ));
+            return;
+        };
+        let repo = self.repo.clone();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let measured =
+                tokio::task::spawn_blocking(move || top_level::sweep_estimate_payload(&root))
+                    .await
+                    .map_err(|error| format!("local capacity inventory failed: {error}"))
+                    .and_then(|result| result);
+            let result = match measured {
+                Ok(files) if files.is_empty() => Err("no ingestable files were found".to_string()),
+                Ok(files) => client
+                    .post_scoped(
+                        estelle_client::Endpoint::SweepEstimate,
+                        &repo,
+                        &serde_json::json!({"files": files}),
+                        &CancellationToken::new(),
+                    )
+                    .await
+                    .map_err(|error| error.to_string()),
+                Err(error) => Err(error),
+            };
+            let _ = tx.send(UiEvent::AffinityCapacity(result));
+        });
+    }
+
+    fn save_affinity_models(&mut self, tx: &mpsc::UnboundedSender<UiEvent>) {
+        let body = self
+            .affinity_surface
+            .as_mut()
+            .and_then(affinity_cli::Surface::models_mut)
+            .and_then(affinity_cli::ModelsScreen::begin_save);
+        let Some(body) = body else { return };
+        let Some(client) = self.client.clone() else {
+            if let Some(models) = self
+                .affinity_surface
+                .as_mut()
+                .and_then(affinity_cli::Surface::models_mut)
+            {
+                models.fail(
+                    "The preset was not sent because no Estelle account is connected".to_string(),
+                );
+            }
+            return;
+        };
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let result = client
+                .put(
+                    estelle_client::Endpoint::AgentPresets,
+                    &body,
+                    &CancellationToken::new(),
+                )
+                .await;
+            let _ = tx.send(UiEvent::AffinityModelsSaved(result));
+        });
+    }
+
     fn apply_command_success(&mut self, name: &'static str, result: RemoteCommandReply) {
         if name == "gate" {
             self.gate_modal = GateModal::from_reply(&result.reply, &result.inspected_files);
@@ -4011,6 +4121,7 @@ impl App {
             }
         }
         let reply = result.reply;
+        self.affinity_costs.observe(name, &reply);
         if name == "sessions" {
             let rows = reply
                 .session_summaries()
@@ -4312,6 +4423,8 @@ impl App {
         self.sweep_progress = None;
         self.work_progress = None;
         self.fleet = None;
+        self.affinity_surface = None;
+        self.affinity_costs.reset_session();
         self.todo = None;
         self.transcript_scroll = 0;
     }
@@ -4413,6 +4526,50 @@ impl App {
                 Ok(overview) => self.apply_overview(overview.memory),
                 Err(error) => self.handle_background_error(&error),
             },
+            UiEvent::AffinityModelsLoaded { presets, providers } => {
+                let parsed = match (*presets, *providers) {
+                    (Ok(presets), Ok(providers)) => {
+                        affinity_cli::ModelsScreen::from_replies(&presets, &providers)
+                    }
+                    (Err(error), _) | (_, Err(error)) => {
+                        self.handle_background_error(&error);
+                        Err(format!("Models could not be read from the server: {error}"))
+                    }
+                };
+                if let Some(surface) = self.affinity_surface.as_mut() {
+                    match parsed {
+                        Ok(models) if surface.models_mut().is_some() => {
+                            *surface = affinity_cli::Surface::Models(Box::new(models));
+                        }
+                        Err(error) => {
+                            if let Some(models) = surface.models_mut() {
+                                models.fail(error);
+                            }
+                        }
+                        Ok(_) => {}
+                    }
+                }
+            }
+            UiEvent::AffinityModelsSaved(result) => {
+                let Some(models) = self
+                    .affinity_surface
+                    .as_mut()
+                    .and_then(affinity_cli::Surface::models_mut)
+                else {
+                    return;
+                };
+                match result {
+                    Ok(reply) => {
+                        if let Err(error) = models.apply_saved(&reply) {
+                            models.fail(error);
+                        }
+                    }
+                    Err(error) => {
+                        models.fail(format!("The server did not save the preset: {error}"))
+                    }
+                }
+            }
+            UiEvent::AffinityCapacity(result) => self.affinity_costs.apply_capacity(result),
             UiEvent::Repos(result) => match result {
                 Ok(repos) => {
                     self.header.indexed = Some(repo_is_listed(&self.repo, &repos.repos));
@@ -6236,6 +6393,43 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
         // the mechanism by which an echoed turn waits forever.
         app.start_next(tx);
         return true;
+    }
+    if control_letter(&key, 'm') {
+        if app
+            .affinity_surface
+            .as_ref()
+            .is_some_and(affinity_cli::Surface::is_models)
+        {
+            app.affinity_surface = None;
+        } else {
+            app.open_affinity_models(tx);
+        }
+        return false;
+    }
+    if control_letter(&key, 's') {
+        if app
+            .affinity_surface
+            .as_ref()
+            .is_some_and(affinity_cli::Surface::is_costs)
+        {
+            app.affinity_surface = None;
+        } else {
+            app.open_affinity_costs(tx);
+        }
+        return false;
+    }
+    if app.affinity_surface.is_some() {
+        match key.code {
+            KeyCode::Esc => app.affinity_surface = None,
+            KeyCode::Enter => app.save_affinity_models(tx),
+            code => {
+                let reverse = key.modifiers.contains(KeyModifiers::SHIFT);
+                if let Some(surface) = app.affinity_surface.as_mut() {
+                    surface.handle_models_key(code, reverse);
+                }
+            }
+        }
+        return false;
     }
     if let Some(picker) = app.resume_picker.as_mut() {
         match key.code {
@@ -8074,6 +8268,141 @@ mod tests {
             .draw(|frame| render_frame(frame, app, now))
             .expect("render frame");
         terminal.backend().buffer().clone()
+    }
+
+    fn affinity_fixture() -> (CommandReply, CommandReply, CommandReply) {
+        let presets = serde_json::from_value(json!({
+            "bundle": {"name": "coding", "routing_table": [
+                {"task_kind": "plan", "mode": "auto", "provider": "*"},
+                {"task_kind": "implement", "mode": "pinned", "provider": "openai", "model": "gpt-5.6-sol"},
+                {"task_kind": "review", "mode": "pinned", "provider": "anthropic", "model": "claude-opus-4-8"}
+            ]},
+            "configured_providers": ["openai", "anthropic"]
+        })).expect("preset fixture");
+        let providers = serde_json::from_value(json!({
+            "configured": ["openai", "anthropic"],
+            "providers": [
+                {"id": "openai", "models": ["gpt-5.6-sol"]},
+                {"id": "anthropic", "models": ["claude-opus-4-8"]}
+            ]
+        }))
+        .expect("provider fixture");
+        let work = serde_json::from_value(json!({"routing": {
+            "stage_usage": {
+                "plan": {"by_model": [{"model": "claude-opus-4-8", "tokens_in": 2194, "tokens_out": 895, "est_cost_usd": 0.033345, "price_known": true}], "est_cost_usd": 0.033345, "cost_known": true, "estelle_billed_usd": 0.0},
+                "implementation": {"by_model": [{"model": "moonshotai/kimi-k2.7-code", "tokens_in": 3676, "tokens_out": 1715, "est_cost_usd": 0.010352, "price_known": true}], "est_cost_usd": 0.010352, "cost_known": true, "estelle_billed_usd": 0.0}
+            },
+            "review": {"by_model": [{"model": "claude-opus-4-8", "tokens_in": 1580, "tokens_out": 135, "est_cost_usd": 0.011275, "price_known": true}], "est_cost_usd": 0.011275, "cost_known": true, "estelle_billed_usd": 0.0}
+        }})).expect("work fixture");
+        (presets, providers, work)
+    }
+
+    #[test]
+    fn affinity_shortcuts_open_and_close_the_full_screen_surfaces() {
+        let mut app = test_app();
+        let (tx, _rx) = mpsc::unbounded_channel();
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL),
+            &tx,
+        );
+        assert!(
+            app.affinity_surface
+                .as_ref()
+                .is_some_and(affinity_cli::Surface::is_models)
+        );
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL),
+            &tx,
+        );
+        assert!(app.affinity_surface.is_none());
+        handle_key(
+            &mut app,
+            KeyEvent::new(
+                KeyCode::Char('S'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+            &tx,
+        );
+        assert!(
+            app.affinity_surface
+                .as_ref()
+                .is_some_and(affinity_cli::Surface::is_costs)
+        );
+        handle_key(&mut app, KeyEvent::from(KeyCode::Esc), &tx);
+        assert!(app.affinity_surface.is_none());
+    }
+
+    #[test]
+    fn affinity_models_and_spend_capture_at_80_and_120_columns() {
+        let (presets, providers, work) = affinity_fixture();
+        let output = std::env::var_os("ESTELLE_AFFINITY_CAPTURE_DIR").map(PathBuf::from);
+        let now = Instant::now();
+        let mut models = test_app();
+        models.affinity_surface = Some(affinity_cli::Surface::Models(Box::new(
+            affinity_cli::ModelsScreen::from_replies(&presets, &providers).expect("models screen"),
+        )));
+        for width in [80, 120] {
+            let buffer = rendered_buffer_at_size(&models, now, width, 30);
+            let text = test_gallery::buffer_text(&buffer);
+            assert!(
+                text.contains("Affinity chooses by default"),
+                "{width} columns\n{text}"
+            );
+            assert!(text.contains("gpt-5.6-sol"), "{width} columns\n{text}");
+            assert!(
+                !text.contains('┌')
+                    && !text.contains('┐')
+                    && !text.contains('└')
+                    && !text.contains('┘')
+            );
+            assert!(
+                buffer
+                    .content()
+                    .iter()
+                    .any(|cell| cell.bg == models.theme.semantic()),
+                "selected row was not highlighted"
+            );
+            if let Some(output) = output.as_deref() {
+                test_gallery::write_frame(output, &format!("models-{width}"), &buffer);
+            }
+        }
+
+        let mut spend = test_app();
+        spend.account = Some(
+            serde_json::from_value(json!({"budget_usd": 50.0, "period_spend_usd": 4.25}))
+                .expect("account"),
+        );
+        spend.affinity_costs.observe("work", &work);
+        spend.affinity_costs.apply_capacity(Ok(json!({
+            "held_tokens": 1_250_000, "cap": 10_000_000, "remaining_tokens": 8_750_000, "exact": false
+        })));
+        spend.affinity_surface = Some(affinity_cli::Surface::Costs);
+        for width in [80, 120] {
+            let buffer = rendered_buffer_at_size(&spend, now, width, 30);
+            let text = test_gallery::buffer_text(&buffer);
+            for fact in [
+                "VENDOR LIST",
+                "claude-opus-4-8",
+                "$0.033345",
+                "$0.000000",
+                "45.75",
+                "1.2M",
+            ] {
+                assert!(
+                    text.contains(fact),
+                    "missing {fact:?} at {width} columns\n{text}"
+                );
+            }
+            assert!(
+                !text.contains("saved"),
+                "unsupported savings claim at {width} columns\n{text}"
+            );
+            if let Some(output) = output.as_deref() {
+                test_gallery::write_frame(output, &format!("spend-{width}"), &buffer);
+            }
+        }
     }
 
     #[tokio::test]
