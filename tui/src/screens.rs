@@ -1060,7 +1060,12 @@ fn everything(p: &Palette, tick: u64, on: bool) -> Vec<Line<'static>> {
         on,
     ));
     v.push(blank());
-    v.push(dim(p, "❯   tab repo · ctrl+s spend · ctrl+m models"));
+    // ⚠️ SECOND OWNER OF THE HINT ROW, AND IT KEPT THE DEAD CHORD FOR A WHILE AFTER
+    // `ASK_HINTS` DROPPED IT. `ctrl+m` is carriage return in this binary and can never be
+    // bound; a catalog screen may print an UNBUILT binding, but not an IMPOSSIBLE one — that
+    // is a promise no future commit can keep. Fixing the live row and leaving this behind is
+    // the "guard on the path you remembered" defect in its cheapest form.
+    v.push(dim(p, "❯   tab repo · ctrl+s spend · ctrl+g context"));
     v
 }
 

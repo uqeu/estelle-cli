@@ -33,4 +33,4 @@ ctrl+t to collapse                                                             �
 
 
 
-  enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection
+  enter send · tab repo · ctrl+s spend · ctrl+g context · esc stop · ctrl+o selection

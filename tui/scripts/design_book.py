@@ -276,7 +276,7 @@ def frame_html(name: str, gallery: Path, defects: dict) -> tuple[str, int, int]:
 
 
 def read_badges(gallery: Path) -> dict[str, str]:
-    """`frame -> "SHIPPED" | "DESIGN"`, derived from the code rather than typed here.
+    """`frame -> "LIVE DATA" | "FIXTURE DATA"`, derived from the code rather than typed here.
 
     🔴 **EVERY SCREEN IN THE PREVIOUS BOOK SAID SHIPPED, AND ONE OF THEM ARGUED AGAINST ITSELF.**
     Screen 14's own note read *"until `/skills` returns tokens per skill, the honest screen is 15,
@@ -286,33 +286,46 @@ def read_badges(gallery: Path) -> dict[str, str]:
     The distinction already had exactly one owner in the Rust: `design_book::BookScreen::contract`
     begins `shipped ·` when the live app renders that screen from real state, and names the missing
     endpoint otherwise. `actual_renderer_gallery` writes those out as `contracts.tsv`. A frame with
-    no row there is a plain live-renderer state — boot, home, the settings list — and is SHIPPED.
+    no row there is a plain live-renderer state — boot, home, the settings list — and is LIVE.
 
-    ⚠️ **DESIGN IS NOT `SPEC` COMING BACK.** SPEC meant *drawn by hand, not built*. Every frame in
-    this book is drawn by the production renderer at a real terminal size. DESIGN means the LAYOUT
-    is real and the DATA under it is a fixture, because the contract printed on the screen does not
-    exist on the wire yet. That is the difference between "we sketched this" and "this needs one
-    server field", and it is the difference the reader is trying to make a decision about.
+    🔴 **THE BADGE NAMES THE THING IT IS ABOUT, WHICH IS THE DATA.** They were `SHIPPED` and
+    `DESIGN` for one pass, and `DESIGN` fails the only test a badge has to pass: a reader who has
+    not read the legend cannot tell from it that the PICTURE is real and the NUMBERS are not. The
+    founder reviews these in front of people who ask *"is that real?"* one screen at a time, so the
+    badge answers exactly that question and nothing else: **LIVE DATA** or **FIXTURE DATA**.
+    Whether the picture is real is not a per-screen variable — every frame here comes out of the
+    production renderer — so it is stated once in the lede and repeated on each screen's source
+    line, which reads `… · rendered in Rust`.
+
+    ⚠️ **THIS IS NOT `SPEC`/`PROPOSED` COMING BACK.** Those marked screens that DID NOT EXIST, and
+    he was right to refuse them. Every screen here exists and renders; what varies is whether the
+    server can fill it yet.
     """
     manifest = gallery / "contracts.tsv"
     if not manifest.exists():
         raise SystemExit(
             f"{manifest} is missing — run the gallery with ESTELLE_ACTUAL_GALLERY_DIR set, "
-            "otherwise every badge would silently default to SHIPPED"
+            "otherwise every badge would silently default to LIVE DATA"
         )
     badges: dict[str, str] = {}
     for line in manifest.read_text(encoding="utf-8").splitlines():
         if line.startswith("#") or not line.strip():
             continue
         name, _, contract = line.partition("\t")
-        badges[name] = "SHIPPED" if contract.startswith("shipped ·") else "DESIGN"
+        badges[name] = LIVE if contract.startswith("shipped ·") else FIXTURE
     if not badges:
         raise SystemExit(f"{manifest} parsed to zero rows — the badge would mean nothing")
     return badges
 
 
+# The badge's visible words, and the class each lands in. Two owners of one label would be a
+# contents row and a section header disagreeing, which is the defect this pass started with.
+LIVE = "LIVE DATA"
+FIXTURE = "FIXTURE DATA"
+
+
 def badge_html(kind: str) -> str:
-    css = {"SHIPPED": "b-ship", "DESIGN": "b-design"}[kind]
+    css = {LIVE: "b-ship", FIXTURE: "b-design"}[kind]
     return f'<span class="badge {css}">{kind}</span>'
 
 
@@ -445,8 +458,8 @@ def main() -> int:
             count=1,
         )
         new_header = re.sub(
-            r'<span class="badge b-[a-z]+">[A-Z]+</span>',
-            badge_html(badges.get(frame, "SHIPPED")),
+            r'<span class="badge b-[a-z]+">[A-Z ]+</span>',
+            badge_html(badges.get(frame, LIVE)),
             new_header,
             count=1,
         )
@@ -486,7 +499,7 @@ def main() -> int:
     for sid, header in headers:
         number = re.search(r'<span class="num">(.*?)</span>', header).group(1)
         title = re.search(r'<span class="name">(.*?)</span>', header).group(1)
-        kind = re.search(r'<span class="badge b-[a-z]+">([A-Z]+)</span>', header).group(1)
+        kind = re.search(r'<span class="badge b-[a-z]+">([A-Z ]+)</span>', header).group(1)
         rows.append(
             f'<li><span class="n">{number}</span>'
             f'<a class="t" href="#{sid}">{title}</a>{badge_html(kind)}</li>'
@@ -509,28 +522,31 @@ def main() -> int:
 
     # The book's own summary of its badge vocabulary. Two owners of one count, and the summary is
     # the one nobody re-reads — so it is computed from the output rather than typed.
-    shipped = sum(1 for _sid, header in headers if 'b-ship">SHIPPED' in header)
-    design = sum(1 for _sid, header in headers if 'b-design">DESIGN' in header)
+    shipped = sum(1 for _sid, header in headers if f'b-ship">{LIVE}' in header)
+    design = sum(1 for _sid, header in headers if f'b-design">{FIXTURE}' in header)
     book = re.sub(
         r'<p class="lede" style="margin-top:14px"><span class="badge b-ship">SHIPPED</span>.*?(?=</p>)',
         '<p class="lede" style="margin-top:14px">'
-        f'<span class="badge b-ship">SHIPPED</span> {shipped} &middot; '
-        f'<span class="badge b-design">DESIGN</span> {design} &nbsp;&nbsp;'
+        f'{badge_html(LIVE)} {shipped} &middot; {badge_html(FIXTURE)} {design} &nbsp;&nbsp;'
         f"total {len(headers)}, numbered 1 to {len(headers)} with no gaps. "
         "<b>Every frame in this book is drawn by the production renderer</b> at a real terminal "
-        "size, so the badge is not about the picture. SHIPPED means the live app fills that layout "
-        "from real state today. DESIGN means the layout is real and the numbers in it are a "
-        "fixture, because the screen is waiting on a server field it names on its own face.",
+        "size &mdash; each screen's source line says <code>rendered in Rust</code> &mdash; so the "
+        "badge is never about the picture. It answers the one question somebody will ask you over "
+        "your shoulder: <b>are those numbers real?</b> "
+        f"<b>{LIVE}</b> means the running app produces them today. <b>{FIXTURE}</b> means the "
+        "layout is real and the numbers are staged, because the screen is waiting on a server "
+        "field it names on its own face.",
         book,
         count=1,
         flags=re.S,
     )
     book = re.sub(
         r'<tr><td><span class="badge b-spec">SPEC</span></td><td>.*?</tr>',
-        '<tr><td><span class="badge b-design">DESIGN</span></td>'
-        "<td>the layout is the production renderer's; the DATA is a fixture</td>"
-        "<td>Same renderer as SHIPPED. What is missing is the server field the screen names, "
-        "not the screen. Without <code>--demo</code> it draws that sentence instead of numbers.</td></tr>",
+        f"<tr><td>{badge_html(FIXTURE)}</td>"
+        "<td>the picture is real; the numbers are staged</td>"
+        f"<td>Same renderer as {LIVE}, at a real terminal size. What is missing is the server "
+        "field the screen names on its own face, not the screen. Without <code>--demo</code> it "
+        "draws that sentence where the numbers would be.</td></tr>",
         book,
         count=1,
         flags=re.S,

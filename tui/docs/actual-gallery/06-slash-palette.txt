@@ -35,4 +35,4 @@ Ask about uqeu/estelle                                                         �
   /whoami       which credential kinds are present, never their values
   /team         your team: role, seats, members, invites; /team board ranks members
   /outcomes     how the team's applied changes fared: accept/revert/reject
-  enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection
+  enter send · tab repo · ctrl+s spend · ctrl+g context · esc stop · ctrl+o selection

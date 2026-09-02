@@ -17,7 +17,7 @@ ESTELLE  ·  uqeu/estelle  ·  repo graph current  ·  1,993 files
 ◐   w8    [0/2] Checking the regression suite                                                     4s        —  │
 per-worker model + cost · no server contract                                                                   │
 Plan floor · not reported                                                                                      │
-◓ Working... [━━━━━━━━━━━━━━━━━━━━━━──────────────────────────] 11/24                                          │
+◐ Working... [━━━━━━━━━━━━━━━━━━━━━━──────────────────────────] 11/24                                          │
                                                                                                                │
                                                                                                                │
                                                                                                                │
@@ -31,4 +31,4 @@ Plan floor · not reported                                                      
 
 
 
-  enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection
+  enter send · tab repo · ctrl+s spend · ctrl+g context · esc stop · ctrl+o selection
