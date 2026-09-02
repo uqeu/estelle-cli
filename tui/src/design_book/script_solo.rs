@@ -6,6 +6,33 @@
 //! cost anything per token. The film attacks the cost structure of the whole industry: **you do not
 //! need to rent a frontier model for the bulk of the work.**
 //!
+//! ## 🔴 THE FILM IS AUTONOMOUS, AND THAT IS THE WHOLE NOTE (2026-09-02)
+//!
+//! The founder watched the previous cut and named the defect exactly: *"you don't have to keep
+//! telling it to do this, to do this, to do this… he's gonna be like dude, you just have to keep
+//! talking to Estelle to keep doing stuff."* That cut had **19 beats and 19 human turns** — `fix
+//! it` → `is the graph still current` → `review it` → `pull it forward` → `finish the rest`. Every
+//! one of those is a person driving a step.
+//!
+//! ⚠️ **A BEAT IS A HUMAN TURN. THAT IS THE STRUCTURAL FACT THIS FILE HAD TO DESIGN AGAINST.**
+//! [`crate::design_book::session::Beat`] carries `typed` and submits it, so **there is no such
+//! thing as a beat Estelle starts by itself**. Autonomy is therefore not something you write into
+//! a beat's prose; it is **fewer beats with longer replies**. Every chain that used to need a turn
+//! now sits inside ONE reply, and the absence of a user-turn tint band between the refusal and the
+//! repair is what a silent viewer reads as *"nobody told it to do that"*.
+//!
+//! What that bought, concretely — each of these crosses a boundary that used to be a typed line:
+//! * the model hits an event it has never seen → **it researches the event itself** (beat 4);
+//! * the sweep and the portal research run **while he is typing about something else** (beat 5);
+//! * **the gate refuses Estelle's own code and Estelle repairs it**, in one reply (beat 5);
+//! * the cross-family reviewer objects → **the fix is pulled forward without being asked** (beat 6).
+//!
+//! 🔴 **AND HE INTERRUPTS IT, NOT THE OTHER WAY ROUND.** Film 3 owns *Estelle interrupts the human*.
+//! Film 1 owns the inverse and it is the more common one: he starts typing a check-in, Estelle's
+//! work keeps arriving underneath the half-written line, and neither stops for the other.
+//! [`Key::Interrupt`] is the mechanism in both films — it is a POSITION in the keystroke stream, so
+//! the overlap cannot drift when a word in front of it changes.
+//!
 //! ## What changed from the first version of this film, and why
 //!
 //! It was Sable, a claims team, and the trigger was a 529. Both were wrong:
@@ -18,6 +45,16 @@
 //!   `/choose` beat about a colleague's retry decision moved there — a team-memory beat sitting in
 //!   this film was part of why all three felt the same.
 //!
+//! ## The voice is the one written down, not one this file invented
+//!
+//! `docs/house-voice.md` in the parent repo is the owner: ASD-STE100, plus the rule that repo added
+//! after a filming session — **do not narrate the product to an audience, talk to the person.** Its
+//! four worked defects are all sentences that are TRUE and about the product rather than about his
+//! work: *"the diff goes to the gate before your tree"*, *"cross-model on purpose"*. Two of those
+//! shapes were in this film in July and are gone. The target shape is the page's own: **a fact, a
+//! location, and what it means** — *"One line in billing/portal.py:44 sets a cookie the edge
+//! runtime drops."*
+//!
 //! ## ⛔ THE HONESTY LINE, WHICH IS NOT NEGOTIABLE
 //!
 //! **No comparative NUMBER appears on screen.** No "as good as frontier", no percentage, no
@@ -26,6 +63,10 @@
 //! exists to prevent. `/spend` is allowed because it is arithmetic on published rates, not a
 //! capability claim. The quality argument lives in the founder's voiceover, where he can say what he
 //! believes and own it.
+//!
+//! ⚠️ **AND THE SHIPPED/NOT-SHIPPED COLUMN LIVES IN `docs/demos/SHOWN-NOT-BUILT.md`, BY BEAT
+//! NUMBER.** It is the answer when James asks *"is that real?"*. Renumbering a beat here is an edit
+//! there, in the same commit, or the column points at the wrong row.
 
 use crate::cols::Col;
 use crate::design_book::session::{Beat, FleetFixture, FleetWorker, GateFixture, Key, Say};
@@ -79,7 +120,7 @@ static INVENTED_IMPORT: GateFixture = GateFixture {
 /// you faked it."*
 ///
 /// ⚠️ **THE MODEL IS STILL ON SCREEN, ON THE LINE WHERE IT IS TRUE.** `models · claude-opus-4-8`
-/// is the fleet's roster, a real `FleetSnapshot` field, rendered on the frame's second row. Beat 2
+/// is the fleet's roster, a real `FleetSnapshot` field, rendered on the frame's second row. Beat 1
 /// still argues "ten workers, one model, all dead at once" — it just no longer fabricates ten
 /// cells to say it.
 ///
@@ -93,10 +134,10 @@ static TEN_WORKERS: FleetFixture = FleetFixture {
 };
 
 /// 🔴 **THE NUMBERS IN THE FAILURE BANNER ARE DERIVED FROM THIS ROSTER, NOT ASSERTED OVER IT.**
-/// The banner says *"Seven were mid-write"*, and at `killed_at_s` exactly seven workers have
-/// started an assignment and not finished it — `the_stopped_fleet_reconciles_with_its_own_banner`
-/// counts them off the rendered rows. A sentence and a table that disagree on camera is the kind of
-/// detail a hostile viewer finds in one pause.
+/// The banner says *"Six were mid-write"*, and at `killed_at_s` exactly six workers have started an
+/// assignment and not finished it — `the_stopped_fleet_reconciles_with_its_own_banner` counts them
+/// off the rendered rows. A sentence and a table that disagree on camera is the kind of detail a
+/// hostile viewer finds in one pause.
 static TEN_STOPPED_AT: u32 = 9;
 
 /// The same ten, after the usage cap. ⚠️ **`Killed`, NOT `Completed`** — `orchestra_view` draws a
@@ -203,7 +244,12 @@ const TEN_JOBS: FleetFixture = FleetFixture {
 pub(crate) const FIXTURE_KEY: &str = "sk-ant-api03-notarealkey-demo-fixture-0000000000";
 
 pub(crate) const SOLO: &[Beat] = &[
-    // ── 1 · OPEN INSIDE THE WORK. No greeting, no setup. A long task is already running.
+    // ── 1 · ONE INSTRUCTION, AND THE RUN GOES ALL THE WAY TO THE WALL WITHOUT HIM.
+    //
+    //       🔴 **THIS USED TO BE TWO BEATS AND THE SECOND ONE WAS THE WORD `go`.** A person does
+    //       not say `go` to a run that is already running; that beat existed because the film was
+    //       built out of turns rather than out of work. The plan, the fleet, the cap and the
+    //       wreckage are one continuous reply now, and the only thing he typed was the first line.
     Beat {
         typed: &[
             Key::Type("keep going on the stripe "),
@@ -227,23 +273,18 @@ pub(crate) const SOLO: &[Beat] = &[
                     "\u{25a1} | idempotency keys | billing/client.py | queued",
                     "\u{25a1} | backfill script | scripts/backfill.py | queued",
                     "\u{25a1} | tests | tests/test_billing.py | queued",
-                    "\u{25a1} | gate | every diff, before your tree | deterministic",
+                    // ⛔ This row used to read `every diff, before your tree`, which is the house
+                    // voice's own worked example of explaining our architecture to an audience.
+                    "\u{25a1} | gate | every diff in this run | no model call",
                 ],
             },
-            Say::Wait(1_400),
+            Say::Wait(1_200),
             Say::Answer {
-                text: "The run finished four of eleven steps. The webhook handler comes next, and it \
+                text: "The run finished four of eleven steps. The webhook handler is next. It \
                        touches the removed fields in three places.",
                 grounded: true,
             },
-        ],
-        read_ms: 6_400,
-    },
-    // ── 2 · THE WALL. Not an outage — a usage cap, which is worse because it is by design.
-    Beat {
-        typed: &[Key::Type("go")],
-        think_ms: 3_800,
-        reply: &[
+            Say::Wait(1_000),
             Say::Orchestra(&TEN_WORKERS),
             Say::Wait(3_400),
             // 🔴 THE CATASTROPHE. Not one worker: ALL TEN, at once, mid-write. Every engineer
@@ -266,20 +307,20 @@ pub(crate) const SOLO: &[Beat] = &[
             // ⚠️ THE CONTRAST IS THE PRODUCT, AND IT LANDS IN ONE CUT: the models died, the work
             // did not. Everything the ten were holding is held here instead.
             Say::Answer {
-                text: "The models stopped. The work did not. I hold the plan, all eleven steps, the \
-                       decisions from steps 1 to 4 and every diff that was in flight. Pick a \
-                       different implementer and the ten jobs continue from where they stopped.",
+                text: "The models stopped. The work did not. I hold the plan, the decisions from \
+                       steps 1 to 4 and every diff that was in flight. Pick another implementer \
+                       and the ten jobs continue from where they stopped.",
                 grounded: true,
             },
         ],
-        read_ms: 6_600,
+        read_ms: 6_800,
     },
-    // ── 3 · COST IS THE REASON HE MOVES, AND IT IS ARITHMETIC, NOT A CLAIM.
+    // ── 2 · HIS FIRST INSTINCT, AND IT IS THE EXPENSIVE ONE.
     //       ⛔ Published rates only. No comparative quality number appears anywhere in this film.
     Beat {
         typed: &[
-            Key::Type("what would it cost to finish this "),
-            Key::Pause(600),
+            Key::Type("can i resume this "),
+            Key::Pause(500),
             Key::Oops("on teh"),
             Key::Type("on the api"),
         ],
@@ -297,41 +338,41 @@ pub(crate) const SOLO: &[Beat] = &[
             },
             Say::Wait(1_600),
             Say::System(
-                "Projected from the six steps already measured, at Anthropic's published rates. It is arithmetic, not an estimate of quality.",
+                "I projected this from the six steps you already ran, at Anthropic's published rates. It is arithmetic, not a claim about quality.",
             ),
         ],
-        read_ms: 6_000,
+        read_ms: 5_800,
     },
-    // ── 4 · he signs into a plan he already pays for. Two stages, and the second is the one
-    //       that matters: a plan is spent by THIS CLI, never by a server.
+    // ── 3 · THE PANIC, AND IT IS ONE TURN RATHER THAN THREE.
+    //
+    //       🔴 **`/login codex`, THE ROLE SPLIT AND THE MACHINE SURVEY USED TO BE THREE BEATS.**
+    //       He said the two halves in one breath — *"use my Codex plan, pull up my local models"* —
+    //       so the film says them in one line and Estelle does both.
+    //
+    //       ⚠️ The machine table is the ONE beat in any film that is not a fixture: every row is
+    //       measured live by `estelle_machine` on the laptop the film is recorded on.
     Beat {
-        typed: &[Key::Burst("/login "), Key::Type("codex")],
-        think_ms: 2_400,
+        typed: &[
+            Key::Burst("use my codex plan "),
+            Key::Type("and pull up my local models"),
+        ],
+        think_ms: 3_000,
         reply: &[
             Say::Table {
                 name: "login",
                 columns: LOGIN,
                 rows: &[
                     "\u{2713} | stage 1 | who you are | device code accepted",
-                    "\u{25b6} | stage 2 | who pays for model tokens | Codex plan \u{b7} your subscription",
+                    "\u{2713} | stage 2 | who pays for model tokens | Codex plan \u{b7} your subscription",
                 ],
             },
-            Say::Wait(1_400),
+            Say::Wait(1_200),
             Say::System(
-                "This CLI spends a plan, on this machine. A server cannot spend one. That is the job of an API key.",
+                "Your Codex subscription pays for the model tokens now. It signs on this machine, so the work stays here.",
             ),
-        ],
-        read_ms: 4_400,
-    },
-    // ── 5 · THE PIVOT. Codex thinks, his own machine writes. The fleet numbers are MEASURED on
-    //       the machine the film is recorded on — see `Say::LocalFleet`.
-    Beat {
-        typed: &[
-            Key::Burst("plan and review on codex, "),
-            Key::Type("implement on my machine"),
-        ],
-        think_ms: 3_000,
-        reply: &[
+            Say::Wait(1_000),
+            Say::LocalFleet,
+            Say::Wait(1_800),
             Say::Table {
                 name: "models",
                 columns: ROLES,
@@ -342,64 +383,62 @@ pub(crate) const SOLO: &[Beat] = &[
                     "review | codex \u{b7} your plan | this CLI",
                 ],
             },
-            Say::Wait(1_500),
-            Say::LocalFleet,
-            Say::Wait(1_600),
+            Say::Wait(1_400),
             Say::Answer {
-                text: "Step 5 restarts with the plan and the four finished steps intact. The \
-                       implementer changed; the work did not.",
+                text: "Codex plans and reviews. Your machine writes the code. Step 5 restarts with \
+                       the plan and the four finished steps intact.",
                 grounded: true,
             },
         ],
-        read_ms: 6_400,
+        read_ms: 7_000,
     },
-    // -- 5b - THE PAYOFF. Ten local models take the same ten jobs. They RESUME; they do not restart.
+    // ── 4 · THE GO-AHEAD, AND THEN THE LONGEST UNATTENDED RUN IN ANY OF THE THREE FILMS.
     //
-    //         🔴 **THE OBVIOUS OBJECTION IS ANSWERED ON SCREEN.** Everyone watching knows small
-    //         models lose the plot on a long task. The answer is not a bigger model, it is the
-    //         harness: each worker reads the SAME plan and the SAME decisions, so they do not
-    //         repeat each other and they do not contradict each other.
+    //       🔴 **THE AUTONOMY BEAT.** The local model hits an event that postdates its training
+    //       data, and **nobody types `look it up`** — the research receipt follows the failure
+    //       inside the same reply, with no user turn between them. That absence is the whole
+    //       argument, and it is visible with the sound off because the tint band that marks his
+    //       words never appears.
     //
-    //         ⛔ No comparative claim appears. Not "as good as", not a percentage. The viewer is
-    //         shown ten models finishing a long task correctly and draws their own conclusion;
-    //         the quality argument lives in the founder's voiceover, where he owns it.
+    //       ⛔ No comparative claim appears. Not "as good as", not a percentage. The viewer is
+    //       shown a small model finishing work it could not have finished alone.
     Beat {
-        typed: &[Key::Type("give the ten jobs to my machine")],
+        typed: &[Key::Type("go")],
         think_ms: 3_400,
         reply: &[
+            // 🟡 A hand-laid table, and it is the one surface in this film that a real renderer
+            // could draw instead — see the note in `docs/demos/SHOWN-NOT-BUILT.md`. What it does
+            // NOT do any more is invent a per-worker MODEL column, which is the cell
+            // `orchestra_view` refuses to draw and the one the founder caught on camera.
             Say::Table {
                 name: "orchestra",
                 columns: FLEET,
                 rows: &[
-                    "  | worker | job | state",
-                    "1 | Qwen2.5-Coder-32B | webhooks | resuming at step 5",
-                    "2 | Qwen2.5-Coder-32B | idempotency keys | resuming",
-                    "3 | Qwen2.5-Coder-14B | backfill script | resuming",
-                    "4 | Qwen2.5-Coder-14B | tests, billing | resuming",
-                    "5 | Qwen2.5-Coder-14B | tests, hooks | resuming",
-                    "6 | Qwen2.5-Coder-32B | customer portal | resuming",
-                    "7 | Qwen2.5-Coder-7B | error mapping | resuming",
-                    "8 | Qwen2.5-Coder-7B | retry budget | resuming",
-                    "9 | Qwen2.5-Coder-7B | migration notes | resuming",
-                    "10 | Qwen2.5-Coder-7B | changelog | resuming",
+                    // 🔴 **THE NUMBERS ARE THE ONES THE DEAD FLEET USED, WORKER FOR WORKER.**
+                    // Worker 7 is the one whose state never arrived and worker 8 has the retry
+                    // budget — the same pairing `TEN_JOBS` renders and the same pairing beat 5
+                    // names. Two tables of ten workers that disagree about who had which job is a
+                    // contradiction a viewer finds by pausing once.
+                    "  | job | where it left off | state",
+                    "1 | webhooks | 2 of 3 handlers | resuming",
+                    "2 | idempotency keys | not started | queued",
+                    "3 | backfill script | read, not written | resuming",
+                    "4 | tests, billing/charge | 1 of 3 | resuming",
+                    "5 | tests, billing/hooks | 1 of 2 | resuming",
+                    "6 | customer portal | read | resuming",
+                    "7 | state never reported | not reported | requeued",
+                    "8 | retry budget | read | resuming",
+                    "9 | migration notes | 1 of 3 | resuming",
+                    "10 | changelog | not started | queued",
                 ],
             },
-            Say::Wait(2_400),
+            Say::Wait(2_200),
             Say::Answer {
-                text: "Every worker reads the same plan and the same four decisions. Worker 2 knows \
-                       what worker 1 wrote, so it does not write it again. None of them starts from \
-                       an empty context.",
+                text: "Every worker reads the same plan and the same four decisions. Worker 2 \
+                       knows what worker 1 wrote. None of them starts from an empty context.",
                 grounded: true,
             },
-        ],
-        read_ms: 6_800,
-    },
-    // ── 6 · THE BODY BEGINS. This is most of the film and it is the argument: a small model
-    //       doing many things correctly, with three independent nets around it.
-    Beat {
-        typed: &[Key::Type("carry on")],
-        think_ms: 2_400,
-        reply: &[
+            Say::Wait(1_600),
             Say::Command {
                 name: "work",
                 lines: &[
@@ -408,30 +447,25 @@ pub(crate) const SOLO: &[Beat] = &[
                     "webhooks   customer.subscription.updated \u{b7} written",
                 ],
             },
-            Say::Wait(2_600),
+            Say::Wait(2_400),
             Say::Failure([
                 "Stopped on the third handler. `payment_intent.amount_capturable_updated` is not in this model's training data.",
                 "Stripe added that event after this model shipped.",
                 "The worker guessed nothing and wrote nothing.",
             ]),
-        ],
-        read_ms: 5_200,
-    },
-    // ── 7 · 🔴 THE BEAT THE FILM EXISTS FOR. A 32B model does not know this week's Stripe API.
-    //       Estelle does, because it reads the documentation live and hands it over.
-    Beat {
-        typed: &[Key::Type("look it up")],
-        think_ms: 4_200,
-        reply: &[
+            Say::Wait(1_800),
+            // 🔴 **NOBODY TYPED `look it up`.** The first line of this receipt says why it fired,
+            // so the chain reads as a decision rather than as a coincidence.
             Say::Command {
                 name: "research",
                 lines: &[
+                    "reason      the worker has no data for this event",
                     "context7    stripe/stripe-python \u{b7} 2026-09-01",
                     "docs        stripe.com/docs/api/events/types",
                     "github      stripe/stripe-python \u{b7} CHANGELOG.md",
                 ],
             },
-            Say::Wait(2_400),
+            Say::Wait(2_200),
             Say::Table {
                 name: "research",
                 columns: DOCS,
@@ -442,20 +476,14 @@ pub(crate) const SOLO: &[Beat] = &[
                     "removed 2026-09-01 | payment_method_types, source",
                 ],
             },
-            Say::Wait(1_800),
+            Say::Wait(1_600),
             Say::Answer {
-                text: "The handler needs the capturable amount and the status, and it must not read \
-                       `source`. The model that writes this handler has that now.",
+                text: "The handler needs the capturable amount and the status. It must not read \
+                       `source`, which Stripe removed on 1 September. The worker writing it has \
+                       those three facts now.",
                 grounded: true,
             },
-        ],
-        read_ms: 7_000,
-    },
-    // ── 8 · the local model writes it correctly against an API it was never trained on.
-    Beat {
-        typed: &[Key::Type("ok write it")],
-        think_ms: 3_400,
-        reply: &[
+            Say::Wait(1_400),
             Say::Command {
                 name: "work",
                 lines: &[
@@ -464,7 +492,7 @@ pub(crate) const SOLO: &[Beat] = &[
                     "gate       checking against this repo's symbol graph",
                 ],
             },
-            Say::Wait(2_200),
+            Say::Wait(2_000),
             Say::Table {
                 name: "gate",
                 columns: STEP,
@@ -475,19 +503,53 @@ pub(crate) const SOLO: &[Beat] = &[
                 ],
             },
             Say::Wait(1_400),
+            // ⛔ This used to end "no model can overrule it", which is a boast about us. The fact
+            // that matters to him is what the check found in HIS 61 lines.
             Say::Answer {
-                text: "The gate passed it. This check asks no model, and no model can overrule it.",
+                text: "The gate passed it. Every name in those 61 lines resolves in your repo, and \
+                       the three calls match their definitions.",
                 grounded: true,
             },
         ],
-        read_ms: 6_000,
+        read_ms: 7_200,
     },
-    // -- 8a - 🔴 THE NEAR-MISS. A capability is a claim; a model that WOULD have gone wrong and was
-    //         pulled back is a proof. And the distinction in the last line is the one no rival can
-    //         make: the gate checks whether a symbol EXISTS, memory checks whether this team
-    //         already RULED IT OUT. Only one of those catches an idea that compiles.
+    // ── 5 · 🔴 HE INTERRUPTS IT, AND NEITHER OF THEM STOPS.
+    //
+    //       The founder: *"the human interrupts WHILE Estelle is working, and Estelle keeps working
+    //       through it. Overlapping, not turn-taking."* `Key::Interrupt` sits between the two
+    //       halves of what he types, so the sweep and the portal research arrive in the transcript
+    //       while `whats worker 8 ` is still sitting unsent in his composer.
+    //
+    //       🔴 **AND THE GATE REFUSES ESTELLE'S OWN CODE IN THE SAME REPLY IT REPAIRS IT.** Nobody
+    //       types `fix it`. A gate that only ever passes is a gate nobody believes, and a refusal
+    //       that needs a human to acknowledge it is a checkpoint rather than a step.
+    //
+    //       ⚠️ The last line is the distinction no rival can make: the gate checks whether a symbol
+    //       EXISTS, memory checks whether this repo already RULED IT OUT. Only one of those catches
+    //       an idea that compiles.
     Beat {
-        typed: &[Key::Type("whats worker 8 doing")],
+        typed: &[
+            Key::Type("whats worker 8 "),
+            Key::Interrupt(&[
+                Say::Command {
+                    name: "sweep",
+                    lines: &[
+                        "changed    7 files since the last sweep",
+                        "graph      current at your working tree",
+                    ],
+                },
+                Say::Wait(900),
+                Say::Command {
+                    name: "research",
+                    lines: &[
+                        "context7    stripe/stripe-python \u{b7} billing_portal.Session",
+                        "github      stripe/stripe-python \u{b7} 4 commits since your pinned version",
+                        "vercel      vercel.com/docs/functions \u{b7} redirect limits on the edge runtime",
+                    ],
+                },
+            ]),
+            Key::Type("doing"),
+        ],
         think_ms: 3_000,
         reply: &[
             Say::Command {
@@ -497,7 +559,7 @@ pub(crate) const SOLO: &[Beat] = &[
                     "worker 8   proposed a second retry wrapper around the Stripe client",
                 ],
             },
-            Say::Wait(1_800),
+            Say::Wait(1_600),
             Say::Failure([
                 "Stopped worker 8. You removed a retry wrapper from this file on 14 August.",
                 "That wrapper double-charged two customers. Commit 4f2c1a9 carries the note on the revert.",
@@ -505,30 +567,11 @@ pub(crate) const SOLO: &[Beat] = &[
             ]),
             Say::Wait(2_000),
             Say::Answer {
-                text: "The gate finds nothing wrong with that code. Every symbol in it exists, and the \
-                       arity is right. Only the record of what this repo already tried can catch an \
-                       idea that compiles.",
+                text: "The gate finds nothing wrong with that code. Every symbol exists and the \
+                       arity is right. Your own revert note is the only thing that could stop it.",
                 grounded: true,
             },
-        ],
-        read_ms: 7_400,
-    },
-    // -- 8b - MORE RESEARCH, DIFFERENT SOURCES. He named Stripe, GitHub and Vercel by name: those
-    //         are the APIs an engineer recognises instantly. Repeating the beat is the point:
-    //         research is not a one-off trick, it is how the small model keeps working.
-    Beat {
-        typed: &[Key::Type("the portal redirect changed too, check it")],
-        think_ms: 3_800,
-        reply: &[
-            Say::Command {
-                name: "research",
-                lines: &[
-                    "context7    stripe/stripe-python \u{b7} billing_portal.Session",
-                    "github      stripe/stripe-python \u{b7} 4 commits since your pinned version",
-                    "vercel      vercel.com/docs/functions \u{b7} redirect limits on the edge runtime",
-                ],
-            },
-            Say::Wait(2_400),
+            Say::Wait(1_600),
             Say::Table {
                 name: "research",
                 columns: DOCS,
@@ -539,22 +582,17 @@ pub(crate) const SOLO: &[Beat] = &[
                     "edge runtime | a 307 is capped at 4KB of headers",
                 ],
             },
-            Say::Wait(1_600),
+            Say::Wait(1_400),
+            // 🔴 THE FOUNDER'S OWN WORKED EXAMPLE OF THE HOUSE VOICE: a fact, a location, and what
+            // it means. It used to open "Your portal code is already correct for the current API",
+            // which buries the finding under a reassurance.
             Say::Answer {
-                text: "Your portal code is already correct for the current API. One line in \
-                       billing/portal.py:44 sets a cookie on the redirect that the edge runtime \
-                       will drop. That is worth fixing while we are here.",
+                text: "One line in billing/portal.py:44 sets a cookie on the redirect. The edge \
+                       runtime drops it. The rest of your portal code already matches the current \
+                       API.",
                 grounded: true,
             },
-        ],
-        read_ms: 7_000,
-    },
-    // -- 8c - THE GATE CATCHES THE SMALL MODEL, AND THE LOOP CLOSES. A gate that only ever passes
-    //         is a gate nobody believes, so it refuses something the local model actually wrote.
-    Beat {
-        typed: &[Key::Type("fix it")],
-        think_ms: 3_400,
-        reply: &[
+            Say::Wait(1_200),
             Say::Command {
                 name: "work",
                 lines: &[
@@ -562,7 +600,7 @@ pub(crate) const SOLO: &[Beat] = &[
                     "portal     moving the cookie onto the session \u{b7} written",
                 ],
             },
-            Say::Wait(2_000),
+            Say::Wait(1_600),
             Say::Gate(&INVENTED_IMPORT),
             Say::Wait(2_600),
             Say::Command {
@@ -574,41 +612,24 @@ pub(crate) const SOLO: &[Beat] = &[
             },
             Say::Wait(1_400),
             Say::Answer {
-                text: "The model reached for a helper that does not exist in this repo. The gate \
-                       refused it before it touched your tree, and the second attempt used the one \
-                       you already have at billing/portal.py:12.",
+                text: "The worker reached for `fastapi_turbo`, which your lockfile does not carry. \
+                       Nothing reached your tree. The second attempt used the helper you already \
+                       have at billing/portal.py:12.",
                 grounded: true,
             },
         ],
-        read_ms: 7_200,
+        read_ms: 7_400,
     },
-    // -- 8d - the graph keeps up with the work. A sweep is not a chore here: it is what makes the
-    //         next gate check true.
+    // ── 6 · A CHECK-IN, ANSWERED BY WORK THAT IS ALREADY DONE.
+    //
+    //       🔴 **`review it` AND `pull it forward` WERE TWO TYPED LINES AND THEY ARE THE TWO HE
+    //       QUOTED BACK AT ME.** The reviewer is a step in the plan, so it runs when the code is
+    //       written, and a planned step that the reviewer's objection makes urgent gets pulled
+    //       forward without a permission round-trip. What he asks for is a STATUS, and the answer
+    //       is a thing that already happened.
     Beat {
-        typed: &[Key::Type("is the graph still current")],
-        think_ms: 2_600,
-        reply: &[
-            Say::Command {
-                name: "sweep",
-                lines: &[
-                    "changed    7 files since the last sweep",
-                    "chunking   billing/ \u{b7} 7 files",
-                    "graph      current at your working tree",
-                ],
-            },
-            Say::Wait(1_800),
-            Say::Answer {
-                text: "Current. Every gate check from here reads the code you have now, not the \
-                       code you had at the start of the task.",
-                grounded: true,
-            },
-        ],
-        read_ms: 4_800,
-    },
-    // ── 9 · the third net: a different model family argues with the code the local model wrote.
-    Beat {
-        typed: &[Key::Type("review it")],
-        think_ms: 4_600,
+        typed: &[Key::Type("hows it looking")],
+        think_ms: 4_200,
         reply: &[
             Say::Command {
                 name: "review",
@@ -617,26 +638,13 @@ pub(crate) const SOLO: &[Beat] = &[
                     "read       billing/hooks.py \u{b7} 61 lines",
                 ],
             },
-            Say::Wait(2_600),
+            Say::Wait(2_400),
             Say::Failure([
                 "One objection. The handler is not idempotent.",
-                "Stripe retries a webhook up to 3 days. This one would capture twice.",
+                "Stripe retries a webhook for up to 3 days. This one would capture twice.",
                 "billing/hooks.py:88 \u{b7} the handler records no event id before the capture.",
             ]),
-            Say::Wait(1_600),
-            Say::Answer {
-                text: "Step 7 already plans the idempotency keys. I can pull it forward and the \
-                       reviewer looks again, or you can leave it for step 7 as written.",
-                grounded: true,
-            },
-        ],
-        read_ms: 7_200,
-    },
-    // ── 10 · he decides, the small model fixes it, and the reviewer signs off.
-    Beat {
-        typed: &[Key::Type("pull it forward")],
-        think_ms: 3_800,
-        reply: &[
+            Say::Wait(2_000),
             Say::Command {
                 name: "work",
                 lines: &[
@@ -647,15 +655,17 @@ pub(crate) const SOLO: &[Beat] = &[
                     "review       codex \u{b7} no objection",
                 ],
             },
-            Say::Wait(2_400),
+            Say::Wait(2_200),
             Say::Answer {
-                text: "The fleet finished steps 5, 6 and 7. Four files changed. Nothing merged.",
+                text: "Step 7 already planned the idempotency keys. I pulled it forward and ran the \
+                       reviewer again. The fleet finished steps 5, 6 and 7. Four files changed and \
+                       nothing merged.",
                 grounded: true,
             },
         ],
-        read_ms: 5_600,
+        read_ms: 7_000,
     },
-    // ── 11 · the credential fence, in the middle of real work, instant.
+    // ── 7 · the credential fence, in the middle of real work, instant.
     //         ⛔ THE SHAPE, NEVER THE VALUE. The string is on his own composer row and Estelle
     //         never echoes it back.
     Beat {
@@ -678,15 +688,52 @@ pub(crate) const SOLO: &[Beat] = &[
         ],
         read_ms: 4_600,
     },
-    // ── 12 · the long task finishes. The length of this film is the evidence.
+    // ── 8 · 🔴 HE REACTS, AND HE GETS AN ANSWER HE CAN ACT ON.
+    //
+    //       The founder: *"the human reacts — oh shit, thank you — how do I send it? — and Estelle
+    //       answers: put it in the `.env` file and I will read it from there."* The old cut had him
+    //       shrug the refusal off, which threw away the best beat in the film one line after it
+    //       landed.
+    //
+    //       ⚠️ **AND THE BACKFILL LANDS WHILE HE IS TYPING THE QUESTION.** Second interrupt in the
+    //       film, and the cheapest possible proof that a housekeeping exchange does not stop the run.
     Beat {
-        typed: &[Key::Type("finish the rest")],
+        typed: &[
+            Key::Type("oh shit thank you. "),
+            Key::Interrupt(&[Say::Command {
+                name: "work",
+                lines: &["backfill   scripts/backfill.py \u{b7} written \u{b7} gate 0 findings"],
+            }]),
+            Key::Type("how do i send it"),
+        ],
+        think_ms: 2_400,
+        reply: &[
+            // ⚠️ **NO PATH ON SCREEN, AND THAT IS DELIBERATE.** `arg0/src/lib.rs:298` loads the
+            // `.env` beside the CLI's own config directory, not the one in the repo root. Naming a
+            // directory here would be a claim I would have to keep true across a rename; naming the
+            // VARIABLE is the half he actually needs and it is true either way.
+            Say::Answer {
+                text: "Put ANTHROPIC_API_KEY in your Estelle .env file, on its own line. I read it \
+                       when the run starts. Your prompt never carries it.",
+                grounded: true,
+            },
+            Say::Wait(1_200),
+            Say::Answer {
+                text: "The backfill script is written and the gate found nothing in it. Two steps \
+                       remain.",
+                grounded: true,
+            },
+        ],
+        read_ms: 5_600,
+    },
+    // ── 9 · the long task finishes. The length of this film is the evidence.
+    Beat {
+        typed: &[Key::Type("nice. finish it")],
         think_ms: 3_000,
         reply: &[
             Say::Command {
                 name: "work",
                 lines: &[
-                    "backfill    scripts/backfill.py \u{b7} written \u{b7} gate 0 findings",
                     "tests       tests/test_billing.py \u{b7} 34 cases written",
                     "tests       running",
                 ],
@@ -703,23 +750,24 @@ pub(crate) const SOLO: &[Beat] = &[
                 ],
             },
             Say::Wait(1_600),
+            // ⛔ The old version ended "and the gate saw every diff before your tree did" — the
+            // house voice's own example of explaining our architecture instead of his result.
             Say::Answer {
-                text: "Eleven of eleven steps. Seven files changed, 455 tests green, and the gate \
-                       saw every diff before your tree did. The PR is open. Nothing merged.",
+                text: "Eleven of eleven steps. Seven files changed and 455 tests pass. The PR is \
+                       open and nothing merged.",
                 grounded: true,
             },
         ],
         read_ms: 7_400,
     },
-    // -- 12b - 🔴 THE DELIGHT, AND IT IS ALSO THE COVERAGE ANSWER. The fleet finished and has
+    // ── 10 · 🔴 THE DELIGHT, AND IT IS ALSO THE COVERAGE ANSWER. The fleet finished and has
     //          capacity left. Nothing is rented, so idle capacity costs nothing — and it starts on
     //          the queue.
     //
     //          🔬 **EVERY SUITE APPEARS HERE BECAUSE THE WORK NEEDED IT, NOT BECAUSE WE WANTED TO
-    //          SHOW IT.** That is the difference between a product tour and a product working, and
-    //          it is the defect the founder has been naming all night in a different form. Each job
-    //          is real work on THIS repo: a CVE in a package it actually uses, a doc that actually
-    //          moved, a test that actually flakes.
+    //          SHOW IT.** That is the difference between a product tour and a product working. Each
+    //          job is real work on THIS repo: a CVE in a package it actually uses, a doc that
+    //          actually moved, a test that actually flakes.
     //
     //          ⛔ EVERY ONE IS PROPOSE-ONLY. Ten models filling a review queue is leverage; ten
     //          models merging is a liability, and the restraint is what makes it credible.
@@ -750,8 +798,8 @@ pub(crate) const SOLO: &[Beat] = &[
             },
             Say::Wait(2_600),
             Say::Answer {
-                text: "Nine jobs wait for you. The fleet finished the tenth. Read the CVE first: your \
-                       lockfile pins urllib3 2.2.1, and the advisory landed on Monday.",
+                text: "Nine jobs wait for you and the fleet finished the tenth. Read the CVE first. \
+                       Your lockfile pins urllib3 2.2.1 and the advisory landed on Monday.",
                 grounded: true,
             },
             Say::Wait(1_600),
@@ -759,7 +807,7 @@ pub(crate) const SOLO: &[Beat] = &[
         ],
         read_ms: 8_400,
     },
-    // ── 13 · THE CLOSE. What he paid, against what the same work costs on the API.
+    // ── 11 · THE CLOSE. What he paid, against what the same work costs on the API.
     //         ⛔ Published rates and his own meter. No quality comparison, on screen or implied.
     Beat {
         typed: &[Key::Type("what did that cost")],
