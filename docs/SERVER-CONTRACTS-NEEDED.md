@@ -583,6 +583,54 @@ test that calls the serializer without installing/running the host adapter prove
 **Missing adapter rendering:** name the harness and say `session capture adapter not installed` or the
 specific host limitation above. Never claim “all harnesses” from the server endpoint alone.
 
+## 13. Per-file index freshness on `/verify` - KEEPS THE GROUNDING GATE'S REFUSAL OPT-IN
+
+**Surface unlocked:** the PreToolUse grounding hook can refuse an edit by default instead of only when
+the operator sets `ESTELLE_HOOK_BLOCK`.
+
+**Today:** the hook can refuse - it emits
+`hookSpecificOutput.permissionDecision: "deny"` with a non-empty `permissionDecisionReason`
+(`cli-rs/tui/src/top_level.rs`, `hook_envelope`) - but only when BOTH the gate flags a symbol AND the
+client believes its index is current. `POST /verify` returns `ungrounded`, `arity_errors`,
+`type_errors`, `third_party`, `hallucination_spans` and `unverified_reason`. **No field says how fresh
+the index is, and none says which file the server looked in.** For a symbol the server did not find
+there is no defining file to name, so the client cannot ask "is the index current for the file that
+defines this symbol" - the question is unanswerable from the current response.
+
+**The client's stand-in, and why it must stay a stand-in:** the CLI writes
+`~/.estelle/reindex-stamp.json` (`{repo: unix_seconds}`, shared byte-for-byte with the Python hook)
+after a successful `POST /reindex`, then walks the tree for the newest `.py` mtime and calls the index
+current when nothing is newer than the stamp (`cli-rs/tui/src/ground_block.rs`). It is a proxy with a
+named hole: the stamp records that a reindex was **posted**, not that the index **holds** a file's
+content. Edit one file outside the hook and another through it, and the repo reads "current" while the
+index has never seen the first. Every failure mode degrades to advisory, so the proxy costs refusals
+rather than causing them - but it is not sound enough to be the default, and the Python hook already
+measured a false refusal of a real symbol with the stamp reading current.
+
+**Contract requested** - a freshness fact on the `/verify` response, per request, never inferred:
+
+```json
+{
+  "index": {
+    "head": "1f5cc7a4...",         // commit the graph was measured against, or null
+    "indexed_at": "2026-09-02T04:11:07Z",
+    "covers_answer": true,          // false = the graph does not cover this submission's scope
+    "stale_reason": null            // e.g. "sweep in flight", "repo never swept"
+  }
+}
+```
+
+`covers_answer: false` and `null` must be distinguishable: `false` is a measured "this graph does not
+cover it", `null` is "the server does not know". The client refuses only on `true`; both other values
+keep the finding advisory and say which one it was. Absent the block entirely, the client keeps the
+mtime proxy and the opt-in.
+
+**Client acceptance proof:** submit an answer naming a symbol the repo genuinely lacks against a repo
+with a known-current graph and assert `permissionDecision: "deny"` on the wire; then submit the same
+answer with a sweep in flight and assert the envelope carries no `permissionDecision` at all and the
+customer line names freshness. A test that only asserts the deny half proves a gate that refuses
+everything.
+
 ## Shared absence and evidence rules
 
 - Every optional capability has an explicit absent/unknown value and a reason field.
