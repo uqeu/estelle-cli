@@ -111,7 +111,7 @@ pub(crate) const SABLE: &[Beat] = &[
                 name: "diff",
                 columns: DIFF,
                 rows: &[
-                    "claims/upstream.py:141 | ",
+                    " | claims/upstream.py:141",
                     "- | for attempt in range(5):",
                     "- |     time.sleep(0.5)",
                     "+ | from fastapi_turbo import backoff_jitter",

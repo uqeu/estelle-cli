@@ -35,6 +35,21 @@ use crate::cols::{Cell, Col, row};
 /// The narrowest column this module will shrink to before it gives up and lets a cell wrap more.
 const MIN_COL: usize = 8;
 
+/// 🔴 **THE NARROWEST COLUMN A CELL MAY BE WRAPPED INTO. BELOW THIS IT IS A SCRIPT DEFECT.**
+///
+/// The first wrap fix stopped continuations falling to column 0 and was verified on `/doctor`,
+/// `/models` and `/spend` — all multi-column, all with wide first columns. It never saw a MARKER
+/// column. `DIFF` is `[Col::l(2), Col::l(64)]` because column 0 holds `-` or `+`, and the beat's
+/// header row put `claims/upstream.py:141` in it. Twenty-two characters wrapped into two columns
+/// is eleven rows of two characters, rendering the path VERTICALLY — worse than the bug it
+/// replaced, because at least column 0 was readable.
+///
+/// ⚠️ **THE WIDTH WAS COMPUTED CORRECTLY AND `wrap` DID EXACTLY WHAT IT WAS TOLD.** There is no
+/// arithmetic to fix. The defect is a long value in a column sized for a glyph, which is a fact
+/// about the SCRIPT, and the only place it can be caught is where the two meet. So this refuses
+/// rather than rendering: a cell that must wrap below `MIN_WRAP` is a test failure, never output.
+const MIN_WRAP: usize = 8;
+
 /// Word-wrap `text` to `width` COLUMNS, never bytes.
 ///
 /// ⚠️ **THIS IS THE THIRD WORD-WRAP IN THE TREE AND I AM SAYING SO RATHER THAN HIDING IT.**
@@ -145,7 +160,19 @@ pub(crate) fn owned_table(columns: &[Col], rows: &[&str], width: usize) -> Vec<S
         let wrapped: Vec<Vec<String>> = cells
             .iter()
             .zip(&columns)
-            .map(|(text, col)| wrap(text, col.w))
+            .enumerate()
+            .map(|(index, (text, col))| {
+                // 🔴 A MARKER COLUMN IS FOR A MARKER. A value that has to wrap into one is a row
+                // written against the wrong grid, and rendering it vertically is not an answer.
+                assert!(
+                    text.chars().count() <= col.w || col.w >= MIN_WRAP,
+                    "script row {source:?} puts {} characters in column {index}, which is {} wide \
+                     \u{2014} it would render one character per line. Put it in a wider column.",
+                    text.chars().count(),
+                    col.w
+                );
+                wrap(text, col.w)
+            })
             .collect();
         let height = wrapped.iter().map(Vec::len).max().unwrap_or(1);
         for index in 0..height {
@@ -375,6 +402,53 @@ mod tests {
                 "wrapping dropped {word:?}: {lines:?}"
             );
         }
+    }
+
+    /// 🔴 **A ONE-COLUMN BLOCK — THE SHAPE THE PREVIOUS FIX NEVER SAW.**
+    ///
+    /// The wrap fix was verified on `/doctor`, `/models` and `/spend`, all multi-column. A
+    /// single-column block takes a different path through `fitted` (no gaps to subtract) and was
+    /// covered by nothing, which is exactly the class of hole the marker-column defect came out of.
+    #[test]
+    fn a_single_column_block_wraps_without_losing_a_word() {
+        static ONE: &[Col] = &[Col::l(40)];
+        let lines = table_lines(
+            ONE,
+            &["A deterministic check against this repo's symbol graph. No model was asked, and no model can overrule it."],
+            40,
+        );
+        assert!(lines.len() > 1, "a one-column block did not wrap: {lines:?}");
+        for line in &lines {
+            assert!(line.chars().count() <= 40, "{line:?} overran the pane");
+            assert!(
+                line.chars().count() > 4,
+                "a one-column block produced a near-empty line: {line:?}"
+            );
+        }
+        let joined = lines.join(" ");
+        for word in ["deterministic", "symbol", "overrule"] {
+            assert!(joined.contains(word), "wrapping dropped {word:?}");
+        }
+    }
+
+    /// 🔴 **THE GUARD THAT WOULD HAVE CAUGHT THE VERTICAL PATH, PROVEN TO FIRE.**
+    ///
+    /// A long value in a marker column renders one character per line. `MIN_WRAP` makes that a
+    /// panic rather than output. ⚠️ Both halves are asserted: a short value in the SAME narrow
+    /// column must still render, or the guard would simply ban marker columns.
+    #[test]
+    fn a_long_value_in_a_marker_column_is_refused_not_rendered_vertically() {
+        static MARKER: &[Col] = &[Col::l(2), Col::l(64)];
+        let vertical =
+            std::panic::catch_unwind(|| table_lines(MARKER, &["claims/upstream.py:141 | "], 88));
+        assert!(
+            vertical.is_err(),
+            "a 22-character path in a 2-wide column must be refused, not rendered vertically"
+        );
+        // The positive control: the column exists to hold a marker, and it still does.
+        let ok = table_lines(MARKER, &["- | for attempt in range(5):"], 88);
+        assert_eq!(ok.len(), 1, "{ok:?}");
+        assert!(ok[0].starts_with('-'), "{ok:?}");
     }
 
     /// A table fits the pane it is given, at every width the film can be recorded at.

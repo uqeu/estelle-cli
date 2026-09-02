@@ -541,60 +541,52 @@ fn no_internal_id_or_line_count_reaches_a_film_frame() {
     }
 }
 
-/// 🔴 **THE DEFECT HE PHOTOGRAPHED, ASSERTED ON THE RENDERED BUFFER.**
+/// 🔴 **THE DEFECT HE PHOTOGRAPHED: TEXT RENDERED VERTICALLY, ONE CHARACTER PER LINE.**
 ///
-/// *"The spacing is messed up."* Six beats wrapped their second and third columns to column 0, so
-/// `is fastapi` and `at load, not at test` sat orphaned under the wrong column. This walks the real
-/// frame and requires that inside a command receipt's output, **no line starts left of the first
-/// line's own indent** — which is what a continuation falling to the margin does.
+/// `claims/upstream.py:141` came out eleven rows tall because the beat put a 22-character path in
+/// a 2-wide marker column. `session::MIN_WRAP` refuses that at the source, which is the strong
+/// guard; this is the INDEPENDENT ORACLE over the rendered buffer. It checks the SYMPTOM rather
+/// than the cause, so it still fires if some other path ever produces the same picture.
+///
+/// ⚠️ **THE FIRST VERSION OF THIS TEST ASSERTED THE WRONG INVARIANT** — that no line in a receipt
+/// may start left of the first line's indent. That is false for a diff: its header row leaves the
+/// marker column blank (indent 4) and every row after it fills the marker at column 0. It fired on
+/// CORRECT output, which is how a guard teaches you to loosen it until it catches nothing. The
+/// property that actually separates the defect from a diff is a RUN of near-empty lines.
 ///
 /// ⚠️ Read on the SESSION column only: the production rail draws its own text on the same terminal
 /// rows, and a whole-row read would find rail content on a row the session left blank.
 #[test]
-fn a_wrapped_cell_never_starts_left_of_its_column() {
-    let film = script::film(1).expect("film 1");
-    let total = runtime_ms(&cue_sheet(film, true, PANE));
-    let mut checked = 0usize;
-    // ⚠️ **SIXTEENTHS, NOT EIGHTHS.** The floor below is a vacuity guard, and when the film's
-    // content changed the honest fix was to inspect MORE of it, never to lower the number that
-    // says the guard looked at something.
-    for fraction in 1..16 {
-        let frame = frame_at(film, total * fraction / 16, true);
-        let session: Vec<String> = frame
-            .lines()
-            .map(|row| {
-                row.split('\u{2502}')
-                    .next()
-                    .unwrap_or("")
-                    .trim_end()
-                    .to_string()
-            })
-            .collect();
-        // A command receipt opens on `● /name`; its output runs until the next blank row.
-        for (index, row) in session.iter().enumerate() {
-            if !row.trim_start().starts_with("\u{25cf} /") {
-                continue;
-            }
-            let body: Vec<&String> = session[index + 1..]
-                .iter()
-                .take_while(|line| !line.trim().is_empty())
-                .collect();
-            let Some(first) = body.first() else { continue };
-            let indent = |line: &str| line.chars().take_while(|c| *c == ' ').count();
-            let base = indent(first);
-            for line in &body {
-                assert!(
-                    indent(line) >= base,
-                    "a continuation fell to column {} under a block indented {base}: {line:?}\n{frame}",
-                    indent(line)
-                );
-                checked += 1;
+fn no_receipt_ever_renders_its_text_vertically() {
+    // Three consecutive lines of one or two visible characters is not a layout, it is a column.
+    const RUN: usize = 3;
+    const THIN: usize = 2;
+    for film in script::FILMS {
+        let total = runtime_ms(&cue_sheet(film, true, PANE));
+        let mut inspected = 0usize;
+        for fraction in 1..16 {
+            let frame = frame_at(film, total * fraction / 16, true);
+            let mut consecutive = 0usize;
+            for row in frame.lines() {
+                let session = row.split('\u{2502}').next().unwrap_or("");
+                let visible = session.trim().chars().count();
+                inspected += 1;
+                if visible > 0 && visible <= THIN {
+                    consecutive += 1;
+                    assert!(
+                        consecutive < RUN,
+                        "film {} rendered text vertically \u{2014} {consecutive} consecutive lines of {THIN} characters or fewer:\n{frame}",
+                        film.number
+                    );
+                } else {
+                    consecutive = 0;
+                }
             }
         }
+        assert!(
+            inspected > 400,
+            "only {inspected} rows inspected for film {} \u{2014} the guard proves nothing",
+            film.number
+        );
     }
-    // The vacuity half: a sweep that inspected no receipts would pass every assertion above.
-    assert!(
-        checked > 40,
-        "only {checked} receipt rows were inspected — the guard proves nothing"
-    );
 }

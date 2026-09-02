@@ -98,11 +98,11 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
                 name: "diff",
                 columns: PATCH,
                 rows: &[
-                    "serve/checkout.py:88 | ",
+                    " | serve/checkout.py:88",
                     "- | payment_method_types=[\"card\"],",
                     "+ | automatic_payment_methods={\"enabled\": True},",
                     " | ",
-                    "serve/webhooks.py:57 | ",
+                    " | serve/webhooks.py:57",
                     "- | event[\"data\"][\"object\"][\"source\"]",
                     "+ | event[\"data\"][\"object\"][\"payment_method\"]",
                 ],
