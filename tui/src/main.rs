@@ -1,10 +1,14 @@
 #![deny(clippy::print_stderr, clippy::print_stdout)]
 
 mod agent_brief;
+#[cfg(test)]
+mod answer_currency_tests;
 mod binding_probe;
 mod claude_import;
 mod cols;
 mod commands;
+#[cfg(test)]
+mod composer_band_tests;
 mod copilot_login;
 /// 🔴 THE DESIGN BOOK'S SCREENS, AND WHY THEY SHIP NOW.
 ///
@@ -861,6 +865,13 @@ struct AnswerReply {
     degraded: bool,
     sources: Vec<Source>,
     working_paths: Vec<String>,
+    /// The server's refusal to certify this answer, when it sent one.
+    ///
+    /// 🔴 **`None` MEANS NOTHING TO DISCLOSE, NEVER "NOT MEASURED".** `serve/answer_currency.py`
+    /// omits the block entirely on a current index — the healthy payload is byte-identical to one
+    /// from a build that never had the field — so absence here is a positive statement, and the
+    /// two readings of an absent field are exactly the ambiguity this repo keeps paying for.
+    code_currency: Option<estelle_client::CodeCurrency>,
 }
 
 type WorkProgressSink = Arc<dyn Fn(estelle_client::WorkProgress) + Send + Sync>;
@@ -3847,6 +3858,12 @@ impl App {
         if !response.text.trim().is_empty() {
             self.citations = response.sources.clone();
             self.working_memory_paths = response.working_paths;
+            // ⚠️ BEFORE the answer, not after it. A reader who has already read a fluent paragraph
+            // and its citations has acted on it; the point of the disclosure is that it arrives
+            // first. The server puts the same notice at the head of the prose for the same reason.
+            if let Some(currency) = response.code_currency {
+                self.transcript.push(TranscriptEntry::Stale(currency));
+            }
             self.transcript.push(TranscriptEntry::Answer {
                 text: response.text,
                 grounded: response.grounded,
@@ -4953,6 +4970,8 @@ fn dispatch_refusal(text: String) -> AnswerReply {
         degraded: true,
         sources: Vec::new(),
         working_paths: Vec::new(),
+        // Nothing was answered from the index, so there is nothing to decertify.
+        code_currency: None,
     }
 }
 
@@ -5003,6 +5022,7 @@ async fn answer_research_question(
         degraded: response.degraded,
         sources: response.sources,
         working_paths,
+        code_currency: response.code_currency,
     })
 }
 
@@ -5152,6 +5172,10 @@ fn answer_from_command(name: &str, reply: CommandReply, working_paths: Vec<Strin
         degraded: reply.degraded,
         sources: Vec::new(),
         working_paths,
+        // 🔴 A COMMAND REPLY IS A DIFFERENT DOOR. `code_currency` is `/memory/chat`'s; wiring it
+        // here from `CommandReply::extra` would invent a second owner for the same verdict, and
+        // the other doors were named as UNCHECKED in the server's own receipt.
+        code_currency: None,
     }
 }
 
@@ -14148,6 +14172,7 @@ mod tests {
                     degraded: false,
                     sources: Vec::new(),
                     working_paths: Vec::new(),
+                    code_currency: None,
                 }),
             },
             &tx,

@@ -38,6 +38,15 @@ pub(crate) enum TranscriptEntry {
         degraded: bool,
         sources: Vec<Source>,
     },
+    /// The server's refusal to certify the answer that follows, in the server's own words.
+    ///
+    /// 🔴 **ITS OWN ENTRY, NOT A FIELD ON [`TranscriptEntry::Answer`].** The disclosure has to
+    /// lead — it is what tells the reader the citations below it may point into code that has
+    /// moved — and an entry can be pushed ahead of the answer without touching the twelve places
+    /// that build one. ⚠️ It is emitted ONLY when the server sends the block, which it does only
+    /// when the index is behind AND the answer leans on the code; a current index produces no
+    /// entry at all, so this can never read as "no data".
+    Stale(estelle_client::CodeCurrency),
     System(String),
     Command {
         name: String,
@@ -152,6 +161,74 @@ pub(crate) fn handle_mouse(
         MouseEventKind::ScrollDown => *scroll = scroll.saturating_sub(WHEEL_LINES),
         _ => {}
     }
+}
+
+/// The staleness verdict, drawn the way screen 10 of the design book draws it.
+///
+/// 🔴 **THE SERVER'S SENTENCE, NOT A SECOND ONE.** `detail` comes from `GraphHealth.describe()`,
+/// which is also what the navigation tools refuse with — so the CLI cannot date a repo differently
+/// from the tool that declined a lookup one second earlier. The two SHAs are pulled out onto their
+/// own line because that is the fact a reader acts on, and they are shortened by the client's
+/// `CodeCurrency::short`, which returns the WHOLE head rather than a clipped one when it is short.
+///
+/// ⚠️ **`detail` MAY BE EMPTY AND THAT IS A REAL STATE**, not a bug: `_describe` falls back to an
+/// empty string when the health record cannot render itself. An empty sentence draws no row rather
+/// than a row saying nothing.
+fn stale_lines(
+    currency: &estelle_client::CodeCurrency,
+    palette: TranscriptPalette,
+) -> Vec<Line<'static>> {
+    use estelle_client::CodeCurrency;
+
+    let headline = if currency.is_stale() {
+        "Index is behind your tree"
+    } else {
+        "Index currency is unknown"
+    };
+    let mut lines = vec![Line::from(vec![
+        Span::styled(
+            format!("{} ", marks::Mark::Blocked.glyph()),
+            Style::default().fg(palette.warn),
+        ),
+        Span::styled(
+            headline.to_string(),
+            Style::default()
+                .fg(palette.warn)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])];
+    if !currency.indexed_head.is_empty() && !currency.current_head.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled(
+                currency.status.to_uppercase(),
+                Style::default().fg(palette.warn),
+            ),
+            Span::styled(
+                " — indexed at ".to_string(),
+                Style::default().fg(palette.ghost),
+            ),
+            Span::styled(
+                CodeCurrency::short(&currency.indexed_head).to_string(),
+                Style::default().fg(palette.warn),
+            ),
+            Span::styled(
+                ", repo is now ".to_string(),
+                Style::default().fg(palette.ghost),
+            ),
+            Span::styled(
+                CodeCurrency::short(&currency.current_head).to_string(),
+                Style::default().fg(palette.cite),
+            ),
+        ]));
+    }
+    if !currency.detail.trim().is_empty() {
+        lines.push(semantic_line(
+            &mask_secret(currency.detail.trim()),
+            palette.semantic,
+            Some(palette.ghost),
+        ));
+    }
+    lines
 }
 
 pub(crate) fn render(
@@ -273,6 +350,9 @@ pub(crate) fn render(
                     mark: Some((mark.glyph().to_string(), ink)),
                 });
             }
+            TranscriptEntry::Stale(currency) => {
+                items.push(HistoryTranscriptItem::Lines(stale_lines(currency, palette)))
+            }
             TranscriptEntry::System(message) => {
                 items.push(HistoryTranscriptItem::Lines(vec![semantic_line(
                     &mask_secret(message),
@@ -367,6 +447,7 @@ pub(crate) fn compaction_messages(entries: &[TranscriptEntry]) -> Vec<Value> {
             TranscriptEntry::SessionHandoff(lines) => message("system", lines.join("\n")),
             TranscriptEntry::User(text) => message("user", text.clone()),
             TranscriptEntry::Answer { text, .. } => message("assistant", text.clone()),
+            TranscriptEntry::Stale(currency) => message("system", currency.detail.clone()),
             TranscriptEntry::System(text) => message("system", text.clone()),
             TranscriptEntry::Command { name, lines } => {
                 message("assistant", format!("/{name}\n{}", lines.join("\n")))

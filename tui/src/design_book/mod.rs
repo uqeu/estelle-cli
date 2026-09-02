@@ -168,7 +168,7 @@ pub(crate) const SCREENS: &[BookScreen] = &[
     },
     BookScreen {
         name: "10-navigation-stale",
-        contract: "no CLI surface reads the staleness verdict yet",
+        contract: "shipped · transcript.rs renders memory_chat's code_currency block",
         width: 120,
         height: 28,
         needle: "indexed at",

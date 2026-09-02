@@ -122,10 +122,7 @@ pub fn render_interactive_history_transcript(
                     }
                 }
                 if let Some(background) = background {
-                    lines = lines
-                        .into_iter()
-                        .map(|line| band(line, width).bg(background))
-                        .collect();
+                    lines = band_the_message_only(lines, width, background);
                 }
                 rendered.extend(lines);
                 rendered.push(Line::default());
@@ -248,6 +245,63 @@ fn open_with_mark(lines: &mut [Line<'static>], glyph: &str, colour: Color) {
 /// still lands flush instead of overshooting. A line already at or past `width` is returned
 /// untouched — never truncated, because clipping the user's own words to paint a band would be
 /// trading the content for the decoration.
+/// Lift ONLY the rows the message occupies, and strip the inherited fill from the rows it does not.
+///
+/// 🔴 **ONE SELECTION BAND, PAINTED TWICE.** [`UserHistoryCell::display_lines`] opens and closes
+/// every user turn with `Line::from("").style(user_message_style())` — a blank row carrying
+/// Codex's own fill. Upstream that fill is a BLEND against the terminal's reported background, so
+/// the two blanks read as padding nobody sees. Estelle re-bands the same lines with
+/// [`crate::theme::Palette::tint`], a colour `theme.rs` asserts is at least 30 points off the
+/// ground — so the padding stopped being padding and became a lit strip ABOVE and BELOW the
+/// message. The founder photographed exactly that on session-home: one message, three bands.
+///
+/// ⚠️ **THE FIRST AND LAST NON-BLANK ROW ARE THE BOUND, NOT "EVERY NON-BLANK ROW".** A message may
+/// contain its own blank line between two paragraphs, and unlifting that row would split one band
+/// into two — the same defect inverted. Everything between the outermost content rows stays lit.
+///
+/// ⚠️ **AND THE ROWS OUTSIDE IT MUST BE CLEARED, NOT MERELY SKIPPED.** Skipping leaves Codex's fill
+/// in place, which is invisible in a test (`default_bg()` is `None` there) and visible on the
+/// founder's terminal, which answers the OSC query. Two owners of one band is what this is.
+fn band_the_message_only(
+    lines: Vec<Line<'static>>,
+    width: u16,
+    background: Color,
+) -> Vec<Line<'static>> {
+    let first = lines.iter().position(|line| !is_blank(line));
+    let last = lines.iter().rposition(|line| !is_blank(line));
+    let (Some(first), Some(last)) = (first, last) else {
+        return lines.into_iter().map(clear_background).collect();
+    };
+    lines
+        .into_iter()
+        .enumerate()
+        .map(|(index, line)| {
+            if index >= first && index <= last {
+                band(line, width).bg(background)
+            } else {
+                clear_background(line)
+            }
+        })
+        .collect()
+}
+
+/// A row with nothing but whitespace on it — the padding the cell frames its message with.
+fn is_blank(line: &Line<'static>) -> bool {
+    line.spans.iter().all(|span| span.content.trim().is_empty())
+}
+
+/// Drop every background this row carries, on the line AND on each span.
+///
+/// A `Line` style and a `Span` style are two different places a fill can hide, and clearing one
+/// leaves the other painting.
+fn clear_background(mut line: Line<'static>) -> Line<'static> {
+    line.style.bg = None;
+    for span in &mut line.spans {
+        span.style.bg = None;
+    }
+    line
+}
+
 fn band(line: Line<'static>, width: u16) -> Line<'static> {
     let padding = usize::from(width).saturating_sub(line.width());
     if padding == 0 {
@@ -290,6 +344,96 @@ fn coalesce_line_spans(line: Line<'static>) -> Line<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use ratatui::style::Style;
+    use ratatui::text::Span;
+
+    /// A dark swatch standing in for `palette.tint` — the fill Estelle lifts the message onto.
+    #[allow(clippy::disallowed_methods)]
+    const LIFT: Color = Color::Rgb(0x24, 0x1f, 0x19);
+
+    /// Codex's own fill on the cell's padding rows: present on a terminal that answers the OSC
+    /// background query, absent in a test, which is exactly why skipping those rows is not enough.
+    #[allow(clippy::disallowed_methods)]
+    const INHERITED: Color = Color::Rgb(0x2a, 0x2a, 0x2a);
+
+    fn line_backgrounds(lines: &[Line<'static>]) -> Vec<Option<Color>> {
+        lines
+            .iter()
+            .map(|line| {
+                line.style
+                    .bg
+                    .or_else(|| line.spans.iter().find_map(|span| span.style.bg))
+            })
+            .collect()
+    }
+
+    /// 🔴 ONE BAND, AND IT ENDS WHERE THE MESSAGE ENDS.
+    ///
+    /// The cell frames a user turn with a blank row above and below, both carrying Codex's fill.
+    /// Banding all three rows put a lit strip above AND below the line the founder had typed.
+    #[test]
+    fn the_band_covers_the_message_and_neither_blank_around_it() {
+        let framed = vec![
+            Line::from("").style(Style::default().bg(INHERITED)),
+            Line::from("› what changed while I was away?").style(Style::default().bg(INHERITED)),
+            Line::from("").style(Style::default().bg(INHERITED)),
+        ];
+
+        let banded = band_the_message_only(framed, 60, LIFT);
+
+        assert_eq!(
+            line_backgrounds(&banded),
+            vec![None, Some(LIFT), None],
+            "the band must cover the message row and neither blank around it"
+        );
+    }
+
+    /// The negative control the assertion above needs: a message with a paragraph break inside it
+    /// is still ONE band. Unlifting every blank row would split it, which is the same defect with
+    /// the sign flipped.
+    #[test]
+    fn an_internal_blank_line_stays_inside_the_one_band() {
+        let framed = vec![
+            Line::from("").style(Style::default().bg(INHERITED)),
+            Line::from("› first paragraph"),
+            Line::from(""),
+            Line::from("  second paragraph"),
+            Line::from("").style(Style::default().bg(INHERITED)),
+        ];
+
+        let banded = band_the_message_only(framed, 60, LIFT);
+
+        assert_eq!(
+            line_backgrounds(&banded),
+            vec![None, Some(LIFT), Some(LIFT), Some(LIFT), None],
+            "the rows between the outermost content rows stay lit"
+        );
+    }
+
+    /// The inherited fill is CLEARED, not merely skipped — on a span as well as on the line.
+    /// A span-level fill survives a line-level clear and paints on the founder's terminal while
+    /// staying invisible in a test, which is how two owners of one band went unnoticed.
+    #[test]
+    fn the_padding_rows_lose_the_fill_they_inherited_on_spans_too() {
+        let framed = vec![
+            Line::from(Span::styled("   ", Style::default().bg(INHERITED))),
+            Line::from("› one line"),
+            Line::from(Span::styled("   ", Style::default().bg(INHERITED))),
+        ];
+
+        let banded = band_the_message_only(framed, 60, LIFT);
+
+        for (index, line) in banded.iter().enumerate() {
+            if index == 1 {
+                continue;
+            }
+            assert!(
+                line.spans.iter().all(|span| span.style.bg.is_none()),
+                "row {index} still carries a span fill: {line:?}"
+            );
+        }
+    }
 
     #[test]
     fn user_cell_wraps_and_markdown_cell_renders_structure() {

@@ -228,8 +228,60 @@ pub struct DeepSearchResponse {
     pub candidates: Vec<String>,
     #[serde(default)]
     pub reason: Option<String>,
+    /// The server's refusal to certify an answer that quotes code the index may be behind on.
+    ///
+    /// 🔴 **PRESENT ONLY WHEN IT MEANS SOMETHING.** `serve/answer_currency.py` returns the block
+    /// exclusively when the index is not current AND the answer depends on the code; on the
+    /// healthy path the payload is byte-identical to one that never had the field. So `None` is
+    /// the normal case and reads as *nothing to disclose*, never as *no data*.
+    #[serde(default)]
+    pub code_currency: Option<CodeCurrency>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+/// Why the server withdrew certification from an answer, and against which two commits.
+///
+/// ⚠️ **THE SHAPE IS THE SERVER'S, NOT A GUESS.** Fields and vocabulary are taken from
+/// `serve/answer_currency.py` (`_fields`) and `serve/graph_currency.py`: `status` re-uses the
+/// pinned four-valued currency vocabulary (`current` · `stale` · `unknown` · `unreachable`) and
+/// `depends_on_code` names WHICH signal decided it (`certified_code_claim` · `names_indexed_path`
+/// · `no_code_dependence` · `unknown`). Every field is `#[serde(default)]` so a block that gains a
+/// field, or arrives from an older build without one, still parses.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct CodeCurrency {
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub indexed_head: String,
+    #[serde(default)]
+    pub current_head: String,
+    #[serde(default)]
+    pub depends_on_code: String,
+    #[serde(default)]
+    pub cited_paths: u64,
+    /// The server's own sentence for this state. **One owner for the wording** — it comes from
+    /// `GraphHealth.describe()`, the same function the navigation door uses, so the CLI cannot
+    /// date one repo differently from the tool that refused the lookup a second earlier.
+    #[serde(default)]
+    pub detail: String,
+}
+
+impl CodeCurrency {
+    /// A short head, the way the server writes one: twelve characters, never a clipped SHA
+    /// pretending to be a full one.
+    ///
+    /// ⚠️ Returns the WHOLE string when it is shorter than the cut. A head this client shortened
+    /// past recognition is worse than a long one, and an empty head stays empty rather than
+    /// becoming a plausible-looking stub.
+    pub fn short(head: &str) -> &str {
+        head.get(..12).unwrap_or(head)
+    }
+
+    /// `true` when the block says the index is behind the tree, rather than merely undated.
+    pub fn is_stale(&self) -> bool {
+        self.status == "stale"
+    }
 }
 
 impl DeepSearchResponse {
