@@ -223,6 +223,15 @@ pub(crate) enum Say {
     /// **Reuse the shape, never the content** — the shape is `gate_refusal`'s renderer and it stays
     /// one owner; what each film feeds it is that film's business.
     Gate(&'static GateFixture),
+    /// The Orchestra worker table, drawn by [`crate::orchestra_view`] — the same renderer the live
+    /// session and catalog screen 20 call — and repainted every frame so the workers ADVANCE.
+    ///
+    /// 🔴 **THE FOUNDER SPOTTED THIS ONE UNAIDED AND HE WAS RIGHT.** Screen 20 of the design book
+    /// is eight workers with per-worker state, a `?  Unknown · worker state not reported` row and
+    /// an `11/24` bar, and it appeared NOWHERE in any film — the whole orchestra moment was a
+    /// hand-typed `Say::Table`. Reuse the shape, never the content: the shape is
+    /// `orchestra_view`'s renderer and it stays one owner.
+    Orchestra(&'static FleetFixture),
     /// 🔴 **THE ONE BEAT IN ANY FILM THAT IS NOT A FIXTURE.** Every row is measured on the machine
     /// the film is being recorded on, live, by [`estelle_machine`] — the same `machine()`,
     /// `named_model()` and `fit()` that `local_provider.rs` already ships. On the founder's laptop
@@ -241,6 +250,188 @@ pub(crate) enum Say {
     Failure([&'static str; 3]),
     /// Silence inside a reply, in milliseconds before `--speed`. Estelle taking its time.
     Wait(u32),
+}
+
+/// One worker in a film's fleet, and when it does what.
+///
+/// 🔴 **THE FILM USED TO TYPE ITS OWN WORKER TABLE, AND IT INVENTED THE ONE COLUMN THE PRODUCT
+/// REFUSES TO DRAW.** Film 1's orchestra beat was a `Say::Table` with ten hand-written rows and a
+/// `claude-opus-4-8` in a per-worker MODEL column. [`crate::orchestra_view`] has no model column
+/// and never has: `FleetAgent` carries no model and no cost, so every cost cell reads `—` and the
+/// frame says `per-worker model + cost · no server contract` underneath. The film was drawing a
+/// number the product declines to draw — which is the exact failure these films exist to argue
+/// against. The founder read it straight off the screen: *"in orchestra it actually shows each
+/// model going… this doesn't really look like the CLI… it kind of seems like you faked it."*
+///
+/// ⚠️ **THE MODEL DID NOT DISAPPEAR, IT MOVED TO WHERE IT IS TRUE.** The fleet's roster is a real
+/// field (`FleetSnapshot::models`) and renders on the frame's second line as `models · …`. One
+/// model named once, honestly, beats ten fabricated cells.
+pub(crate) struct FleetWorker {
+    /// Its own reported action. `None` is the worker the server never reported on.
+    pub action: Option<&'static str>,
+    /// Assignments in this worker's batch, and how many are done when it finishes.
+    pub steps: u64,
+    /// Seconds after the block opens at which it starts working, and stops.
+    pub starts_s: u32,
+    pub ends_s: Option<u32>,
+    /// Set only for the worker whose state never arrived — the contract requires a reason, and a
+    /// row that says only "Unknown" has thrown away the half that says why.
+    pub unknown_reason: Option<&'static str>,
+}
+
+/// A fleet, as a film tells it. Rendered by [`crate::orchestra_view`] — the same function the live
+/// session and the catalog's screen 20 call.
+pub(crate) struct FleetFixture {
+    pub batch: &'static str,
+    pub models: &'static [&'static str],
+    pub narrator: &'static str,
+    /// Assignments admitted across the whole fleet. `completed` is derived from the workers, so
+    /// the bar and the counts cannot disagree.
+    pub total: u64,
+    pub workers: &'static [FleetWorker],
+    /// How long this fleet has ALREADY been running when the block first appears.
+    ///
+    /// 🔴 **WITHOUT THIS THE TABLE OPENS AT ZERO AND READS AS "NOTHING IS WORKING"** — which is
+    /// the founder's complaint about the local models, word for word, and it would have been true
+    /// of the fleet too. A batch a viewer joins mid-flight is also simply what an orchestra run
+    /// looks like: you do not watch it from the instant it is admitted.
+    pub opens_at_s: u32,
+    /// After this many seconds every worker is `Killed`. `None` for a fleet that just works.
+    ///
+    /// ⚠️ **`Killed`, NOT `Completed`.** `orchestra_view::glyph` draws `×` in red for it, and the
+    /// contract it cites is explicit that *"a stopped process is not a successful process"*. Film
+    /// 1's whole second beat is ten workers dying at once; rendering that as ten green ticks would
+    /// invert the beat.
+    pub killed_at_s: Option<u32>,
+}
+
+/// The film's clock, as a wall clock the worker table can date rows against.
+///
+/// Same value as `rail::EPOCH` and for the same reason: the gallery's own fixture used a year-2100
+/// timestamp, which made every row read `clock ahead`.
+const FLEET_EPOCH: f64 = 1_788_392_400.0;
+
+/// Build the snapshot this fleet looks like `elapsed_ms` into its block.
+///
+/// 🔴 **THIS IS THE HALF THAT MAKES THE WORKERS MOVE.** The founder's note on the local models was
+/// *"they just stand there, nothing is working, it doesn't show actual progress"*, and the same was
+/// true of the orchestra: a table pushed once is a photograph. Every field here is a function of
+/// the clock, so `completed` climbs, states advance, and `last seen` ages — and because it is a
+/// pure function of `(fixture, elapsed_ms)` a re-shot take matches the last one frame for frame.
+///
+/// ⚠️ **THE ROW COUNT IS INVARIANT IN TIME AND IN THEME**, which is what lets the player lay one
+/// reveal cue per row at plan time. `fleet_height_never_moves` presses it.
+pub(crate) fn fleet_snapshot(
+    fixture: &'static FleetFixture,
+    elapsed_ms: u32,
+) -> estelle_client::FleetSnapshot {
+    use estelle_client::{
+        FleetAgent, FleetAgentProgress, FleetAgentStatus, FleetEvidence, FleetObservedText,
+        FleetSnapshot,
+    };
+
+    // 🔴 **THE CLOCK IS RELATIVE TO THIS BLOCK, NOT TO THE APP.** `elapsed_ms` counts from the
+    // moment the block opened; `opens_at_s` is how long the fleet had been running before that.
+    // An earlier draft fed the pulse clock straight in — milliseconds since the app booted — so a
+    // fleet appearing forty seconds into a film opened on 24/24 and never moved.
+    let seconds = fixture.opens_at_s + elapsed_ms / 1000;
+    let killed = fixture.killed_at_s.filter(|at| seconds >= *at);
+    let mut completed_total = 0u64;
+    let agents = fixture
+        .workers
+        .iter()
+        .enumerate()
+        .map(|(index, worker)| {
+            // How many of this worker's assignments are done. Linear between its start and its
+            // end, and frozen at whatever it had reached when the fleet was killed.
+            let clock = killed.unwrap_or(seconds);
+            let done = match worker.ends_s {
+                _ if clock <= worker.starts_s => 0,
+                Some(end) if clock >= end => worker.steps,
+                Some(end) => {
+                    let span = u64::from(end.saturating_sub(worker.starts_s).max(1));
+                    worker.steps * u64::from(clock - worker.starts_s) / span
+                }
+                // An open-ended worker climbs but never reaches its own total: it is still
+                // working, and a full bar on a Running row would say otherwise.
+                None => worker
+                    .steps
+                    .saturating_sub(1)
+                    .min(u64::from(clock - worker.starts_s) / 2),
+            };
+            completed_total += done;
+            let status = if worker.unknown_reason.is_some() {
+                FleetAgentStatus::Unknown
+            } else if killed.is_some() {
+                FleetAgentStatus::Killed
+            } else if clock <= worker.starts_s {
+                FleetAgentStatus::Queued
+            } else if worker.ends_s.is_some_and(|end| clock >= end) {
+                FleetAgentStatus::Completed
+            } else {
+                FleetAgentStatus::Running
+            };
+            FleetAgent {
+                index: index as u64 + 1,
+                status,
+                // ⚠️ The age is the age of the OBSERVATION, which is what the column says. A
+                // queued worker was observed when the batch opened; a working one, seconds ago.
+                state_observed_at: FLEET_EPOCH + f64::from(clock.saturating_sub(2 + index as u32)),
+                unknown_reason: worker.unknown_reason.map(ToString::to_string),
+                current_action: worker.action.map(ToString::to_string),
+                progress: Some(FleetAgentProgress {
+                    completed: done,
+                    total: worker.steps,
+                }),
+                assignments: estelle_client::FleetAssignmentCounts::default(),
+                failure_cause: None,
+                attempt: estelle_client::FleetAttempt::First,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    FleetSnapshot {
+        id: "fleet-demo".to_string(),
+        batch: fixture.batch.to_string(),
+        models: fixture.models.iter().map(ToString::to_string).collect(),
+        model: String::new(),
+        state: if killed.is_some() {
+            "failed"
+        } else {
+            "running"
+        }
+        .to_string(),
+        revision: u64::from(seconds),
+        observed_at: FLEET_EPOCH + f64::from(seconds),
+        stale_after_s: 60,
+        completed: Some(completed_total.min(fixture.total)),
+        total: Some(fixture.total),
+        // ⛔ **NO PLAN FLOOR.** `plan_floor_usd` is a real server field and no film measures one,
+        // so the frame prints `Plan floor · not reported` — which is the honest cell, and the same
+        // one screen 20 shows.
+        plan_floor_usd: None,
+        plan_floor_basis: String::new(),
+        agents,
+        narrator: Some(FleetObservedText {
+            text: fixture.narrator.to_string(),
+            // The sentence is written by us, so it is `Observed` at best and the renderer would
+            // otherwise stamp `Unverified:` across it. It describes the roster, which IS measured
+            // from the fixture's own rows.
+            evidence: FleetEvidence::Observed,
+        }),
+        attempt: estelle_client::FleetAttempt::First,
+    }
+}
+
+/// The wall clock a film's worker table dates itself against, for the renderer's `now`.
+///
+/// 🔴 **IT MUST USE THE SAME CLOCK `fleet_snapshot` DATES ITS ROWS ON, AND THE FIRST VERSION DID
+/// NOT.** Rows were stamped at `opens_at_s + elapsed` while `now` was just `elapsed`, so `now` sat
+/// BEHIND the rows and `orchestra_view::last_seen` correctly reported `clock ahead` — its honest
+/// answer for a row dated in the future. The renderer was right and the fixture was feeding it two
+/// different notions of now. Caught by a guard reading the rendered rows, not by review.
+pub(crate) fn fleet_now(fixture: &'static FleetFixture, elapsed_ms: u32) -> f64 {
+    FLEET_EPOCH + f64::from(fixture.opens_at_s) + f64::from(elapsed_ms / 1000)
 }
 
 /// What the gate refused, in one film's own terms.

@@ -28,7 +28,7 @@
 //! believes and own it.
 
 use crate::cols::Col;
-use crate::design_book::session::{Beat, GateFixture, Key, Say};
+use crate::design_book::session::{Beat, FleetFixture, FleetWorker, GateFixture, Key, Say};
 
 static PLAN: &[Col] = &[Col::l(2), Col::l(26), Col::l(24), Col::l(20)];
 static STEP: &[Col] = &[Col::l(2), Col::l(30), Col::l(40)];
@@ -68,6 +68,136 @@ static INVENTED_IMPORT: GateFixture = GateFixture {
         ),
     ],
     files: &[("billing/portal.py", 14), ("billing/hooks.py", 3)],
+};
+
+/// 🔴 **FILM 1'S TEN WORKERS, AS THE PRODUCT'S OWN RENDERER DRAWS THEM.**
+///
+/// This replaces two hand-typed `Say::Table` blocks that between them invented a per-worker MODEL
+/// column — a cell `orchestra_view` refuses to draw, because `FleetAgent` carries neither a model
+/// nor a cost. The founder read the difference off the screen without being told: *"in orchestra it
+/// actually shows each model going… this doesn't really look like the CLI… it kind of seems like
+/// you faked it."*
+///
+/// ⚠️ **THE MODEL IS STILL ON SCREEN, ON THE LINE WHERE IT IS TRUE.** `models · claude-opus-4-8`
+/// is the fleet's roster, a real `FleetSnapshot` field, rendered on the frame's second row. Beat 2
+/// still argues "ten workers, one model, all dead at once" — it just no longer fabricates ten
+/// cells to say it.
+///
+/// ⚠️ **WORKER 7 REPORTS NOTHING, ON PURPOSE.** Screen 20 of the design book carries exactly this
+/// row, and it is the most honest thing on the frame: the fleet does not pretend to know a state
+/// the server never sent. It renders `? Unknown · worker state not reported` in `mid`, not a
+/// warning colour, because unknown is the ABSENCE of a signal rather than a call for a human.
+static TEN_WORKERS: FleetFixture = FleetFixture {
+    killed_at_s: None,
+    ..TEN_JOBS
+};
+
+/// 🔴 **THE NUMBERS IN THE FAILURE BANNER ARE DERIVED FROM THIS ROSTER, NOT ASSERTED OVER IT.**
+/// The banner says *"Seven were mid-write"*, and at `killed_at_s` exactly seven workers have
+/// started an assignment and not finished it — `the_stopped_fleet_reconciles_with_its_own_banner`
+/// counts them off the rendered rows. A sentence and a table that disagree on camera is the kind of
+/// detail a hostile viewer finds in one pause.
+static TEN_STOPPED_AT: u32 = 9;
+
+/// The same ten, after the usage cap. ⚠️ **`Killed`, NOT `Completed`** — `orchestra_view` draws a
+/// red multiplication sign for a stopped process, and the contract it cites is explicit that a
+/// stopped process is not a successful one. Ten green ticks would have inverted the whole beat.
+static TEN_STOPPED: FleetFixture = FleetFixture {
+    // 🔴 **BOTH FIELDS, AND THE FIRST DRAFT SET ONLY ONE.** `killed_at_s` is measured on the
+    // fleet's OWN clock, which starts at `opens_at_s` — so a block that opens at 3 s and dies at
+    // 9 s renders six seconds of a fleet that is still alive before it freezes. The stopped block
+    // opens at the moment of death: it is a photograph of the wreck, not a replay of the crash.
+    opens_at_s: TEN_STOPPED_AT,
+    killed_at_s: Some(TEN_STOPPED_AT),
+    ..TEN_JOBS
+};
+
+/// 🔴 **ONE ROSTER, TWO STATES.** Both blocks above spread this, so "which worker had which job"
+/// cannot drift between the living table and the dead one — which is exactly what two hand-typed
+/// tables could do, and did: the old pair disagreed, listing worker 7 as `error mapping` in both
+/// while nothing else in the film ever mentioned error mapping.
+const TEN_JOBS: FleetFixture = FleetFixture {
+    batch: "Migrate billing off the removed Stripe fields",
+    models: &["claude-opus-4-8"],
+    narrator: "10 workers writing 24 assignments across the billing package",
+    total: 24,
+    // The batch has been running three seconds when the block appears, so the table opens
+    // mid-flight rather than at zero — and two workers finish on camera during the beat.
+    opens_at_s: 3,
+    killed_at_s: None,
+    workers: &[
+        FleetWorker {
+            action: Some("rewriting the webhook handler"),
+            steps: 3,
+            starts_s: 0,
+            ends_s: None,
+            unknown_reason: None,
+        },
+        FleetWorker {
+            action: Some("idempotency keys on capture"),
+            steps: 3,
+            starts_s: 0,
+            ends_s: None,
+            unknown_reason: None,
+        },
+        FleetWorker {
+            action: Some("reading the backfill script"),
+            steps: 2,
+            starts_s: 1,
+            ends_s: Some(6),
+            unknown_reason: None,
+        },
+        FleetWorker {
+            action: Some("tests, billing/charge"),
+            steps: 3,
+            starts_s: 0,
+            ends_s: None,
+            unknown_reason: None,
+        },
+        FleetWorker {
+            action: Some("tests, billing/hooks"),
+            steps: 2,
+            starts_s: 1,
+            ends_s: None,
+            unknown_reason: None,
+        },
+        FleetWorker {
+            action: Some("reading the customer portal"),
+            steps: 2,
+            starts_s: 2,
+            ends_s: Some(7),
+            unknown_reason: None,
+        },
+        // The one the server never reported on. Screen 20 carries the same row.
+        FleetWorker {
+            action: None,
+            steps: 2,
+            starts_s: 0,
+            ends_s: None,
+            unknown_reason: Some("worker state not reported"),
+        },
+        FleetWorker {
+            action: Some("reading the retry budget"),
+            steps: 2,
+            starts_s: 3,
+            ends_s: None,
+            unknown_reason: None,
+        },
+        FleetWorker {
+            action: Some("migration notes"),
+            steps: 3,
+            starts_s: 2,
+            ends_s: None,
+            unknown_reason: None,
+        },
+        FleetWorker {
+            action: Some("changelog"),
+            steps: 2,
+            starts_s: 9,
+            ends_s: None,
+            unknown_reason: None,
+        },
+    ],
 };
 
 pub(crate) const FIXTURE_KEY: &str = "sk-ant-api03-notarealkey-demo-fixture-0000000000";
@@ -114,49 +244,24 @@ pub(crate) const SOLO: &[Beat] = &[
         typed: &[Key::Type("go")],
         think_ms: 3_800,
         reply: &[
-            Say::Table {
-                name: "orchestra",
-                columns: FLEET,
-                rows: &[
-                    "  | worker | job | state",
-                    "1 | claude-opus-4-8 | webhooks | writing",
-                    "2 | claude-opus-4-8 | idempotency keys | writing",
-                    "3 | claude-opus-4-8 | backfill script | reading",
-                    "4 | claude-opus-4-8 | tests, billing | writing",
-                    "5 | claude-opus-4-8 | tests, hooks | writing",
-                    "6 | claude-opus-4-8 | customer portal | reading",
-                    "7 | claude-opus-4-8 | error mapping | writing",
-                    "8 | claude-opus-4-8 | retry budget | reading",
-                    "9 | claude-opus-4-8 | migration notes | writing",
-                    "10 | claude-opus-4-8 | changelog | queued",
-                ],
-            },
+            Say::Orchestra(&TEN_WORKERS),
             Say::Wait(3_400),
             // 🔴 THE CATASTROPHE. Not one worker: ALL TEN, at once, mid-write. Every engineer
             // watching has had this happen, and the beat is held rather than summarised.
             Say::Failure([
                 "You reached your Anthropic usage limit. All ten workers stopped.",
-                "Seven were mid-write. Four files are half changed.",
+                // 🔴 **THIS SENTENCE IS COUNTED OFF THE TABLE ABOVE IT, NOT TYPED.** It read
+                // "Seven were mid-write. Four files are half changed." beside a hand-written table
+                // that supported neither number. The worker rows are the product's renderer now,
+                // so `the_stopped_fleet_reconciles_with_its_own_banner` counts the `[done/total]`
+                // cells and fails if this line and those rows ever disagree. ⚠️ And the seventh
+                // worker is not "mid-write" — its state never arrived, which is a DIFFERENT thing
+                // and is the more interesting half: the fleet does not guess.
+                "Six were mid-write. One never reported its state.",
                 "Nothing merged. Your tree did not change.",
             ]),
             Say::Wait(2_600),
-            Say::Table {
-                name: "orchestra",
-                columns: FLEET,
-                rows: &[
-                    "  | worker | job | state",
-                    "1 | \u{2014} | webhooks | stopped",
-                    "2 | \u{2014} | idempotency keys | stopped",
-                    "3 | \u{2014} | backfill script | stopped",
-                    "4 | \u{2014} | tests, billing | stopped",
-                    "5 | \u{2014} | tests, hooks | stopped",
-                    "6 | \u{2014} | customer portal | stopped",
-                    "7 | \u{2014} | error mapping | stopped",
-                    "8 | \u{2014} | retry budget | stopped",
-                    "9 | \u{2014} | migration notes | stopped",
-                    "10 | \u{2014} | changelog | stopped",
-                ],
-            },
+            Say::Orchestra(&TEN_STOPPED),
             Say::Wait(2_800),
             // ⚠️ THE CONTRAST IS THE PRODUCT, AND IT LANDS IN ONE CUT: the models died, the work
             // did not. Everything the ten were holding is held here instead.

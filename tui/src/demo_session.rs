@@ -338,12 +338,33 @@ enum Paint {
         fixture: &'static GateFixture,
         pane: usize,
     },
+    /// The Orchestra worker table, drawn by [`crate::orchestra_view`] — the renderer behind
+    /// catalog screen 20 and the live session's own fleet panel.
+    ///
+    /// ⚠️ **THIS ONE READS THE CLOCK FOR CONTENT, NOT JUST FOR A PULSE.** The gate's rows are
+    /// fixed and only its mark moves; a fleet's rows are a function of time, which is the founder's
+    /// *"it actually shows each model going"*. Both go through the same [`repaint`], because
+    /// "re-render this block at the current frame" is one job.
+    Fleet {
+        fixture: &'static session::FleetFixture,
+        pane: usize,
+    },
 }
 
-/// Where a repainted block lives in the real transcript.
+/// Where a repainted block lives in the real transcript, and when it got there.
+///
+/// 🔴 **`opened_tick` IS WHY THE FLEET IS NOT ALREADY FINISHED WHEN YOU FIRST SEE IT.**
+/// [`repaint`] runs off `live_renderer::pulse_tick`, which counts from the APP's boot. Feeding that
+/// straight to a worker table meant a block appearing forty seconds into a film opened on a fleet
+/// that had been running forty seconds — every worker complete, the bar full, nothing to watch. A
+/// block's animation clock has to start when the BLOCK does.
+///
+/// ⚠️ Harmless for the gate, whose pulse is periodic: a phase shift is invisible. It is load-bearing
+/// for anything whose CONTENT is a function of time.
 struct Painting {
     entry: usize,
     source: Paint,
+    opened_tick: u64,
 }
 
 /// Draw one block, at this frame's clock, in the caller's palette.
@@ -385,6 +406,19 @@ fn paint(source: Paint, palette: &crate::theme::Palette, tick: u64) -> Vec<Line<
                 true,
             )
         }
+        // 🔴 **THE CLOCK IS THE PULSE CLOCK, DELIBERATELY.** `pulse_tick` counts 50 ms steps from
+        // the app's boot, so `tick * 50` is a millisecond reading of the SAME clock the gate's
+        // mark moves on. One clock for everything that animates means a film cannot have two
+        // notions of "now", which is how the rail and the session drifted apart once already.
+        Paint::Fleet { fixture, pane } => {
+            let elapsed_ms = u32::try_from(tick.saturating_mul(50)).unwrap_or(u32::MAX);
+            crate::orchestra_view::lines(
+                &session::fleet_snapshot(fixture, elapsed_ms),
+                palette,
+                pane,
+                session::fleet_now(fixture, elapsed_ms),
+            )
+        }
     }
 }
 
@@ -406,7 +440,11 @@ fn paint_height(source: Paint) -> usize {
 fn repaint(app: &mut App, paintings: &[Painting], tick: u64) {
     let palette = app.theme.screen_palette();
     for painting in paintings {
-        let fresh = paint(painting.source, &palette, tick);
+        let fresh = paint(
+            painting.source,
+            &palette,
+            tick.saturating_sub(painting.opened_tick),
+        );
         let Some(TranscriptEntry::Painted { lines, .. }) = app.transcript.get_mut(painting.entry)
         else {
             continue;
@@ -498,6 +536,24 @@ fn plan_say(steps: &mut Vec<Step>, say: &'static Say, start: u32, pane: usize) -
                 steps.push(Step {
                     at_ms: clock,
                     cue: Cue::CommandLine(line),
+                });
+            }
+        }
+        Say::Orchestra(fixture) => {
+            let source = Paint::Fleet { fixture, pane };
+            clock += CHUNK_MS * 2;
+            steps.push(Step {
+                at_ms: clock,
+                // ⚠️ **NO `● /orchestra` RECEIPT.** `orchestra_view` opens on its own
+                // `● Task(batch · N workers)`; a receipt above it draws two filled marks for one
+                // event, which is the same doubling the gate block would have had.
+                cue: Cue::OpenPainted { name: None, source },
+            });
+            for _ in 0..paint_height(source) {
+                clock += CHUNK_MS * 2;
+                steps.push(Step {
+                    at_ms: clock,
+                    cue: Cue::PaintRow,
                 });
             }
         }
@@ -700,6 +756,7 @@ fn apply(cue: &Cue, app: &mut App, now: Instant, paintings: &mut Vec<Painting>) 
             paintings.push(Painting {
                 entry: app.transcript.len() - 1,
                 source: *source,
+                opened_tick: live_renderer::pulse_tick(app, now),
             });
         }
         // 🔴 **PAINTED FROM THE APP'S OWN THEME, NOT FROM A PALETTE THE PLANNER CHOSE.** A film

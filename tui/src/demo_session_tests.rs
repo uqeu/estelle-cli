@@ -777,9 +777,23 @@ fn brand_red() -> ratatui::style::Color {
 /// `credential_lines` already carries next door.
 fn gate_settles_at(film: &'static Film) -> u32 {
     let steps = cue_sheet(film, true, PANE);
+    // 🔴 **BY SOURCE, NOT BY POSITION — AND THIS GUARD CAUGHT ITSELF GETTING THAT WRONG.**
+    // The first version matched any `OpenPainted`, which was the gate right up until the orchestra
+    // beat became a painted block too. It then measured the FLEET's settle time, the loop below
+    // stopped before the gate had streamed in, and both gate guards failed with "`Gate refused` is
+    // not on the frame at all" — the vacuity check firing exactly as designed. A guard that selects
+    // the only member of a set is a guard that breaks when the set grows.
     let opened = steps
         .iter()
-        .position(|step| matches!(step.cue, Cue::OpenPainted { .. }))
+        .position(|step| {
+            matches!(
+                step.cue,
+                Cue::OpenPainted {
+                    source: Paint::Gate { .. },
+                    ..
+                }
+            )
+        })
         .expect("the film must still carry a painted gate block");
     steps[opened..]
         .iter()
@@ -787,6 +801,31 @@ fn gate_settles_at(film: &'static Film) -> u32 {
         .map(|step| step.at_ms)
         .last()
         .expect("the gate block must reveal at least one row")
+}
+
+/// The painted block whose source is a gate, and the source it was painted from.
+fn gate_block(film: &'static Film) -> (Vec<Line<'static>>, Paint) {
+    let mut app = film_app(film);
+    let now = Instant::now();
+    let mut paintings = Vec::new();
+    for step in cue_sheet(film, true, PANE) {
+        if step.at_ms > gate_settles_at(film) {
+            break;
+        }
+        apply(&step.cue, &mut app, now, &mut paintings);
+    }
+    let painting = paintings
+        .iter()
+        .find(|painting| matches!(painting.source, Paint::Gate { .. }))
+        .expect("a gate block must be registered for repainting");
+    let lines = match &app.transcript[painting.entry] {
+        TranscriptEntry::Painted { lines, .. } => lines.clone(),
+        other => panic!(
+            "the registered gate entry is not a painted block: {:?}",
+            std::mem::discriminant(other)
+        ),
+    };
+    (lines, painting.source)
 }
 
 /// Every cell of the rendered frame, with the style the renderer actually gave it.
@@ -903,13 +942,15 @@ fn the_gates_mark_pulses_in_a_film_and_its_words_hold_still() {
     let headline_of = |app: &App| {
         app.transcript
             .iter()
-            .find_map(|entry| match entry {
-                TranscriptEntry::Painted { lines, .. } => lines.iter().find(|line| {
-                    line.spans
-                        .iter()
-                        .any(|span| span.content.contains("Gate refused"))
-                }),
+            .filter_map(|entry| match entry {
+                TranscriptEntry::Painted { lines, .. } => Some(lines),
                 _ => None,
+            })
+            .flatten()
+            .find(|line| {
+                line.spans
+                    .iter()
+                    .any(|span| span.content.contains("Gate refused"))
             })
             .cloned()
             .expect("the painted gate must carry its headline")
@@ -947,24 +988,7 @@ fn the_gates_mark_pulses_in_a_film_and_its_words_hold_still() {
 #[test]
 fn a_painted_row_is_the_shipped_renderers_own_output() {
     let film = script::film(1).expect("film 1");
-    let mut app = film_app(film);
-    let now = Instant::now();
-    let mut paintings = Vec::new();
-    for step in cue_sheet(film, true, PANE) {
-        if step.at_ms > gate_settles_at(film) {
-            break;
-        }
-        apply(&step.cue, &mut app, now, &mut paintings);
-    }
-    let painted = app
-        .transcript
-        .iter()
-        .find_map(|entry| match entry {
-            TranscriptEntry::Painted { lines, .. } => Some(lines.clone()),
-            _ => None,
-        })
-        .expect("film 1 must carry a painted block");
-    let source = paintings[0].source;
+    let (painted, source) = gate_block(film);
     let expected = paint(source, &Theme::Dark.screen_palette(), 0);
 
     assert_eq!(
@@ -1017,4 +1041,288 @@ fn every_painted_block_has_the_same_height_in_both_themes() {
             assert_eq!(dark, paint_height(source), "paint_height disagrees");
         }
     }
+}
+
+/// 🔴 **THE WORKERS MOVE. THE FOUNDER'S WHOLE ORCHESTRA NOTE IS THIS ONE PROPERTY.**
+///
+/// His words on the local models, which apply to the fleet identically: *"they just stand there,
+/// nothing is working, it doesn't show actual progress."* A table pushed into the transcript once
+/// is a photograph, and that is exactly what the hand-typed `Say::Table` was.
+///
+/// ⚠️ **ASSERTED ON THE RENDERED ROWS, NOT ON THE SNAPSHOT.** `fleet_snapshot` returning different
+/// structs proves the fixture is a function of time; it does not prove the FILM shows it. This
+/// drives [`repaint`] at three clocks and counts the distinct rendered blocks — the same discipline
+/// `rail.rs` uses on the production rail.
+#[test]
+fn the_orchestra_workers_advance_while_the_block_sits_on_screen() {
+    let mut blocks = std::collections::BTreeSet::new();
+    let mut fleets = 0usize;
+    for film in script::FILMS {
+        for step in cue_sheet(film, true, PANE) {
+            let Cue::OpenPainted {
+                source: source @ Paint::Fleet { .. },
+                ..
+            } = step.cue
+            else {
+                continue;
+            };
+            fleets += 1;
+            for tick in [0u64, 60, 140, 260] {
+                let rows = paint(source, &Theme::Dark.screen_palette(), tick);
+                blocks.insert(
+                    rows.iter()
+                        .map(|line| {
+                            line.spans
+                                .iter()
+                                .map(|span| span.content.as_ref())
+                                .collect::<String>()
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                );
+            }
+        }
+    }
+    assert!(
+        fleets > 0,
+        "no film renders a worker table — this guard proves nothing"
+    );
+    assert!(
+        blocks.len() > 2,
+        "the worker table drew {} distinct frames across the whole film — it is a photograph",
+        blocks.len()
+    );
+}
+
+/// 🔴 **A BLOCK THAT CHANGES HEIGHT WOULD ARRIVE TRUNCATED ON CAMERA.**
+///
+/// The plan lays down one `PaintRow` cue per row, counted ONCE with [`paint_height`]. If a block's
+/// height moved with the clock, [`repaint`]'s `zip` would silently stop at the shorter side and the
+/// fleet would lose its progress bar — the last row, and the one the beat is about. Pressed at four
+/// clocks rather than argued in a comment.
+#[test]
+fn a_painted_blocks_height_never_moves_with_the_clock() {
+    for film in script::FILMS {
+        for step in cue_sheet(film, true, PANE) {
+            let Cue::OpenPainted { source, .. } = step.cue else {
+                continue;
+            };
+            let planned = paint_height(source);
+            for tick in [0u64, 60, 140, 260, 4_000] {
+                assert_eq!(
+                    paint(source, &Theme::Dark.screen_palette(), tick).len(),
+                    planned,
+                    "film {} has a block that is {planned} rows at plan time and a different \
+                     height at tick {tick} — the film would reveal the wrong number of rows",
+                    film.number
+                );
+            }
+        }
+    }
+}
+
+/// 🔴 **THE FILM MAY NOT INVENT A PER-WORKER MODEL OR COST. THE PRODUCT REFUSES TO.**
+///
+/// `FleetAgent` carries neither field (`orchestra_view`'s own header says so), which is why every
+/// cost cell is an em dash and the frame prints `per-worker model + cost · no server contract`
+/// underneath. The old hand-typed table put `claude-opus-4-8` in ten per-worker cells — a
+/// fabricated measurement in the interface whose entire job is refusing those.
+///
+/// ⚠️ **THE POSITIVE CONTROL IS THE ROSTER.** Asserting only "no model name appears" would pass
+/// over a table that had lost the model entirely, so the fleet's own `models ·` line is asserted to
+/// still name it. The claim is *the model is named ONCE, where it is true* — not *the model is
+/// gone*.
+#[test]
+fn the_worker_table_never_prints_a_per_worker_model_or_price() {
+    for film in script::FILMS {
+        for step in cue_sheet(film, true, PANE) {
+            let Cue::OpenPainted {
+                source: source @ Paint::Fleet { .. },
+                ..
+            } = step.cue
+            else {
+                continue;
+            };
+            let rows = painted_text(source, 120);
+            let roster = rows
+                .iter()
+                .position(|row| row.contains("models \u{b7}"))
+                .expect("the fleet must still name its model roster");
+            assert!(
+                rows[roster].contains("claude-opus-4-8"),
+                "the roster line lost the model: {:?}",
+                rows[roster]
+            );
+            // Every WORKER row — the ones beginning with a `w<n>` cell — carries no model and no
+            // price. `$` catches a price in any column.
+            for row in worker_rows(&rows) {
+                assert!(
+                    !row.contains("claude-opus"),
+                    "a worker row names a model the server does not send: {row:?}"
+                );
+                assert!(
+                    !row.contains('$'),
+                    "a worker row prints a price the server does not send: {row:?}"
+                );
+            }
+            assert!(
+                rows.iter()
+                    .any(|row| row.contains(crate::orchestra_view::MISSING_PER_WORKER_SPEND)),
+                "the frame does not say which measurement is missing"
+            );
+        }
+    }
+}
+
+/// The worker rows of a rendered fleet block: the ones whose second cell is `w<n>`.
+///
+/// ⚠️ **NOT `starts_with(glyph)` AND NOT `contains(" w")`.** The first missed every row whose glyph
+/// was not the one the test happened to expect, and the second matches the narrator line
+/// *"10 workers writing 24 assignments"*. Selecting on the `wkr` CELL is the only reading that
+/// means "a worker row" regardless of what state the worker is in.
+fn worker_rows(rows: &[String]) -> Vec<&String> {
+    rows.iter()
+        .filter(|row| {
+            row.split_whitespace().nth(1).is_some_and(|cell| {
+                cell.starts_with('w')
+                    && cell[1..].chars().all(|c| c.is_ascii_digit())
+                    && cell.len() > 1
+            })
+        })
+        .collect()
+}
+
+/// One painted block, flattened to plain rows for reading.
+fn painted_text(source: Paint, tick: u64) -> Vec<String> {
+    paint(source, &Theme::Dark.screen_palette(), tick)
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect()
+}
+
+/// 🔴 **THE FAILURE BANNER AND THE WORKER TABLE MUST AGREE, AND NOW ONE IS DERIVED FROM THE OTHER.**
+///
+/// Film 1's banner says *"You reached your Anthropic usage limit. All ten workers stopped. Seven
+/// were mid-write."* Those were three numbers typed into a string beside ten rows typed into a
+/// table, with nothing connecting them — the shape where a viewer who pauses the video finds a
+/// contradiction the author never could. The rows are the renderer's now, so this counts the
+/// claim off the RENDERED block: ten rows, and exactly seven of them started an assignment and did
+/// not finish it.
+///
+/// ⚠️ **COUNTED FROM THE `[done/total]` CELL, WHICH IS WHAT A VIEWER READS.** Counting off the
+/// fixture would only prove the fixture is self-consistent; the question is whether the thing on
+/// screen supports the sentence next to it.
+#[test]
+fn the_stopped_fleet_reconciles_with_its_own_banner() {
+    let film = script::film(1).expect("film 1");
+    let stopped = cue_sheet(film, true, PANE)
+        .into_iter()
+        .filter_map(|step| match step.cue {
+            Cue::OpenPainted {
+                source: source @ Paint::Fleet { .. },
+                ..
+            } => Some(source),
+            _ => None,
+        })
+        // The film opens the fleet twice: alive, then stopped. The banner describes the second.
+        .next_back()
+        .expect("film 1 must render a stopped fleet");
+
+    let rows = painted_text(stopped, 0);
+    let workers = worker_rows(&rows);
+    assert_eq!(
+        workers.len(),
+        10,
+        "the banner says ten workers and the table draws {}:\n{}",
+        workers.len(),
+        rows.join("\n")
+    );
+
+    // `[done/total]` — mid-write is `done > 0` and `done < total`.
+    let mid_write = workers
+        .iter()
+        .filter(|row| {
+            row.split_once('[')
+                .and_then(|(_, rest)| rest.split_once(']'))
+                .and_then(|(cell, _)| cell.split_once('/'))
+                .and_then(|(done, total)| {
+                    Some((
+                        done.trim().parse::<u64>().ok()?,
+                        total.trim().parse::<u64>().ok()?,
+                    ))
+                })
+                .is_some_and(|(done, total)| done > 0 && done < total)
+        })
+        .count();
+
+    // 🔴 **THE NUMBER COMES OUT OF THE BANNER THE FILM ACTUALLY SPEAKS.** Hard-coding `6` here
+    // would let the sentence and the table drift apart again the moment somebody retimes a worker
+    // — the two would simply both be wrong in the same test. The banner is FOUND, the way
+    // `credential_lines` is found, because the script is data the founder reorders.
+    let banner = script::FILMS
+        .iter()
+        .flat_map(|film| film.beats.iter())
+        .flat_map(|beat| beat.reply.iter())
+        .find_map(|say| match say {
+            crate::design_book::session::Say::Failure(lines) if lines[1].contains("mid-write") => {
+                Some(lines[1])
+            }
+            _ => None,
+        })
+        .expect("film 1 must still carry the usage-limit banner");
+    let spelled = [
+        ("One", 1usize),
+        ("Two", 2),
+        ("Three", 3),
+        ("Four", 4),
+        ("Five", 5),
+        ("Six", 6),
+        ("Seven", 7),
+        ("Eight", 8),
+        ("Nine", 9),
+        ("Ten", 10),
+    ];
+    let claimed = spelled
+        .iter()
+        .find(|(word, _)| banner.starts_with(word))
+        .map(|(_, value)| *value)
+        .unwrap_or_else(|| panic!("the banner does not open on a spelled number: {banner:?}"));
+    assert_eq!(
+        mid_write,
+        claimed,
+        "the banner says {banner:?} and the table shows {mid_write} mid-write:\n{}",
+        rows.join("\n")
+    );
+
+    // 🔴 **AND THE UNKNOWN WORKER IS NOT COUNTED AS MID-WRITE.** Its state never arrived, which is
+    // a different fact and the more interesting one — the fleet declines to guess. The banner says
+    // so in its own sentence, and exactly one row must back that.
+    assert!(
+        banner.contains("never reported"),
+        "the banner stopped naming the unreported worker: {banner:?}"
+    );
+    assert_eq!(
+        workers
+            .iter()
+            .filter(|row| row.contains("Unknown \u{b7}"))
+            .count(),
+        1,
+        "the table does not show exactly one unreported worker:\n{}",
+        rows.join("\n")
+    );
+
+    // 🔴 And every stopped worker is drawn with the STOPPED glyph, never a checkmark. The data
+    // contract this renderer cites is explicit: a stopped process is not a successful process.
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.trim_start().starts_with('\u{2713}')),
+        "a killed worker drew a checkmark:\n{}",
+        rows.join("\n")
+    );
 }

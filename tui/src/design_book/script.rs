@@ -306,6 +306,19 @@ mod tests {
                     }
                     text
                 }
+                // The fleet's own prose — the batch name and the narrator line — IS user-facing,
+                // so it belongs in the sweep. The worker rows are the renderer's words, not the
+                // script's, and `orchestra_view` has its own guards over those.
+                Say::Orchestra(fleet) => {
+                    let mut text = format!("{} {}", fleet.batch, fleet.narrator);
+                    for worker in fleet.workers {
+                        if let Some(action) = worker.action {
+                            text.push(' ');
+                            text.push_str(action);
+                        }
+                    }
+                    text
+                }
                 // Measured live, so it carries no script text to audit.
                 Say::LocalFleet => "local fleet measured on this machine".to_string(),
                 Say::Wait(_) => String::new(),
