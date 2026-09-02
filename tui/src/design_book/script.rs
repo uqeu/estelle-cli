@@ -25,6 +25,7 @@
 //! client here is pointed at a dead port (`127.0.0.1:9`), copied from the gallery's own home
 //! fixture: it constructs, it is never dialled, and no film makes a network call.
 
+use crate::design_book::rail;
 use crate::design_book::script_cartwheel::CARTWHEEL;
 use crate::design_book::script_estelle::ESTELLE_REPO;
 use crate::design_book::script_solo::SOLO;
@@ -68,9 +69,12 @@ pub(crate) const FILMS: &[Film] = &[
         beats: CARTWHEEL,
     },
     // 🔴 Film 3 is set in THIS repo on purpose — see `script_estelle`'s own note.
+    // 🔴 Film 3 is the SAME storefront as film 2, on the night it goes down. Two films at one
+    // company is the founder's own structure, and it is what lets film 3 open on a team and a
+    // codebase the viewer already knows.
     Film {
         number: 3,
-        repo: "uqeu/estelle",
+        repo: "cartwheel/storefront",
         branch: "main",
         beats: ESTELLE_REPO,
     },
@@ -126,7 +130,12 @@ pub(crate) fn dress(app: &mut crate::App, film: &Film, fixtures: bool) {
             6,
             Some(("team-cartwheel", "Cartwheel")),
         ),
-        _ => ("khai@fatelabs.ca", "ultra", 1, None),
+        _ => (
+            "you@cartwheel.shop",
+            "team",
+            6,
+            Some(("team-cartwheel", "Cartwheel")),
+        ),
     };
     app.account = serde_json::from_value(match team {
         Some((id, name)) => json!({
@@ -148,105 +157,21 @@ pub(crate) fn dress(app: &mut crate::App, film: &Film, fixtures: bool) {
         )
         .ok();
     }
-    let services: [&str; 3] = match film.number {
-        1 => ["inkwell-web", "inkwell-api", "billing"],
-        2 => ["checkout", "catalog", "webhooks"],
-        _ => ["api.fatelabs.ca", "sweep-worker", "monitor-ingest"],
-    };
-    #[allow(non_snake_case, reason = "read as a fixed triple by the JSON below")]
-    let SERVICES = services;
-    app.prod_overview = serde_json::from_value(json!({
-        // ⚠️ The rail joins org and app, so handing it the whole slug for BOTH printed
-        // `cartwheel/storefront/cartwheel/storefront`. Split it once, here.
-        "app": film.repo.split('/').next_back().unwrap_or(film.repo),
-        "org": film.repo.split('/').next().unwrap_or(film.repo),
-        "series": {
-            "window_s": 3600,
-            "bucket_s": 300,
-            "requests_source": "monitor_ingest",
-            "buckets": [
-                {"t": 1, "errors": 0, "requests": 612},
-                {"t": 2, "errors": 1, "requests": 640},
-                {"t": 3, "errors": 0, "requests": 628},
-                {"t": 4, "errors": 2, "requests": 655}
-            ]
-        },
-        "uptime": {"checks": 3, "up": 3, "down": 0},
-        "uptime_checks": [
-            {"check_id": "c1", "name": SERVICES[0], "url": "https://a/health",
-             "enabled": true, "up": true, "last_status": 200,
-             "last_latency_ms": 118.2, "last_checked": 1788392400.0},
-            {"check_id": "c2", "name": SERVICES[1], "url": "https://b/health",
-             "enabled": true, "up": true, "last_status": 200,
-             "last_latency_ms": 244.7, "last_checked": 1788392370.0},
-            {"check_id": "c3", "name": SERVICES[2], "url": "https://c/health",
-             "enabled": true, "up": true, "last_status": 200,
-             "last_latency_ms": 61.0, "last_checked": 1788392340.0}
-        ]
-    }))
-    .ok();
-    // ⛔ No `patch` on any issue: `queue_lines` renders a patch at a hardcoded 96 columns
-    // (`live_renderer.rs:1876`) inside a ~30-column rail, which blows the rail out.
-    app.prod_issues = serde_json::from_value(json!({
-        "issues": [{
-            "key": "sable-88",
-            "status": "unresolved",
-            "signal": {"title": match film.number { 1 => "ReadTimeout in fetch_claim", 2 => "checkout.session.create failing", _ => "sweep 503 on batches over 500KB" }},
-            "count": 12,
-            "events_in_window": 4,
-            "bind_status": "bound",
-            "repair": {"status": "proposed", "pr": null, "patch": null,
-                       "patch_absent_reason": "waiting on the repro suite"}
-        }],
-        "counts": {"unresolved": 1},
-        "window_s": 3600
-    }))
-    .ok();
-    // The agents belong to the company the film is set at, for the same reason the services do.
-    #[allow(non_snake_case, reason = "read as a fixed pair by the JSON below")]
-    let AGENTS: [&str; 2] = match film.number {
-        1 => ["indexer", "mailer"],
-        2 => ["cart-worker", "fulfilment"],
-        _ => ["sweep-worker", "hook-relay"],
-    };
-    app.prod_agent_health = serde_json::from_value(json!({
-        "enabled": true,
-        "observed_at": 1788392400.0,
-        "stale_after_s": 120,
-        "counts": {"reporting": 2, "degraded": 0, "silent": null},
-        "agents": [
-            {"id": AGENTS[0], "state": "healthy", "events": 1420,
-             "last_seen": 1788392370.0, "current_signal": null},
-            {"id": AGENTS[1], "state": "healthy", "events": 903,
-             "last_seen": 1788392340.0, "current_signal": null}
-        ]
-    }))
-    .ok();
+    // 🔴 **EVERYTHING THAT MOVES BELONGS TO `rail::tick`, NOT HERE.** `dress` used to set the
+    // overview, the agents, the issues and the PRs once, and nothing touched them again — so the
+    // right-hand third of the screen was a photograph for two minutes while the session below it
+    // was alive. Identity is static and stays here; every number is a function of the film clock.
+    // The GitHub binding is identity, not motion: which account is connected does not change
+    // during a film, so it stays here rather than being rewritten sixty times a second.
     app.prod_github_status = serde_json::from_value(json!({
-        "connected": true, "provider": "github", "login": match film.number { 1 => "sable-eng", 2 => "cartwheel-eng", _ => "uqeu" },
-        "observed_at": 1788392400.0, "absent_reason": null
+        "connected": true,
+        "provider": "github",
+        "login": match film.number { 1 => "saltbox", 2 => "cartwheel-eng", _ => "cartwheel-eng" },
+        "observed_at": 1_788_392_400.0,
+        "absent_reason": null,
     }))
     .ok();
-    app.prod_proposed_prs = serde_json::from_value(json!({
-        "prs": [{
-            "number": match film.number { 1 => 412, 2 => 418, _ => 421 },
-            "title": match film.number {
-                1 => "Migrate billing off the removed Stripe fields",
-                2 => "Move checkout off removed Stripe fields",
-                _ => "Split the sweep upload and poll budgets" },
-            "url": format!("https://github.com/{}/pull/1", film.repo),
-            "repo": film.repo,
-            "issue_key": "sable-88",
-            "repair_status": "pr",
-            "gate": {"state": "clean", "verdict": "merge", "blockers": 0, "verified": true},
-            "gate_absent_reason": null,
-            "created_at": "2026-09-02T13:40:00Z",
-            "updated_at": "2026-09-02T13:44:00Z"
-        }],
-        "next_cursor": null,
-        "has_more": false
-    }))
-    .ok();
+    rail::tick(app, film, 0, fixtures);
 }
 
 #[cfg(test)]

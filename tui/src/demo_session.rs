@@ -553,6 +553,13 @@ pub(crate) async fn run(
             }
         }
 
+        // 🔴 THE RAIL MOVES. One call, every frame: latency jitters, counters climb, timestamps
+        // advance, and film 3's outage ramps while he is typing about something else.
+        if let Some(start) = film_started {
+            let elapsed_ms = (start.elapsed().as_millis() as f32 * speed) as u32;
+            crate::design_book::rail::tick(&mut app, film, elapsed_ms, fixtures);
+        }
+
         // THE WHOLE TERMINAL, WIDTH INCLUDED. `render_frame` lays out against `frame.area()`, so
         // the two-pane split, the production rail and the composer are the product's own.
         terminal.draw(|frame| live_renderer::render_frame(frame, &app, now))?;

@@ -37,6 +37,8 @@ pub(crate) mod loops;
 pub(crate) mod panel;
 pub(crate) mod panes;
 /// The three films, as data. Reorder a beat here and nowhere else.
+/// The production rail, moving.
+pub(crate) mod rail;
 pub(crate) mod script;
 /// Film 2 · Cartwheel, as data.
 pub(crate) mod script_cartwheel;
