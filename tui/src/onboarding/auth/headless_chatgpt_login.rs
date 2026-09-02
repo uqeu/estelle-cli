@@ -89,7 +89,7 @@ pub(super) fn render_device_code_login(
     state: &ContinueWithDeviceCodeState,
 ) {
     let banner = if state.is_showing_copyable_auth() {
-        "Finish signing in via your browser"
+        "Finish signing in through the browser"
     } else {
         "Preparing device code login"
     };
@@ -109,16 +109,14 @@ pub(super) fn render_device_code_login(
     let verification_url = if let (Some(verification_url), Some(user_code)) =
         (&state.verification_url, &state.user_code)
     {
-        lines.push("  1. Open this link in your browser and sign in".into());
+        lines.push("  1. Open this link in a browser and sign in".into());
         lines.push("".into());
         lines.push(Line::from(vec![
             "  ".into(),
             verification_url.as_str().cyan().underlined(),
         ]));
         lines.push("".into());
-        lines.push(
-            "  2. Enter this one-time code after you are signed in (expires in 15 minutes)".into(),
-        );
+        lines.push("  2. Enter this one-time code once signed in (expires in 15 minutes)".into());
         lines.push("".into());
         lines.push(Line::from(vec![
             "  ".into(),
@@ -126,7 +124,7 @@ pub(super) fn render_device_code_login(
         ]));
         lines.push("".into());
         lines.push(
-            "  Continue only if you started this login in Codex. If a website or another person gave you this code, cancel."
+            "  Continue only if this login started in Estelle. A code handed over by a website or a person is an attack; cancel."
                 .dim()
                 .into(),
         );

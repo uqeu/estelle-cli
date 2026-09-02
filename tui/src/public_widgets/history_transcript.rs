@@ -122,10 +122,7 @@ pub fn render_interactive_history_transcript(
                     }
                 }
                 if let Some(background) = background {
-                    lines = lines
-                        .into_iter()
-                        .map(|line| band(line, width).bg(background))
-                        .collect();
+                    lines = paint_band(lines, width, background);
                 }
                 rendered.extend(lines);
                 rendered.push(Line::default());
@@ -248,6 +245,48 @@ fn open_with_mark(lines: &mut [Line<'static>], glyph: &str, colour: Color) {
 /// still lands flush instead of overshooting. A line already at or past `width` is returned
 /// untouched — never truncated, because clipping the user's own words to paint a band would be
 /// trading the content for the decoration.
+/// Paint ONE band over the rows of a user turn that actually carry the message.
+///
+/// 🔴 **ONE SELECTION, PAINTED THREE TIMES.** `UserHistoryCell::display_lines` opens with
+/// `Line::from("")` and closes with another — spacing between history cells, correct in the Codex
+/// chatwidget it was written for, where nothing paints a ground behind it. Here every returned line
+/// was banded, so a one-line prompt rendered as **three** filled rows: an empty band, the text, an
+/// empty band. On the founder's own session-home screenshot — *"What changed while I was away?"* —
+/// that is a fat block with the sentence floating in the middle of it, and it is the most visible
+/// thing on the frame.
+///
+/// ⚠️ **THE FIX IS NOT `trim_trailing_blank_lines` AND IT IS NOT DELETING THE SPACERS.** The spacers
+/// are load-bearing: they are the gap between this turn and the reply under it, and
+/// `display_lines` is shared with the chatwidget, which needs them. What was wrong is the PAINT,
+/// not the layout — so the spacers stay and the ground stops at the content.
+///
+/// ⚠️ **THE RANGE IS FIRST-TO-LAST INCLUSIVE, NOT "EVERY NON-BLANK LINE".** A message with a blank
+/// line in the middle of it is one message, and banding around the gap would punch a hole through
+/// the highlight — the same defect wearing the opposite sign. Only the leading and trailing runs
+/// are left unpainted.
+fn paint_band(lines: Vec<Line<'static>>, width: u16, background: Color) -> Vec<Line<'static>> {
+    let Some(first) = lines.iter().position(|line| line.width() > 0) else {
+        // Every row is blank: there is no message to highlight, so there is nothing to paint.
+        // Banding here is how an empty turn became a bare coloured rectangle.
+        return lines;
+    };
+    let last = lines
+        .iter()
+        .rposition(|line| line.width() > 0)
+        .unwrap_or(first);
+    lines
+        .into_iter()
+        .enumerate()
+        .map(|(index, line)| {
+            if (first..=last).contains(&index) {
+                band(line, width).bg(background)
+            } else {
+                line
+            }
+        })
+        .collect()
+}
+
 fn band(line: Line<'static>, width: u16) -> Line<'static> {
     let padding = usize::from(width).saturating_sub(line.width());
     if padding == 0 {

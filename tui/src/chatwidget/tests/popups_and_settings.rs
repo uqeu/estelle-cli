@@ -1114,7 +1114,7 @@ async fn plugin_detail_popup_shows_admin_disabled_status_snapshot() {
         @"  Admin Blocked · Disabled by admin · ChatGPT Marketplace"
     );
     assert!(
-        popup.contains("This plugin is disabled by your workspace admin.")
+        popup.contains("Disabled by the workspace admin.")
             && !popup.contains("Install this plugin now."),
         "expected admin-disabled detail to block install, got:\n{popup}"
     );

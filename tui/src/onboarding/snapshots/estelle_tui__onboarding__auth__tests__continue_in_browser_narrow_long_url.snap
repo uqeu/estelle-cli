@@ -2,7 +2,7 @@
 source: tui/src/onboarding/auth.rs
 expression: contents
 ---
-  Finish signing in via your browser
+  Finish signing in through the browser
 
   If the link doesn't open automatically,
 open the following link to authenticate:

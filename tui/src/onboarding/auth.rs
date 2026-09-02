@@ -393,7 +393,7 @@ impl AuthModeWidget {
         let mut lines: Vec<Line> = vec![
             Line::from(vec![
                 "  ".into(),
-                "Sign in with ChatGPT to use Codex as part of your paid plan".into(),
+                "Sign in with ChatGPT to run Estelle on that paid plan".into(),
             ]),
             Line::from(vec![
                 "  ".into(),
@@ -460,8 +460,8 @@ impl AuthModeWidget {
                     lines.extend(create_mode_item(
                         idx,
                         option,
-                        "Provide your own API key",
-                        "Pay for what you use",
+                        "Provide an API key",
+                        "Usage-based billing",
                     ));
                 }
             }
@@ -498,11 +498,11 @@ impl AuthModeWidget {
             self.request_frame
                 .schedule_frame_in(std::time::Duration::from_millis(100));
             spans.extend(shimmer_text(
-                "Finish signing in via your browser",
+                "Finish signing in through the browser",
                 MotionMode::Animated,
             ));
         } else {
-            spans.push("Finish signing in via your browser".into());
+            spans.push("Finish signing in through the browser".into());
         }
         let mut lines = vec![spans.into(), "".into()];
 
@@ -547,38 +547,34 @@ impl AuthModeWidget {
     }
 
     fn render_chatgpt_success_message(&self, area: Rect, buf: &mut Buffer) {
-        let mut docs_line = HyperlinkLine::new(Line::from("  For more details see the ").dim());
+        let mut docs_line = HyperlinkLine::new(Line::from("  For more details see ").dim());
         docs_line.push_span(
-            "Codex docs".underlined(),
+            "the sandbox docs".underlined(),
             Some("https://developers.openai.com/codex/security"),
         );
         let mut preferences_line =
-            HyperlinkLine::new(Line::from("  Uses your plan's rate limits and ").dim());
+            HyperlinkLine::new(Line::from("  Uses the plan's rate limits and ").dim());
         preferences_line.push_span(
             "training data preferences".underlined(),
             Some("https://chatgpt.com/#settings"),
         );
 
         let lines = vec![
-            HyperlinkLine::new(
-                "✓ Signed in with your ChatGPT account"
-                    .fg(Color::Green)
-                    .into(),
-            ),
+            HyperlinkLine::new("✓ Signed in with a ChatGPT account".fg(Color::Green).into()),
             "".into(),
-            "  Before you start:".into(),
+            "  Before the first turn:".into(),
             "".into(),
-            "  Decide how much autonomy you want to grant Codex".into(),
+            "  Autonomy is a dial, and it starts at off".into(),
             docs_line,
             "".into(),
-            "  Codex can make mistakes".into(),
+            "  A model can be wrong; the gate is what catches it".into(),
             HyperlinkLine::new(
-                "  Review the code it writes and commands it runs"
+                "  Read the diff it proposes and the commands it runs"
                     .dim()
                     .into(),
             ),
             "".into(),
-            "  Powered by your ChatGPT account".into(),
+            "  Model tokens come from the ChatGPT account".into(),
             preferences_line,
             "".into(),
             HyperlinkLine::new(Line::from(vec![
@@ -595,11 +591,7 @@ impl AuthModeWidget {
     }
 
     fn render_chatgpt_success(&self, area: Rect, buf: &mut Buffer) {
-        let lines = vec![
-            "✓ Signed in with your ChatGPT account"
-                .fg(Color::Green)
-                .into(),
-        ];
+        let lines = vec!["✓ Signed in with a ChatGPT account".fg(Color::Green).into()];
 
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
@@ -610,7 +602,7 @@ impl AuthModeWidget {
         let lines = vec![
             "✓ API key configured".fg(Color::Green).into(),
             "".into(),
-            "  Codex will use usage-based billing with your API key.".into(),
+            "  Usage-based billing applies to that API key.".into(),
         ];
 
         Paragraph::new(lines)
@@ -629,16 +621,16 @@ impl AuthModeWidget {
         let mut intro_lines: Vec<Line> = vec![
             Line::from(vec![
                 "> ".into(),
-                "Use your own OpenAI API key for usage-based billing".bold(),
+                "Use an OpenAI API key, billed by usage".bold(),
             ]),
             "".into(),
-            "  Paste or type your API key below. It will be stored locally in auth.json.".into(),
+            "  Paste or type the API key below. It is stored locally in auth.json.".into(),
             "".into(),
         ];
         if state.prepopulated_from_env {
             intro_lines.push("  Detected OPENAI_API_KEY environment variable.".into());
             intro_lines.push(
-                "  Paste a different key if you prefer to use another account."
+                "  Paste a different key to use another account."
                     .dim()
                     .into(),
             );
@@ -649,7 +641,7 @@ impl AuthModeWidget {
             .render(intro_area, buf);
 
         let content_line: Line = if state.value.is_empty() {
-            vec!["Paste or type your API key".dim()].into()
+            vec!["Paste or type the API key".dim()].into()
         } else {
             Line::from(state.value.clone())
         };
@@ -1266,27 +1258,35 @@ mod tests {
 
         assert_eq!(
             collect_osc8_chars(&buf, area, "https://developers.openai.com/codex/security"),
-            "Codex docs"
+            "the sandbox docs"
         );
         assert_eq!(
             collect_osc8_chars(&buf, area, "https://chatgpt.com/#settings"),
             "training data preferences"
         );
-        assert_eq!(
-            (0..37).map(|x| buf[(x, 5)].modifier).collect::<Vec<_>>(),
-            [
-                vec![Modifier::DIM; 27],
-                vec![Modifier::DIM | Modifier::UNDERLINED; 10],
-            ]
-            .concat()
-        );
-        assert_eq!(
-            (0..60).map(|x| buf[(x, 11)].modifier).collect::<Vec<_>>(),
-            [
-                vec![Modifier::DIM; 35],
-                vec![Modifier::DIM | Modifier::UNDERLINED; 25],
-            ]
-            .concat()
+        // ⚠️ **THE RUN LENGTHS ARE DERIVED FROM THE COPY, NOT TYPED.** They were `27`/`10` and
+        // `35`/`25` — four hand-counted column offsets that break on any wording change, which is
+        // friction that teaches the next person to leave the copy alone. The property under test
+        // is "the lead is dim and the link is dim+underlined", and that survives an edit.
+        let dim_then_link = |row: u16, lead: &str, link: &str| {
+            let lead = lead.chars().count();
+            let link = link.chars().count();
+            assert_eq!(
+                (0..u16::try_from(lead + link).expect("row fits"))
+                    .map(|x| buf[(x, row)].modifier)
+                    .collect::<Vec<_>>(),
+                [
+                    vec![Modifier::DIM; lead],
+                    vec![Modifier::DIM | Modifier::UNDERLINED; link],
+                ]
+                .concat()
+            );
+        };
+        dim_then_link(5, "  For more details see ", "the sandbox docs");
+        dim_then_link(
+            11,
+            "  Uses the plan's rate limits and ",
+            "training data preferences",
         );
 
         let visible = (area.top()..area.bottom())
@@ -1301,18 +1301,18 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         insta::assert_snapshot!(visible, @r###"
-        ✓ Signed in with your ChatGPT account
+        ✓ Signed in with a ChatGPT account
 
-          Before you start:
+          Before the first turn:
 
-          Decide how much autonomy you want to grant Codex
-          For more details see the Codex docs
+          Autonomy is a dial, and it starts at off
+          For more details see the sandbox docs
 
-          Codex can make mistakes
-          Review the code it writes and commands it runs
+          A model can be wrong; the gate is what catches it
+          Read the diff it proposes and the commands it runs
 
-          Powered by your ChatGPT account
-          Uses your plan's rate limits and training data preferences
+          Model tokens come from the ChatGPT account
+          Uses the plan's rate limits and training data preferences
 
           Press enter to continue
         "###);

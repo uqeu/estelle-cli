@@ -102,15 +102,12 @@ impl ChatWidget {
                 if crate::ide_context::has_prompt_context(&context) {
                     self.add_info_message(
                         "IDE context is on.".to_string(),
-                        Some(
-                            "Future messages will include your current IDE selection and open tabs."
-                                .to_string(),
-                        ),
+                        Some("Later messages carry the IDE selection and open tabs.".to_string()),
                     );
                 } else {
                     self.add_info_message(
                         "IDE context is on.".to_string(),
-                        Some("Connected to your IDE.".to_string()),
+                        Some("IDE connected.".to_string()),
                     );
                 }
             }

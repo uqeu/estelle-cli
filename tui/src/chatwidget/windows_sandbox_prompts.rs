@@ -346,16 +346,16 @@ impl ChatWidget {
             !allow_unelevated || self.elevated_windows_sandbox_setup_required();
         let mut lines = Vec::new();
         lines.push(line![
-            "Couldn't set up your sandbox with Administrator permissions".bold()
+            "Sandbox setup failed: Administrator permissions were refused".bold()
         ]);
         lines.push(line![""]);
         if allow_unelevated {
             lines.push(line![
-                "You can still use Codex in a non-admin sandbox. It carries greater risk if prompt injected."
+                "A non-admin sandbox still works. It carries greater risk under prompt injection."
             ]);
         } else {
             lines.push(line![
-                "Your organization requires the default sandbox before Codex can continue."
+                "This organization requires the default sandbox before Estelle can continue."
             ]);
         }
         lines.push(line![
@@ -395,7 +395,7 @@ impl ChatWidget {
         }];
         if allow_unelevated {
             items.push(SelectionItem {
-                name: "Use Codex with non-admin sandbox".to_string(),
+                name: "Use Estelle with a non-admin sandbox".to_string(),
                 description: None,
                 actions: vec![Box::new({
                     let otel = self.session_telemetry.clone();
@@ -487,7 +487,7 @@ impl ChatWidget {
             .set_interrupt_hint_visible(/*visible*/ false);
         self.set_status(
             "Setting up sandbox...".to_string(),
-            Some("Hang tight, this may take a few minutes".to_string()),
+            Some("Usually under five minutes.".to_string()),
             StatusDetailsCapitalization::CapitalizeFirst,
             STATUS_DETAILS_DEFAULT_MAX_LINES,
         );

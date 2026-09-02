@@ -181,10 +181,7 @@ impl ChatWidget {
             SlashCommand::Archive => {
                 self.bottom_pane.show_selection_view(SelectionViewParams {
                     title: Some("Archive this session?".to_string()),
-                    subtitle: Some(
-                        "Are you sure? This will archive the current session and exit Codex"
-                            .to_string(),
-                    ),
+                    subtitle: Some("Archive the current session and exit Estelle?".to_string()),
                     footer_hint: Some(standard_popup_hint_line()),
                     items: vec![
                         SelectionItem {
@@ -796,9 +793,7 @@ impl ChatWidget {
                     let Some(thread_id) = self.thread_id else {
                         self.add_info_message(
                             GOAL_USAGE.to_string(),
-                            Some(
-                                "The session must start before you can change a goal.".to_string(),
-                            ),
+                            Some("The session must start before a goal can change.".to_string()),
                         );
                         if source == SlashCommandDispatchSource::Live {
                             self.clear_live_goal_submission();
@@ -856,7 +851,7 @@ impl ChatWidget {
                     } else {
                         self.add_info_message(
                             GOAL_USAGE.to_string(),
-                            Some("The session must start before you can set a goal.".to_string()),
+                            Some("The session must start before a goal can be set.".to_string()),
                         );
                     }
                     return;

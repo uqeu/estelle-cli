@@ -13233,6 +13233,73 @@ mod tests {
             tint,
             "the row below is lifted too"
         );
+        // 🔴 THE CLAUSE THIS TEST WAS MISSING, AND IT COST THE DEMO'S MOST VISIBLE DEFECT.
+        // Everything above measures the band's WIDTH and its CONTIGUITY and says nothing about
+        // its HEIGHT — so three banded rows around one line of text satisfied every assertion in
+        // it. Every row the ground is painted on must carry ink.
+        for row in &banded {
+            let text: String = (0..buffer.area.width)
+                .map(|x| buffer[(x, *row)].symbol())
+                .collect();
+            assert!(
+                !text.trim().is_empty(),
+                "row {row} is a blank banded row — the band is taller than the message"
+            );
+        }
+    }
+
+    /// 🔴 **ONE SELECTION BAND, PAINTED THREE TIMES.** The founder's session-home screenshot shows
+    /// *"What changed while I was away?"* — a single line — inside a fat block of ground with the
+    /// sentence floating in the middle. `UserHistoryCell::display_lines` opens and closes with
+    /// `Line::from("")` as spacing between history cells, correct where it was written because
+    /// nothing there paints a ground; `history_transcript` banded EVERY line it returned, so a
+    /// one-line prompt rendered as an empty band, the text, and another empty band.
+    ///
+    /// ⚠️ **ASSERTED ON THE RENDERED BUFFER, NOT ON THE LINE VECTOR.** A background is not a
+    /// character: `display_lines` can be perfectly correct and the paint still wrong, which is
+    /// exactly what happened. This is the same discipline that caught the tab-strip gutters, where
+    /// a self-consistent column spec drew gaps of 7/6/6/6.
+    ///
+    /// ⚠️ Cream Ink on purpose — `user_turn_background` blends against a terminal background that
+    /// is `None` in any test, so a Dark fixture would assert nothing.
+    #[test]
+    fn a_one_line_user_turn_paints_exactly_one_banded_row() {
+        const WIDTH: u16 = 80;
+        assert!(
+            session_view::split(WIDTH).is_none(),
+            "this test's premise is a single-column frame"
+        );
+        let mut app = test_app();
+        app.theme = Theme::CreamInk;
+        let tint = user_turn_background(app.theme).expect("cream ink has a known band colour");
+        // The founder's own screenshot, verbatim, and short enough that it cannot wrap at 80.
+        let question = "What changed while I was away?".to_string();
+        assert!(
+            question.chars().count() < usize::from(WIDTH) - 4,
+            "the premise is a message that does not wrap"
+        );
+        app.transcript.push(TranscriptEntry::User(question.clone()));
+
+        let buffer = rendered_buffer_at_size(&app, Instant::now(), WIDTH, 32);
+        let banded = (0..buffer.area.height)
+            .filter(|y| buffer[(0, *y)].bg == tint)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            banded.len(),
+            1,
+            "one line of text painted {} banded rows: {banded:?}",
+            banded.len()
+        );
+        // ⚠️ The positive control. `banded.len() == 1` would also hold if the band had moved onto
+        // some unrelated row, so the one painted row is asserted to be the one carrying the words.
+        let text: String = (0..buffer.area.width)
+            .map(|x| buffer[(x, banded[0])].symbol())
+            .collect();
+        assert!(
+            text.contains("What changed while I was away?"),
+            "the banded row is not the message row: {text:?}"
+        );
     }
 
     /// 🔴 THE CARET IS ALWAYS ON A ROW THE FRAME ACTUALLY DREW. This is the founder's "glitch

@@ -671,7 +671,6 @@
 <text x="1321" y="204" fill="#6F6A5E" font-weight="400">u</text>
 <text x="1330" y="204" fill="#6F6A5E" font-weight="400">e</text>
 <text x="1339" y="204" fill="#6F6A5E" font-weight="400">s</text>
-<rect x="16" y="208" width="864" height="18" fill="#241F19"/>
 <text x="898" y="222" fill="#6F6A5E" font-weight="400">│</text>
 <rect x="16" y="226" width="864" height="18" fill="#241F19"/>
 <text x="16" y="240" fill="#E9E6DC" font-weight="700">›</text>
@@ -755,7 +754,6 @@
 <text x="1429" y="240" fill="#6F6A5E" font-weight="400">─</text>
 <text x="1438" y="240" fill="#6F6A5E" font-weight="400">─</text>
 <text x="1447" y="240" fill="#6F6A5E" font-weight="400">─</text>
-<rect x="16" y="244" width="864" height="18" fill="#241F19"/>
 <text x="898" y="258" fill="#6F6A5E" font-weight="400">│</text>
 <text x="925" y="258" fill="#6F6A5E" font-weight="400">○</text>
 <text x="961" y="258" fill="#948E81" font-weight="400">r</text>

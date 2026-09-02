@@ -2,9 +2,9 @@
 source: tui/src/chatwidget/tests/permissions.rs
 expression: popup
 ---
-  Couldn't set up your sandbox with Administrator permissions
+  Sandbox setup failed: Administrator permissions were refused
 
-  Your organization requires the default sandbox before Codex can continue.
+  This organization requires the default sandbox before Estelle can continue.
   Learn more <https://developers.openai.com/codex/windows>
 
 › 1. Try setting up admin sandbox again

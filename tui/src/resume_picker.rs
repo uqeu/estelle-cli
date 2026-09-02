@@ -3397,7 +3397,7 @@ fn render_empty_state_line(state: &PickerState) -> Line<'static> {
             );
             return vec![Span::from(msg).italic().dim()].into();
         }
-        return vec!["No results for your search".italic().dim()].into();
+        return vec!["No results".italic().dim()].into();
     }
 
     if state.pagination.is_loading() {

@@ -64,9 +64,7 @@ impl SkillsToggleView {
     ) -> Self {
         let mut header = ColumnRenderable::new();
         header.push(Line::from("Enable/Disable Skills".bold()));
-        header.push(Line::from(
-            "Turn skills on or off. Your changes are saved automatically.".dim(),
-        ));
+        header.push(Line::from("Turn skills on or off. Saved on change.".dim()));
 
         let mut view = Self {
             items,

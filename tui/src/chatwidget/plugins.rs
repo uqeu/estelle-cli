@@ -885,7 +885,7 @@ impl ChatWidget {
             items.push(SelectionItem {
                 name: install_label.to_string(),
                 description: Some("Open the ChatGPT app management page".to_string()),
-                selected_description: Some("Open the app page in your browser.".to_string()),
+                selected_description: Some("Open the app page in a browser.".to_string()),
                 actions: vec![Box::new(move |tx| {
                     tx.send(AppEvent::OpenUrlInBrowser {
                         url: install_url.clone(),
@@ -916,9 +916,9 @@ impl ChatWidget {
             });
         } else {
             items.push(SelectionItem {
-                name: "I've installed it".to_string(),
+                name: "Installed".to_string(),
                 description: Some(
-                    "Trust your confirmation and continue to the next app.".to_string(),
+                    "Take that as confirmed and continue to the next app.".to_string(),
                 ),
                 selected_description: Some(
                     "Continue without waiting for refresh to complete.".to_string(),
@@ -979,7 +979,7 @@ impl ChatWidget {
                     "Completed app setup flow for {} plugin.",
                     flow.plugin_display_name
                 ),
-                Some("You can now continue managing plugins from /plugins.".to_string()),
+                Some("Plugin management continues at /plugins.".to_string()),
             );
         }
 

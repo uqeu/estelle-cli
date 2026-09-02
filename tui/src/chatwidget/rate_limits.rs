@@ -454,12 +454,12 @@ impl ChatWidget {
 
         let (title, prompt) = match credit_type {
             AddCreditsNudgeCreditType::Credits => (
-                "You've reached your workspace credit limit",
-                "Your workspace is out of credits. Ask your workspace owner to add more. Notify owner?",
+                "Workspace credit limit reached",
+                "This workspace is out of credits. The workspace owner can add more. Notify owner?",
             ),
             AddCreditsNudgeCreditType::UsageLimit => (
                 "Usage limit reached",
-                "Request a limit increase from your owner to continue using codex. Request increase?",
+                "A limit increase from the workspace owner is needed to continue. Request increase?",
             ),
         };
         let send_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
@@ -517,7 +517,7 @@ impl ChatWidget {
                 Ok(AddCreditsNudgeEmailStatus::CooldownActive),
             ) => "Workspace owner was already notified recently.",
             (AddCreditsNudgeCreditType::Credits, Err(_)) => {
-                "Could not notify your workspace owner. Please try again."
+                "The workspace owner was not notified. Retry."
             }
             (AddCreditsNudgeCreditType::UsageLimit, Ok(AddCreditsNudgeEmailStatus::Sent)) => {
                 "Limit increase requested."
@@ -527,7 +527,7 @@ impl ChatWidget {
                 Ok(AddCreditsNudgeEmailStatus::CooldownActive),
             ) => "A limit increase was already requested recently.",
             (AddCreditsNudgeCreditType::UsageLimit, Err(_)) => {
-                "Could not request a limit increase. Please try again."
+                "The limit increase was not requested. Retry."
             }
         };
         self.add_to_history(history_cell::new_info_event(
