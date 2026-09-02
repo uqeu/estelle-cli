@@ -183,7 +183,7 @@ pub(crate) fn dress(app: &mut crate::App, film: &Film, fixtures: bool) {
 mod tests {
     use super::*;
     use crate::design_book::script_solo::{FIXTURE_KEY, SOLO};
-    use crate::design_book::session::Say;
+    use crate::design_book::session::{Beat, Say};
 
     /// 🔴 **THE FIXTURE CREDENTIAL IS STILL REFUSED BY THE SHIPPED FENCE.**
     ///
@@ -379,10 +379,12 @@ mod tests {
             "$52.65",                             // 4 · cost is the REASON he moves
             "codex",        // 5 · a plan he already pays for does the thinking
             "this machine", // 6 · his own hardware does the writing
-            "context7",     // 7 · research feeds it live docs
+            "the worker has no data for this event", // 7 · why it went and looked, unprompted
+            "context7",     // 7b · research feeds it live docs
             "every name resolves in this repo", // 8 · the gate checks the small model
             "not idempotent", // 9 · a rival family argues with it
             "did not go out", // 10 · the credential fence
+            ".env file",    // 10b · and he is told what to do about it
             "455 tests",    // 11 · the long task finishes, correct
             "what you actually paid", // 12 · the bill
         ] {
@@ -391,6 +393,119 @@ mod tests {
                 "film 1 lost the beat carrying {statement:?} — it no longer stands alone"
             );
         }
+    }
+
+    /// Every [`Say`] in one beat, in the order the player fires them.
+    ///
+    /// ⚠️ **THE INTERRUPT'S LINES LIVE IN `typed`, AND THAT IS EXACTLY WHERE THE AUTONOMY IS.**
+    /// A sweep that runs while he is mid-word is a `Say` inside a `Key::Interrupt`, so a scan of
+    /// `beat.reply` alone would report a film with no autonomous work in it at all — the same hole
+    /// `spoken()` next door already had to be corrected for.
+    fn beat_says(beat: &'static Beat) -> Vec<&'static Say> {
+        beat.typed
+            .iter()
+            .flat_map(|key| match key {
+                crate::design_book::session::Key::Interrupt(says) => says.iter(),
+                _ => [].iter(),
+            })
+            .chain(beat.reply.iter())
+            .collect()
+    }
+
+    /// Everything the hands type in film 1, as one lowercase string.
+    fn typed_in_film_one() -> String {
+        SOLO.iter()
+            .flat_map(|beat| beat.typed.iter())
+            .filter_map(|key| match key {
+                crate::design_book::session::Key::Type(text)
+                | crate::design_book::session::Key::Burst(text)
+                | crate::design_book::session::Key::Oops(text) => Some(*text),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase()
+    }
+
+    /// 🔴 **FILM 1 IS AUTONOMOUS, AND THAT IS COUNTABLE RATHER THAN A TONE.**
+    ///
+    /// The founder, on the cut this replaced: *"you don't have to keep telling it to do this, to do
+    /// this, to do this… he's gonna be like dude, you just have to keep talking to Estelle to keep
+    /// doing stuff."* That cut had **19 beats**, and a beat IS a human turn — `Beat::typed` is
+    /// submitted, so there is no beat Estelle starts by itself. Autonomy in this player is
+    /// therefore **fewer beats carrying longer replies**, and each clause below is one reading of
+    /// that.
+    ///
+    /// ⚠️ **CLAUSE 3 IS THE ONLY STRONG ONE AND I AM SAYING SO.** A beat count is a budget and the
+    /// banned-phrase list is a spelling check — rename `review it` to `check it` and it passes. What
+    /// cannot be renamed around is the STRUCTURE: the gate refusal and the repair that answers it
+    /// are in one beat, so no user turn can sit between them.
+    #[test]
+    fn film_one_does_not_make_him_drive_every_step() {
+        // 1 · the budget. 19 turns was the complaint; this is the ceiling that keeps it answered.
+        assert!(
+            SOLO.len() <= 12,
+            "film 1 is back to {} human turns \u{2014} the founder's whole note on this film",
+            SOLO.len()
+        );
+
+        // 2 · he interrupts it, and the film keeps talking underneath his half-typed line.
+        let interrupts = SOLO
+            .iter()
+            .flat_map(|beat| beat.typed.iter())
+            .filter(|key| matches!(key, crate::design_book::session::Key::Interrupt(_)))
+            .count();
+        assert!(
+            interrupts >= 1,
+            "nothing in film 1 arrives while he is mid-word \u{2014} it is turn-taking again"
+        );
+
+        // 3 · 🔴 THE ONE THAT CANNOT BE RENAMED AROUND. The gate refuses Estelle's own code and
+        //     Estelle repairs it INSIDE THE SAME BEAT, so no typed line can sit between them.
+        let refusing = SOLO
+            .iter()
+            .find(|beat| {
+                beat_says(beat)
+                    .iter()
+                    .any(|say| matches!(say, Say::Gate(_)))
+            })
+            .expect("film 1 must still carry a gate refusal");
+        let says = beat_says(refusing);
+        let refused_at = says
+            .iter()
+            .position(|say| matches!(say, Say::Gate(_)))
+            .expect("the refusal was just found");
+        let repaired = says[refused_at + 1..].iter().any(|say| match say {
+            Say::Command { lines, .. } => lines.iter().any(|line| line.contains("repair")),
+            _ => false,
+        });
+        assert!(
+            repaired,
+            "the gate refuses and nothing repairs it in the same beat \u{2014} a human turn is \
+             carrying the recovery again"
+        );
+
+        // 4 · the five lines he read back at me, by name. ⚠️ A spelling check, and weak on its own.
+        let typed = typed_in_film_one();
+        for driven in [
+            "fix it",
+            "look it up",
+            "review it",
+            "pull it forward",
+            "is the graph still current",
+            "finish the rest",
+        ] {
+            assert!(
+                !typed.contains(driven),
+                "film 1 makes him type {driven:?} again"
+            );
+        }
+        // The positive control: he is still IN the film. A guard over what he does not say passes
+        // identically over a film in which he never types at all.
+        assert!(
+            typed.contains("whats worker 8"),
+            "he no longer checks in on the fleet \u{2014} this guard is measuring an empty film"
+        );
     }
 
     /// 🔴 **FILM 2 ARGUES ONE THING: THE TEAM'S REASONING IS IN THE ROOM WITH HIM.**
