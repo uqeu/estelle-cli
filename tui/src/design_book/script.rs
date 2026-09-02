@@ -65,6 +65,8 @@ static ROLES: &[Col] = &[Col::l(11), Col::l(28), Col::l(30)];
 static DECISION: &[Col] = &[Col::l(8), Col::l(8), Col::l(52)];
 static CHOICE: &[Col] = &[Col::l(4), Col::l(60)];
 static SPEND: &[Col] = &[Col::l(22), Col::r(10), Col::l(30)];
+static DOCTOR: &[Col] = &[Col::l(12), Col::l(10), Col::l(52)];
+static PROVIDERS: &[Col] = &[Col::l(22), Col::l(18), Col::r(8), Col::r(8)];
 
 /// 🔴 **THE FIXTURE CREDENTIAL, AND EVERY WORD OF THIS CHOICE WAS MEASURED.**
 ///
@@ -108,7 +110,7 @@ const SABLE: &[Beat] = &[
             },
             Say::Wait(700),
             Say::Table {
-                label: "find_references \u{b7} retry",
+                name: "find_references",
                 columns: WHERE,
                 rows: &[
                     "where                   | what it does                   | retries",
@@ -129,7 +131,7 @@ const SABLE: &[Beat] = &[
         ],
         think_ms: 5_200,
         reply: &[
-            Say::Screen("09-gate-refused"),
+            Say::Gate,
             Say::Wait(2_600),
             Say::Answer {
                 text: "Repaired and re-gated. Round 2 of 3, zero findings: no invented symbols, \
@@ -177,9 +179,12 @@ const SABLE: &[Beat] = &[
         ],
         think_ms: 4_200,
         reply: &[
-            Say::Tool {
-                label: "implement \u{b7} claude-opus-4-8",
-                lines: &["claims/webhooks.py \u{b7} 2 hunks", "editing \u{2026}"],
+            Say::Command {
+                name: "work",
+                lines: &[
+                    "implement \u{b7} claude-opus-4-8",
+                    "claims/webhooks.py \u{b7} 2 hunks",
+                ],
             },
             Say::Wait(2_400),
             Say::Failure([
@@ -189,7 +194,7 @@ const SABLE: &[Beat] = &[
             ]),
             Say::Wait(1_400),
             Say::Table {
-                label: "roles",
+                name: "models",
                 columns: ROLES,
                 rows: &[
                     "role       | model                       | state",
@@ -205,7 +210,17 @@ const SABLE: &[Beat] = &[
     Beat {
         typed: &[Key::Type("whats up with anthropic")],
         think_ms: 2_600,
-        reply: &[Say::Screen("36-doctor-failing")],
+        reply: &[Say::Table {
+            name: "doctor",
+            columns: DOCTOR,
+            rows: &[
+                "check | state | detail",
+                "anthropic | degraded | 529 overloaded on 3 of 4 probes in the last 2 minutes",
+                "openrouter | ready | key on file \u{b7} 214 models reachable",
+                "local | ready | 3 models installed on this machine",
+                "repo graph | current | swept 6 minutes ago \u{b7} 1,284 files",
+            ],
+        }],
         read_ms: 4_600,
     },
     // ── 6 · one line swaps the model, INCLUDING a local one, and the run resumes from the plan.
@@ -216,10 +231,19 @@ const SABLE: &[Beat] = &[
         ],
         think_ms: 3_200,
         reply: &[
-            Say::Screen("30-provider-keys"),
+            Say::Table {
+                name: "models",
+                columns: PROVIDERS,
+                rows: &[
+                    "provider | credential | in | out",
+                    "anthropic | api key on file | $5.00 | $25.00",
+                    "openrouter | api key on file | varies | varies",
+                    "local \u{b7} this machine | none needed | $0.00 | $0.00",
+                ],
+            },
             Say::Wait(1_700),
             Say::Table {
-                label: "roles \u{b7} pinned",
+                name: "models",
                 columns: ROLES,
                 rows: &[
                     "role       | model                       | why",
@@ -252,7 +276,7 @@ const SABLE: &[Beat] = &[
             ]),
             Say::Wait(900),
             Say::Table {
-                label: "memory \u{b7} decision",
+                name: "memory",
                 columns: DECISION,
                 rows: &[
                     "when    | who    | what was decided",
@@ -262,7 +286,7 @@ const SABLE: &[Beat] = &[
             },
             Say::Wait(1_500),
             Say::Table {
-                label: "choose",
+                name: "choose",
                 columns: CHOICE,
                 rows: &[
                     "1  | follow the recorded decision \u{2014} cap 2",
@@ -278,8 +302,8 @@ const SABLE: &[Beat] = &[
         typed: &[Key::Type("1")],
         think_ms: 3_000,
         reply: &[
-            Say::Tool {
-                label: "repair \u{b7} round 3",
+            Say::Command {
+                name: "work",
                 lines: &[
                     "capped     2 attempts \u{b7} claims/upstream.py:141",
                     "re-gated   0 findings",
@@ -305,10 +329,9 @@ const SABLE: &[Beat] = &[
         typed: &[Key::Type("what did that cost")],
         think_ms: 2_400,
         reply: &[
-            Say::Screen("33b-model-cost"),
             Say::Wait(1_500),
             Say::Table {
-                label: "this turn",
+                name: "spend",
                 columns: SPEND,
                 rows: &[
                     "prompt tokens         | count      | how it is billed",
@@ -562,9 +585,9 @@ mod tests {
                 Say::Answer { text, .. } => (*text).to_string(),
                 Say::System(text) => (*text).to_string(),
                 Say::Failure(lines) => lines.join(" "),
-                Say::Tool { label, lines } => format!("{label} {}", lines.join(" ")),
-                Say::Table { label, rows, .. } => format!("{label} {}", rows.join(" ")),
-                Say::Screen(name) => (*name).to_string(),
+                Say::Command { name, lines } => format!("{name} {}", lines.join(" ")),
+                Say::Table { name, rows, .. } => format!("{name} {}", rows.join(" ")),
+                Say::Gate => "gate refused fastapi_turbo".to_string(),
                 Say::Wait(_) => String::new(),
             })
             .collect::<Vec<_>>()
@@ -614,10 +637,10 @@ mod tests {
         let text = spoken();
         for statement in [
             "claims/upstream.py:141",         // 1 · cited answers about your own code
-            "09-gate-refused",                // 2 · it refuses what it cannot ground
+            "fastapi_turbo",                  // 2 · it refuses what it cannot ground
             "blocked this prompt",            // 3 · the credential fence
             "529",                            // 4 · the provider dies
-            "36-doctor-failing",              // 5 · it says which provider
+            "529 overloaded on 3 of 4",       // 5 · it says WHICH provider is unhealthy
             "Resumed from the existing plan", // 6 · the work survives the swap
             "Your team decided otherwise",    // 7 · team memory contradicts him
             "Nothing merged",                 // 8 · propose-only

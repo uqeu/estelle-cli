@@ -19,6 +19,9 @@ use ratatui::backend::TestBackend;
 /// The width the founder records at. Comfortably over `session_view::DESIGN_WIDTH` (81), which is
 /// the threshold below which the two-pane split — and therefore the rail — is dropped.
 const WIDE: u16 = 150;
+/// The session pane the guards lay their tables out against — the same value `run` measures
+/// off a 150-column terminal, so a test frame and a recorded frame wrap identically.
+const PANE: usize = 88;
 const TALL: u16 = 44;
 
 /// Build the film's app exactly as [`run`] does, minus the terminal.
@@ -61,7 +64,7 @@ fn frame_at_width(film: &'static Film, at_ms: u32, fixtures: bool, width: u16) -
         };
     }
     let now = Instant::now();
-    for step in cue_sheet(film, fixtures) {
+    for step in cue_sheet(film, fixtures, PANE) {
         if step.at_ms > at_ms {
             break;
         }
@@ -99,7 +102,7 @@ fn the_transcript_only_ever_grows() {
         let mut app = film_app(film);
         let now = Instant::now();
         let mut high_water = 0usize;
-        for step in cue_sheet(film, true) {
+        for step in cue_sheet(film, true, PANE) {
             apply(&step.cue, &mut app, now);
             assert!(
                 app.transcript.len() >= high_water,
@@ -126,7 +129,7 @@ fn the_transcript_only_ever_grows() {
 #[test]
 fn the_production_rail_is_on_every_frame_and_is_not_empty() {
     let film = script::film(1).expect("film 1");
-    let total = runtime_ms(&cue_sheet(film, true));
+    let total = runtime_ms(&cue_sheet(film, true, PANE));
     for fraction in [0, 2, 4, 6, 7] {
         let at = total * fraction / 8;
         let frame = frame_at(film, at, true);
@@ -173,7 +176,7 @@ fn the_production_rail_is_on_every_frame_and_is_not_empty() {
 #[test]
 fn the_frame_fills_every_width_and_degrades_below_the_split_threshold() {
     let film = script::film(1).expect("film 1");
-    let at = runtime_ms(&cue_sheet(film, true)) / 2;
+    let at = runtime_ms(&cue_sheet(film, true, PANE)) / 2;
     // `session_view::DESIGN_WIDTH` is 81: the narrowest frame that can hold a 46-column session,
     // a divider with its two gaps, and a 30-column rail.
     for width in [200u16, 160, 150, 120, 100, 81, 80, 70] {
@@ -229,7 +232,7 @@ fn the_users_own_turn_is_the_only_thing_wearing_the_band() {
     let mut app = film_app(film);
     let now = Instant::now();
     // Far enough in that a user turn and a reply are both on screen.
-    for step in cue_sheet(film, true) {
+    for step in cue_sheet(film, true, PANE) {
         if step.at_ms > 20_000 {
             break;
         }
@@ -274,7 +277,7 @@ fn a_reply_arrives_in_many_pieces_rather_than_all_at_once() {
     let mut app = film_app(film);
     let now = Instant::now();
     let mut lengths = std::collections::BTreeSet::new();
-    for step in cue_sheet(film, true) {
+    for step in cue_sheet(film, true, PANE) {
         apply(&step.cue, &mut app, now);
         if let Some(TranscriptEntry::Answer { text, .. }) = app.transcript.last() {
             lengths.insert(text.len());
@@ -291,7 +294,7 @@ fn a_reply_arrives_in_many_pieces_rather_than_all_at_once() {
 #[test]
 fn every_film_is_bounded_and_long_enough_to_talk_over() {
     for film in script::FILMS {
-        let ms = runtime_ms(&cue_sheet(film, true));
+        let ms = runtime_ms(&cue_sheet(film, true, PANE));
         assert!(
             ms < session::MAX_FILM_MS,
             "film {} runs {ms} ms, over the {} ms bound",
@@ -311,7 +314,7 @@ fn every_film_is_bounded_and_long_enough_to_talk_over() {
 #[test]
 fn the_cue_sheet_is_monotonic_in_time() {
     for film in script::FILMS {
-        for pair in cue_sheet(film, true).windows(2) {
+        for pair in cue_sheet(film, true, PANE).windows(2) {
             assert!(
                 pair[0].at_ms <= pair[1].at_ms,
                 "film {} plans a cue backwards",
@@ -330,7 +333,7 @@ fn keystrokes_are_not_evenly_spaced() {
     let film = script::film(1).expect("film 1");
     let mut gaps = Vec::new();
     let mut previous: Option<u32> = None;
-    for step in cue_sheet(film, true) {
+    for step in cue_sheet(film, true, PANE) {
         if matches!(step.cue, Cue::Compose(_)) {
             if let Some(previous) = previous {
                 gaps.push(step.at_ms.saturating_sub(previous));
@@ -359,7 +362,7 @@ fn a_scripted_stumble_shows_the_composer_getting_shorter() {
     let film = script::film(1).expect("film 1");
     let mut shrinks = 0usize;
     let mut previous = 0usize;
-    for step in cue_sheet(film, true) {
+    for step in cue_sheet(film, true, PANE) {
         if let Cue::Compose(text) = &step.cue {
             if text.chars().count() < previous {
                 shrinks += 1;
@@ -380,7 +383,7 @@ fn a_scripted_stumble_shows_the_composer_getting_shorter() {
 #[test]
 fn the_submitted_turn_does_not_carry_the_typo() {
     let film = script::film(1).expect("film 1");
-    let submitted: Vec<String> = cue_sheet(film, true)
+    let submitted: Vec<String> = cue_sheet(film, true, PANE)
         .into_iter()
         .filter_map(|step| match step.cue {
             Cue::Submit(text) => Some(text),
@@ -410,7 +413,7 @@ fn transcript_text(film: &'static Film, fixtures: bool) -> String {
         script::dress(&mut app, false);
     }
     let now = Instant::now();
-    for step in cue_sheet(film, fixtures) {
+    for step in cue_sheet(film, fixtures, PANE) {
         apply(&step.cue, &mut app, now);
     }
     app.transcript
@@ -418,7 +421,7 @@ fn transcript_text(film: &'static Film, fixtures: bool) -> String {
         .map(|entry| match entry {
             TranscriptEntry::User(text) | TranscriptEntry::System(text) => text.clone(),
             TranscriptEntry::Answer { text, .. } => text.clone(),
-            TranscriptEntry::Tool { label, lines, .. } => format!("{label} {}", lines.join(" ")),
+
             TranscriptEntry::Failure(lines) => lines.join(" "),
             TranscriptEntry::Command { name, lines } => format!("{name} {}", lines.join(" ")),
             TranscriptEntry::SessionHandoff(lines) => lines.join(" "),
@@ -460,7 +463,7 @@ fn a_film_cannot_draw_fixture_numbers_with_the_gate_shut() {
 #[test]
 fn no_film_frame_carries_the_fixture_watermark() {
     let film = script::film(1).expect("film 1");
-    let total = runtime_ms(&cue_sheet(film, true));
+    let total = runtime_ms(&cue_sheet(film, true, PANE));
     for fraction in [0, 3, 6] {
         let frame = frame_at(film, total * fraction / 8, true);
         assert!(
@@ -485,7 +488,7 @@ fn no_film_frame_carries_a_box_corner() {
         "\u{2534}", "\u{253C}",
     ];
     let film = script::film(1).expect("film 1");
-    let total = runtime_ms(&cue_sheet(film, true));
+    let total = runtime_ms(&cue_sheet(film, true, PANE));
     for fraction in [1, 4, 7] {
         let frame = frame_at(film, total * fraction / 8, true);
         for corner in BOX_CORNERS {
@@ -497,23 +500,98 @@ fn no_film_frame_carries_a_box_corner() {
     }
 }
 
-/// Every screen a film names exists in the book. A mistyped name would render nothing and the beat
-/// would play as silence — a hole in the footage that still reports a clean runtime.
+/// 🔴 **NO GALLERY FRAME ID AND NO DEBUG LINE COUNT REACHES A FILM.**
+///
+/// His frames carried `09-gate-refused · 23 lines`, `30-provider-keys · 27 lines`,
+/// `33b-model-cost · 20 lines` and four more — a filename and an internal metric, on screen, in a
+/// film for an investor. Two mechanisms produced all of them: `Say::Screen`, which labelled a beat
+/// with the book's own frame name, and `TranscriptEntry::Tool`, whose receipt renders
+/// `· N lines` beside its label (`history_transcript.rs:167`). Both are gone — a beat is a
+/// `Command` now — and this asserts it on the RENDERED FRAME rather than on the script, because
+/// the count was never in the script to begin with.
 #[test]
-fn every_screen_a_film_names_exists() {
-    for film in script::FILMS {
-        for beat in film.beats {
-            for say in beat.reply {
-                if let Say::Screen(name) = say {
-                    assert!(
-                        crate::design_book::SCREENS
-                            .iter()
-                            .any(|screen| screen.name == *name),
-                        "film {} names screen {name:?}, which the book does not have",
-                        film.number
-                    );
-                }
+fn no_internal_id_or_line_count_reaches_a_film_frame() {
+    let film = script::film(1).expect("film 1");
+    let total = runtime_ms(&cue_sheet(film, true, PANE));
+    for fraction in 0..8 {
+        let frame = frame_at(film, total * fraction / 8, true);
+        // Every screen the book has ever named. If a beat reintroduces one, it fires by name.
+        for screen in crate::design_book::SCREENS {
+            assert!(
+                !frame.contains(screen.name),
+                "the gallery frame id {:?} is on screen at {}/8 through the film:\n{frame}",
+                screen.name,
+                fraction
+            );
+        }
+        // ⚠️ **THE NEEDLE IS THE RECEIPT'S EXACT CHROME, NOT THE WORD "lines".** A bare
+        // `contains(" lines")` fired on the gate's own `blast radius · 2 files · 17 changed
+        // lines`, which is product content a viewer SHOULD see. What must not appear is the tool
+        // receipt's `  ·  N line(s)` suffix — a count of rows, which is a debug metric.
+        for row in frame.lines() {
+            if let Some(at) = row.find("  \u{b7}  ") {
+                let after = &row[at + 5..];
+                let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+                assert!(
+                    digits.is_empty() || !after[digits.len()..].starts_with(" line"),
+                    "a tool receipt's line count is on screen at {fraction}/8: {row:?}"
+                );
             }
         }
     }
+}
+
+/// 🔴 **THE DEFECT HE PHOTOGRAPHED, ASSERTED ON THE RENDERED BUFFER.**
+///
+/// *"The spacing is messed up."* Six beats wrapped their second and third columns to column 0, so
+/// `is fastapi` and `at load, not at test` sat orphaned under the wrong column. This walks the real
+/// frame and requires that inside a command receipt's output, **no line starts left of the first
+/// line's own indent** — which is what a continuation falling to the margin does.
+///
+/// ⚠️ Read on the SESSION column only: the production rail draws its own text on the same terminal
+/// rows, and a whole-row read would find rail content on a row the session left blank.
+#[test]
+fn a_wrapped_cell_never_starts_left_of_its_column() {
+    let film = script::film(1).expect("film 1");
+    let total = runtime_ms(&cue_sheet(film, true, PANE));
+    let mut checked = 0usize;
+    for fraction in 1..8 {
+        let frame = frame_at(film, total * fraction / 8, true);
+        let session: Vec<String> = frame
+            .lines()
+            .map(|row| {
+                row.split('\u{2502}')
+                    .next()
+                    .unwrap_or("")
+                    .trim_end()
+                    .to_string()
+            })
+            .collect();
+        // A command receipt opens on `● /name`; its output runs until the next blank row.
+        for (index, row) in session.iter().enumerate() {
+            if !row.trim_start().starts_with("\u{25cf} /") {
+                continue;
+            }
+            let body: Vec<&String> = session[index + 1..]
+                .iter()
+                .take_while(|line| !line.trim().is_empty())
+                .collect();
+            let Some(first) = body.first() else { continue };
+            let indent = |line: &str| line.chars().take_while(|c| *c == ' ').count();
+            let base = indent(first);
+            for line in &body {
+                assert!(
+                    indent(line) >= base,
+                    "a continuation fell to column {} under a block indented {base}: {line:?}\n{frame}",
+                    indent(line)
+                );
+                checked += 1;
+            }
+        }
+    }
+    // The vacuity half: a sweep that inspected no receipts would pass every assertion above.
+    assert!(
+        checked > 40,
+        "only {checked} receipt rows were inspected — the guard proves nothing"
+    );
 }

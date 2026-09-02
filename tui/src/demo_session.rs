@@ -41,6 +41,7 @@ use ratatui::backend::CrosstermBackend;
 
 use crate::design_book::script;
 use crate::design_book::session::{self, Beat, Film, Key, Say};
+use crate::gate_refusal::{Blocker, Refusal};
 use crate::transcript::TranscriptEntry;
 use crate::{App, Args, Theme, live_renderer};
 
@@ -72,6 +73,9 @@ const CHUNK_WORDS: usize = 2;
 /// loop that waits for someone else's condition with no bound is the shape Power of Ten #2 exists
 /// to forbid. If boot has not finished by this point the film starts anyway.
 const BOOT_CEILING: Duration = Duration::from_secs(12);
+/// What the transcript spends on its own left indent before a command receipt's output starts.
+/// Measured off the rendered buffer by `a_wrapped_cell_never_starts_left_of_its_column`.
+const GUTTER: usize = 6;
 
 /// Deterministic jitter in `[-38, +38]` ms, keyed on the keystroke's index.
 ///
@@ -104,10 +108,14 @@ enum Cue {
     OpenAnswer { grounded: bool },
     /// Append a chunk to the answer in flight.
     Grow(&'static str),
-    /// Start a tool receipt with a label and no lines yet.
-    OpenTool(&'static str),
-    /// Append one line to the tool receipt in flight.
-    ToolLine(String),
+    /// Start a command receipt — `● /gate` — with no output yet.
+    ///
+    /// ⚠️ **`Command`, NOT `Tool`.** A tool receipt renders `· 23 lines` beside its label
+    /// (`history_transcript.rs:167`). That is a debug metric, and it went out on screen in a film
+    /// for an investor next to a gallery frame id.
+    OpenCommand(&'static str),
+    /// Append one output line to the command receipt in flight.
+    CommandLine(String),
     /// A system note.
     System(&'static str),
     /// The product's own three-line refusal banner.
@@ -123,7 +131,7 @@ struct Step {
 ///
 /// 🔴 **BOUNDED BEFORE IT IS BUILT.** A film that is too long is a script defect, and the cheapest
 /// place to find one is before the terminal is claimed.
-fn cue_sheet(film: &'static Film, fixtures: bool) -> Vec<Step> {
+fn cue_sheet(film: &'static Film, fixtures: bool, pane: usize) -> Vec<Step> {
     assert!(
         film.beats.len() <= session::MAX_BEATS,
         "film {} carries {} beats, over the {} bound",
@@ -134,13 +142,19 @@ fn cue_sheet(film: &'static Film, fixtures: bool) -> Vec<Step> {
     let mut steps = Vec::new();
     let mut clock = 0u32;
     for beat in film.beats {
-        clock = plan_beat(&mut steps, beat, clock, fixtures);
+        clock = plan_beat(&mut steps, beat, clock, fixtures, pane);
     }
     steps
 }
 
 /// Plan one beat: typing, the wait, the reply arriving in pieces, then the silence he reads in.
-fn plan_beat(steps: &mut Vec<Step>, beat: &'static Beat, start: u32, fixtures: bool) -> u32 {
+fn plan_beat(
+    steps: &mut Vec<Step>,
+    beat: &'static Beat,
+    start: u32,
+    fixtures: bool,
+    pane: usize,
+) -> u32 {
     let mut clock = plan_typing(steps, beat, start);
 
     clock += SUBMIT_MS;
@@ -166,7 +180,7 @@ fn plan_beat(steps: &mut Vec<Step>, beat: &'static Beat, start: u32, fixtures: b
     // move. Only the CONTENT changes.
     let reply: &'static [Say] = if fixtures { beat.reply } else { script::SHUT };
     for say in reply {
-        clock = plan_say(steps, say, clock, fixtures);
+        clock = plan_say(steps, say, clock, pane);
     }
     clock + beat.read_ms
 }
@@ -257,8 +271,67 @@ fn typed_text(beat: &Beat) -> String {
     text
 }
 
+/// The gate refusal, drawn by its own owner at the REAL pane width, flattened to plain rows.
+///
+/// 🔴 **THIS IS WHY THE GATE BEAT WRAPPED TO COLUMN 0 AND THE FIX IS ONE ARGUMENT.**
+/// `design_book::render` calls the book screen, which renders at a hard-coded 108 columns; the
+/// session pane is ~91 on a 150-wide terminal. Everything past the pane was re-wrapped by the
+/// transcript, which knows nothing about columns and starts each continuation at the left margin.
+/// `gate_refusal::lines` has taken a `width` all along and wraps its own cells correctly — it was
+/// simply never handed the width that mattered.
+fn gate_lines(pane: usize) -> Vec<String> {
+    const BLOCKERS: [(&str, &str); 2] = [
+        (
+            "import fastapi_turbo",
+            "no such package on PyPI; nearest is fastapi (0.115.6). The import would fail at load, \
+             not at test time.",
+        ),
+        (
+            "claims/upstream.py:141",
+            "the repo graph holds zero definition sites for this module in any version the \
+             lockfile resolves.",
+        ),
+    ];
+    let blockers = BLOCKERS
+        .iter()
+        .map(|(claim, finding)| Blocker {
+            claim,
+            finding: Some(finding),
+        })
+        .collect::<Vec<_>>();
+    let files = [
+        ("claims/upstream.py".to_string(), 14u64),
+        ("claims/fetcher.py".to_string(), 3u64),
+    ];
+    let palette = crate::theme::ScreenTheme::Dark.palette();
+    crate::gate_refusal::lines(
+        &Refusal {
+            detail: "round 1 of 3 \u{b7} no model call",
+            note: Some(
+                "A deterministic check against this repo's symbol graph. No model was asked, and no model can overrule it.",
+            ),
+            blockers: &blockers,
+            files: &files,
+        },
+        &palette,
+        pane,
+        0,
+        false,
+    )
+    .iter()
+    .map(|line| {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    })
+    .collect()
+}
+
 /// Plan one unit of a reply, streamed rather than dropped in whole.
-fn plan_say(steps: &mut Vec<Step>, say: &'static Say, start: u32, fixtures: bool) -> u32 {
+fn plan_say(steps: &mut Vec<Step>, say: &'static Say, start: u32, pane: usize) -> u32 {
     let mut clock = start;
     match say {
         Say::Wait(ms) => clock += ms,
@@ -291,49 +364,52 @@ fn plan_say(steps: &mut Vec<Step>, say: &'static Say, start: u32, fixtures: bool
                 });
             }
         }
-        Say::Tool { label, lines } => {
+        Say::Command { name, lines } => {
             clock += CHUNK_MS * 2;
             steps.push(Step {
                 at_ms: clock,
-                cue: Cue::OpenTool(label),
+                cue: Cue::OpenCommand(name),
             });
             for line in *lines {
                 clock += CHUNK_MS * 2;
                 steps.push(Step {
                     at_ms: clock,
-                    cue: Cue::ToolLine((*line).to_string()),
+                    cue: Cue::CommandLine((*line).to_string()),
                 });
             }
         }
         Say::Table {
-            label,
+            name,
             columns,
             rows,
         } => {
             clock += CHUNK_MS * 2;
             steps.push(Step {
                 at_ms: clock,
-                cue: Cue::OpenTool(label),
+                cue: Cue::OpenCommand(name),
             });
-            for source in *rows {
+            // 🔴 LAID OUT AGAINST THE REAL PANE. This is the one call that stops a cell wrapping
+            // to column 0 — `table_lines` wraps inside the column and `cols` positions every
+            // continuation, so nothing here is ever wider than the pane it lands in.
+            for line in session::table_lines(columns, rows, pane) {
                 clock += CHUNK_MS * 2;
                 steps.push(Step {
                     at_ms: clock,
-                    cue: Cue::ToolLine(session::table_row(columns, source)),
+                    cue: Cue::CommandLine(line),
                 });
             }
         }
-        Say::Screen(name) => {
+        Say::Gate => {
             clock += CHUNK_MS * 2;
             steps.push(Step {
                 at_ms: clock,
-                cue: Cue::OpenTool(name),
+                cue: Cue::OpenCommand("gate"),
             });
-            for line in session::screen_lines(name, fixtures) {
+            for line in gate_lines(pane) {
                 clock += CHUNK_MS * 2;
                 steps.push(Step {
                     at_ms: clock,
-                    cue: Cue::ToolLine(line),
+                    cue: Cue::CommandLine(line),
                 });
             }
         }
@@ -383,6 +459,19 @@ fn runtime_ms(steps: &[Step]) -> u32 {
 
 // ── the run ──────────────────────────────────────────────────────────────────────────────────
 
+/// The session column's usable width, from the terminal's.
+///
+/// `session_view::split` is the one owner of where the divider falls; below its threshold there is
+/// no rail and the session has the whole frame. [`GUTTER`] is what the transcript itself spends on
+/// a command receipt's indent — measured from the rendered buffer, not guessed.
+fn pane_width(terminal_width: u16) -> usize {
+    let session = crate::session_view::split(terminal_width)
+        .map_or(usize::from(terminal_width), |columns| columns[0].w);
+    session
+        .saturating_sub(GUTTER)
+        .max(session::FALLBACK_PANE.min(session))
+}
+
 /// Play one film in the real terminal, unattended, and exit on its own.
 pub(crate) async fn run(
     number: u8,
@@ -399,7 +488,13 @@ pub(crate) async fn run(
     } else {
         1.0
     };
-    let steps = cue_sheet(film, fixtures);
+    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    // 🔴 **THE PANE IS MEASURED, ONCE, FROM THE REAL TERMINAL.** Every table in the film is laid
+    // out against this. It is the SESSION column — what is left after the production rail — not the
+    // terminal width, because a table sized to the terminal overflows the pane it lands in, which
+    // is exactly how six beats ended up wrapping to column 0.
+    let pane = pane_width(terminal.size()?.width);
+    let steps = cue_sheet(film, fixtures, pane);
     let ceiling = Duration::from_millis(u64::from(
         (runtime_ms(&steps) as f32 / speed).min(session::MAX_FILM_MS as f32 * 4.0) as u32,
     ));
@@ -414,7 +509,6 @@ pub(crate) async fn run(
     app.theme = theme;
     script::dress(&mut app, fixtures);
 
-    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     let mut events = EventStream::new();
     let mut ticker = tokio::time::interval(TICK);
     let opened = Instant::now();
@@ -500,13 +594,12 @@ fn apply(cue: &Cue, app: &mut App, now: Instant) {
                 text.push_str(chunk);
             }
         }
-        Cue::OpenTool(label) => app.transcript.push(TranscriptEntry::Tool {
-            label: (*label).to_string(),
+        Cue::OpenCommand(name) => app.transcript.push(TranscriptEntry::Command {
+            name: (*name).to_string(),
             lines: Vec::new(),
-            expanded: true,
         }),
-        Cue::ToolLine(line) => {
-            if let Some(TranscriptEntry::Tool { lines, .. }) = app.transcript.last_mut() {
+        Cue::CommandLine(line) => {
+            if let Some(TranscriptEntry::Command { lines, .. }) = app.transcript.last_mut() {
                 lines.push(line.clone());
             }
         }
@@ -525,7 +618,8 @@ fn apply(cue: &Cue, app: &mut App, now: Instant) {
 pub(crate) fn listing() -> String {
     let mut out = vec!["film  repo                     beats   runtime".to_string()];
     for film in script::FILMS {
-        let seconds = f64::from(runtime_ms(&cue_sheet(film, true))) / 1000.0;
+        let seconds =
+            f64::from(runtime_ms(&cue_sheet(film, true, session::FALLBACK_PANE))) / 1000.0;
         out.push(format!(
             "{:<5} {:<24} {:>5}   {:>4.0}s",
             film.number,
@@ -562,7 +656,7 @@ pub(crate) fn timeline(film: &'static Film) -> String {
     for beat in film.beats {
         let mut steps = Vec::new();
         let start = clock;
-        clock = plan_beat(&mut steps, beat, clock, true);
+        clock = plan_beat(&mut steps, beat, clock, true, session::FALLBACK_PANE);
         out.push(format!(
             "  {}  {}  {}",
             stamp(start),
