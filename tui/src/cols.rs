@@ -42,7 +42,7 @@ impl Col {
 
 pub struct Cell<'a>(pub &'a str, pub Color);
 
-pub fn row<'a>(cols: &[Col], cells: &[Cell<'a>], indent: usize) -> Line<'a> {
+pub fn row(cols: &[Col], cells: &[Cell<'_>], indent: usize) -> Line<'static> {
     let mut spans = Vec::with_capacity(cells.len() * 2 + 1);
     if indent > 0 {
         spans.push(Span::raw(" ".repeat(indent)));
@@ -71,7 +71,7 @@ pub fn row<'a>(cols: &[Col], cells: &[Cell<'a>], indent: usize) -> Line<'a> {
     Line::from(spans)
 }
 
-pub fn head<'a>(cols: &[Col], labels: &[&'a str], dim: Color, indent: usize) -> Line<'a> {
+pub fn head(cols: &[Col], labels: &[&str], dim: Color, indent: usize) -> Line<'static> {
     let cells = labels
         .iter()
         .map(|label| Cell(label, dim))
