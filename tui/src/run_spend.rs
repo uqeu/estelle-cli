@@ -274,13 +274,19 @@ mod tests {
       "cost_bound_note": "the provider reported no prompt-cache breakdown for moonshotai/kimi-k2.7-code, so all input is priced as FRESH. A cache read costs ~10% of that, so est_cost_usd is an UPPER BOUND, not the measured cost."
     }"#;
 
+    /// ⚠️ **THE FIRST DRAFT OF THIS CONST WAS MISSING TWO FIELDS PRODUCTION SENDS**
+    /// (`cost_is_upper_bound`, `cost_bound_note`) — a double strictly FRIENDLIER than the server,
+    /// which is the shape that certifies code production rejects. Caught by diffing every fixture
+    /// here against a live call to the shipped function; both are restored below.
     const SAVINGS: &str = r#"{
       "measured": true, "measured_cost_usd": 18.7784, "baseline_model": "claude-opus-4-8",
       "billed_models": ["claude-opus-4-8", "moonshotai/kimi-k2.7-code"],
       "baseline_is_what_ran": false, "baseline_cost_usd": 22.7,
       "saved_usd": 3.9216, "saved_pct": 17.3,
       "assumption": "the baseline is the SAME measured token counts priced at the baseline model's published rates; it assumes that model would have produced a comparable token volume for the same work, which is an assumption and not a measurement",
-      "excluded_unpriced_models": ["some-model-nobody-priced"]
+      "excluded_unpriced_models": ["some-model-nobody-priced"],
+      "cost_is_upper_bound": true,
+      "cost_bound_note": "the provider reported no prompt-cache breakdown for moonshotai/kimi-k2.7-code, so all input is priced as FRESH. A cache read costs ~10% of that, so est_cost_usd is an UPPER BOUND, not the measured cost."
     }"#;
 
     fn value(raw: &str) -> Value {
