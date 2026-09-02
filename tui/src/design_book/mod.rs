@@ -212,8 +212,7 @@ pub(crate) const SCREENS: &[BookScreen] = &[
     },
     BookScreen {
         name: "14-skills-browse",
-        contract: "GET /skills sends name+category+summary+short only · no total, enabled, \
-                   token cost or compose budget, and NO write route to toggle one",
+        contract: "GET /skills sends 4 fields · no count, cost, budget or toggle route",
         width: 120,
         height: 34,
         needle: "max compose",
@@ -269,8 +268,7 @@ pub(crate) const SCREENS: &[BookScreen] = &[
     },
     BookScreen {
         name: "33b-model-cost",
-        contract: "per-model cost IS on the wire (usage_breakdown.by_model, read by \
-                   run_spend) · what is missing is a per-million PRICE catalog and a role lock",
+        contract: "by_model cost IS on the wire · no per-million price, no role lock",
         width: 130,
         height: 34,
         needle: "run spend",
@@ -334,8 +332,7 @@ pub(crate) const SCREENS: &[BookScreen] = &[
     },
     BookScreen {
         name: "42-stats-activity",
-        contract: "both exist PER RUN — /work result.phases, /trajectory summary.tools · \
-                   neither is per-SESSION, and this client reads neither",
+        contract: "phases + trajectory.tools exist PER RUN · unread, never per-session",
         width: 130,
         height: 48,
         needle: "where the 3h02m went",
@@ -343,8 +340,7 @@ pub(crate) const SCREENS: &[BookScreen] = &[
     },
     BookScreen {
         name: "41-memory-correct",
-        contract: "kind AND trust are on GET /memories (trust is grounded|acquired) · the \
-                   book's measured|observed|asserted has NO source · no CLI surface",
+        contract: "trust is grounded|acquired · measured|observed|asserted has no source",
         width: 130,
         height: 32,
         needle: "supersedes",
