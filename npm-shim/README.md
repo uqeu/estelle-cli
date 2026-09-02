@@ -84,7 +84,8 @@ Read that precisely, because the narrow version is the one you can check:
 - **Metric level.** Candidate-level: the rate is per code reference emitted, not per task completed
   and not per answer.
 - **Dataset.** Our own repository, plus 1,323 real third-party symbols across `requests`, `httpx`,
-  `urllib3` and `click`, caught at 100% with 0 false positives.
+  `urllib3` and `click`: all 1,323 caught, 0 false positives. Reproduce with
+  `python scripts/eval_hallucination_libs.py`.
 - **Language scope.** 23 languages are supported and 12 block at some rung, but Python is the only
   one with the full guarantee of existence, arity, type, and member calls on any receiver.
   References in the 11 navigate-only languages are not gated at all. They are excluded from the
