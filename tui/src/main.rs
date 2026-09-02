@@ -852,6 +852,8 @@ enum UiEvent {
         proposed_prs: Result<estelle_client::ProposedPrsResponse, Error>,
     },
     ProdGraph(Result<production_hud::ProductionGraph, String>),
+    /// The capacity half of `POST /sweep/estimate`, asked by `/memory left`.
+    MemoryLeft(Result<Value, String>),
     /// The four graph tools, fetched for the walkable pane.
     GraphWalk(Result<graph_walk::Fetched, String>),
     /// One file's blast radius, measured because somebody pressed `b` on its row.
@@ -2715,6 +2717,7 @@ impl App {
             // makes its own four calls. Routing it through the remote dispatcher would have sent
             // a `GET /graph?walk` nobody serves and printed the summary anyway.
             "graph" if argument.trim() == "walk" => self.open_graph_walk(tx),
+            "memory" if argument.trim() == "left" => self.request_memory_left(tx),
             "context" => self.toggle_context_panel(),
             "prod" => self.toggle_prod_panel(tx),
             "diff" => self.toggle_diff_panel(),
@@ -3480,6 +3483,65 @@ impl App {
                 "closed"
             }
         )));
+    }
+
+    /// `/memory left` — how much memory this account has, and what this repo would take.
+    ///
+    /// 🔴 **THE DOOR THE FOUNDER ASKED FOR BY NAME, AND IT IS A COMMAND RATHER THAN A ROW IN
+    /// `/me`.** The 13-field screen was reachable from exactly one place: `/sweep`, at the moment
+    /// it decides whether to ingest. "How much memory do I have left" is asked at other times —
+    /// most often by someone deciding whether to pay — and an answer you can only get by starting
+    /// an ingest is not an answer to that question.
+    ///
+    /// ⚠️ **IT RENDERS THROUGH `sweep_estimate::estimate_lines`, THE SAME FUNCTION `/sweep` USES.**
+    /// A second capacity renderer is a second answer to "how much is left", and this file already
+    /// carries one that reads FOUR of the thirteen fields into a single line
+    /// (`affinity_cli::costs::memory_line`, behind `ctrl+s`). That one is a summary beside a spend
+    /// ledger and stays what it is; this is the screen, and there is no third.
+    ///
+    /// ⚠️ **READ-ONLY, AND THE SERVER SAYS SO OUT LOUD.** `api_sweep_estimate.py:265` — *"Read-only
+    /// and deliberately NOT balance-gated: an over-cap Free account is exactly who needs this
+    /// answer."* Nothing is ingested and nothing is billed by asking.
+    fn request_memory_left(&mut self, tx: &mpsc::UnboundedSender<UiEvent>) {
+        let (Some(client), root) = (self.client.clone(), self.root.clone()) else {
+            self.transcript.push(TranscriptEntry::System(
+                "Your memory capacity is on your Estelle account. Run /login first.".to_string(),
+            ));
+            return;
+        };
+        self.transcript.push(TranscriptEntry::System(
+            "Measuring this repo against your account capacity. Nothing is ingested.".to_string(),
+        ));
+        let repo = self.repo.clone();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let measured =
+                tokio::task::spawn_blocking(move || top_level::sweep_estimate_payload(&root))
+                    .await
+                    .map_err(|error| format!("local capacity inventory failed: {error}"))
+                    .and_then(|result| result);
+            let result = match measured {
+                // ⚠️ AN EMPTY INVENTORY IS ITS OWN SENTENCE. `POST /sweep/estimate` refuses an
+                // empty `files` list with a 400 whose text is about the request shape, which is
+                // not what a user standing in a directory with no source files needs to read.
+                Ok(files) if files.is_empty() => Err(
+                    "no ingestable files were found here, so there is nothing to measure against \
+                     your capacity."
+                        .to_string(),
+                ),
+                Ok(files) => client
+                    .post_scoped(
+                        estelle_client::Endpoint::SweepEstimate,
+                        &repo,
+                        &serde_json::json!({"files": files}),
+                        &CancellationToken::new(),
+                    )
+                    .await
+                    .map_err(|error| error.to_string()),
+                Err(error) => Err(error),
+            };
+            let _ = tx.send(UiEvent::MemoryLeft(result));
+        });
     }
 
     /// Open the walkable code graph (`/graph walk`).
@@ -4967,6 +5029,34 @@ impl App {
                     self.request_production_graph(tx);
                 }
             }
+            UiEvent::MemoryLeft(result) => match result {
+                Ok(estimate) => {
+                    let mut lines = Vec::new();
+                    // 🔴 **THE REFUSAL LEADS, IN WORDS, BEFORE THE TABLE.** This is the one moment
+                    // a customer is deciding whether to pay, and a `fits  no` cell nine rows down
+                    // a field list is a fact they have to hunt for. The advice is already in the
+                    // table (`suggested plan`, `overflow`, `blocked`) — what leads is the verdict.
+                    if estimate.get("fits") == Some(&Value::Bool(false)) {
+                        lines.push(
+                            "This repo does not fit your account capacity as it stands."
+                                .to_string(),
+                        );
+                        lines.push(String::new());
+                    }
+                    lines.extend(crate::sweep_estimate::estimate_lines(&estimate));
+                    self.transcript.push(TranscriptEntry::Command {
+                        name: "memory left".to_string(),
+                        lines,
+                    });
+                }
+                // ⚠️ THREE SENTENCES, NOT A SERIALISED OBJECT. D10 in the design-book backlog is
+                // this failure on the `/sweep` path; the same discipline applies to the door.
+                Err(error) => self.transcript.push(TranscriptEntry::Failure([
+                    format!("Your capacity could not be measured: {error}"),
+                    "Nothing was ingested and nothing was billed.".to_string(),
+                    "Retry, or run /me to read the plan without measuring this repo.".to_string(),
+                ])),
+            },
             UiEvent::GraphWalk(result) => {
                 self.graph_walk_in_flight = false;
                 match result {
@@ -10836,6 +10926,143 @@ mod tests {
         absent.header.indexed = Some(false);
         let drawn = rendered_frame_at_size(&absent, Instant::now(), 200, 30);
         assert!(drawn.contains("repo graph absent"), "{drawn}");
+    }
+
+    fn transcript_text(app: &App) -> String {
+        app.transcript
+            .iter()
+            .map(|entry| match entry {
+                TranscriptEntry::System(text) => text.clone(),
+                TranscriptEntry::Command { name, lines } => {
+                    format!("/{name}\n{}", lines.join("\n"))
+                }
+                TranscriptEntry::Failure(lines) => lines.join("\n"),
+                _ => String::new(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The `/sweep/estimate` reply this test drives, produced by the SHIPPED server function.
+    ///
+    /// ```text
+    /// cd <estelle>; PYTHONPATH=src:scripts python3 -c "
+    /// from estelle.serve.api_sweep_estimate import fit_report
+    /// from estelle.serve.capacity import CapacityState
+    /// from estelle.serve.plans import OVERFLOW_RATE_PER_MILLION
+    /// print(fit_report(repo='acme/monolith', state=CapacityState(held=2_000_000,
+    ///   cap=10_000_000, has_funds=False, rate_per_million=OVERFLOW_RATE_PER_MILLION,
+    ///   plan_cap=10_000_000, extra=0), estimated_tokens=70_000_000,
+    ///   per_path=[('logs/', 40_000_000)], exact=False))"
+    /// ```
+    fn blocked_estimate() -> Value {
+        json!({
+            "repo": "acme/monolith", "estimated_tokens": 70000000, "net_new_tokens": 68000000,
+            "held_tokens": 2000000, "cap": 10000000, "remaining_tokens": 8000000, "fits": false,
+            "blocked_tokens": 60000000, "billable_tokens": 0, "overflow_cost_usd": 0.0,
+            "suggested_plan": {"plan": "ultra", "monthly_usd": 49.0,
+                               "memory_tokens": 100000000, "cap": 100000000},
+            "largest_paths": [{"path": "logs/", "tokens": 40000000, "files": 1}],
+            "exact": false,
+            "message": "acme/monolith is about 70M memory-tokens and only 8M of your 10M capacity is free."
+        })
+    }
+
+    /// 🔴 **THE REFUSAL PATH IS THE ONE THAT MATTERS, AND IT IS PROSE AND NUMBERS, NEVER AN
+    /// OBJECT.** A customer who does not fit is a customer deciding whether to pay. They must read
+    /// the verdict, the two numbers it rests on, and the plan that would hold them — the design
+    /// book's D10 is exactly this failing on the `/sweep` path, and the door has to be held to the
+    /// same standard.
+    #[test]
+    fn memory_left_answers_a_refusal_with_the_numbers_and_the_advice() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.handle_ui_event(UiEvent::MemoryLeft(Ok(blocked_estimate())), &tx);
+        let text = transcript_text(&app);
+
+        assert!(
+            text.contains("This repo does not fit your account capacity"),
+            "the verdict must LEAD, not sit nine rows down a field list:\n{text}"
+        );
+        // The numbers a reader acts on: what is held, what the cap is, what is blocked, what fits.
+        for needle in ["2M", "10M", "60M", "ultra", "$49/mo"] {
+            assert!(text.contains(needle), "the refusal dropped `{needle}`:\n{text}");
+        }
+        // The server's own sentence survives to the pane.
+        assert!(
+            text.contains("only 8M of your 10M capacity is free"),
+            "the server's message was replaced with our own words:\n{text}"
+        );
+        // 🔴 AND NOT A SERIALISED OBJECT. This is the D10 shape, asserted directly.
+        for shape in ["{\"", "held_tokens\":", "Object {"] {
+            assert!(
+                !text.contains(shape),
+                "a serialised object reached the pane: `{shape}`\n{text}"
+            );
+        }
+    }
+
+    /// A capacity read that fails says three things and never claims an ingest happened.
+    #[test]
+    fn a_failed_capacity_read_names_the_failure_and_says_nothing_was_ingested() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.handle_ui_event(
+            UiEvent::MemoryLeft(Err("Estelle returned HTTP 503".to_string())),
+            &tx,
+        );
+        let text = transcript_text(&app);
+        assert!(text.contains("HTTP 503"), "{text}");
+        assert!(
+            text.contains("Nothing was ingested and nothing was billed."),
+            "a capacity read that failed must say it changed nothing:\n{text}"
+        );
+    }
+
+    /// The door resolves locally, and only for the one argument that means it.
+    #[test]
+    fn memory_left_is_a_local_door_and_plain_memory_is_still_the_remote_question() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        assert!(app.client.is_none());
+        assert!(
+            app.handle_local_command("memory", "left", &tx),
+            "/memory left did not resolve locally"
+        );
+        assert!(
+            transcript_text(&app).contains("Run /login first"),
+            "with no credential the door must say why, not fail silently"
+        );
+        assert!(
+            !app.handle_local_command("memory", "", &tx),
+            "/memory alone must still go to the server"
+        );
+        assert!(
+            !app.handle_local_command("memory", "what do you know", &tx),
+            "/memory <question> must still go to the server"
+        );
+    }
+
+    /// 🔴 **ONE RENDERER FOR "HOW MUCH IS LEFT", AND THE DOOR READS IT.**
+    ///
+    /// `/sweep`'s refusal and `/memory left` must print the same thirteen fields, because two
+    /// capacity screens are two answers to one question. The assertion is on the ROWS, not on a
+    /// shared function name: a caller that copied the field list would satisfy a grep.
+    #[test]
+    fn the_capacity_door_prints_the_same_screen_the_sweep_refusal_does() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        app.handle_ui_event(UiEvent::MemoryLeft(Ok(blocked_estimate())), &tx);
+        let door = transcript_text(&app);
+        for line in sweep_estimate::estimate_lines(&blocked_estimate()) {
+            if line.trim().is_empty() {
+                continue;
+            }
+            assert!(
+                door.contains(line.trim_end()),
+                "the door dropped a row the sweep refusal prints: {line:?}\n{door}"
+            );
+        }
     }
 
     fn tool_entry(label: &str, lines: usize) -> TranscriptEntry {

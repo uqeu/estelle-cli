@@ -127,7 +127,7 @@ const SESSION_HELP: [(&str, &str); 49] = [
     ("suites", "your custom suites with draft/active status"),
     (
         "memory",
-        "an answered question: what Estelle knows about this repo",
+        "what Estelle knows here; /memory left is your capacity",
     ),
     ("sweep", "index this repo into memory"),
     ("sessions", "your recent sessions"),
