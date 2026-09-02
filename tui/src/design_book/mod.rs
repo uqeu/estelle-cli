@@ -176,7 +176,7 @@ pub(crate) const SCREENS: &[BookScreen] = &[
     },
     BookScreen {
         name: "11-compaction-refused",
-        contract: "no CLI surface reads the compaction refusal yet",
+        contract: "refusal read by compaction_view · no split plan or per-part tokens",
         width: 120,
         height: 26,
         needle: "one message",
