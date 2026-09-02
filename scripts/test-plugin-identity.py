@@ -43,7 +43,10 @@ REPOSITORY = "https://github.com/uqeu/estelle-cli"
 PLUGIN_CONTRACT_SHA256_BY_VERSION = {
     "0.2.31": "9d806279081abab96dc19d3aaae4a4c84f955df0458a5668afcf31f5c21ad472",
     "0.2.32": "c811c073c806387d49b310b0be98cdc0a5be07eadf26e12141632258fe3b3f5d",
-    "0.2.33": "43fb1636cf921f54353ae0ea398959e627919a2daaba918762877c8b0df1124f",
+    # 0.2.33 is NOT PUBLISHED. Its digest moved when the manifest description was corrected and
+    # the bundle was regenerated from the Rust owner, which is exactly what an unreleased version's
+    # digest is for. The two above it are published and are byte-untouched.
+    "0.2.33": "4ff63c24250febb7c079a15570e177ec86b5341659f6725568f82133583fff0a",
 }
 
 #: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.
@@ -108,20 +111,21 @@ readme = (PLUGIN / "README.md").read_text(encoding="utf-8")
 hooks_path = PLUGIN / "hooks" / "hooks.json"
 owner_version = workspace_version()
 
-# The marketplace file is generated from the Rust installer owner.  A row-count
-# assertion would miss a replacement or timeout drift, so read back the complete
-# rendered artifact before checking individual high-risk clauses below.
-renderer = subprocess.run(
-    [sys.executable, str(ROOT / "scripts" / "render-plugin-hooks.py"), "--check"],
-    capture_output=True,
-    text=True,
-    check=False,
-)
-check(
-    "shipping hook bundle is byte-exact output of the Rust HOOK_TABLE owner",
-    renderer.returncode == 0,
-    (renderer.stderr or renderer.stdout).strip(),
-)
+# 🔴 THERE IS ONE OWNER OF THIS BUNDLE AND IT IS THE RUST TABLE, NOT A SECOND GENERATOR.
+#
+# This used to shell out to scripts/render-plugin-hooks.py, a Python re-implementation of the
+# renderer.  Two generators of one derived fact will disagree, and these did, in four ways at
+# once: the Python one emitted `hook <mode> --event <Event>` where the Rust one emits `hook
+# <mode>`, wrote `Estelle <mode>` where Rust writes `Estelle hook <mode>`, took its async marker
+# from `claude_async` instead of `plugin_async`, and ignored the `plugin` column entirely, so it
+# shipped the `shift` row that the Rust owner marks `plugin: false` with a written reason.  It
+# also could not parse the table at all any more: its regex ended at `claude_async` and the struct
+# has carried `plugin` and `plugin_async` since.  It has been deleted.
+#
+# The byte-for-byte check now lives where the owner lives:
+# `the_plugin_manifest_is_generated_from_the_one_hook_table` in tui/src/top_level.rs, which
+# renders HOOK_TABLE and compares it to this file with `include_str!`.  What is left here is the
+# half a Rust test cannot do — the per-version SHA-256 cache contract, below.
 
 # ── identity ──────────────────────────────────────────────────────────────────
 check("plugin name is the pinned skill namespace",
@@ -176,26 +180,35 @@ if hooks_path.is_file():
               "PostToolUse", "PreCompact", "PreToolUse", "SessionEnd",
               "SessionStart", "Stop", "UserPromptSubmit",
           }, str(sorted(hooks.get("hooks", {}))))
-    commands = {
-        hook.get("command"): hook
+    # ⚠️ A DICT KEYED BY COMMAND SILENTLY COLLAPSES ROWS. `checkpoint` is registered on Stop,
+    # PreCompact and SessionEnd with the SAME command string, so a dict turns three handlers into
+    # one and any count taken off it is wrong. Keep the handlers as a list and index separately.
+    handlers = [
+        hook
         for event in hooks.get("hooks", {}).values()
         for matcher in event
         for hook in matcher.get("hooks", [])
         if hook.get("command")
-    }
-    check("shipping hook table contains all ten owner rows", len(commands) == 10, str(len(commands)))
-    check(
-        "shipping hook table carries the dispatched shift mode",
-        "npx -y @fatelabs/estelle@0 hook shift --event PostToolUse" in commands,
-    )
-    for command in (
-        "npx -y @fatelabs/estelle@0 hook ground --event PreToolUse",
-        "npx -y @fatelabs/estelle@0 hook sync --event PostToolUse",
-        "npx -y @fatelabs/estelle@0 hook context --event UserPromptSubmit",
-    ):
-        check(f"shipping timeout is 30 seconds ({command.split(' hook ', 1)[1].split()[0]})",
-              commands.get(command, {}).get("timeout") == 30,
-              f"timeout={commands.get(command, {}).get('timeout')!r}")
+    ]
+    commands = {hook["command"]: hook for hook in handlers}
+    # NINE handlers, which is what v0.2.32 ships.  The count is asserted rather than the
+    # membership because a replacement would keep the count and change the row.
+    check("shipping hook bundle has the nine plugin-door rows", len(handlers) == 9,
+          str(len(handlers)))
+    # ⚠️ A DECLARED EXEMPTION, ASSERTED AS AN ABSENCE. `shift` fires on every Read. The Rust owner
+    # marks it `plugin: false` because adding it is a product decision with a release attached,
+    # not a drift fix. A lane regenerated this file WITH it; that is why the absence is now a
+    # clause instead of a silence.
+    check("shipping hook bundle does NOT carry the shift row",
+          not any(" hook shift" in command for command in commands),
+          str(sorted(commands)))
+    for mode, expected in (("ground", 30), ("sync", 30), ("context", 30),
+                           ("guard", 10), ("distil", 10), ("welcome", 5)):
+        command = f"npx -y @fatelabs/estelle@0 hook {mode}"
+        matching = [h for c, h in commands.items() if c == command]
+        check(f"shipping timeout for {mode} is {expected}s",
+              bool(matching) and all(h.get("timeout") == expected for h in matching),
+              f"{command!r} -> {[h.get('timeout') for h in matching]!r}")
 
 # ── the server entry is the HOSTED one, and carries no credential ─────────────
 servers = mcp["mcpServers"]
