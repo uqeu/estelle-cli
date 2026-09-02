@@ -31,199 +31,68 @@
 //! ladder is the one production serves on `/plans`. Nothing here is a number somebody liked the
 //! look of.
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::cols::{Cell, Col, RULE, head, row, rule};
 use crate::design_book::{blank, note, owned};
 use crate::theme::Palette;
 
-/// A proportion bar. Filled cells are solid, the remainder is the light shade — the same two
-/// glyphs the founder's `/usage` mock uses, so the panel reads as one family with it.
+/// 🔴 **THE GAUGE MOVED TO ITS PRODUCTION OWNER, [`crate::sweep_estimate`].**
 ///
-/// ⚠️ Both glyphs are one terminal column and the bar is a fixed `width`, which is why the bar can
-/// sit in a `Col` at all: a bar whose length depended on its value would push every column right of
-/// it, and that is the bug `cols::every_row_in_a_table_is_the_same_width` exists to catch.
-pub(crate) fn bar(percent: usize, width: usize) -> String {
-    let filled = (percent.min(100) * width).div_ceil(100);
-    let mut out = String::with_capacity(width * 3);
-    for index in 0..width {
-        out.push(if index < filled { '█' } else { '░' });
-    }
-    out
-}
+/// `bar` and `load_colour` were defined here, which made the DESIGN BOOK the owner of two things
+/// the shipped capacity panel needs — the same inversion that moved `owned` out of this module and
+/// into `cols`. They are re-exported rather than moved-and-updated so `panel.rs`'s existing
+/// `use crate::design_book::costing::{bar, load_colour}` keeps working: one definition, no churn.
+pub(crate) use crate::sweep_estimate::{bar, load_colour};
 
-/// The colour a utilisation bar earns. Green under two thirds, amber over it, red at the cap.
+/// Screen 30 — **"How much memory do I have left"**, which is the whole `/sweep/estimate` answer.
 ///
-/// ⚠️ Green here is a claim that there is room, so the boundary is stated once rather than being
-/// re-guessed at each call site — the two-owners defect, in miniature.
-pub(crate) fn load_colour(percent: usize, palette: &Palette) -> Color {
-    match percent {
-        0..=65 => palette.green,
-        66..=94 => palette.warn,
-        _ => palette.red,
-    }
-}
-
-pub(crate) fn label(palette: &Palette, text: &str, value: &str, accent: Color) -> Line<'static> {
-    owned(Line::from(vec![
-        Span::styled(format!("  {text}  "), Style::default().fg(palette.dim)),
-        Span::styled(value.to_string(), Style::default().fg(accent)),
-    ]))
-}
-
-/// Screen 32 — **"How much memory do I have left"**, which is the whole `/sweep/estimate` answer.
+/// 🔴 **THIS FUNCTION DRAWS NOTHING. IT SUPPLIES A FIXTURE AND CALLS THE SHIPPED RENDERER.**
+/// It used to build the panel itself, row by row, under a badge claiming the product produced
+/// those numbers — two renderers, one screen, and no test comparing them. The layout now lives in
+/// [`crate::sweep_estimate::estimate_panel`], which the live cost pane also calls, so this frame is
+/// the product's own output over staged data rather than a drawing of it.
 ///
-/// This is the PROPOSED screen the book describes as *"the whole estimate answer the client
-/// discards after reading `fits`"*. Every row below names the field it came from, so the day this
-/// is wired to the live reply the mapping is already written down.
+/// ⚠️ **THE FIXTURE IS THE SERVER'S SHAPE, FIELD FOR FIELD.** All fourteen keys of
+/// `api_sweep_estimate.fit_report` are present with the server's own types, including the two
+/// nullable ones. A fixture missing a key would render [`crate::sweep_estimate::UNKNOWN`] and the
+/// frame would quietly show a dash where the product shows a number — which is why
+/// `the_fixture_carries_every_field_the_server_sends` names all fourteen rather than trusting this
+/// literal to stay complete.
 pub(crate) fn memory_remaining(palette: &Palette, _tick: u64, _pulse: bool) -> Vec<Line<'static>> {
-    const HELD_PERCENT: usize = 41;
-    const GAUGE: &[Col] = &[Col::l(16), Col::l(30), Col::r(5), Col::l(28)];
-    const PATHS: &[Col] = &[Col::l(2), Col::l(34), Col::r(9), Col::r(7), Col::l(26)];
+    crate::sweep_estimate::estimate_panel(&memory_fixture(), palette)
+}
 
-    let held_bar = bar(HELD_PERCENT, 30);
-    let held_percent = format!("{HELD_PERCENT}%");
-
-    let mut lines = vec![
-        rule(
-            "memory",
-            "uqeu/estelle",
-            118,
-            palette.dim,
-            palette.mid,
-            palette.cite,
-        ),
-        blank(),
-    ];
-
-    // ── What the plan holds, and what is already in it ──────────────────────────
-    lines.push(owned(row(
-        GAUGE,
-        &[
-            Cell("memory used", palette.mid),
-            Cell(&held_bar, load_colour(HELD_PERCENT, palette)),
-            Cell(&held_percent, palette.mid),
-            Cell("103M of 250M held", palette.dim),
+/// A `POST /sweep/estimate` reply for a repo that fits, in the server's exact shape.
+///
+/// The numbers are this repo measured against the Ultra 250M rung: `uqeu/estelle` is about 11.5M
+/// memory-tokens (the market census figure), 103M of 250M is held, and `logs/` dominates at 43.4%
+/// — the share the corpus census actually found. They are STAGED, not measured today, which is
+/// what the `FIXTURE DATA` gate exists to say.
+pub(crate) fn memory_fixture() -> serde_json::Value {
+    serde_json::json!({
+        "repo": "uqeu/estelle",
+        "estimated_tokens": 11_500_000,
+        "net_new_tokens": 11_500_000,
+        "held_tokens": 103_000_000,
+        "cap": 250_000_000,
+        "remaining_tokens": 147_000_000,
+        "fits": true,
+        "blocked_tokens": 0,
+        "billable_tokens": 0,
+        "overflow_cost_usd": 0.0,
+        "suggested_plan": serde_json::Value::Null,
+        "largest_paths": [
+            {"path": "logs/", "tokens": 4_990_000, "files": 1_204},
+            {"path": "vendor-reference/", "tokens": 2_093_000, "files": 318},
+            {"path": "docs/", "tokens": 1_391_000, "files": 214},
+            {"path": "src/estelle/serve/", "tokens": 897_000, "files": 143},
+            {"path": "cli-rs/tui/", "tokens": 701_000, "files": 114}
         ],
-        2,
-    )));
-    lines.push(owned(row(
-        GAUGE,
-        &[
-            Cell("plan remaining", palette.mid),
-            Cell("", palette.dim),
-            Cell("", palette.dim),
-            Cell("147M free · Ultra 250M", palette.green),
-        ],
-        2,
-    )));
-    lines.push(owned(row(
-        GAUGE,
-        &[
-            Cell("this repo", palette.mid),
-            Cell("", palette.dim),
-            Cell("", palette.dim),
-            Cell("11.5M net new · 1,993 files", palette.cite),
-        ],
-        2,
-    )));
-    lines.push(blank());
-
-    // ── The verdict, in the server's own words ─────────────────────────────────
-    lines.push(note(
-        palette,
-        "uqeu/estelle is about 11.5M memory-tokens; 147M of your 250M capacity is free.",
-    ));
-    lines.push(owned(Line::from(vec![
-        Span::styled("  fits  ".to_string(), Style::default().fg(palette.dim)),
-        Span::styled(
-            "yes".to_string(),
-            Style::default()
-                .fg(palette.green)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "   nothing blocked · nothing bills as overflow".to_string(),
-            Style::default().fg(palette.dim),
-        ),
-    ])));
-    lines.push(blank());
-
-    // ── The fields the client used to throw away ───────────────────────────────
-    lines.push(note(palette, "what a run that did NOT fit shows instead"));
-    lines.push(blank());
-    let overflow: &[(&str, &str, Color)] = &[
-        ("blocked", "0 tokens", palette.dim),
-        ("billable overflow", "0 tokens · $0.00", palette.dim),
-        ("suggested plan", "Ultra 400M fits — $119/mo", palette.plan),
-    ];
-    for (name, value, accent) in overflow {
-        lines.push(label(palette, name, value, *accent));
-    }
-    lines.push(blank());
-
-    // ── The largest paths, so a refusal is actionable ──────────────────────────
-    lines.push(rule(
-        "largest paths",
-        "",
-        118,
-        palette.dim,
-        palette.mid,
-        palette.cite,
-    ));
-    lines.push(owned(head(
-        PATHS,
-        &["", "path", "tokens", "share", ""],
-        palette.dim,
-        0,
-    )));
-    let paths: &[(&str, &str, &str, &str)] = &[
-        ("logs/", "4.9M", "43.4%", "excluded by default now"),
-        ("vendor-reference/", "2.1M", "18.2%", ""),
-        ("docs/", "1.4M", "12.1%", ""),
-        (
-            "src/estelle/serve/",
-            "0.9M",
-            "7.8%",
-            "the part you ask about",
-        ),
-        ("cli-rs/tui/", "0.7M", "6.1%", ""),
-    ];
-    for (index, (path, tokens, share, why)) in paths.iter().enumerate() {
-        let mut line = owned(row(
-            PATHS,
-            &[
-                Cell(if index == 0 { "›" } else { "" }, palette.cite),
-                Cell(path, palette.mid),
-                Cell(tokens, palette.mid),
-                Cell(share, palette.dim),
-                Cell(
-                    why,
-                    if why.contains("excluded") {
-                        palette.warn
-                    } else {
-                        palette.dim
-                    },
-                ),
-            ],
-            0,
-        ));
-        if index == 0 {
-            line = line.style(Style::default().bg(palette.tint));
-        }
-        lines.push(line);
-    }
-    lines.push(blank());
-    lines.push(note(
-        palette,
-        "every figure here is a field POST /sweep/estimate already returns.",
-    ));
-    lines.push(note(
-        palette,
-        "the client read `fits` and discarded the other thirteen — top_level.rs:2314.",
-    ));
-    lines
+        "exact": true,
+        "message": "uqeu/estelle is about 11.5M memory-tokens; 147M of your 250M capacity is free."
+    })
 }
 
 /// Screen 33 — `/usage`, and 🔴 **`ctrl+s` showing the actual spend**.
@@ -483,32 +352,163 @@ mod tests {
         assert!(rendered.contains("total"), "{rendered}");
     }
 
-    /// 🔴 EVERY FIELD `/sweep/estimate` RETURNS REACHES THE SCREEN.
+    /// 🔴 **EVERY FIELD `/sweep/estimate` RETURNS REACHES THE SCREEN — PROVEN BY REMOVING IT.**
     ///
-    /// This is the test that would have gone red for the last eight months. `top_level.rs:2314`
-    /// reads `fits` and drops the other thirteen fields; the screen below is the place they land,
-    /// so the clauses are enumerated rather than spot-checked.
+    /// This is the test that would have gone red for the last eight months: `top_level.rs` read
+    /// `fits` and dropped the other thirteen, and the live cost pane still keeps only four
+    /// (`capacity_from_value` parses `held_tokens`, `cap`, `remaining_tokens`, `exact`).
+    ///
+    /// ⚠️ **IT USED TO ASSERT EIGHT LABELS AND THAT WAS THE WEAKER TEST.** A label is a word this
+    /// module chose; matching it proves the word was typed, never that the FIELD was read. Three of
+    /// its eight labels went stale the moment the frame started calling the shipped renderer, which
+    /// words the same facts differently — a test that fails on a rename and passes on a dropped
+    /// field is pointed at the wrong thing.
+    ///
+    /// So each of the fourteen keys is DELETED from the fixture in turn and the frame must change.
+    /// A field the renderer ignores produces an identical frame and fires here by name. This cannot
+    /// be satisfied by typing a word, and it cannot go stale when the wording changes.
     #[test]
-    fn the_memory_screen_spends_the_estimate_instead_of_discarding_it() {
+    fn every_field_the_estimate_returns_changes_the_screen() {
         let palette = ScreenTheme::Dark.palette();
-        let rendered = text(&memory_remaining(&palette, 0, true));
-        for field in [
-            "memory used",       // held_tokens
-            "plan remaining",    // remaining_tokens + cap
-            "net new",           // net_new_tokens
-            "fits",              // fits
-            "blocked",           // blocked_tokens
-            "billable overflow", // billable_tokens + overflow_cost_usd
-            "suggested plan",    // suggested_plan
-            "largest paths",     // largest_paths
-        ] {
+        let whole = text(&memory_remaining(&palette, 0, true));
+        let fixture = memory_fixture();
+
+        // The fourteen keys of `api_sweep_estimate.fit_report`, written out rather than derived
+        // from the fixture's own keys — a list read off the object it is checking can never notice
+        // the object is missing one.
+        const FIELDS: [&str; 14] = [
+            "repo",
+            "estimated_tokens",
+            "net_new_tokens",
+            "held_tokens",
+            "cap",
+            "remaining_tokens",
+            "fits",
+            "blocked_tokens",
+            "billable_tokens",
+            "overflow_cost_usd",
+            "suggested_plan",
+            "largest_paths",
+            "exact",
+            "message",
+        ];
+        for field in FIELDS {
+            let mut without = fixture.clone();
             assert!(
-                rendered.contains(field),
-                "the estimate's {field:?} is still on the floor\n{rendered}"
+                without
+                    .as_object_mut()
+                    .expect("the fixture is an object")
+                    .remove(field)
+                    .is_some(),
+                "the fixture never carried {field:?} — the removal below would prove nothing"
+            );
+            let starved = text(&crate::sweep_estimate::estimate_panel(&without, &palette));
+            assert_ne!(
+                starved, whole,
+                "dropping {field:?} changed nothing on screen — it is still on the floor"
             );
         }
-        // The server writes one sentence a human acts on. It is not a summary we re-derive.
-        assert!(rendered.contains("memory-tokens"), "{rendered}");
+    }
+
+    /// 🔴 **AN ABSENT FIELD DRAWS A DASH, NEVER A ZERO.**
+    ///
+    /// The differential above proves each field is READ. It cannot prove the frame is HONEST when
+    /// one is missing, because any change satisfies it — including `0` or `$0.00`, which is the
+    /// defect this repo has paid for repeatedly: a cost the server measured as nothing and a cost
+    /// the server never sent are opposite facts.
+    ///
+    /// ⚠️ The control is the first assertion: the fixture's `blocked_tokens` IS a measured zero, so
+    /// `0` must be on the frame when the field is present. Without that, a renderer printing `—`
+    /// for everything would pass the second half.
+    #[test]
+    fn an_absent_number_is_a_dash_and_a_measured_zero_is_a_zero() {
+        let palette = ScreenTheme::Dark.palette();
+        let measured = text(&memory_remaining(&palette, 0, true));
+        assert!(
+            measured.contains("blocked  0"),
+            "a measured zero stopped printing as 0\n{measured}"
+        );
+
+        let mut without = memory_fixture();
+        let object = without.as_object_mut().expect("the fixture is an object");
+        object.remove("blocked_tokens");
+        object.remove("overflow_cost_usd");
+        object.remove("billable_tokens");
+        let starved = text(&crate::sweep_estimate::estimate_panel(&without, &palette));
+        assert!(
+            !starved.contains("blocked  0"),
+            "an absent count printed as a measured zero\n{starved}"
+        );
+        assert!(
+            starved.contains(crate::sweep_estimate::UNKNOWN),
+            "an absent count printed neither a number nor a dash\n{starved}"
+        );
+    }
+
+    /// 🔴 **NOT ONE FIGURE ON THE CAPACITY PANEL MAY BE ELIDED.**
+    ///
+    /// `cols::row` ends an overlong cell in `…`, which is right for a model name and wrong for a
+    /// token count: `250M held 103M · 147M free  (41% used)` truncated to
+    /// `250M held 103M · 147M free …` drops the utilisation figure and the reader cannot tell that
+    /// anything is missing. That is exactly what the first version of this panel shipped, at
+    /// `Col::l(28)`, and the gallery caught it only because an unrelated needle moved.
+    ///
+    /// ⚠️ **THE POSITIVE CONTROL IS THE SECOND HALF.** An assertion that `…` is absent passes over
+    /// a frame that rendered nothing, so the same rows are re-measured with a deliberately narrow
+    /// column set and `…` is asserted PRESENT — proving the detector fires.
+    #[test]
+    fn no_figure_on_the_capacity_panel_is_truncated() {
+        for theme in [ScreenTheme::Dark, ScreenTheme::Cream] {
+            let rendered = text(&memory_remaining(&theme.palette(), 0, true));
+            assert!(
+                !rendered.contains('…'),
+                "the capacity panel elided a figure\n{rendered}"
+            );
+            // The whole point of the panel: the free figure and the utilisation both survive.
+            let flat = rendered.split_whitespace().collect::<Vec<_>>().join(" ");
+            assert!(flat.contains("147M free"), "{rendered}");
+            assert!(flat.contains("(41% used)"), "{rendered}");
+        }
+    }
+
+    /// The control for the test above: `cols::row` really does elide, so its absence means
+    /// something.
+    #[test]
+    fn the_truncation_detector_fires_on_a_narrow_column() {
+        let palette = ScreenTheme::Dark.palette();
+        let narrow = crate::cols::owned(crate::cols::row(
+            &[crate::cols::Col::l(10)],
+            &[crate::cols::Cell(
+                "250M held 103M · 147M free  (41% used)",
+                palette.mid,
+            )],
+            2,
+        ));
+        let text = narrow
+            .spans
+            .iter()
+            .map(|span| span.content.to_string())
+            .collect::<String>();
+        assert!(
+            text.contains('…'),
+            "cols::row stopped eliding — the guard above now proves nothing: {text:?}"
+        );
+    }
+
+    /// The server writes one sentence a human acts on, and it is not a summary we re-derive.
+    #[test]
+    fn the_servers_own_sentence_is_on_the_frame_verbatim() {
+        let palette = ScreenTheme::Dark.palette();
+        let rendered = text(&memory_remaining(&palette, 0, true));
+        let sentence = memory_fixture()["message"]
+            .as_str()
+            .expect("the fixture carries a message")
+            .to_string();
+        let flat = rendered.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            flat.contains(&sentence),
+            "the server's sentence did not survive the frame\n{rendered}"
+        );
     }
 
     /// The bars sit in a column, so a full bar and an empty one must occupy the same width. A bar

@@ -252,10 +252,10 @@ pub(crate) const SCREENS: &[BookScreen] = &[
     },
     BookScreen {
         name: "32-memory-remaining",
-        contract: "POST /sweep/estimate · top_level.rs:2314 reads 1 of its 14 fields",
+        contract: "shipped · sweep_estimate::estimate_panel, drawn by the ctrl+s pane",
         width: 130,
         height: 36,
-        needle: "plan remaining",
+        needle: "largest paths",
         render: costing::memory_remaining,
     },
     BookScreen {

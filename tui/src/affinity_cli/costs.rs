@@ -86,6 +86,17 @@ pub(crate) struct CostLedger {
     session_receipts: usize,
     session_incomplete: bool,
     capacity: Capacity,
+    /// 🔴 **THE OTHER TEN FIELDS.** [`capacity_from_value`] parses four of the fourteen
+    /// `/sweep/estimate` returns — `held_tokens`, `cap`, `remaining_tokens`, `exact` — and the
+    /// body carrying `fits`, `blocked_tokens`, `billable_tokens`, `overflow_cost_usd`,
+    /// `suggested_plan`, `largest_paths`, `estimated_tokens`, `net_new_tokens`, `repo` and the
+    /// server's written `message` was dropped on the floor by the pane whose whole job is to
+    /// answer *"how much memory do I have left"*.
+    ///
+    /// ⚠️ Kept as the raw `Value` on purpose: [`crate::sweep_estimate::estimate_panel`] is the one
+    /// owner of what those fields mean, and a struct here would be a second parser that has to be
+    /// kept in step with it.
+    capacity_report: Option<Value>,
 }
 
 impl Default for CostLedger {
@@ -96,6 +107,7 @@ impl Default for CostLedger {
             session_receipts: 0,
             session_incomplete: false,
             capacity: Capacity::NotRequested,
+            capacity_report: None,
         }
     }
 }
@@ -130,9 +142,24 @@ impl CostLedger {
     }
 
     pub(crate) fn apply_capacity(&mut self, result: Result<Value, String>) {
+        // ⚠️ The report is kept only when it PARSED. A body that failed `capacity_from_value` is a
+        // body whose shape we do not trust, and drawing a panel from it would put half-read numbers
+        // under a heading that says they were measured.
         self.capacity = match result {
-            Ok(value) => capacity_from_value(&value).unwrap_or_else(Capacity::Failed),
-            Err(error) => Capacity::Failed(error),
+            Ok(value) => match capacity_from_value(&value) {
+                Ok(capacity) => {
+                    self.capacity_report = Some(value);
+                    capacity
+                }
+                Err(error) => {
+                    self.capacity_report = None;
+                    Capacity::Failed(error)
+                }
+            },
+            Err(error) => {
+                self.capacity_report = None;
+                Capacity::Failed(error)
+            }
         };
     }
 
@@ -196,13 +223,35 @@ impl CostLedger {
             ));
         }
         append_live_fleet(&mut lines, fleet, &columns, theme);
-        lines.extend([
+        let footer = [
             Line::from(""),
             Line::styled(
                 "Ctrl+S or Ctrl+Shift+S close   Esc close   no savings claim is made",
                 Style::default().fg(theme.ghost()),
             ),
-        ]);
+        ];
+
+        // 🔴 **THE WHOLE `/sweep/estimate` ANSWER, DRAWN BY ITS ONE OWNER.**
+        //
+        // This pane asks "how much memory do I have left" and, until now, answered it with four of
+        // the fourteen fields the server sends — the compact `memory_line` above. The rest,
+        // including `largest_paths` (which is what makes a refusal actionable) and `message` (the
+        // sentence the server writes for a human), were parsed off the wire and discarded.
+        //
+        // ⚠️ **BOUNDED BEFORE IT IS TAKEN.** The panel is appended only when the remaining rows
+        // fit above the footer, because `Paragraph` clips silently and a panel that pushed the
+        // key hints off the bottom would trade one missing answer for another. When it does not
+        // fit, `memory_line` above is still the honest short form.
+        if let Some(report) = &self.capacity_report {
+            let panel = crate::sweep_estimate::estimate_panel(report, &theme.screen_palette());
+            let height = usize::from(area.height);
+            if lines.len() + panel.len() + footer.len() <= height {
+                lines.push(Line::from(""));
+                lines.extend(panel);
+            }
+        }
+
+        lines.extend(footer);
         frame.render_widget(
             Paragraph::new(lines).style(Style::default().fg(theme.primary())),
             area,
@@ -587,7 +636,98 @@ fn amount(value: Option<&Value>) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
     use serde_json::json;
+
+    /// Everything the pane painted, as text, at a chosen size.
+    fn painted(ledger: &CostLedger, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
+        terminal
+            .draw(|frame| ledger.render(frame, frame.area(), Theme::Dark, None, None))
+            .expect("draw");
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(usize::from(width))
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// 🔴 **THE RUNNING PANE DRAWS THE ESTIMATE, NOT JUST THE DESIGN BOOK.**
+    ///
+    /// `32-memory-remaining` carries a `LIVE DATA` badge, and a badge is a claim that *the running
+    /// app produces these numbers today*. The book frame calling
+    /// `sweep_estimate::estimate_panel` proves only that the BOOK does. This asserts the shipped
+    /// `ctrl+s` pane paints the same panel from a body the server sent — the innermost observable,
+    /// not the outer one.
+    ///
+    /// ⚠️ **`largest_paths` AND `message` ARE THE NEEDLES ON PURPOSE.** They are the two fields
+    /// `capacity_from_value` never parsed, so a pane still answering from the four-field `Capacity`
+    /// cannot produce them by accident.
+    #[test]
+    fn the_live_pane_paints_every_field_not_just_the_four_it_parsed() {
+        let mut ledger = CostLedger::default();
+        ledger.apply_capacity(Ok(crate::design_book::costing::memory_fixture()));
+        let painted = painted(&ledger, 130, 48);
+        for needle in ["logs/", "largest paths", "147M", "fits", "capacity is free"] {
+            assert!(
+                painted.contains(needle),
+                "the live pane dropped {needle:?}\n{painted}"
+            );
+        }
+    }
+
+    /// 🔴 **THE BOUND IS REAL, AND THE FOOTER SURVIVES IT.**
+    ///
+    /// `Paragraph` clips silently, so an unbounded append would trade the estimate for the key
+    /// hints and nothing would say so. In a short pane the panel is not drawn at all and the
+    /// compact `memory_line` still answers.
+    ///
+    /// ⚠️ This is also the positive control for the test above: the same ledger, the same fixture,
+    /// a different height, and the needle is ABSENT — so `contains` there was measuring the panel
+    /// rather than passing on some fixed string the pane always prints.
+    #[test]
+    fn a_short_pane_keeps_the_key_hints_and_drops_the_panel() {
+        let mut ledger = CostLedger::default();
+        ledger.apply_capacity(Ok(crate::design_book::costing::memory_fixture()));
+        let painted = painted(&ledger, 130, 14);
+        assert!(
+            !painted.contains("largest paths"),
+            "the panel was drawn into a pane too short for it\n{painted}"
+        );
+        assert!(
+            painted.contains("Esc close"),
+            "the key hints were clipped\n{painted}"
+        );
+        assert!(
+            painted.contains("Memory used / plan"),
+            "the short form stopped answering\n{painted}"
+        );
+    }
+
+    /// ⛔ **A BODY THAT DID NOT PARSE DRAWS NO PANEL.** Half-read numbers under a heading saying
+    /// they were measured is worse than the compact line, and `capacity_from_value` rejecting a
+    /// body is exactly the signal that its shape is not the one `estimate_panel` reads.
+    #[test]
+    fn a_rejected_estimate_body_draws_no_panel() {
+        let mut ledger = CostLedger::default();
+        ledger.apply_capacity(Ok(crate::design_book::costing::memory_fixture()));
+        assert!(
+            ledger.capacity_report.is_some(),
+            "the good body was dropped"
+        );
+        // `held_tokens` missing is one of `capacity_from_value`'s named refusals.
+        ledger.apply_capacity(Ok(json!({"cap": 250_000_000, "largest_paths": []})));
+        assert!(
+            ledger.capacity_report.is_none(),
+            "a body the parser refused was kept for the panel to read"
+        );
+        let painted = painted(&ledger, 130, 48);
+        assert!(!painted.contains("largest paths"), "{painted}");
+    }
 
     #[test]
     fn absent_cost_is_not_rendered_as_zero_but_received_zero_is() {

@@ -47,7 +47,12 @@
 //! Only the FORMATTING is ours, and [`human_tokens`] deliberately mirrors the server's own
 //! `human_tokens` so the table and the server's sentence do not print the same number two ways.
 
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
 use serde_json::Value;
+
+use crate::cols::{Cell, Col, head, owned, row as col_row, rule};
+use crate::theme::Palette;
 
 /// How many dominating directories are printed. The server sends its own top five (`_TOP_PATHS`);
 /// this is the CLIENT's bound on a list that arrives over a wire, stated once, so a server that
@@ -59,7 +64,7 @@ const TOP_PATHS_SHOWN: usize = 5;
 /// ⛔ **NEVER `0`, NEVER `$0.00`.** Absent and zero must not share bytes: a cost the server
 /// measured as nothing and a cost the server never sent are opposite facts, and printing them alike
 /// is the defect this repo has paid for six times.
-const UNKNOWN: &str = "—";
+pub(crate) const UNKNOWN: &str = "—";
 
 /// The width the label column is padded to, so the values line up in a terminal without a table
 /// engine. A named constant because it appears in both the row builder and the paths block.
@@ -259,6 +264,269 @@ pub(crate) fn estimate_lines(estimate: &Value) -> Vec<String> {
             .unwrap_or(UNKNOWN)
     ));
     lines.push(format!("  {BILL_OWNER}"));
+    lines
+}
+
+// ── The same fourteen fields, drawn ────────────────────────────────────────────────────────────
+
+/// A proportion bar. Filled cells solid, the remainder the light shade.
+///
+/// 🔴 **THE PRODUCTION OWNER OF THE GAUGE.** It was written in `design_book/costing.rs`, which made
+/// the DESIGN BOOK the owner of a glyph the product needs — the same inversion `design_book::owned`
+/// was moved out of the book to fix. `costing` and `panel` re-export it from here, so their call
+/// sites are unchanged and there is one definition.
+///
+/// ⚠️ Both glyphs are one terminal column and the bar is a fixed `width`, which is why the bar can
+/// sit in a [`Col`] at all: a bar whose length depended on its value would push every column right
+/// of it out of alignment.
+pub(crate) fn bar(percent: usize, width: usize) -> String {
+    let filled = (percent.min(100) * width).div_ceil(100);
+    (0..width)
+        .map(|index| if index < filled { '█' } else { '░' })
+        .collect()
+}
+
+/// The colour a utilisation bar earns. Green under two thirds, amber over it, red at the cap.
+///
+/// ⚠️ Green here is a claim that there is room, so the boundary is stated once rather than
+/// re-guessed at each call site.
+pub(crate) fn load_colour(percent: usize, palette: &Palette) -> Color {
+    match percent {
+        0..=65 => palette.green,
+        66..=94 => palette.warn,
+        _ => palette.red,
+    }
+}
+
+/// The panel width. The rules stop short of a 130-column frame so it has a margin, not a seam.
+const PANEL_WIDTH: usize = 118;
+
+/// How many largest-path rows the PANEL draws. Separate from [`TOP_PATHS_SHOWN`] on purpose: that
+/// bounds a text dump, this bounds a fixed-height pane, and tying them together would mean a pane
+/// growing because somebody widened a log.
+const PANEL_PATHS_SHOWN: usize = 5;
+
+/// One dim line of prose, indented two.
+fn note(palette: &Palette, text: &str) -> Line<'static> {
+    Line::from(Span::styled(
+        format!("  {text}"),
+        Style::default().fg(palette.dim),
+    ))
+}
+
+/// `held / cap` as a whole percent — `None` unless BOTH are present and the cap is a real ceiling.
+///
+/// ⛔ **AN UNLIMITED PLAN HAS NO PERCENTAGE, AND NEITHER HAS AN ABSENT ONE.** `cap == 0` means
+/// unlimited (the server's own sentinel, mirrored in [`capacity_row`]); a percentage of unlimited
+/// is not `0%`, it is a question with no answer, and a `0%` bar reads as "nothing used".
+fn used_percent(estimate: &Value) -> Option<usize> {
+    let held = estimate.get("held_tokens").and_then(Value::as_i64)?;
+    let cap = estimate.get("cap").and_then(Value::as_i64)?;
+    (cap > 0).then(|| usize::try_from(held.saturating_mul(100) / cap).unwrap_or(100))
+}
+
+/// A field's share of `estimated_tokens`, as `43.4%` — or [`UNKNOWN`] when either side is absent.
+///
+/// ⚠️ Derived, and derived HERE only. The server does not send a share; a second call site
+/// computing one against a different denominator would put two percentages for one path on one
+/// screen.
+fn share_of_total(tokens: Option<i64>, total: Option<i64>) -> String {
+    match (tokens, total) {
+        (Some(tokens), Some(total)) if total > 0 => {
+            format!("{:.1}%", tokens as f64 * 100.0 / total as f64)
+        }
+        _ => UNKNOWN.to_string(),
+    }
+}
+
+/// **The whole `/sweep/estimate` answer as a drawn panel — screen 30 of the design book.**
+///
+/// 🔴 **ONE RENDERER, TWO DATA SOURCES.** The live cost pane feeds this the body the server sent;
+/// `design_book::costing::memory_remaining` feeds it a fixture in the same shape. Before this, the
+/// book drew its own version of this panel and the badge over it claimed the product produced those
+/// numbers — the two-owners shape, with a `LIVE DATA` label on top.
+///
+/// 🔴 **AND THE LIVE PANE WAS KEEPING FOUR FIELDS OF FOURTEEN.** `capacity_from_value` parses
+/// `held_tokens`, `cap`, `remaining_tokens` and `exact`, and drops `repo`, `estimated_tokens`,
+/// `net_new_tokens`, `fits`, `blocked_tokens`, `billable_tokens`, `overflow_cost_usd`,
+/// `suggested_plan`, `largest_paths` and `message`. Ten measured fields, including the sentence the
+/// server writes for a human and the list that makes a refusal actionable, thrown away by the pane
+/// whose whole job is to answer *"how much memory do I have left"*.
+///
+/// ⚠️ **EVERY VALUE IS READ, NOT RE-DERIVED.** `fits`, `blocked_tokens`, `billable_tokens`,
+/// `overflow_cost_usd` and `suggested_plan` come off the wire as sent — a client that recomputed
+/// the verdict would contradict the gate that actually admits the sweep. The only two derived
+/// figures on the frame are the utilisation percentage and each path's share, and both are
+/// `None`/[`UNKNOWN`] rather than `0` when an input is missing.
+pub(crate) fn estimate_panel(estimate: &Value, palette: &Palette) -> Vec<Line<'static>> {
+    // ⚠️ **THREE COLUMNS, NOT FOUR — THE PERCENTAGE HAS ONE OWNER.** The first version drew the
+    // utilisation figure in its own `Col::r(5)` AND again inside `capacity_row`'s
+    // `(41% used)`, so one derived number appeared twice on one row and a change to either
+    // formatter would have printed two answers side by side. `capacity_row` keeps it, because that
+    // string is also what the stdout sweep path prints; the bar beside it is the picture, not a
+    // second claim.
+    //
+    // ⚠️ The value column is 55. At 28 `capacity_row`'s longest honest output —
+    // `250M held 103M · 147M free  (41% used)`, 38 columns — came off the frame as
+    // `250M held 103M · 147M free …`, ELIDING the remaining capacity, which is the one number the
+    // screen exists to show. 16+2+30+2+55 = 105 inside a 118-column rule.
+    const GAUGE: &[Col] = &[Col::l(16), Col::l(30), Col::l(55)];
+    const PATHS: &[Col] = &[Col::l(2), Col::l(34), Col::r(9), Col::r(7), Col::l(26)];
+
+    let repo = estimate
+        .get("repo")
+        .and_then(Value::as_str)
+        .filter(|repo| !repo.trim().is_empty())
+        .unwrap_or(UNKNOWN)
+        .to_string();
+    let total = estimate.get("estimated_tokens").and_then(Value::as_i64);
+
+    let mut lines = vec![
+        owned(rule(
+            "memory",
+            &repo,
+            PANEL_WIDTH,
+            palette.dim,
+            palette.mid,
+            palette.cite,
+        )),
+        Line::from(""),
+    ];
+
+    // ── What the plan holds, and what is already in it ──────────────────────────
+    let percent = used_percent(estimate);
+    // ⛔ An unknown utilisation draws NO bar, not an empty one: a 0%-filled bar is a picture of
+    // "nothing used", which is the opposite of "not measured".
+    let gauge = percent.map(|percent| bar(percent, 30)).unwrap_or_default();
+    lines.push(owned(col_row(
+        GAUGE,
+        &[
+            Cell("memory used", palette.mid),
+            Cell(&gauge, load_colour(percent.unwrap_or_default(), palette)),
+            Cell(&capacity_row(estimate), palette.dim),
+        ],
+        2,
+    )));
+    lines.push(owned(col_row(
+        GAUGE,
+        &[
+            Cell("this repo", palette.mid),
+            Cell("", palette.dim),
+            Cell(
+                &format!(
+                    "{} memory-tokens · {} net new",
+                    tokens(estimate, "estimated_tokens"),
+                    tokens(estimate, "net_new_tokens")
+                ),
+                palette.cite,
+            ),
+        ],
+        2,
+    )));
+    lines.push(owned(col_row(
+        GAUGE,
+        &[
+            Cell("measured", palette.mid),
+            Cell("", palette.dim),
+            Cell(&unit_row(estimate), palette.dim),
+        ],
+        2,
+    )));
+    lines.push(Line::from(""));
+
+    // ── The verdict, in the server's own words ─────────────────────────────────
+    lines.push(note(
+        palette,
+        estimate
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or(UNKNOWN),
+    ));
+    let (verdict, verdict_colour) = match estimate.get("fits").and_then(Value::as_bool) {
+        None => (UNKNOWN, palette.dim),
+        Some(true) => ("yes", palette.green),
+        Some(false) => ("no", palette.red),
+    };
+    lines.push(Line::from(vec![
+        Span::styled("  fits  ".to_string(), Style::default().fg(palette.dim)),
+        Span::styled(
+            verdict.to_string(),
+            Style::default()
+                .fg(verdict_colour)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("   {}", overflow_row(estimate)),
+            Style::default().fg(palette.dim),
+        ),
+    ]));
+    lines.push(Line::from(""));
+
+    // ── The fields a refusal turns on ──────────────────────────────────────────
+    for (name, value, accent) in [
+        ("blocked", tokens(estimate, "blocked_tokens"), palette.dim),
+        ("suggested plan", suggested_row(estimate), palette.plan),
+    ] {
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {name}  "), Style::default().fg(palette.dim)),
+            Span::styled(value, Style::default().fg(accent)),
+        ]));
+    }
+    lines.push(Line::from(""));
+
+    // ── The largest paths, so a refusal is actionable ──────────────────────────
+    lines.push(owned(rule(
+        "largest paths",
+        "",
+        PANEL_WIDTH,
+        palette.dim,
+        palette.mid,
+        palette.cite,
+    )));
+    lines.push(owned(head(
+        PATHS,
+        &["", "path", "tokens", "share", ""],
+        palette.dim,
+        0,
+    )));
+    match estimate.get("largest_paths").and_then(Value::as_array) {
+        // ⛔ An absent list is not an empty one. "the server sent no list" and "this repo has no
+        // dominating directory" are opposite facts and must not draw the same blank table.
+        None => lines.push(note(palette, "largest paths   —   the server sent no list")),
+        Some(paths) if paths.is_empty() => {
+            lines.push(note(palette, "no directory dominates this repo"));
+        }
+        Some(paths) => {
+            for (index, path) in paths.iter().take(PANEL_PATHS_SHOWN).enumerate() {
+                let name = path.get("path").and_then(Value::as_str).unwrap_or(UNKNOWN);
+                let held = path.get("tokens").and_then(Value::as_i64);
+                let files = path
+                    .get("files")
+                    .and_then(Value::as_i64)
+                    .map_or_else(|| UNKNOWN.to_string(), |files| format!("{files} files"));
+                let mut line = owned(col_row(
+                    PATHS,
+                    &[
+                        Cell(if index == 0 { "›" } else { "" }, palette.cite),
+                        Cell(name, palette.mid),
+                        Cell(
+                            &held.map_or_else(|| UNKNOWN.to_string(), human_tokens),
+                            palette.mid,
+                        ),
+                        Cell(&share_of_total(held, total), palette.dim),
+                        Cell(&files, palette.dim),
+                    ],
+                    0,
+                ));
+                if index == 0 {
+                    line = line.style(Style::default().bg(palette.tint));
+                }
+                lines.push(line);
+            }
+        }
+    }
+    lines.push(Line::from(""));
+    lines.push(note(palette, BILL_OWNER));
     lines
 }
 
