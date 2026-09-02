@@ -329,7 +329,7 @@ pub(crate) const INCIDENT: &[Beat] = &[
                 // ⚠️ This used to end *"You are here, so I will ask."* and then it never asked —
                 // it started. A trust line that describes a turn the film does not take is worse
                 // than no trust line, so the second half now says what actually happens.
-                "I would not normally interrupt. Production is down, so I am telling you now.",
+                "I would not normally interrupt. Production is down.",
             ])]),
             // He reads it. His hands are off the keyboard, and nobody presses enter.
             Key::Pause(2_800),
@@ -492,8 +492,8 @@ pub(crate) const INCIDENT: &[Beat] = &[
         think_ms: 2_800,
         reply: &[
             Say::Answer {
-                text: "Yes. 61 more failed while we were talking. The second repair is written and \
-                       the gate has nothing on it.",
+                text: "Yes. 61 more failed while we talked. Four workers finished the second \
+                       repair, and the gate has nothing on it.",
                 grounded: true,
             },
             Say::Wait(1_600),
