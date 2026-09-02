@@ -396,22 +396,32 @@ mod tests {
     /// 🔴 **FILM 2 ARGUES ONE THING: THE TEAM'S REASONING IS IN THE ROOM WITH HIM.**
     ///
     /// Its centre is the frame no competitor can build — not *"Devon committed to this file"*,
-    /// which any tool reads from git, but **what Devon asked his agent and what it told him**. Each
-    /// needle is a beat a silent viewer has to see, so trimming one is a test failure rather than a
-    /// quiet loss of the film's whole argument.
+    /// which any tool reads from git, but **the words Devon typed at his own agent**. Each needle is
+    /// a beat a silent viewer has to see, so trimming one is a test failure rather than a quiet loss
+    /// of the film's whole argument.
+    ///
+    /// ⚠️ **THREE NEEDLES CHANGED WHEN THE SURFACE AUDIT LANDED, AND EACH ONE MARKS A CUT BEAT.**
+    /// `"record why this path differs"` and `"posted to #eng"` pinned a `/choose` menu and a
+    /// `● /slack` receipt that no shipped surface answers, and `"asked about this same retry path"`
+    /// pinned a table whose second column — *what they were told* — has no store behind it: the turn
+    /// log holds `role="user"` rows only. The replacements pin what the product can actually do,
+    /// **including its refusal**, which is now the film's strongest line.
     #[test]
     fn film_two_stands_alone_with_the_sound_off() {
         let text = spoken();
         for statement in [
-            "merged #401",                         // 1 · the repo moved while he was away
-            "0009-upstream-retry-budget.md:31",    // 2 · a decision, volunteered, with its line
-            "record why this path differs",        // 3 · he can disagree, and it is recorded
-            "Sam proposed",                        // 4 · a proposal already parked in Slack
-            "inside billing/capture.py right now", // 5 · a teammate mid-flight in the same file
-            "asked about this same retry path",    // 6 · 🔴 what he ASKED, and what he was TOLD
-            "Only",                                // 7 · memory catches what the gate cannot
-            "posted to #eng",                      // 8 · the work leaves the terminal
-            "waiting on your review",              // 9 · what still needs him
+            "merged #401",                           // 1 · the repo moved while he was away
+            "0009-upstream-retry-budget.md:31",      // 2 · a decision, volunteered, with its line
+            "reads it instead of guessing",          // 3 · he disagrees, and his reason is kept
+            "Sam proposed",                          // 4 · a proposal already parked in Slack
+            "where do we bound the capture retries", // 5 · 🔴 a teammate's PROMPT, word for word
+            "I do not have the answers he got",      // 6 · 🔴 and the half it refuses to invent
+            "inside billing/capture.py right now",   // 7 · a teammate mid-flight in the same file
+            "Nobody disagrees",                      // 8 · the team already answered this
+            "Nothing stopped for that question",     // 9 · he interrupts it and it keeps working
+            "Only the record of what this team already tried", // 10 · memory beats the gate
+            "Nobody was paged",                      // 11 · the team beat, with its limit stated
+            "waiting on your review",                // 12 · what still needs him
         ] {
             assert!(
                 text.contains(statement),
