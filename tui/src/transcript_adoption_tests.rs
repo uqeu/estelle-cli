@@ -221,3 +221,96 @@ async fn compact_refusal_that_mutates_source_goes_red_and_does_not_advance_gener
     assert!(rendered.contains("Compaction refusal changed the active transcript"));
     assert!(!rendered.contains("compact BLOCKED  latest_turn_exceeds_usable_window"));
 }
+
+/// 🔴 **SCREEN 34's GAP WAS NAMED WRONG IN ONE OF ITS TWO HALVES, AND THIS IS THE HALF THAT SHIPS.**
+///
+/// `design_book::SCREENS` said `34-answer-table-diagram` needs *"no markdown table or diagram
+/// renderer in this client"*. The table half is false and has been since the renderer was vendored:
+/// `markdown_render.rs` computes column widths by content-priority class, honours `:---` / `---:` /
+/// `:---:`, wraps rather than truncates an over-wide cell, transposes to key/value records when the
+/// grid stops being scannable, and separates the header with `━` (`markdown_render.rs:87-88`,
+/// `:1241`, `:1500-1503`). The answer path reaches it: `TranscriptEntry::Answer` →
+/// `HistoryTranscriptItem::Markdown` → `AgentMarkdownCell` →
+/// `markdown::render_markdown_agent_with_links_cwd_and_visualizations`.
+///
+/// ⚠️ **A GAP STATEMENT IS A CLAIM, AND A CLAIM NEEDS AN INSTRUMENT.** Nobody had ever asserted the
+/// table renders, which is exactly why the line could say it does not for as long as it did. This
+/// is that instrument: break the pipeline anywhere along it and this goes red.
+#[test]
+fn an_answer_that_carries_a_markdown_table_renders_a_table() {
+    let mut app = test_app();
+    app.transcript.push(TranscriptEntry::Answer {
+        text: "| call site | file:line | retries |\n| --- | --- | ---: |\n| charge_card | billing/charge.rs:82 | 3 |\n| receipt_writer | billing/receipt.rs:17 | 0 |".to_string(),
+        grounded: Some(true),
+        degraded: false,
+        sources: Vec::new(),
+    });
+    let frame = rendered_frame_at_size(&app, Instant::now(), 100, 24);
+    assert!(frame.contains("call site"), "header missing:\n{frame}");
+    assert!(
+        frame.contains('━'),
+        "the header separator is the table's own texture:\n{frame}"
+    );
+    // The pipe syntax must be GONE — its survival is what "printed, not rendered" looks like.
+    assert!(
+        !frame.contains("| --- |"),
+        "the delimiter row was printed rather than rendered:\n{frame}"
+    );
+    // A right-aligned column is the half a naive renderer drops. `3` and `0` sit under the `s`
+    // of `retries`, not at the left edge of the cell.
+    let retries = frame
+        .lines()
+        .find(|line| line.contains("retries"))
+        .and_then(|line| line.find("retries"))
+        .expect("the retries header");
+    for row in ["charge_card", "receipt_writer"] {
+        let line = frame
+            .lines()
+            .find(|line| line.contains(row))
+            .unwrap_or_else(|| panic!("row {row} missing:\n{frame}"));
+        let digit = line
+            .rfind(['0', '3'])
+            .unwrap_or_else(|| panic!("no count on {row}:\n{frame}"));
+        assert!(
+            digit >= retries,
+            "{row}'s count is left-aligned under a `---:` column:\n{frame}"
+        );
+    }
+}
+
+/// 🔴 **AND THIS IS THE HALF THAT DOES NOT SHIP — ASSERTED, SO THE GAP CANNOT QUIETLY CLOSE OR
+/// QUIETLY WIDEN.**
+///
+/// There is no diagram renderer in this client. Measured 2026-09-02: no `ratatui-image`, no
+/// resvg/usvg, no kitty/sixel emission anywhere in the crate. The two rivals that solve it
+/// disagree, and BOTH answers are refused here for a stated reason:
+///
+/// - **jcode** parses and lays out the diagram, rasterises to PNG and emits it over a real terminal
+///   image protocol (`jcode-tui-mermaid/src/lib.rs:1-5`), explicitly refusing a half-block fallback
+///   because *"source is more useful than a degraded diagram"* (`mermaid_runtime.rs:417-427`). The
+///   layout half is a 58k-line dependency.
+/// - **oh-my-pi** draws it as character art
+///   (`packages/utils/src/vendor/mermaid-ascii/`) — and its canvas is built from `┌ ┐ └ ┘ ├ ┤`
+///   node boxes (`ascii/draw.ts:171-176`) that MERGE into `┼` where edges cross
+///   (`ascii/canvas.ts:217-226`). **Every one of those glyphs is on this repo's no-box list**, which
+///   the founder has stated five times and `BOX_CORNERS` enforces over every gallery frame. Porting
+///   it is not a cost trade-off; it is a house rule.
+///
+/// ▶ **SO THE FENCE PRINTS ITS SOURCE, WHICH IS THE ANSWER BOTH RIVALS AGREE IS CORRECT WHEN THE
+/// PICTURE CANNOT BE DRAWN HONESTLY.** That is a decision for the founder to overturn, not for this
+/// file to guess at, and it is asserted here so nobody mistakes it for an oversight.
+#[test]
+fn a_fenced_diagram_prints_its_source_because_nothing_draws_one() {
+    let mut app = test_app();
+    app.transcript.push(TranscriptEntry::Answer {
+        text: "```mermaid\nflowchart LR\n  charge_card --> retry_gate\n```".to_string(),
+        grounded: Some(true),
+        degraded: false,
+        sources: Vec::new(),
+    });
+    let frame = rendered_frame_at_size(&app, Instant::now(), 100, 24);
+    assert!(
+        frame.contains("charge_card --> retry_gate"),
+        "the source is what a reader gets, and it must survive verbatim:\n{frame}"
+    );
+}

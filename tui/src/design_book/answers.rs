@@ -291,80 +291,84 @@ pub(crate) fn tool_calls(palette: &Palette, tick: u64, pulse: bool) -> Vec<Line<
 
 // ── 40 · the code graph, walkable ────────────────────────────────────────────────────────────
 
-/// mark · symbol · file:line · fan-in · fan-out · role. The role column is 44 wide because a
-/// chokepoint's role is a SENTENCE with a file count in it, and a truncated blast radius would be
-/// the same lie as no blast radius.
-#[rustfmt::skip]
-const NODES: &[Col] = &[Col::l(2), Col::l(22), Col::l(24), Col::r(4), Col::r(4), Col::l(44)];
-
+/// The walk, drawn by the PRODUCTION renderer — [`crate::graph_view::lines`] — with fixture rows.
+///
+/// 🔴 **THE SYMBOL COLUMNS CAME OFF, AND THAT WAS A MEASUREMENT, NOT A PREFERENCE.**
+///
+/// This screen was drawn with a SYMBOL per row (`charge_card`, `settle_charge`) and a
+/// `fan-in`/`fan-out` pair beside each. Measured against the server on 2026-09-02: every graph tool
+/// on the wire is FILE-level (`agent/graph_tools.py:150-210`), `fan_out` does not exist anywhere in
+/// the server, and `fan_in` exists exactly once — `len(graph.importers(path))` at
+/// `serve/improve.py:453`, file-level, never reaching a tool reply. **Those two columns were not
+/// un-wired; they were a granularity the graph does not have**, and a book screen that keeps
+/// drawing them teaches a reader to ask for a number nothing can produce.
+///
+/// ⚠️ **THE ROW'S ACTUAL CLAIM SURVIVED INTACT, WHICH IS WHY THIS IS THE SAME SCREEN.**
+/// *"chokepoint · touching this moves 47 files"* is `blast_radius`'s line count — a real number off
+/// the real graph, and the point the founder's version was making (a count anybody can check, not a
+/// badge nobody can). Nothing about that changed. What changed is that the two columns that could
+/// never be filled stopped being drawn, and the file the claim is about is now named in the row
+/// rather than implied by the symbol.
+///
+/// 🔴 **AND IT IS THE PRODUCTION RENDERER, NOT A SECOND DRAWING OF ONE.** The whole reason this
+/// module exists is that a hand-placed space is a layout claim nobody can falsify. A book screen
+/// that re-drew the walk beside `graph_view` would be that defect wearing the module's own clothes.
 pub(crate) fn code_graph(palette: &Palette, tick: u64, pulse: bool) -> Vec<Line<'static>> {
-    let hot = pulsed(palette.warn, tick, pulse);
-    let mut lines = vec![
-        band(palette, "graph", "uqeu/estelle", 92, palette.cite),
-        blank(),
-        Line::from(vec![
-            Span::styled("  / ".to_string(), Style::default().fg(palette.cite)),
-            Span::styled("settle".to_string(), Style::default().fg(palette.bright)),
-            Span::styled(
-                "   6 of 5,608 symbols match · 4 files".to_string(),
-                Style::default().fg(palette.dim),
-            ),
-        ]),
-        blank(),
-        head(
-            NODES,
-            &["", "symbol", "file:line", "in", "out", "role"],
-            palette.mid,
-            2,
+    use crate::graph_view::{Node, Role, Surface};
+
+    // The fixture is written in the shape `graph_view::assemble` produces: a score exactly as the
+    // server prints it, and `moves` set ONLY on rows a walk would have measured. The unmeasured
+    // rows draw `—`, which is the rule this screen has to demonstrate more than any other.
+    let node = |path: &str, score: Option<&str>, moves: Option<u64>, role: Role| Node {
+        path: path.to_string(),
+        score: score.map(str::to_string),
+        moves,
+        role,
+    };
+    let nodes = [
+        node(
+            "billing/charge.rs",
+            Some("(0.81)"),
+            Some(47),
+            Role::Chokepoint,
         ),
+        node(
+            "billing/settle.rs",
+            Some("(0.64)"),
+            Some(31),
+            Role::Chokepoint,
+        ),
+        node("billing/retry.rs", Some("(0.44)"), None, Role::Core),
+        node("billing/client.rs", Some("(0.31)"), None, Role::Core),
+        node("billing/receipt.rs", None, None, Role::Cycle),
+        node("billing/refund.rs", None, Some(0), Role::Plain),
     ];
-
-    // 🔴 A CHOKEPOINT IS MARKED BY WHAT TOUCHING IT MOVES, NOT BY A BADGE. The file count is the
-    // claim; `chokepoint` on its own is a label nobody can check. The marker glyph is DERIVED from
-    // the role, so the glyph and the words cannot disagree.
-    #[rustfmt::skip]
-    let nodes: &[(&str, &str, &str, &str, &str)] = &[
-        ("charge_card",    "billing/charge.rs:82",  "12", "4", "chokepoint · touching this moves 47 files"),
-        ("settle_charge",  "billing/settle.rs:113",  "9", "6", "chokepoint · touching this moves 31 files"),
-        ("retry_gate",     "billing/retry.rs:41",    "7", "3", "gate · every charge passes through it"),
-        ("card_client",    "billing/client.rs:29",   "5", "9", "hub · 9 outbound edges, 1 provider"),
-        ("receipt_writer", "billing/receipt.rs:17",  "2", "1", "leaf · nothing imports it"),
-        ("refund_card",    "billing/refund.rs:64",   "3", "2", "leaf · nothing imports it"),
-    ];
-    for (index, (symbol, cite, fan_in, fan_out, role)) in nodes.iter().enumerate() {
-        let choke = role.starts_with("chokepoint");
-        let mark = if choke {
-            "●"
-        } else if role.starts_with("leaf") {
-            "○"
-        } else {
-            "◆"
-        };
-        let mut line = row(
-            NODES,
-            &[
-                Cell(mark, if choke { hot } else { palette.mid }),
-                Cell(symbol, palette.mid),
-                Cell(cite, palette.cite),
-                Cell(fan_in, palette.mid),
-                Cell(fan_out, palette.mid),
-                Cell(role, if choke { hot } else { palette.dim }),
-            ],
-            2,
-        );
-        if index == 0 {
-            line = line.style(Style::default().bg(palette.tint));
-        }
-        lines.push(line);
-    }
-
-    lines.push(blank());
-    let mut foot = |text: &str| lines.push(note(palette, text));
-    foot("enter opens the symbol · space filters · b shows the blast radius · d exports dot");
-    foot("fan-in and fan-out come off the swept graph at 1f5cc7a4, not inferred from imports.");
-    foot("a chokepoint is not a label: the file count is what the graph says touching it moves.");
-    lines
+    crate::graph_view::lines(
+        &Surface::Walk {
+            repo: "uqeu/estelle",
+            filter: "billing",
+            matched: nodes.len(),
+            // ⚠️ **NOT 5,608 — THAT WAS THE SYMBOL COUNT.** The founder's version read
+            // `6 of 5,608 symbols match`, and this table is files. Carrying the symbol figure over
+            // to a row of files would have been a staged number that is wrong in its UNITS, which
+            // is the kind of fixture nobody re-reads.
+            total: 812,
+            nodes: &nodes,
+            // ⚠️ NO SELECTION BAND, BECAUSE NOTHING CAN SELECT. The founder's version tinted the
+            // first row. Nothing in this binary binds a key on this pane, so a tinted row in the
+            // book would be the fixture claiming an interaction the product does not have — and
+            // the pane's own last footnote says so two lines below it.
+            selected: None,
+        },
+        palette,
+        WIDTH_40,
+        tick,
+        pulse,
+    )
 }
+
+/// Screen 40 is 130 columns wide (`design_book::SCREENS`), and the walk fills it.
+const WIDTH_40: usize = 128;
 
 // ── 41 · memory, and the half that corrects it ───────────────────────────────────────────────
 
@@ -671,15 +675,30 @@ mod tests {
             assert!(joined(&lines).contains(needle), "{needle:?} lost");
         }
 
+        // 🔴 **THE CLAUSE IS THE SAME; THE COLUMN IT LIVES IN MOVED, AND THIS IS WHY.**
+        //
+        // It read `choke.contains("touching this moves")` — an assertion on the SENTENCE, when the
+        // clause it exists for is *"a chokepoint is not a bare label; the row carries the count."*
+        // The sentence was 41 characters in a 40-wide cell, so `no_book_screen_truncates_its_own_copy`
+        // refused it, and the count moved into the `moves` column beside the other numbers, where
+        // two rows can be compared. Asserting the prose here would have made the LAYOUT the
+        // contract instead of the claim — and would have been a guard that fails on a correct row.
+        //
+        // ⚠️ So it asserts the claim: a chokepoint row carries a MEASURED count, and the count is
+        // not the `—` that means unmeasured.
         let choke = code_graph(&palette, 0, true)
             .iter()
             .map(text)
             .find(|line| line.contains("chokepoint"))
             .expect("no chokepoint row");
+        let cells: Vec<&str> = choke.split_whitespace().collect();
         assert!(
-            choke.contains("touching this moves")
-                && choke.chars().any(|glyph| glyph.is_ascii_digit()),
+            cells.iter().any(|cell| cell.parse::<u64>().is_ok()),
             "the chokepoint is a bare label with no blast radius: {choke:?}"
+        );
+        assert!(
+            !cells.contains(&"—"),
+            "a chokepoint drawn with an unmeasured blast radius makes the row a badge: {choke:?}"
         );
     }
 }

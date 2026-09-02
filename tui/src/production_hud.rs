@@ -4,7 +4,6 @@ use crate::theme::Palette;
 use estelle_client::{Client, MonitorOverviewResponse, Repo};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -17,6 +16,18 @@ pub struct ProductionGraph {
     pub chokepoints: Vec<String>,
     pub core_files: Vec<String>,
     pub drill_down: bool,
+    /// 🔴 **THE SERVER'S REFUSAL, WHEN IT GAVE ONE — AND THE FIELD THAT STOPS IT BEING DATA.**
+    ///
+    /// Measured against production on 2026-09-02: `chokepoints{"repo":"uqeu/estelle"}` answers
+    /// `CANNOT ANSWER: … this repo has never been swept …` on the SUCCESS path — HTTP 200,
+    /// `isError` unset, ordinary text content. This pane used to split that sentence on newlines
+    /// and draw the first three lines as `choke` rows, i.e. it showed a risk map over a server
+    /// that had just said it has no graph.
+    ///
+    /// ⚠️ When this is `Some`, every list above is EMPTY by construction — see [`fetch`]. There is
+    /// no state in which the pane holds both a refusal and rows, because "some of the graph"
+    /// is a claim nothing on the wire supports.
+    pub withheld: Option<String>,
 }
 
 pub async fn fetch(
@@ -26,32 +37,50 @@ pub async fn fetch(
     failing_symbol: String,
     failing_file: String,
 ) -> Result<ProductionGraph, String> {
-    let blast = call_graph_tool(
+    let cancel = CancellationToken::new();
+    let blast = crate::mcp_tool::call(
         client,
         repo,
         "blast_radius",
         serde_json::json!({"file": failing_file}),
+        &cancel,
     );
-    let chokepoints = call_graph_tool(client, repo, "chokepoints", serde_json::json!({}));
-    let subsystems = call_graph_tool(client, repo, "subsystems", serde_json::json!({}));
-    let core_files = call_graph_tool(client, repo, "core_files", serde_json::json!({}));
+    let chokepoints =
+        crate::mcp_tool::call(client, repo, "chokepoints", serde_json::json!({}), &cancel);
+    let subsystems =
+        crate::mcp_tool::call(client, repo, "subsystems", serde_json::json!({}), &cancel);
+    let core_files =
+        crate::mcp_tool::call(client, repo, "core_files", serde_json::json!({}), &cancel);
     let (blast, chokepoints, subsystems, core_files) =
         tokio::try_join!(blast, chokepoints, subsystems, core_files)?;
-    let meaningful_lines = |text: String| {
-        text.lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(mask_secret)
-            .collect::<Vec<_>>()
-    };
-    let blast_radius = meaningful_lines(blast);
-    let chokepoints = meaningful_lines(chokepoints).into_iter().take(3).collect();
-    let healthy_subsystems = meaningful_lines(subsystems)
+    // 🔴 ONE REFUSAL WITHHOLDS THE WHOLE PANE. All four tools read the same graph through the same
+    // currency guard, so if one says the graph cannot be dated, the other three are answering about
+    // a graph the server has already declined to stand behind. Drawing the rows that happened to
+    // come back would be "some of the risk map", which is the reading a user cannot act on.
+    let withheld = [&blast, &chokepoints, &subsystems, &core_files]
+        .into_iter()
+        .find_map(|outcome| match outcome {
+            crate::mcp_tool::Outcome::CannotAnswer(reason) => Some(reason.clone()),
+            crate::mcp_tool::Outcome::Answered(_) => None,
+        });
+    if let Some(reason) = withheld {
+        return Ok(ProductionGraph {
+            issue_key,
+            failing_symbol,
+            failing_file,
+            withheld: Some(reason),
+            ..ProductionGraph::default()
+        });
+    }
+    let blast_radius = blast.lines();
+    let chokepoints = chokepoints.lines().into_iter().take(3).collect();
+    let healthy_subsystems = subsystems
+        .lines()
         .into_iter()
         .filter(|subsystem| !subsystem.contains(&failing_file))
         .take(4)
         .collect();
-    let core_files = meaningful_lines(core_files).into_iter().take(3).collect();
+    let core_files = core_files.lines().into_iter().take(3).collect();
     Ok(ProductionGraph {
         issue_key,
         failing_symbol,
@@ -61,58 +90,8 @@ pub async fn fetch(
         chokepoints,
         core_files,
         drill_down: false,
+        withheld: None,
     })
-}
-
-async fn call_graph_tool(
-    client: &Client,
-    repo: &Repo,
-    name: &str,
-    mut arguments: Value,
-) -> Result<String, String> {
-    let Some(arguments) = arguments.as_object_mut() else {
-        return Err(format!("{name} arguments were not an object"));
-    };
-    arguments.insert("repo".to_string(), Value::String(repo.as_str().to_string()));
-    let response: Value = client
-        .post(
-            estelle_client::Endpoint::Mcp,
-            &serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {"name": name, "arguments": arguments},
-            }),
-            &CancellationToken::new(),
-        )
-        .await
-        .map_err(|error| format!("{name} request failed: {error}"))?;
-    if let Some(error) = response.get("error") {
-        return Err(format!(
-            "{name} returned a protocol error: {}",
-            mask_secret(&error.to_string())
-        ));
-    }
-    let result = response
-        .get("result")
-        .and_then(Value::as_object)
-        .ok_or_else(|| format!("{name} omitted the MCP result object"))?;
-    if result.get("isError").and_then(Value::as_bool) == Some(true) {
-        return Err(format!("{name} reported a tool failure"));
-    }
-    result
-        .get("content")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .find_map(|item| {
-            (item.get("type").and_then(Value::as_str) == Some("text"))
-                .then(|| item.get("text").and_then(Value::as_str))
-                .flatten()
-        })
-        .filter(|text| !text.trim().is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| format!("{name} returned no text content"))
 }
 
 /// The service row: glyph, name, last status code, last latency. The name column takes whatever
@@ -324,6 +303,22 @@ pub fn lines(
         pulse_enabled,
     ));
 
+    // 🔴 THE REFUSAL IS DRAWN BY THE SAME MODULE THAT DRAWS THE ROWS, AND IT ENDS THE PANE.
+    // Nothing below can be honest once the server has said it cannot date the graph, so the
+    // sections that would follow are not drawn at all rather than drawn empty — an empty risk map
+    // reads as "no risk", which is the opposite of what the server said.
+    if let Some(reason) = &graph.withheld {
+        output.push(Line::from(""));
+        output.extend(crate::graph_view::lines(
+            &crate::graph_view::Surface::Withheld { repo: "", reason },
+            palette,
+            width,
+            tick,
+            pulse_enabled,
+        ));
+        return output;
+    }
+
     let related = related_columns(width);
     if graph.blast_radius.is_empty() {
         output.push(Line::styled(
@@ -335,11 +330,29 @@ pub fn lines(
             output.push(related_row(&related, "blast", file, palette.warn, palette));
         }
     }
-    for file in &graph.chokepoints {
-        output.push(related_row(&related, "choke", file, palette.mid, palette));
-    }
-    for file in &graph.core_files {
-        output.push(related_row(&related, "core", file, palette.mid, palette));
+
+    // 🔴 THE GRAPH ROWS GO THROUGH [`crate::graph_view`], WHICH IS ALSO WHAT DESIGN-BOOK SCREEN 40
+    // DRAWS. They were two pictures of one fact: this pane printed `choke  api.py  (0.81)` from a
+    // `related_row`, and the book drew a node table beside it that nothing produced. A layout with
+    // two owners is the defect this whole design-book pass exists to close, so there is now one
+    // function, and the book's version is this one with fixture rows in it.
+    let nodes = graph_nodes(graph);
+    if !nodes.is_empty() {
+        output.push(Line::from(""));
+        output.extend(crate::graph_view::lines(
+            &crate::graph_view::Surface::Walk {
+                repo: "",
+                filter: "",
+                matched: nodes.len(),
+                total: nodes.len(),
+                nodes: &nodes,
+                selected: None,
+            },
+            palette,
+            width,
+            tick,
+            pulse_enabled,
+        ));
     }
 
     output.push(Line::from(""));
@@ -382,10 +395,37 @@ pub fn lines(
     output
 }
 
+/// The pane's graph rows as [`crate::graph_view::Node`]s.
+///
+/// ⚠️ The `path  (score)` split has ONE owner, [`crate::graph_view::Node::from_tool_line`], beside
+/// the type it produces.
+///
+/// 🔴 **`moves` STAYS `None` HERE AND THAT IS THE HONEST VALUE.** A blast radius is fetched for one
+/// file — the failing one — so no other row has been measured, and the walk that would measure the
+/// selected row is not built. `None` draws `—`; printing `0` would put "safe to change" on every
+/// file nobody asked about.
+fn graph_nodes(graph: &ProductionGraph) -> Vec<crate::graph_view::Node> {
+    let mut nodes: Vec<crate::graph_view::Node> = graph
+        .chokepoints
+        .iter()
+        .map(|line| {
+            crate::graph_view::Node::from_tool_line(line, crate::graph_view::Role::Chokepoint)
+        })
+        .collect();
+    for line in &graph.core_files {
+        let node = crate::graph_view::Node::from_tool_line(line, crate::graph_view::Role::Core);
+        if !nodes.iter().any(|held| held.path == node.path) {
+            nodes.push(node);
+        }
+    }
+    nodes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::theme::ScreenTheme;
+    use serde_json::Value;
     use serde_json::json;
     use wiremock::matchers::{body_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -645,6 +685,97 @@ mod tests {
         assert_eq!(graph.healthy_subsystems, ["auth.py, sessions.py"]);
         assert_eq!(graph.chokepoints, ["api.py  (0.8)"]);
         assert_eq!(graph.core_files, ["models.py  (0.9)"]);
+    }
+
+    /// 🔴 **THE BUG THIS PANE SHIPPED WITH, AND THE TEST THAT KILLS IT.**
+    ///
+    /// `serve/mcp/__init__.py:1174` returns the graph-currency refusal as ORDINARY text on the
+    /// SUCCESS path — HTTP 200, `isError` unset. Probed against production on 2026-09-02,
+    /// `chokepoints{"repo":"uqeu/estelle"}` answered exactly the sentence below, and so did
+    /// `core_files` and `import_cycles`.
+    ///
+    /// This pane used to split whatever came back on newlines and draw the first three lines as
+    /// `choke` rows. Handed that sentence it rendered a risk map over a server that had just said
+    /// it has no graph — and it did so with no error, no warning, and a green suite.
+    ///
+    /// ⚠️ **THE ASSERTIONS RUN IN BOTH DIRECTIONS.** That the refusal is CARRIED is half of it; the
+    /// half that matters is that not one row survives beside it. Delete the `withheld` short-circuit
+    /// in `fetch` and the `chokepoints` assertion below goes red on the first line of the sentence.
+    #[tokio::test]
+    async fn a_currency_refusal_is_carried_as_a_refusal_and_not_drawn_as_three_files() {
+        const REFUSAL: &str = "CANNOT ANSWER: uqeu/estelle: currency UNKNOWN — this repo has never been swept, so there is no graph to date.\nSweep this repo first — nothing has been indexed for it yet.";
+        let server = MockServer::start().await;
+        // Three tools answer normally and ONE refuses. That is the honest shape of the bug: the
+        // pane had three real replies in hand and drew the fourth as if it were a fourth.
+        mount_graph_tool(
+            &server,
+            "blast_radius",
+            json!({"file": "billing.py", "repo": "uqeu/estelle"}),
+            Some("checkout.py"),
+        )
+        .await;
+        mount_graph_tool(
+            &server,
+            "chokepoints",
+            json!({"repo": "uqeu/estelle"}),
+            Some(REFUSAL),
+        )
+        .await;
+        mount_graph_tool(
+            &server,
+            "subsystems",
+            json!({"repo": "uqeu/estelle"}),
+            Some("billing.py, checkout.py"),
+        )
+        .await;
+        mount_graph_tool(
+            &server,
+            "core_files",
+            json!({"repo": "uqeu/estelle"}),
+            Some("models.py  (0.9)"),
+        )
+        .await;
+        let client = Client::new(
+            &format!("{}/", server.uri()),
+            estelle_client::ApiKey::new("test-key").expect("key"),
+            estelle_client::MINIMUM_TIMEOUT,
+        )
+        .expect("client");
+
+        let graph = fetch(
+            &client,
+            &Repo::new("uqeu/estelle").expect("repo"),
+            "issue-17".to_string(),
+            "charge_card".to_string(),
+            "billing.py".to_string(),
+        )
+        .await
+        .expect("a refusal is not a transport failure");
+
+        let reason = graph.withheld.as_deref().expect("the refusal is carried");
+        assert!(
+            reason.starts_with("uqeu/estelle: currency UNKNOWN"),
+            "{reason}"
+        );
+        assert!(
+            !reason.starts_with("CANNOT ANSWER"),
+            "the tag is for the parser: {reason}"
+        );
+        // 🔴 NOT ONE ROW SURVIVES. These four were the bug.
+        assert!(graph.chokepoints.is_empty(), "{:?}", graph.chokepoints);
+        assert!(graph.core_files.is_empty(), "{:?}", graph.core_files);
+        assert!(graph.blast_radius.is_empty(), "{:?}", graph.blast_radius);
+        assert!(
+            graph.healthy_subsystems.is_empty(),
+            "{:?}",
+            graph.healthy_subsystems
+        );
+
+        // And the drawn pane says so, with no table under it.
+        let drawn = text(&lines(&graph, &ScreenTheme::Dark.palette(), 110, 0, false));
+        assert!(drawn.contains("no walk from here"), "{drawn}");
+        assert!(!drawn.contains("centrality"), "no node table: {drawn}");
+        assert!(!drawn.contains("models.py"), "no surviving row: {drawn}");
     }
 
     #[tokio::test]
