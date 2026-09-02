@@ -4919,24 +4919,31 @@ mod tests {
             "/usage was shadowed by a graft stub; it must route to GET /usage"
         );
         // The KEEP list still resolves.
+        // 🔴 TEN NAMES CAME OFF THIS LIST, AND THE LIST WAS RED FOR A ROUND BEFORE ANYONE READ IT.
+        //
+        // `82858e2db` deleted 21 slash commands whose ENTIRE description was "<x> ownership
+        // status" - a command that exists only to say it does nothing - and it did NOT update this
+        // list. `new`, `fork`, `rename`, `archive`, `delete`, `ps`, `stop`, `goal`, `side` and
+        // `btw` were all removed from GRAFT_HELP in that commit and all ten stayed named here, so
+        // this test has asserted a surface the product does not have ever since. It failed on the
+        // FIRST of them and reported only that one, which is why a reader could look at
+        // "/new must stay reachable" and think one command had gone missing.
+        //
+        // ⚠️ THE LIST STAYS WRITTEN OUT RATHER THAN DERIVED. Deriving it from GRAFT_HELP would
+        // make it agree with the tables by construction and it would never catch a deletion again,
+        // which is the whole point of pinning an expected set.
+        //
+        // `/new` and the other nine are still ANSWERED, by `inherited_command_lines`, with
+        // "the command is visible and inert". That is the third state the 0.3.0 gate says helps
+        // nobody, and closing it is a product decision, not a test fix.
         for kept in [
             "logout",
-            "new",
             "clear",
             "resume",
-            "fork",
-            "rename",
-            "archive",
-            "delete",
             "diff",
             "status",
             "keymap",
             "permissions",
-            "ps",
-            "stop",
-            "goal",
-            "side",
-            "btw",
             "quit",
             "exit",
         ] {
