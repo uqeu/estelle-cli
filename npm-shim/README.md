@@ -83,10 +83,14 @@ Writes ten handlers across seven events (`PreToolUse`, `PostToolUse`, `UserPromp
 available to editors that are not Claude Code.
 
 Every hook fails silently by design: no credentials, no network, a slow server or an empty memory all
-produce nothing rather than an error on the hot path. **The `UserPromptSubmit` handler is the slow one.**
-It asks the server for a full search and reads only the recall text, so on a long prompt it can exceed
-its timeout, and when the host kills it the turn simply proceeds with no added context. Nothing tells you
-that happened.
+produce nothing rather than an error on the hot path. **The `UserPromptSubmit` handler is still the
+slowest one, and it is now bounded.** It used to ask the server for a full search and read only the recall
+text, paying for a code branch it discarded unread — measured at 133.4 s against 8.4 s for the same recall,
+byte for byte. It now asks for the one field it reads, and gives up at 20 seconds, ten seconds under the
+host's 30-second kill, because being killed by the host discards your prompt along with the hook's answer.
+**The floor is the server's, not ours**: `POST /search` has an observed floor near 6 seconds, so a prompt
+still costs that much before the model sees it, and if the budget expires the turn proceeds with no added
+context. Nothing tells you that happened.
 
 **What the edit hook does, exactly.** It grounds the edit and reports one of four verdicts to you and to
 the model: PASSED, FLAGGED, ABSTAINED, or UNREACHABLE. ABSTAINED says in its own words that it is not a

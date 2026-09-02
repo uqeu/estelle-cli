@@ -47,20 +47,24 @@ For editors that are not Claude Code, `estelle install-hooks` writes the same te
 events (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `Stop`, `PreCompact`,
 `SessionEnd`) for both Claude Code and the Codex CLI.
 
-Every hook fails silently by design (`tui/src/top_level.rs:378`): no credentials, no network, a slow
+Every hook fails silently by design (`tui/src/top_level.rs:471`): no credentials, no network, a slow
 server or an empty memory all produce nothing rather than an error on the hot path. **The
-`UserPromptSubmit` handler is the slow one.** It asks the server for a full search
-(`top_level.rs:384`) and reads only the recall text (`top_level.rs:389`), so on a long prompt it can
-exceed its timeout, and when the host kills it the turn simply proceeds with no added context. Nothing
-tells you that happened.
+`UserPromptSubmit` handler is still the slowest one, and it is now bounded.** It used to ask the
+server for a full search and read only the recall text, paying for a code branch it discarded
+unread — measured at 133.4 s against 8.4 s for the same recall, byte for byte. It now asks for the
+one field it reads (`top_level.rs:424`) and gives up at 20 seconds (`top_level.rs:397`), ten
+seconds under the host's 30-second kill, because being killed by the host discards your prompt
+along with the hook's answer. **The floor is the server's, not ours**: `POST /search` has an
+observed floor near 6 seconds, so a prompt still costs that much before the model sees it, and if
+the budget expires the turn proceeds with no added context. Nothing tells you that happened.
 
 **What the edit hook does, exactly.** It grounds the edit and reports one of four verdicts to you and to
 the model: PASSED, FLAGGED, ABSTAINED, or UNREACHABLE. ABSTAINED says in its own words that it is not a
-pass. **It does not block the edit** (`tui/src/top_level.rs:717`). The finding is advisory while the
+pass. **It does not block the edit** (`tui/src/top_level.rs:805`). The finding is advisory while the
 server does not attest index freshness, and the runner says so in the text it emits. The blocking check is
 `estelle gate`, which returns a merge verdict you can fail a build on.
 
-**And the edit hook inspects Python only today** (`tui/src/top_level.rs:719`). A write to any other file
+**And the edit hook inspects Python only today** (`tui/src/top_level.rs:807`). A write to any other file
 type produces no output at all, so on that path "not checked" and "clean" look the same. Use
 `estelle gate` on the diff if you need a verdict for another language.
 
