@@ -7,7 +7,7 @@
   uqeu/estelle is about 11.5M memory-tokens; 147M of your 250M capacity is free.
   fits  yes   nothing blocked · nothing bills as overflow
 
-  if it did not fit, this is what you would see
+  what a run that did NOT fit shows instead
 
   blocked  0 tokens
   billable overflow  0 tokens · $0.00

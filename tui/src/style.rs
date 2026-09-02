@@ -56,7 +56,11 @@ pub fn proposed_plan_style_for(terminal_bg: Option<(u8, u8, u8)>) -> Style {
 /// thing that marks a list instead of a box around it.
 ///
 /// It is [`theme::Palette::cite`] now — Estelle's own accent blue, `#7FB3C8` on the dark ground and
-/// `#38708C` on cream — which is the role this already was.
+/// `#264B5E` on cream — which is the role this already was.
+///
+/// ⚠️ The cream value was `#38708C` until 2026-09-02, when every cream accent was re-seated for
+/// a light ground: it measured 3.89:1 on the #DDDAD1 paper against the dark accent's 8.10:1 on
+/// its own ground. See `theme.rs`'s cream block for the whole table.
 ///
 /// ⚠️ **THE VALUES ARE WRITTEN HERE BECAUSE THIS MODULE CANNOT IMPORT `theme`.** `style` is in the
 /// `estelle_tui` library and `theme` is declared in the `estelle` binary. The binary owns a test
@@ -77,7 +81,7 @@ pub(crate) const DARK_ACCENT: Color = Color::from_u32(0x7F_B3_C8);
 ///
 /// ⚠️ This replaces `best_color((0, 95, 135))`, a value with no owner and no
 /// relationship to anything else on a cream frame.
-pub(crate) const CREAM_ACCENT: Color = Color::from_u32(0x38_70_8C);
+pub(crate) const CREAM_ACCENT: Color = Color::from_u32(0x26_4B_5E);
 
 fn table_separator_style_for(
     terminal_fg: Option<(u8, u8, u8)>,

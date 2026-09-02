@@ -75,7 +75,7 @@ pub(crate) fn login(palette: &Palette, tick: u64, pulse: bool) -> Vec<Line<'stat
         blank(),
         headline(
             InFlight,
-            "creating your account",
+            "creating the account",
             WHERE,
             palette,
             tick,
@@ -171,7 +171,7 @@ fn login_why(palette: &Palette) -> Vec<Line<'static>> {
 /// `step | what you do | how`
 const NEXT: &[&str] = &[
     "active | cd into a repo | cd ~/Desktop/estelle, then estelle — the graph follows the tree",
-    "todo | or sweep a path | /sweep ~/Desktop/estelle indexes it and brings you back here",
+    "todo | or sweep a path | /sweep ~/Desktop/estelle indexes it and returns here",
     "todo | or ask account-wide | /memory and /sessions answer from your team's memory, uncited",
 ];
 

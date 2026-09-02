@@ -1,6 +1,6 @@
 ── login · two stages ────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-◐ creating your account  ·  stage 2 of 2 · nothing has been charged to anything yet
+◐ creating the account  ·  stage 2 of 2 · nothing has been charged to anything yet
 
   ✓   stage 1    who you are                   khai@fatelabs.ca · device code accepted 12s ago
   ▶   stage 2    who pays for model tokens     pick one now; the other four can wait

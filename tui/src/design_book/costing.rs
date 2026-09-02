@@ -151,10 +151,7 @@ pub(crate) fn memory_remaining(palette: &Palette, _tick: u64, _pulse: bool) -> V
     lines.push(blank());
 
     // ── The fields the client used to throw away ───────────────────────────────
-    lines.push(note(
-        palette,
-        "if it did not fit, this is what you would see",
-    ));
+    lines.push(note(palette, "what a run that did NOT fit shows instead"));
     lines.push(blank());
     let overflow: &[(&str, &str, Color)] = &[
         ("blocked", "0 tokens", palette.dim),

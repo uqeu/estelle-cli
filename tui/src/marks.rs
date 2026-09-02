@@ -15,7 +15,7 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::theme::{Palette, pulse};
+use crate::theme::{ATTENTION, DREAD, Palette, PulseShape, pulse_with};
 
 /// The status vocabulary, chosen by the founder from the rendered specimen sheet (set 2A).
 ///
@@ -94,11 +94,33 @@ impl Mark {
         }
     }
 
+    /// 🔴 **A REFUSAL PULSES DIFFERENTLY FROM EVERYTHING ELSE, AND THAT IS THE POINT.**
+    ///
+    /// The founder, 2026-09-02: *"Anything that's red and an error should be pulsing — a very slow
+    /// pulse, DOOM… DOOM… DOOM — that's like 'oh shit, I should look at that'."* A working spinner
+    /// and a blocked merge were sharing one 1.4s cycle, so the loudest thing on the screen moved at
+    /// exactly the speed of the most routine.
+    ///
+    /// ⚠️ **ONLY `Refused` GETS IT, AND `Blocked` DELIBERATELY DOES NOT.** `Refused` is the red
+    /// one — the gate saying no. `Blocked` is `warn`, and it means *needs a human*, which is a
+    /// request rather than an alarm; giving both the dread pulse would spend the loudest signal we
+    /// have on the second-loudest thing and neither would read as urgent afterwards. His words were
+    /// "red AND an error", and this is the only mark that is both.
+    ///
+    /// ⚠️ The choice lives HERE rather than at the call sites because the last time a pulse
+    /// decision was made per-call-site, five of them pulsed the words instead of the mark.
+    pub(crate) fn shape(self) -> PulseShape {
+        match self {
+            Self::Refused => DREAD,
+            _ => ATTENTION,
+        }
+    }
+
     /// The mark on its own, pulsing when asked. Every other span on the row stays steady.
     pub(crate) fn span(self, palette: &Palette, tick: u64, pulse_enabled: bool) -> Span<'static> {
         Span::styled(
             format!("{} ", self.glyph()),
-            pulse(self.colour(palette), tick, pulse_enabled),
+            pulse_with(self.shape(), self.colour(palette), tick, pulse_enabled),
         )
     }
 }
@@ -228,6 +250,43 @@ mod tests {
                 "{mark:?} did not pulse its MARK across the cycle"
             );
         }
+    }
+
+    /// 🔴 **THE REFUSAL IS THE ONLY MARK ON THE DREAD PULSE, AND IT IS ASSERTED BOTH WAYS.**
+    ///
+    /// One half says `Refused` uses the slow heavy shape. The other says every other mark does
+    /// NOT — without it, a change that gave the whole vocabulary the dread pulse would pass, and
+    /// the loudest signal on the screen would have been spent on a queued row.
+    ///
+    /// ⚠️ It asserts on the RENDERED span at a tick where the two shapes disagree, not only on
+    /// `shape()`. `shape()` returning the right constant proves nothing if `span` stops reading it.
+    #[test]
+    fn only_the_refusal_mark_pulses_slowly() {
+        assert_eq!(Mark::Refused.shape(), DREAD);
+        for mark in Mark::ALL {
+            if mark == Mark::Refused {
+                continue;
+            }
+            assert_eq!(mark.shape(), ATTENTION, "{mark:?} took the dread pulse");
+        }
+
+        // Tick 20 is inside ATTENTION's second (damped) half and inside DREAD's long dark, so it
+        // cannot separate them. Tick 30 can: ATTENTION is back at full strength (30 % 28 == 2),
+        // DREAD is still dark (30 % 56 == 30). A mark that quietly reverted to the fast cycle
+        // shows full colour here.
+        let palette = ScreenTheme::Dark.palette();
+        let refused = Mark::Refused.span(&palette, 30, true);
+        assert_ne!(
+            refused.style.fg,
+            Some(palette.red),
+            "the refusal was at full strength 1.5s into its cycle — that is the fast pulse"
+        );
+        let queued = Mark::Queued.span(&palette, 30, true);
+        assert_eq!(
+            queued.style.fg,
+            Some(palette.dim),
+            "a queued row is on the ordinary pulse and should be lit at tick 30"
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-── cost · ctrl+m locks a role ────────────────────────────────────────────────────────────────────────────────────────
+── cost · enter locks a role ─────────────────────────────────────────────────────────────────────────────────────────
 
     model                 provider       in/M     out/M  run spend  role
 ●   claude-opus-5         anthropic     $5.00    $25.00      $2.41  plan       locked by you

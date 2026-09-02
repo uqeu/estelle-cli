@@ -716,9 +716,7 @@ async fn no_credit_outcome_disables_reset_entry_in_usage_menu() {
         )),
     ));
     assert_eq!(chat.available_rate_limit_reset_credits, None);
-    assert!(
-        render_bottom_popup(&chat, /*width*/ 80).contains("That reset is no longer available.")
-    );
+    assert!(render_bottom_popup(&chat, /*width*/ 80).contains("That reset is gone."));
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_matches!(rx.try_recv(), Ok(AppEvent::OpenRateLimitResetCredits));
 }

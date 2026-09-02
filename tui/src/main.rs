@@ -2669,6 +2669,11 @@ impl App {
             "diff" => self.toggle_diff_panel(),
             "todo" => self.toggle_todo_surface(),
             "settings" => self.picker = Some(PickerSurface::settings(self)),
+            // 🔴 **`/theme` EXISTS BECAUSE THE FOUNDER ASKED WHY IT DID NOT** (2026-09-02). It
+            // opens the SAME `PickerSurface::themes` that `/settings` row 2 opens, so the palette
+            // has one owner and one save path; a second theme surface would be a second answer to
+            // "which theme is in force" within a week.
+            "theme" => self.picker = Some(PickerSurface::themes(self)),
             "apply" => {
                 if let Some(refusal) = self.write_refusal() {
                     self.transcript.push(TranscriptEntry::System(refusal));
@@ -2973,7 +2978,7 @@ impl App {
         self.transcript.push(TranscriptEntry::Command {
             name: "context".to_string(),
             lines: vec![format!(
-                "Grounding context side panel {}. Alt+M or /context toggles it.",
+                "Grounding context side panel {}. ctrl+g or /context toggles it.",
                 if self.context_panel_visible {
                     "opened"
                 } else {
@@ -8199,6 +8204,40 @@ mod tests {
             "Ask about uqeu/estelle",
         );
 
+        // 🔴 **THE GROUNDING PANE, AS ITS OWN FRAME.** The design book's screen 8 is *"Grounding
+        // context: what the answer was built on"* and it had no frame of its own — it cited
+        // `02-orchestra-active right pane`, so the generator spliced the WHOLE orchestra picture
+        // into it and the book carried the same image under two different screens. The founder
+        // read that and said there were duplicates.
+        //
+        // ⚠️ A pane shown as a sliver of another screen is not the same claim as a pane shown as
+        // the subject. This is the same `render_context_panel` the live app calls, with no fleet
+        // beside it, so the reader is looking at what the pane is FOR rather than at where it sits.
+        let mut grounding = test_app();
+        grounding.prod_panel_visible = false;
+        grounding.context_panel_visible = true;
+        grounding.header.indexed = Some(true);
+        grounding.header.files = Some(1_993);
+        grounding.citations = vec![Source {
+            file: "billing/charge.rs".to_string(),
+            line: Some(82),
+            extra: serde_json::Map::from_iter([(
+                "symbol".to_string(),
+                Value::String("charge_card".to_string()),
+            )]),
+        }];
+        grounding.working_memory_paths = vec![
+            "billing/charge.rs · local, not pushed".to_string(),
+            "billing/retry.rs · local, not pushed".to_string(),
+        ];
+        capture(
+            "08-grounding-context",
+            &grounding,
+            130,
+            30,
+            "Working memory · local request context",
+        );
+
         // 🔴 THE FIXTURE USED TO DATE EVERY WORKER IN THE YEAR 2100, SO THE `last seen` COLUMN SAID
         // `clock ahead` ON ALL EIGHT ROWS AND THE FOUNDER READ A COLUMN OF ONE REPEATED WORD.
         //
@@ -8590,7 +8629,10 @@ mod tests {
         // screen is a decision somebody makes on purpose.
         assert_eq!(
             names.len(),
-            18 + design_book::SCREENS.len(),
+            // 19 live-renderer states plus one frame per book screen. It was 18 until
+            // `08-grounding-context` was given a frame of its own — screen 8 had been pointing at
+            // `02-orchestra-active`'s right pane, so the book drew one picture under two screens.
+            19 + design_book::SCREENS.len(),
             "the gallery changed size: {names:?}"
         );
 
@@ -8601,6 +8643,13 @@ mod tests {
 
         if let Some(output) = output.as_deref() {
             test_gallery::write_index(output, &names);
+            // The book's badge, derived from the one owner of "does live state exist for this
+            // screen" rather than hand-typed into the HTML. See `test_gallery::write_contracts`.
+            let contracts = design_book::SCREENS
+                .iter()
+                .map(|screen| (screen.name, screen.contract))
+                .collect::<Vec<_>>();
+            test_gallery::write_contracts(output, &contracts);
         }
     }
 
@@ -9373,6 +9422,75 @@ mod tests {
         );
     }
 
+    /// 🔴 **`/theme` REACHES THE SAME PICKER `/settings` ROW 2 REACHES, AND THAT IS THE POINT.**
+    ///
+    /// The founder, 2026-09-02: *"There's no slash theme command. Well shouldn't you make a theme
+    /// command then?"* It had been on `DROPPED_COMMANDS` as a Codex-only name, which was wrong —
+    /// the CLI ships two first-class palettes.
+    ///
+    /// ⚠️ **THE TEST DRIVES THE COMMAND THROUGH `submit`, NOT `handle_local_command`.** A dispatch
+    /// arm can be present and unreachable: that is exactly how `/logout` came to be advertised and
+    /// refused for months, with its 40-line implementation dead. So this goes through the resolver
+    /// the user's keystrokes go through, and asserts the picker that OPENS is the same surface —
+    /// same rows, same actions — that the settings row opens. Two theme surfaces would be two
+    /// answers to "which theme is in force" inside a week.
+    #[test]
+    fn slash_theme_opens_the_one_theme_picker_the_settings_row_opens() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        // The resolver must know the name at all. `/theme` answered "unknown command" before this.
+        assert_eq!(commands::resolve_session_name("theme"), Some("theme"));
+
+        let mut typed = test_app();
+        typed.submit("/theme".to_string(), &tx);
+        let opened = typed.picker.as_ref().expect("/theme opened no picker");
+
+        let reference = PickerSurface::themes(&test_app());
+        assert_eq!(opened.title, reference.title);
+        assert_eq!(
+            opened
+                .rows
+                .iter()
+                .map(|row| row.label.clone())
+                .collect::<Vec<_>>(),
+            reference
+                .rows
+                .iter()
+                .map(|row| row.label.clone())
+                .collect::<Vec<_>>(),
+            "/theme opened a different list from the settings row"
+        );
+
+        // And it actually switches the renderer, driven from the command rather than from a
+        // hand-placed `app.theme = …`.
+        assert_eq!(typed.theme, Theme::Dark);
+        handle_key(
+            &mut typed,
+            KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+            &tx,
+        );
+        handle_key(
+            &mut typed,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &tx,
+        );
+        assert_eq!(
+            typed.theme,
+            Theme::CreamInk,
+            "/theme did not change the theme"
+        );
+
+        // 🔴 THE HALF THAT IS NOT ABOUT `/theme`. A command that resolves but is advertised
+        // nowhere is discoverable only by someone who already knows it exists — the inverse of
+        // the `/logout` defect and just as invisible.
+        assert!(
+            commands::help_lines()
+                .iter()
+                .any(|line| line.starts_with("/theme")),
+            "/theme resolves but /help does not list it"
+        );
+    }
+
     #[test]
     fn cream_theme_never_paints_visible_text_in_its_background_colour() {
         let mut app = test_app();
@@ -9654,13 +9772,13 @@ mod tests {
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 30);
 
         assert!(
-            rendered.contains("── context · alt+m · /context"),
+            rendered.contains("── context · ctrl+g · /context"),
             "{rendered}"
         );
         assert!(rendered.contains("Repo graph"));
         assert!(rendered.contains("billing.py:88"));
         assert!(rendered.contains("charge_card"));
-        assert!(rendered.contains("Alt+M"));
+        assert!(rendered.contains("ctrl+g"));
         assert!(rendered.contains("/context"));
     }
 
@@ -12841,6 +12959,67 @@ mod tests {
         }
     }
 
+    /// 🔴 **THE `alt+<letter>` RULE, ENFORCED INSTEAD OF COMMENTED.**
+    ///
+    /// `handle_key` carried a rule reading *"NEVER BIND `alt+<letter>` IN THIS BINARY"* and, four
+    /// lines above it, an `alt+m` binding — with `alt+m → µ` named in the rule's own worked example.
+    /// The founder found it by reading the design book, not the code. **A rule beside its own
+    /// violation reads as being obeyed**, which is why this one is now a check that can go red.
+    ///
+    /// It scans this file's own source with comments stripped, so the rule's prose (which must keep
+    /// saying `alt+m` — it is the example) cannot trip it and cannot satisfy it either.
+    ///
+    /// ⚠️ **`alt+<arrow>` IS DELIBERATELY NOT CAUGHT.** Option+Arrow is not composed into a
+    /// character on macOS; it arrives as a modified key event, and `main.rs` binds it for session
+    /// switching. The defect is Option-as-COMPOSE, which only affects letters, so the guard is
+    /// scoped to `KeyCode::Char` — a guard scoped to "any ALT" would be red on correct code and
+    /// suppressed inside a week.
+    ///
+    /// ⚠️ **LIMIT, STATED:** this proves no such binding is WRITTEN. It cannot prove a terminal
+    /// delivers `ctrl+g`, which is the same gap that let `alt+s` ship.
+    #[test]
+    fn no_alt_letter_chord_is_bound_anywhere_in_this_binary() {
+        const SOURCE: &str = include_str!("main.rs");
+
+        let code: Vec<&str> = SOURCE
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect();
+
+        // A positive test for ALT — `!key.modifiers.contains(..)` is an EXCLUSION and is fine.
+        let binds_alt = |line: &str| {
+            line.contains("modifiers.contains(KeyModifiers::ALT)")
+                && !line.contains("!key.modifiers.contains(KeyModifiers::ALT)")
+                && !line.contains("!chord.modifiers.contains(KeyModifiers::ALT)")
+        };
+
+        let mut positive = 0_usize;
+        for (index, line) in code.iter().enumerate() {
+            if !binds_alt(line) {
+                continue;
+            }
+            positive += 1;
+            // The condition may wrap; a chord is a small statement, so a four-line window around
+            // the modifier test covers both `A && B` orders without reaching the next binding.
+            let window = code[index.saturating_sub(2)..(index + 2).min(code.len())].join(" ");
+            assert!(
+                !window.contains("KeyCode::Char("),
+                "an alt+<letter> chord is bound at main.rs line {}: macOS composes it into a \
+                 character and sends no key event at all — use a ctrl chord\n{window}",
+                index + 1
+            );
+        }
+
+        // 🔴 THE POSITIVE CONTROL. With zero positive ALT sites the loop above passes over a file
+        // that binds nothing, which is the vacuity shape this repo has paid for repeatedly. There
+        // is exactly one legitimate ALT binding today (alt+left/right, session switching); if that
+        // ever goes away this floor is the thing that says the guard stopped measuring anything.
+        assert!(
+            positive >= 1,
+            "no ALT binding was examined at all — this guard measured nothing"
+        );
+    }
+
     /// 🔴 **THE TOGGLE IS A CONTROL CHORD, AND THAT IS THE WHOLE POINT OF THIS TEST.**
     ///
     /// `alt+s` shipped for one commit and never fired on macOS: Option is a COMPOSE modifier
@@ -13438,6 +13617,73 @@ mod tests {
             buffer[(0, last + 1)].bg,
             tint,
             "the row below is lifted too"
+        );
+        // 🔴 THE CLAUSE THIS TEST WAS MISSING, AND IT COST THE DEMO'S MOST VISIBLE DEFECT.
+        // Everything above measures the band's WIDTH and its CONTIGUITY and says nothing about
+        // its HEIGHT — so three banded rows around one line of text satisfied every assertion in
+        // it. Every row the ground is painted on must carry ink.
+        for row in &banded {
+            let text: String = (0..buffer.area.width)
+                .map(|x| buffer[(x, *row)].symbol())
+                .collect();
+            assert!(
+                !text.trim().is_empty(),
+                "row {row} is a blank banded row — the band is taller than the message"
+            );
+        }
+    }
+
+    /// 🔴 **ONE SELECTION BAND, PAINTED THREE TIMES.** The founder's session-home screenshot shows
+    /// *"What changed while I was away?"* — a single line — inside a fat block of ground with the
+    /// sentence floating in the middle. `UserHistoryCell::display_lines` opens and closes with
+    /// `Line::from("")` as spacing between history cells, correct where it was written because
+    /// nothing there paints a ground; `history_transcript` banded EVERY line it returned, so a
+    /// one-line prompt rendered as an empty band, the text, and another empty band.
+    ///
+    /// ⚠️ **ASSERTED ON THE RENDERED BUFFER, NOT ON THE LINE VECTOR.** A background is not a
+    /// character: `display_lines` can be perfectly correct and the paint still wrong, which is
+    /// exactly what happened. This is the same discipline that caught the tab-strip gutters, where
+    /// a self-consistent column spec drew gaps of 7/6/6/6.
+    ///
+    /// ⚠️ Cream Ink on purpose — `user_turn_background` blends against a terminal background that
+    /// is `None` in any test, so a Dark fixture would assert nothing.
+    #[test]
+    fn a_one_line_user_turn_paints_exactly_one_banded_row() {
+        const WIDTH: u16 = 80;
+        assert!(
+            session_view::split(WIDTH).is_none(),
+            "this test's premise is a single-column frame"
+        );
+        let mut app = test_app();
+        app.theme = Theme::CreamInk;
+        let tint = user_turn_background(app.theme).expect("cream ink has a known band colour");
+        // The founder's own screenshot, verbatim, and short enough that it cannot wrap at 80.
+        let question = "What changed while I was away?".to_string();
+        assert!(
+            question.chars().count() < usize::from(WIDTH) - 4,
+            "the premise is a message that does not wrap"
+        );
+        app.transcript.push(TranscriptEntry::User(question.clone()));
+
+        let buffer = rendered_buffer_at_size(&app, Instant::now(), WIDTH, 32);
+        let banded = (0..buffer.area.height)
+            .filter(|y| buffer[(0, *y)].bg == tint)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            banded.len(),
+            1,
+            "one line of text painted {} banded rows: {banded:?}",
+            banded.len()
+        );
+        // ⚠️ The positive control. `banded.len() == 1` would also hold if the band had moved onto
+        // some unrelated row, so the one painted row is asserted to be the one carrying the words.
+        let text: String = (0..buffer.area.width)
+            .map(|x| buffer[(x, banded[0])].symbol())
+            .collect();
+        assert!(
+            text.contains("What changed while I was away?"),
+            "the banded row is not the message row: {text:?}"
         );
     }
 
