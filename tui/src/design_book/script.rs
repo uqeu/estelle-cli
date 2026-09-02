@@ -372,11 +372,11 @@ mod tests {
         // FINISHED THE JOB.** Each needle is a beat a silent viewer has to see, so trimming a beat
         // is a test failure rather than a quiet loss of the film's whole argument.
         for statement in [
-            "billing/hooks.py",                   // 1 · it read his actual repo
-            "reached your Anthropic usage limit", // 2 · the wall, and it is a cap, not an outage
-            "All ten workers stopped",            // 3 · ten subagents die at once
-            "the decisions from steps 1 to 4",    // 3b · the plan and the work survive it
-            "$52.65",                             // 4 · cost is the REASON he moves
+            "billing/hooks.py",                      // 1 · it read his actual repo
+            "reached your Anthropic usage limit",    // 2 · the wall, and it is a cap, not an outage
+            "All ten workers stopped",               // 3 · ten subagents die at once
+            "the decisions from steps 1 to 4",       // 3b · the plan and the work survive it
+            "$52.65",                                // 4 · cost is the REASON he moves
             "codex",        // 5 · a plan he already pays for does the thinking
             "this machine", // 6 · his own hardware does the writing
             "the worker has no data for this event", // 7 · why it went and looked, unprompted

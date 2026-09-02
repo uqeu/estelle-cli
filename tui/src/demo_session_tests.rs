@@ -245,44 +245,80 @@ fn the_frame_fills_every_width_and_degrades_below_the_split_threshold() {
 /// ⚠️ It reads the SESSION column only. The production rail draws its own text on the same terminal
 /// rows, so a whole-row read finds rail content on a row the band lit blank — the same trap the
 /// sibling lane documented when they fixed it.
+/// ⚠️ **THE SAMPLE MOMENT IS FOUND, NEVER INDEXED — AND THIS GUARD WAS PINNED AT `20_000` MS.**
+///
+/// A hard-coded timecode is a POSITION in script data the founder reorders, which is the same
+/// defect `credential_lines` and `gate_settles_at` were each corrected for once already
+/// (*"it was `SOLO[2]`, then `SOLO[10]`, and both went stale the moment a beat moved"*). It went
+/// stale exactly as predicted: film 1 lost eight human turns and its first reply grew from ~14 s to
+/// ~24 s, so at 20 s the frame sits deep inside beat 1's reply and his turn has legitimately
+/// scrolled out of a 44-row viewport. **The film was not broken; the clock the guard read was.**
+///
+/// ⚠️ **AND THE REPLACEMENT IS STRICTLY STRONGER, NOT MERELY GREENER.** One sample proved the band
+/// exists ONCE. This derives the moment from the `Submit` cues themselves and presses the first
+/// three of them, so the property is now *"his turn wears the band every time he sends one"* —
+/// which is the sentence the founder actually complained about (*"it's impossible to tell who sent
+/// the message"*) rather than a fact about one frame.
+const AFTER_SUBMIT_MS: u32 = 400;
+
 #[test]
 fn the_users_own_turn_is_the_only_thing_wearing_the_band() {
     let film = script::film(1).expect("film 1");
-    let mut app = film_app(film);
-    let now = Instant::now();
-    let mut paintings = Vec::new();
-    // Far enough in that a user turn and a reply are both on screen.
-    for step in cue_sheet(film, true, PANE) {
-        if step.at_ms > 20_000 {
-            break;
-        }
-        apply(&step.cue, &mut app, now, &mut paintings);
-    }
-    let mut terminal = Terminal::new(TestBackend::new(WIDE, TALL)).expect("test terminal");
-    terminal
-        .draw(|frame| live_renderer::render_frame(frame, &app, now))
-        .expect("draw");
-    let buffer = terminal.backend().buffer().clone();
-
-    let tint = Theme::Dark.screen_palette().tint;
-    let banded: Vec<u16> = (0..buffer.area.height)
-        .filter(|y| {
-            // Session column only — the rail starts well past column 60 on a 150-wide frame.
-            (2..60).any(|x| buffer[(x, *y)].style().bg == Some(tint))
+    let steps = cue_sheet(film, true, PANE);
+    let submits: Vec<u32> = steps
+        .iter()
+        .filter_map(|step| match step.cue {
+            Cue::Submit(_) => Some(step.at_ms),
+            _ => None,
         })
         .collect();
+    // The vacuity half: a loop over an empty list passes without rendering anything at all.
     assert!(
-        !banded.is_empty(),
-        "no row wears the user band — his message is indistinguishable from Estelle's"
+        submits.len() >= 3,
+        "film 1 sends {} turns — this guard is measuring an empty film",
+        submits.len()
     );
-    // Every banded row carries text. "Exactly one band" passes on the broken frame too, since the
-    // three lit rows there were consecutive; what separates them is whether a lit row is blank.
-    for y in &banded {
-        let text: String = (2..60).map(|x| buffer[(x, *y)].symbol()).collect();
+
+    for at in submits.iter().take(3) {
+        let sent = at + AFTER_SUBMIT_MS;
+        let mut app = film_app(film);
+        let now = Instant::now();
+        let mut paintings = Vec::new();
+        for step in &steps {
+            if step.at_ms > sent {
+                break;
+            }
+            apply(&step.cue, &mut app, now, &mut paintings);
+        }
+        let mut terminal = Terminal::new(TestBackend::new(WIDE, TALL)).expect("test terminal");
+        terminal
+            .draw(|frame| live_renderer::render_frame(frame, &app, now))
+            .expect("draw");
+        let buffer = terminal.backend().buffer().clone();
+
+        let tint = Theme::Dark.screen_palette().tint;
+        let banded: Vec<u16> = (0..buffer.area.height)
+            .filter(|y| {
+                // Session column only — the rail starts well past column 60 on a 150-wide frame.
+                (2..60).any(|x| buffer[(x, *y)].style().bg == Some(tint))
+            })
+            .collect();
         assert!(
-            !text.trim().is_empty(),
-            "row {y} is lit but blank — the band is painted over its own padding again"
+            !banded.is_empty(),
+            "no row wears the user band {AFTER_SUBMIT_MS} ms after the turn he sent at {at} ms — \
+             his message is indistinguishable from Estelle's"
         );
+        // Every banded row carries text. "Exactly one band" passes on the broken frame too, since
+        // the three lit rows there were consecutive; what separates them is whether a lit row is
+        // blank.
+        for y in &banded {
+            let text: String = (2..60).map(|x| buffer[(x, *y)].symbol()).collect();
+            assert!(
+                !text.trim().is_empty(),
+                "row {y} is lit but blank at {sent} ms — the band is painted over its own padding \
+                 again"
+            );
+        }
     }
 }
 
