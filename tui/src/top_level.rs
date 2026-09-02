@@ -1216,7 +1216,7 @@ async fn ground_hook(
         &path,
         repo,
         ground_block::blocking_enabled(),
-        || ground_block::index_is_current(repo.as_str(), root),
+        || index_is_current_for(repo, root),
     )])
 }
 
@@ -1244,6 +1244,41 @@ fn ground_envelope(
         FlaggedOutcome::NotOptedIn
     };
     ground_report(verdict, outcome, name, path, repo).envelope()
+}
+
+/// The key the freshness stamp may be filed under, or `None` when no repository was identified.
+///
+/// 🔴 **`Repo::default()` IS `"unknown/repo"`, NOT EMPTY, AND THAT ALMOST BOUGHT A FALSE BLOCK.**
+/// `ground_block`'s own guard only refuses a blank key, so an unidentified caller would have
+/// stamped and read a shared `unknown/repo` entry — two different unrecognised trees agreeing that
+/// each other's index is current, in the one direction that REFUSES REAL CODE. `repo.rs:34` states
+/// the rule that catches this: *"one owner for that question, because the alternative is every rule
+/// comparing against the placeholder string itself and one of them getting it wrong."* This is that
+/// one owner for the freshness signal, and `Repo::is_unresolved` is the only thing it asks.
+fn freshness_key(repo: &Repo) -> Option<&str> {
+    (!repo.is_unresolved()).then(|| repo.as_str())
+}
+
+/// Whether Estelle's index is current for THIS repo. An unidentified repo is never current.
+fn index_is_current_for(repo: &Repo, root: &Path) -> bool {
+    let Some(stamp) = ground_block::stamp_path() else {
+        return false;
+    };
+    index_is_current_at_for(&stamp, repo, root)
+}
+
+/// The testable half — the stamp path is a parameter so the placeholder guard is proven with a
+/// real stamp on disk rather than by reading the call site.
+fn index_is_current_at_for(stamp: &Path, repo: &Repo, root: &Path) -> bool {
+    freshness_key(repo).is_some_and(|key| ground_block::index_is_current_at(stamp, key, root))
+}
+
+/// Record that this repo's index just became current. Silent for an unidentified repo, because a
+/// stamp under the placeholder is a licence to refuse edits in a tree we could not name.
+fn mark_index_current(repo: &Repo) {
+    if let Some(key) = freshness_key(repo) {
+        ground_block::mark_indexed(key);
+    }
 }
 
 /// The subject of the abstention sentences when the payload named no file. An empty `{name}` reads
@@ -1377,7 +1412,7 @@ async fn sync_hook(payload: &HookPayload, repo: &Repo, root: &Path) -> Result<Ve
         // reindex that stamped would make a stale index look current, which is a false block on
         // real code. Best-effort — a stamp we cannot write costs a block, never causes one.
         Ok(_) => {
-            ground_block::mark_indexed(repo.as_str());
+            mark_index_current(repo);
             Ok(Vec::new())
         }
         Err(error) => Ok(vec![hook_message(
@@ -2788,7 +2823,7 @@ async fn reindex(
     // fail independently, so "the sweep returned" is not "the index holds this repo". After a
     // sweep the gate stays advisory until a reindex lands — the direction that costs a block
     // rather than causing one.
-    ground_block::mark_indexed(repo.as_str());
+    mark_index_current(repo);
     lines.push("Memory current. Untouched files kept their symbols.".to_string());
     lines.extend(dropped_lines(&response));
     Ok(lines)
@@ -4646,6 +4681,44 @@ mod tests {
         assert!(
             !ground_block::FRESHNESS_SKIP_DIRECTORIES.is_empty(),
             "an empty skip list would make this guard vacuous"
+        );
+    }
+
+    /// 🔴 **AN UNIDENTIFIED REPO MUST NEVER READ AS "CURRENT".** `Repo::default()` is the
+    /// placeholder `"unknown/repo"`, not an empty string, so the freshness layer's own blank-key
+    /// guard does not catch it: without this, two different unrecognised trees would share one
+    /// stamp entry and each would vouch for the other's index — a refusal of REAL code in a repo
+    /// Estelle could not even name. Proven with a real, deliberately future-dated stamp on disk,
+    /// so the test cannot pass by the walk failing for some unrelated reason.
+    #[test]
+    fn an_unidentified_repo_is_never_current_even_with_a_future_stamp() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let root = home.path().join("repo");
+        fs::create_dir_all(&root).expect("root");
+        fs::write(root.join("module.py"), b"def go(): pass\n").expect("write");
+        let stamp = home.path().join("reindex-stamp.json");
+        let far_future = 4_102_444_800.0_f64; // 2100-01-01, newer than any mtime here
+        let named = Repo::new("acme/widgets").expect("repo");
+        let unresolved = Repo::default();
+
+        assert_eq!(freshness_key(&named), Some("acme/widgets"));
+        assert_eq!(
+            freshness_key(&unresolved),
+            None,
+            "the placeholder {unresolved} must never become a stamp key"
+        );
+
+        // The POSITIVE CONTROL first: if a named repo did not read as current here, the negative
+        // below would pass for the wrong reason and this guard would prove nothing.
+        ground_block::mark_indexed_at(&stamp, named.as_str(), far_future).expect("stamp");
+        assert!(index_is_current_at_for(&stamp, &named, &root));
+
+        // Now plant the placeholder key by hand — the only way it could ever exist — and confirm
+        // the guard refuses to read it.
+        ground_block::mark_indexed_at(&stamp, unresolved.as_str(), far_future).expect("stamp");
+        assert!(
+            !index_is_current_at_for(&stamp, &unresolved, &root),
+            "a repo we could not identify must stay advisory whatever the stamp says"
         );
     }
 
