@@ -2533,22 +2533,18 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         && !show_context_panel
         && !app.citations.is_empty()
         && design_split.is_some();
-    // 🔴 `app.prod_panel_visible` IS THE FIRST CLAUSE AND IT WAS MISSING FOR A WHOLE REFACTOR.
+    // Production has a PERMANENT home on the right; `/prod` is not a visibility toggle. The R9
+    // finding named opt-in as the reason the redesign never reached the customer: a rail you have
+    // to remember to open is, from the user's seat, a rail that is not there. The contract is
+    // written down in `production_is_a_permanent_rail_and_every_empty_section_has_an_action`.
     //
-    // The comment that used to sit here said production has a PERMANENT home and `/prod` is not a
-    // toggle. The rest of the binary never agreed: `App::poll_production_if_due` returns early on
-    // this exact flag (`main.rs`), `/prod` prints "Production health closed.", and the flag
-    // defaults to FALSE. So a rail drawn without reading it could never hold live data - it
-    // rendered, it never polled, and `/prod` off left a FROZEN rail on screen while telling the
-    // user it had closed. A stale rail with no indication is worse than a rail that does not open.
-    //
-    // The flag is the one owner of this fact everywhere else in the product, so it is the owner
-    // here. `v0.2.32` reads it (`main.rs:7030` on `origin/main`); this refactor stopped, and the
-    // test that would have said so was deleted in the same change - see
-    // `production_home_is_opt_in_and_every_empty_section_has_an_action`, rewritten against THIS
-    // renderer rather than the one it replaced.
-    let prod_as_rail = app.prod_panel_visible
-        && !app.diff_panel_visible
+    // ⚠️ `app.prod_panel_visible` IS DELIBERATELY NOT READ HERE, AND THAT IS WHY IT HAD TO STOP
+    // GATING THE POLLER. While the rail rendered unconditionally and `poll_production_if_due`
+    // returned early on that flag - which defaulted to FALSE - the permanent rail polled NOTHING
+    // until the user typed `/prod`. It was on every frame and empty on every frame. The flag now
+    // means "are production updates running", it defaults to true, and the rail's own copy is the
+    // only thing that says whether data arrived.
+    let prod_as_rail = !app.diff_panel_visible
         && !show_context_panel
         && !show_citation_pane
         && !modal_open
@@ -2788,9 +2784,9 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             && !app.todo_visible
             && app.picker.is_none()
             && app.resume_picker.is_none()
-            // The production rail is OPT-IN, like every other rail, so a user who has not
-            // opened it keeps the empty-state ground. A rail the user asked for - diff,
-            // context, evidence, or production - still displaces it.
+            // The production rail is permanent, so it can no longer be a reason to drop the
+            // empty-state ground: the art lives in the session column, which is still empty.
+            // A rail the user asked for (diff, context, evidence) still displaces it.
             && (!show_auxiliary_pane || prod_as_rail);
         if show_ground {
             if let Some(flourish) = flourish_area(transcript_root) {

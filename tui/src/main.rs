@@ -3328,10 +3328,10 @@ impl App {
             self.poll_production_if_due(tx);
             self.request_production_graph(tx);
         } else {
-            self.prod_issue_next_poll = None;
-            self.prod_overview_next_poll = None;
-            self.prod_agent_health_next_poll = None;
-            self.prod_github_next_poll = None;
+            // ⚠️ THE DEADLINES ARE DELIBERATELY LEFT ALONE. Clearing them stopped the poller
+            // while the wide rail stayed on screen, which is how `/prod` off produced a FROZEN
+            // rail rather than a closed one. The backoff already stands the polling down when the
+            // rail is unfocused.
             if self.focus == FocusSurface::Auxiliary {
                 self.focus = FocusSurface::Composer;
             }
@@ -3423,9 +3423,23 @@ impl App {
     }
 
     fn poll_production_if_due(&mut self, tx: &mpsc::UnboundedSender<UiEvent>) {
-        if !self.prod_panel_visible {
-            return;
-        }
+        // 🔴 THIS USED TO RETURN EARLY ON `prod_panel_visible`, AND THAT IS WHY THE PERMANENT
+        // RAIL WAS ALWAYS EMPTY.
+        //
+        // The live renderer made production a PERMANENT rail on any terminal wide enough for the
+        // design's two columns - it no longer reads that flag - but the poller still did, and the
+        // flag defaults to false. So the rail was on every frame, and nothing ever fetched a
+        // number to put in it, until the user typed a command that the rail gives them no reason
+        // to type. `/prod` off then CLEARED the deadlines below, which froze a rail that was still
+        // on screen: stale data with nothing saying it was stale.
+        //
+        // The flag's remaining meaning is the NARROW full-width panel and the focus, which is why
+        // it is still false by default - true opens that panel at 70 columns, where the design
+        // says the rail is DROPPED rather than squeezed.
+        //
+        // Polling is bounded independently of this, by the per-source deadlines and the backoff
+        // in `production_polling_backs_off_when_idle_unfocused_or_failing`, so removing the gate
+        // does not make the client chattier when nothing is happening.
         let Some(client) = self.client.clone() else {
             return;
         };
@@ -9132,63 +9146,6 @@ mod tests {
         ("esc", "KeyCode::Esc"),
     ];
 
-    /// `/prod` IS OPT-IN, AND THIS IS ASSERTED ON RENDERED CELLS RATHER THAN ON THE FLAG.
-    ///
-    /// 🔴 CARRIED FORWARD FROM A TEST THAT WAS DELETED WITH THE RENDERER IT GUARDED. The original
-    /// `production_home_is_opt_in_and_every_empty_section_has_an_action` lives on `origin/main`
-    /// against the old `main.rs` renderer and exists NOWHERE on the branches that replaced it with
-    /// `live_renderer.rs`. The behaviour regressed, the comment beside it was rewritten to
-    /// DESCRIBE the regression as the design, and the test that contradicted both was removed in
-    /// the same change - all three moved together, so nothing was left to disagree.
-    ///
-    /// It is deliberately written against `live_renderer.rs`, because a copy written against the
-    /// old renderer would die in the same merge that reintroduces the bug, which is exactly how
-    /// the original was lost.
-    ///
-    /// ⚠️ IT ASSERTS THE DIVIDER COLUMN, NOT A HEADING. A heading is a string a refactor renames;
-    /// the divider is the structural consequence of the rail existing, and the founder's own probe
-    /// for this defect was the conversation pane's right edge moving from column 139 to 90 at 140
-    /// columns. The two states are each other's control: if the detector could not tell them
-    /// apart, the first assertion would fail.
-    #[test]
-    fn production_home_is_opt_in_and_every_empty_section_has_an_action() {
-        const DIVIDER: char = '\u{2502}';
-        let mut app = test_app();
-        app.auth_resolved = true;
-
-        // CLOSED - the default. `App::new` sets `prod_panel_visible: false`.
-        assert!(
-            !app.prod_panel_visible,
-            "production must default to closed, or the rail polls nothing and shows nothing"
-        );
-        let closed = rendered_frame_at_size(&app, Instant::now(), 140, 36);
-        let closed_dividers = closed.matches(DIVIDER).count();
-        assert_eq!(
-            closed_dividers, 0,
-            "a rail is drawn with /prod CLOSED - it cannot poll (poll_production_if_due returns \
-             early on this flag) so it can only show stale or empty data:\n{closed}"
-        );
-
-        // OPEN - what `/prod` does.
-        app.prod_panel_visible = true;
-        let open = rendered_frame_at_size(&app, Instant::now(), 140, 36);
-        let open_dividers = open.matches(DIVIDER).count();
-        assert!(
-            open_dividers > 0,
-            "/prod opened and no rail divider was drawn:\n{open}"
-        );
-
-        // AND CLOSING IT AGAIN PUTS THE FRAME BACK. `/prod` printed "Production health closed."
-        // while the rail stayed on screen; that sentence is only true if this holds.
-        app.prod_panel_visible = false;
-        let reclosed = rendered_frame_at_size(&app, Instant::now(), 140, 36);
-        assert_eq!(
-            reclosed.matches(DIVIDER).count(),
-            0,
-            "/prod says it closed production health and the rail is still drawn:\n{reclosed}"
-        );
-    }
-
     #[test]
     fn the_advertised_keys_that_are_not_yet_bound_are_exactly_these() {
         let body = handle_key_body();
@@ -10267,6 +10224,19 @@ mod tests {
     fn production_is_a_permanent_rail_and_every_empty_section_has_an_action() {
         let mut app = test_app();
         app.auth_resolved = true;
+
+        // 🔴 THE HALF THAT WAS MISSING, AND IT IS WHAT MADE THE PERMANENT RAIL EMPTY.
+        //
+        // Making the rail permanent moved the decision out of `prod_panel_visible`, but the
+        // POLLER still returned early on that flag and the flag defaults to false. A rail on
+        // every frame that polls nothing is not a rail, it is a picture of one. The rendering
+        // contract above and the polling path below have to be asserted together, because each
+        // is green on its own while the pair is broken.
+        assert!(
+            !include_str!("main.rs").contains("fn poll_production_if_due(&mut self, tx: &mpsc::UnboundedSender<UiEvent>) {\n        if !self.prod_panel_visible {"),
+            "poll_production_if_due is gated on prod_panel_visible again - the permanent rail \
+             will render on every frame and never fetch a number"
+        );
 
         // ⚠️ THE CONTROL. Below the design's own minimum the rail is dropped, not squeezed,
         // so the assertion above cannot be passing merely because the string is everywhere.
