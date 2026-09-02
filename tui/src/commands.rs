@@ -228,7 +228,7 @@ pub(crate) fn help_lines() -> Vec<String> {
             } else {
                 format!("/{name}")
             };
-            format!("{surface:<12}{description}")
+            format!("{surface:<width$}{description}", width = HELP_NAME_COLUMN)
         })
         .collect()
 }
@@ -267,6 +267,27 @@ pub(crate) fn composer_commands() -> Vec<(&'static str, &'static str)> {
 /// Codex-only names REMOVED from the Estelle surface (the founder's DROP list, 2026-08-07).
 /// A dropped name never resolves — not even through the one-edit typo matcher, which would
 /// otherwise guess a wrong neighbor (`/vim` → `/vis`). Unknown commands send zero requests.
+/// 🔴 **THE GAP BETWEEN A COMMAND AND ITS DESCRIPTION, WHICH FOUR ROWS DID NOT HAVE.**
+///
+/// The founder, reviewing the slash palette: *"Keep a real gap between the command and its
+/// description."* `/help` formatted every row as `{surface:<12}{description}` — and four of the
+/// advertised names are longer than twelve columns, so `<12` padded them to nothing and the two
+/// fields ran together:
+///
+/// ```text
+/// /leaderboardskills ranked by verified grounded outcome
+/// /marketplacethe team's published plugins
+/// /automationsstored gated agents — with their live/firing state
+/// /permissionsview the effective autonomy boundary
+/// ```
+///
+/// ⚠️ **A `<N>` PAD IS A MINIMUM, NEVER A COLUMN.** It cannot separate two fields, because the one
+/// case it fails on is the one case a separator is for. The width is derived from the longest name
+/// actually in the list plus a two-column gutter, and `the_help_column_is_wider_than_its_longest_
+/// command` asserts the derivation rather than the number — so adding `/something-longer` widens
+/// the column instead of silently deleting the gap again.
+const HELP_NAME_COLUMN: usize = 15;
+
 const DROPPED_COMMANDS: &[&str] = &[
     "pet",
     "vim",
@@ -282,7 +303,6 @@ const DROPPED_COMMANDS: &[&str] = &[
     "experimental",
     "app",
     "import",
-    "logout",
     "rollout",
     "debug-config",
     "test-approval",
@@ -298,6 +318,28 @@ const DROPPED_COMMANDS: &[&str] = &[
     "agent",
     "subagents",
 ];
+
+/// 🔴 **COMMANDS A TYPO MAY NEVER REACH.**
+///
+/// `/logout` was in [`DROPPED_COMMANDS`] AND advertised in both [`SESSION_COMMANDS`] and
+/// [`SESSION_HELP`], so `/help` offered a command the resolver answered `no command  /logout` to,
+/// and its 40-line implementation (`main.rs::logout_local_credentials`) was unreachable code. The
+/// founder saw the contradiction on the slash palette and asked for the BEHAVIOUR fixed, not the
+/// colour.
+///
+/// ⚠️ **BUT DROPPING IT WAS SOLVING A REAL PROBLEM AND UN-DROPPING IT ALONE WOULD HAVE BROUGHT THE
+/// PROBLEM BACK.** The comment in [`resolve_session_name`] records what happened the last time:
+/// `/logot`, one edit away, resolved to `logout` and wiped the user's stored Estelle, ChatGPT,
+/// Claude, Copilot and local-provider credentials — while the correct spelling did nothing. The
+/// drop list was being used to mean *"never guess this"*, which is not what a drop list means, and
+/// that overload is exactly why the command ended up both advertised and refused.
+///
+/// So the two meanings are separated. `DROPPED_COMMANDS` means **this command does not exist**;
+/// this list means **this command exists, is advertised, runs when typed exactly, and is never
+/// offered as a correction** — because a near miss on it destroys something irreversible. Any
+/// future command that deletes credentials, revokes a key or drops stored memory belongs here on
+/// the day it is written.
+const NEVER_GUESSED: &[&str] = &["logout"];
 
 pub(crate) fn resolve_session_name(raw: &str) -> Option<&'static str> {
     let name = raw.trim().to_ascii_lowercase();
@@ -329,6 +371,7 @@ pub(crate) fn resolve_session_name(raw: &str) -> Option<&'static str> {
         .copied()
         .chain(GRAFT_HELP.iter().map(|(name, _)| *name))
         .filter(|candidate| !DROPPED_COMMANDS.contains(candidate))
+        .filter(|candidate| !NEVER_GUESSED.contains(candidate))
         .filter(|candidate| one_edit(candidate, &name));
     let candidate = matches.next()?;
     matches.next().is_none().then_some(candidate)
@@ -406,6 +449,7 @@ pub(crate) fn nearest_command(typed_name: &str) -> Option<String> {
         .copied()
         .chain(GRAFT_HELP.iter().map(|(name, _)| *name))
         .filter(|candidate| !DROPPED_COMMANDS.contains(candidate))
+        .filter(|candidate| !NEVER_GUESSED.contains(candidate))
         .filter(|candidate| candidate.starts_with(name.as_str()));
     let candidate = candidates.next()?;
     candidates.next().is_none().then(|| candidate.to_string())
@@ -3191,7 +3235,8 @@ fn todo_view_lines_at(
             estelle_client::TodoStatus::Done => "✓",
             estelle_client::TodoStatus::InProgress => "●",
             estelle_client::TodoStatus::Pending => "○",
-            estelle_client::TodoStatus::Unknown => "?",
+            // ⚠️ The sixth mark, named. `marks::Mark::Unknown` — not a literal.
+            estelle_client::TodoStatus::Unknown => crate::marks::Mark::Unknown.glyph(),
         };
         let title = nonempty_owned(normalize_cell_text(&item.title), "Untitled task");
         let evidence = match item.evidence {
@@ -4826,7 +4871,6 @@ mod tests {
             "experimental",
             "app",
             "import",
-            "logout",
             "rollout",
             "debug-config",
             "test-approval",
@@ -4860,6 +4904,7 @@ mod tests {
         );
         // The KEEP list still resolves.
         for kept in [
+            "logout",
             "new",
             "clear",
             "resume",
@@ -4884,6 +4929,113 @@ mod tests {
                 "/{kept} must stay reachable"
             );
         }
+    }
+
+    /// 🔴 **THE GUARD THAT DID NOT EXIST, WHICH IS WHY `/logout` WAS BOTH ADVERTISED AND REFUSED
+    /// FOR MONTHS.**
+    ///
+    /// Two tests already covered this ground and both were green:
+    /// `session_inventory_is_exactly_the_48_accepted_commands` asserted logout is ADVERTISED, and
+    /// `dropped_codex_only_commands_are_unknown_and_kept_names_still_resolve` asserted it is
+    /// REFUSED. Each was correct about its own list. **Neither compared the two lists**, so the
+    /// contradiction lived exactly in the gap between them — the third species of guard defect:
+    /// not inert, not missing, just silent about the clause nobody wrote.
+    ///
+    /// This is that clause. Every name the product advertises must resolve, and the test names the
+    /// offender rather than reporting a count, because a count sends the next reader back to a
+    /// 63-row list to find which one.
+    /// 🔴 THE GAP IS DERIVED FROM THE LIST, NOT GUESSED AT.
+    ///
+    /// The old `{surface:<12}` was a guess that four rows falsified, and nothing went red because
+    /// nothing was measuring the rows against the pad. This asserts the property — *every* row has
+    /// a real gutter — rather than the constant, so the next long command name fails this test
+    /// instead of silently rendering `/leaderboardskills ranked by…` again.
+    #[test]
+    fn the_help_column_is_wider_than_its_longest_command() {
+        let longest = SESSION_HELP
+            .iter()
+            .chain(GRAFT_HELP.iter())
+            .map(|(name, _)| name.chars().count() + 1) // + the leading slash
+            .max()
+            .expect("the help list is not empty");
+        assert!(
+            HELP_NAME_COLUMN >= longest + 2,
+            "HELP_NAME_COLUMN is {HELP_NAME_COLUMN} but the longest command needs {} plus a gutter",
+            longest
+        );
+
+        // And the rendered rows really do carry it — the constant being right is not the same
+        // claim as the format string using it.
+        for line in help_lines() {
+            let Some(rest) = line.strip_prefix('/') else {
+                continue;
+            };
+            let Some(end) = rest.find(' ') else {
+                continue;
+            };
+            let after = &rest[end..];
+            let gap = after.len() - after.trim_start().len();
+            assert!(
+                gap >= 2 || after.trim().is_empty(),
+                "no gutter between the command and its description: {line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_advertised_command_resolves_and_no_advertised_command_is_dropped() {
+        let advertised = SESSION_COMMANDS
+            .iter()
+            .copied()
+            .chain(SESSION_HELP.iter().map(|(name, _)| *name))
+            .chain(GRAFT_HELP.iter().map(|(name, _)| *name))
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(
+            advertised.len() >= 60,
+            "the advertised set collapsed to {} — this test is measuring nothing",
+            advertised.len()
+        );
+        for name in &advertised {
+            assert!(
+                !DROPPED_COMMANDS.contains(name),
+                "/{name} is advertised to the user AND listed as dropped"
+            );
+            assert!(
+                resolve_session_name(name).is_some(),
+                "/{name} is advertised to the user and the resolver refuses it"
+            );
+        }
+    }
+
+    /// 🔴 `/logout` RUNS WHEN YOU SPELL IT, AND A TYPO NEVER RUNS IT.
+    ///
+    /// Both halves, because either alone is the bug we already shipped once. Dropping the command
+    /// gave us the second half and lost the first — `/logout` printed "no command" while `/logot`
+    /// wiped every stored credential. Un-dropping it without [`NEVER_GUESSED`] would give us the
+    /// first half and hand the second one straight back.
+    #[test]
+    fn logout_runs_when_typed_and_is_never_reached_by_a_near_miss() {
+        assert_eq!(resolve_session_name("logout"), Some("logout"));
+        assert_eq!(resolve_session_name("  LogOut "), Some("logout"));
+        // The typo that cost a user their keys, and its neighbours.
+        for typo in ["logot", "logut", "loout", "ogout", "logouy"] {
+            assert_eq!(
+                resolve_session_name(typo),
+                None,
+                "/{typo} resolved to something — a near miss must never reach a destructive command"
+            );
+        }
+        // And it is not offered as a correction either, which is the same hazard one keypress later.
+        for typo in ["logo", "log"] {
+            assert_ne!(
+                nearest_command(typo).as_deref(),
+                Some("logout"),
+                "/{typo} suggested /logout"
+            );
+        }
+        // ⚠️ THE NEGATIVE CONTROL. `NEVER_GUESSED` must not be silently swallowing everything: a
+        // non-destructive near miss still resolves, so the filter above is narrow, not a blanket.
+        assert_eq!(resolve_session_name("statu"), Some("status"));
     }
 
     #[test]

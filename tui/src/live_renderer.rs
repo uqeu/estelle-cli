@@ -1108,7 +1108,8 @@ pub(super) fn render_gate_modal(
 ///
 /// ⚠️ `render_frame`'s `now` is an `Instant`, which is a monotonic reading with no epoch, so it
 /// cannot be compared to a server timestamp. A row whose observation is dated AHEAD of this clock
-/// therefore renders its age as `?` rather than as `0s`; see `orchestra_view::age`.
+/// therefore renders its `last seen` cell as `clock ahead` rather than as `0s`; see
+/// `orchestra_view::last_seen`.
 pub(super) fn epoch_seconds() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2151,17 +2152,26 @@ pub(super) fn github_diff_lines(diff: &str, width: usize, app: &App) -> Vec<Line
     let number_width = 3_usize;
     let content_width = width.saturating_sub(number_width * 2 + 5);
 
+    // 🔴 **THE LINE GROUNDS ARE THE PALETTE'S OWN `diff_add` / `diff_del`.**
+    //
+    // They used to be four literals here, and two of them were near misses of tokens `theme.rs`
+    // already ships (`#361714` beside `diff_del`'s `#361A18`) — a second owner for a colour that
+    // has one. The GUTTER grounds stay literal below and stay stronger than the line ground on
+    // purpose: the gutter is the narrow strip carrying the line NUMBER, and it has to separate
+    // itself from the row it labels or the row reads as one block.
+    let palette_add = palette.diff_add;
+    let palette_del = palette.diff_del;
     let (add_line_bg, add_gutter_bg, del_line_bg, del_gutter_bg) = match app.theme {
         Theme::Dark => (
-            Color::from_u32(0x21_3A_2B),
+            palette_add,
             Color::from_u32(0x16_2E_20),
+            palette_del,
             Color::from_u32(0x4A_22_1D),
-            Color::from_u32(0x36_17_14),
         ),
         Theme::CreamInk => (
-            Color::from_u32(0xDA_FB_E1),
+            palette_add,
             Color::from_u32(0xAC_EE_BB),
-            Color::from_u32(0xFF_EB_E9),
+            palette_del,
             Color::from_u32(0xFF_CE_CB),
         ),
     };
@@ -2211,11 +2221,7 @@ pub(super) fn github_diff_lines(diff: &str, width: usize, app: &App) -> Vec<Line
                     content,
                     add_line_bg,
                     add_gutter_bg,
-                    if app.theme == Theme::CreamInk {
-                        FATE_INK
-                    } else {
-                        palette.green
-                    },
+                    palette.green,
                 );
                 new_line = new_line.saturating_add(1);
                 row
@@ -2227,11 +2233,18 @@ pub(super) fn github_diff_lines(diff: &str, width: usize, app: &App) -> Vec<Line
                     content,
                     del_line_bg,
                     del_gutter_bg,
-                    if app.theme == Theme::CreamInk {
-                        FATE_INK
-                    } else {
-                        FATE_BG
-                    },
+                    // 🔴 **A DELETION IS RED.** It was `FATE_BG` — the bone the whole product
+                    // writes ordinary text in — so a removed line was the same colour as a
+                    // comment, while the line that REPLACED it was green. The founder read the
+                    // diff and said so in four words: *"Red for deletions, green for additions."*
+                    // The two halves of a diff are the one place in this product where colour is
+                    // carrying the entire meaning, and only one half was carrying it.
+                    //
+                    // ⚠️ Cream changed too, and deliberately. It painted BOTH signs in
+                    // `FATE_INK`, so the light theme had no colour distinction at all and leaned
+                    // entirely on a background tint a colour-flattening terminal drops. Symmetric
+                    // in both themes is the only version that reads the same way twice.
+                    palette.red,
                 );
                 old_line = old_line.saturating_add(1);
                 row

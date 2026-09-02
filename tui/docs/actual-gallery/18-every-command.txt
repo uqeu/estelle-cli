@@ -1,0 +1,40 @@
+── commands · 63 advertised ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+      command          what it does                                                            state
+      /help            what you can do here                                                    live
+      /login           connect grounding, and the plan or key that pays for model tokens       live
+  ›   /logout          remove local Estelle and plan credentials                               advertised and refused
+      /doctor          why a provider login cannot generate an answer                          live
+      /keymap          composer keymap status                                                  inert · prints a stub
+      /task            view server orchestra work                                              inert · prints a stub
+      /fork            not a command; one edit from work, and the matcher takes it             near-miss
+      /tools           list every MCP tool Estelle exposes                                     duplicate of mcp
+      /mcp             byte-identical to the tools listing above                               duplicate of tools
+      /resume          re-queues the sessions picker, nothing more                             duplicate of sessions
+
+  1 of 63 · ↑↓ scrolls · enter runs · esc closes · the popup ships an 8-row cap; this shows ten
+
+── legend ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  ●   live                      resolves, and does the thing its own description names
+  ■   advertised and refused    in SESSION_HELP at commands.rs:62, dropped at commands.rs:285
+  ▲   inert · near-miss         resolves and prints a stub, or resolves to a DIFFERENT command
+  ○   duplicate                 a second name for a surface that already answers to one
+
+  63 advertised · 60 resolve · 2 inert · 1 advertised and refused · 4 of the 60 are a second name
+  logout is advertised in help and dropped by the resolver; its handler at main.rs:2755 never runs.
+
+── proposed cut · 63 to 56 ───────────────────────────────────────────────────────────────────────────────────────────────────
+
+  ■   logout                              delete the name or restore the handler — it cannot stay both
+  ▲   keymap · task                       ship them or drop them; a stub is a promise the CLI does not keep
+  ○   mcp · plan · permissions · resume   four names over surfaces that already have one
+
+  nothing here is cut yet. this screen IS the audit, and an audit is what a cut needs first.
+
+  ~/estelle · main · $0.104 · ◐ affinity
+
+
+
+
+

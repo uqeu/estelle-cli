@@ -1,0 +1,28 @@
+── navigation · stale index ────────────────────────────────────────────────────────────────────────────────
+
+▲ Index is behind your tree  ·  find_definition · no answer given
+
+  STALE — indexed at 6ff03b18, repo is now 75557c7f
+
+  a stale index does not fail loudly — it answers with a plausible citation into code that has moved.
+  refusing is the correct behaviour, and the only one that cannot be confidently wrong.
+
+     what was asked        against which tree
+  │  find_definition       Rows.fetchone, written since the sweep
+     the index             6ff03b18 · swept 2026-09-01 06:14
+     your working tree     75557c7f · 214 files changed
+
+── recovery · sweeping ─────────────────────────────────────────────────────────────────────────────────────
+
+✓  refused         no citation was invented
+✓  remembered      the sweep is behind HEAD
+▶  sweeping        214 files changed since 6ff03b18
+□  re-answer       the same question, at 75557c7f
+
+  your question is held, not dropped.
+
+
+
+
+
+

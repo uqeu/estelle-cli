@@ -1,34 +1,34 @@
 ESTELLE  ·  uqeu/estelle
 
-╌╌ session · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌  │  ╌╌ production · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-work  Checking every claim against your code · revision 6 · elapsed 1.2s · sc  │  APP HEALTH · repo uqeu/estelle
-scope ✓ → recall ✓ → conventions ✓ → prompt ✓ → implement ✓ → gate ✓           │  Connecting to Estelle...
-                                                                               │
-                                                                               │  AGENT HEALTH
-                                                                               │  State unavailable · no read contract · send POST
-                                                                               │  /agent/events.
-                                                                               │
-                                                                               │  ESTELLE STATUS
-                                                                               │  Waiting for the live issue feed...
-                                                                               │
-                                                                               │  ESTELLE QUEUE
-                                                                               │  Queue empty · no repair work is reported.
-                                                                               │  Issue selection: /monitor issues
-                                                                               │
-                                                                               │  GITHUB
-                                                                               │  Waiting for measured GitHub connection state...
-                                                                               │
+── session · uqeu/estelle ───────────────────────────────────────────────────  │  ── production · uqeu/estelle ───────────────────
+   uqeu/estelle · cli/design-book-rust-20260902                                │  ── app · repo uqeu/estelle ─────────────────────
+── plan · revision 4 ────────────────────────────────────────────────────────  │  Connecting to Estelle...
+          step                                evidence                         │
+  ✓    1  read the failing test               gate ok · 2 cites                │  ── agents · unread ─────────────────────────────
+  ✓    2  locate every parse_header call      12 refs · graph                  │  ○   agents            no read yet · GET /agent/…
+  ✓    3  rewrite for the folded shape        headers.rs:288                   │
+  ✓    4  update the 12 call sites            blast radius 12                  │  ── estelle · unread ────────────────────────────
+  ▶    5  run the suite + the mutant          — unevidenced                    │  ○   issues            no read yet · GET /issues
+  ▲    6  deploy the checkout worker          human-gated                      │
+          step 5 has no evidence — Estelle is guessing there                   │  ── queue · 0 repair(s) ─────────────────────────
+          step 6 is blocked — human-gated                                      │  ○   repairs           none reported
+work  Checking every claim against your code · revision 6 · elapsed 1.2s · sc  │  ○   select            /monitor issues
+scope ✓ → recall ✓ → conventions ✓ → prompt ✓ → implement ✓ → gate ✓           │
+                                                                               │  ── github · unknown ────────────────────────────
+                                                                               │  ○   connection        no read yet · GET /github…
                                                                                │
                                                                                │
                                                                                │
                                                                                │
                                                                                │
                                                                                │
-                                                                               │
-╌╌ ask · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+◐ Working · 4 of 6 landed · run the suite + the mutant
 
-› Ask Estelle
+── ask · uqeu/estelle ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
 
 
-  ? for shortcuts
-tab focus · shift+tab autonomy · ctrl+t tasks · alt+m context · / commands  |  /work  0s  |  Esc cancels
+
+
+
+  enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection

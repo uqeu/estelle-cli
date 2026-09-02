@@ -1,0 +1,28 @@
+◐ Sweeping fernpost/checkout-api  ·  step 2 of 5 · 20%
+
+── sweep · checking account capacity ─────────────────────────────────────────────────────────────────────────────────
+  ✓   files collected safely          10%  1,993 files · 24.1 MB · 61 skipped
+  ▶   checking account capacity       20%  POST /sweep/estimate · its answer is below
+  □   sending source set              35%  sync transport · under 400 files
+  □   starting background ingest      30%  background transport · 400 files or more
+  □   repo swept                     100%  the graph is current for this commit
+
+── account capacity · POST /sweep/estimate ───────────────────────────────────────────────────────────────────────────
+  1,993 files · 11.5M tokens · 103M of 250M held · 147M free
+  field                    value  what the number means
+  estimated_tokens         11.5M  what this sweep would add
+  held_tokens               103M  already held across 6 repos
+  cap                       250M  the plan's ceiling on tokens held
+  remaining_tokens          147M  free after this sweep lands
+
+  35% then 30% is not a regression: they are two transports and only one of them runs
+  under 400 files the whole set is sent; at 400 or more an ingest starts and continues if this terminal closes
+  cost and budget stay on screen: every figure above is a field the estimate returned, not a derived one
+
+
+
+
+
+
+
+

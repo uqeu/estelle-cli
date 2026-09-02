@@ -176,8 +176,22 @@ pub(crate) fn render(
                 }));
                 items.push(HistoryTranscriptItem::Lines(rendered));
             }
+            // 🔴 **THE WORD `you` IS GONE, AND THE BAND IS WHAT SAYS IT NOW.**
+            //
+            // The founder, reading the waiting screen: *"Delete the word 'you'. I don't want to
+            // see that 'you' any more."* — and on the next screen: *"When a message arrives it
+            // should be visually highlighted the way ChatGPT and Codex highlight yours. Same
+            // treatment, our palette."* Those are one instruction, not two: the label was standing
+            // in for a highlight that was not reliably drawn.
+            //
+            // ⚠️ Deleting the label alone would have been a REGRESSION, because
+            // `user_turn_background` returned `None` on any terminal that does not answer an OSC
+            // background query — so on those terminals the turn would have lost its only marker
+            // and become indistinguishable from Estelle's own output. The label could only go once
+            // the band was made unconditional; see `user_turn_background` in `main.rs` for the
+            // fallback that made this safe.
             TranscriptEntry::User(message) => items.push(HistoryTranscriptItem::User {
-                heading: vec![Line::styled("you", Style::default().fg(palette.ghost))],
+                heading: Vec::new(),
                 message: mask_secret(message),
                 background: palette.user_background,
                 semantic_color: Some(palette.semantic),

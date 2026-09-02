@@ -55,7 +55,26 @@ impl ScreenTheme {
                 diff_del: Color::Rgb(0x36, 0x1a, 0x18),
             },
             Self::Cream => Palette {
-                ground: Color::Rgb(0xe9, 0xe6, 0xdc),
+                // 🔴 **FIVE PERCENT DARKER THAN THE WEB CREAM, ON THE FOUNDER'S OWN REPORT.**
+                //
+                // He read the design book on the light theme and said it *"kind of hurt my eye"* —
+                // the terminal fills the WHOLE screen with the ground, where the website only ever
+                // paints a page, so the same value is a different amount of light. The instruction
+                // was exact: *"Lower the luminance of the light ground only; do not touch ink or
+                // red."* So `bright` (#1F1C17, the ink) and `red` are untouched below, and only the
+                // two GROUND roles moved: #E9E6DC x 0.95 -> #DDDAD1.
+                //
+                // ⚠️ **`tint` MOVED WITH IT, AND HAD TO.** `tint` is "one step off the ground" — the
+                // band under a selected row and under the active plan step. Darkening the ground
+                // alone would have left #DDDAD1 sitting on #DCD7C9, a one-value difference nobody
+                // can see, which would have silently deleted every row highlight in the light theme
+                // while the change looked like it only touched a background. Both scaled by the
+                // same 0.95, so every relationship in the palette is the one he approved.
+                //
+                // ⚠️ This is the CLI's cream and is now deliberately NOT the web's `#E9E6DC`. A
+                // shared name with two correct values is survivable only while somebody has written
+                // down that they diverged, which is what this paragraph is for.
+                ground: Color::Rgb(0xdd, 0xda, 0xd1),
                 dim: Color::Rgb(0x8b, 0x85, 0x78),
                 mid: Color::Rgb(0x57, 0x50, 0x43),
                 bright: Color::Rgb(0x1f, 0x1c, 0x17),
@@ -65,7 +84,7 @@ impl ScreenTheme {
                 cite: Color::Rgb(0x38, 0x70, 0x8c),
                 plan: Color::Rgb(0x35, 0x6a, 0x8c),
                 skill: Color::Rgb(0xb0, 0x6a, 0x8c),
-                tint: Color::Rgb(0xdc, 0xd7, 0xc9),
+                tint: Color::Rgb(0xd1, 0xcc, 0xbe),
                 diff_add: Color::Rgb(0xd2, 0xdf, 0xcc),
                 diff_del: Color::Rgb(0xeb, 0xd3, 0xcf),
             },
@@ -96,6 +115,45 @@ fn dampen(color: Color) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 🔴 THE LIGHT GROUND CAME DOWN AND THE INK AND THE RED DID NOT.
+    ///
+    /// The founder's instruction had three clauses and this test enforces all three separately,
+    /// because a change that darkened everything by 5% would satisfy the first and quietly break
+    /// the brand — which is the "partial guard reports complete" shape, in a palette.
+    ///
+    /// ⚠️ Clause 3 is the one nobody would have written: `tint` is the row highlight, and a ground
+    /// that moved without it would have left the two values one step apart and deleted every
+    /// selected-row band in the light theme. Asserting the GAP rather than the value is what makes
+    /// this catch that, whatever the next value turns out to be.
+    #[test]
+    fn the_light_ground_is_dimmer_and_the_ink_and_red_are_untouched() {
+        let cream = ScreenTheme::Cream.palette();
+
+        // 1. The ground came down from the web's #E9E6DC to #DDDAD1 — 5%, hue held.
+        assert_eq!(cream.ground, Color::Rgb(0xdd, 0xda, 0xd1));
+
+        // 2. Ink and red are exactly what they were. These are brand values, not theme values.
+        assert_eq!(cream.bright, Color::Rgb(0x1f, 0x1c, 0x17));
+        assert_eq!(cream.red, Color::Rgb(0xb0, 0x21, 0x0f));
+
+        // 3. The highlight band survived the move. A `tint` left behind would be invisible.
+        let gap = |a: Color, b: Color| match (a, b) {
+            (Color::Rgb(ar, ag, ab), Color::Rgb(br, bg, bb)) => {
+                u32::from(ar.abs_diff(br)) + u32::from(ag.abs_diff(bg)) + u32::from(ab.abs_diff(bb))
+            }
+            _ => 0,
+        };
+        assert!(
+            gap(cream.ground, cream.tint) >= 30,
+            "the light row highlight is invisible against its own ground: {:?} vs {:?}",
+            cream.ground,
+            cream.tint
+        );
+        // The dark theme's own gap is the reference for "visible", and cream must not be worse.
+        let dark = ScreenTheme::Dark.palette();
+        assert!(gap(cream.ground, cream.tint) >= gap(dark.ground, dark.tint));
+    }
 
     #[test]
     fn pulse_has_two_intensities_on_a_twenty_eight_tick_cycle() {

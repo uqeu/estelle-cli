@@ -1,0 +1,30 @@
+── doctor · 1 of 7 failed ──────────────────────────────────────────────────────────────────────────────────────────
+
+      check             surface                 result
+  ●   endpoint          api.fatelabs.ca         200 · 41 ms · build 1f5cc7a4, build_verified true
+  ●   account           khai@fatelabs.ca        Free · 10M tokens · plan resolved from /plans
+  ●   repository        uqeu/estelle · main     swept at 6ff03b18 · 5,608 symbols indexed
+  ●   provider key      anthropic               on file · sk-ant-…4f2c · a generation returned 200
+  ●   grounding gate    POST /gate              refused a fabricated import — the gate doing its job
+  ○   local model       none                    not configured — optional, and not why anything failed
+  ■   MCP initialize    POST /mcp               500 · the handshake was accepted, then failed inside
+
+■ MCP initialize returned 500  ·  round 1 of 3 · retrying with a fresh session id
+
+  the server accepted the handshake and then raised inside its own initialize handler.
+  the durable error log holds the traceback; /doctor --verbose prints it here.
+
+  what this is NOT: not your key, not your network, not your plan.
+  the key generated a 200 two rows up and the handshake reached the handler.
+
+  ~/estelle · main · $0.000 · ▲ 1 failing
+
+
+
+
+
+
+
+
+
+

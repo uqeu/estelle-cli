@@ -1,0 +1,30 @@
+── gate · refused ──────────────────────────────────────────────────────────────────────────────────────────
+
+■ Gate refused  ·  round 1 of 3 · no model call
+A deterministic check against this repo's symbol graph. No model was asked, and no model can overrule it.
+
+│    import fastapi_turbo                             no such package on PyPI; nearest is fastapi
+                                                      (0.115.6). The import would fail at load, not at test
+                                                      time.
+│    src/api/routes.py:12                             the repo graph holds zero definition sites for this
+                                                      module in any version the lockfile resolves.
+
+blast radius · 2 files · 17 changed lines
+     src/api/routes.py                                14 changed lines
+     src/api/deps.py                                  3 changed lines
+
+── repair · round 2 of 3 ───────────────────────────────────────────────────────────────────────────────────
+
+✓  refused         the import does not exist
+✓  remembered      this repo has no fastapi_turbo
+▶  repairing       round 2 of 3, rewriting the import
+□  re-gate         the repaired diff goes back
+
+  nothing was written to your tree.
+
+
+
+
+
+
+

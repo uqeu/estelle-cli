@@ -644,6 +644,30 @@ pub struct TeamView {
     pub seat_ledger: Option<SeatLedger>,
     #[serde(default)]
     pub invites: Vec<serde_json::Value>,
+    /// 🔴 **`team` IS TWO DIFFERENT PAYLOADS ON TWO DIFFERENT ENDPOINTS, AND THIS FIELD IS WHERE
+    /// THE SECOND ONE SURVIVES.**
+    ///
+    /// `GET /me/team` sends `{"team": {id, name, role, members, …}}` — a roster, which is what
+    /// every field above reads. `GET /settings` sends `{"schema": …, "team": {<suite>: {<key>:
+    /// <value>}}, "personal": …}` — the team-SCOPED SETTING VALUES, an entirely different shape
+    /// under an identical key.
+    ///
+    /// ⚠️ **AND THE TYPED FIELD ATE IT SILENTLY.** [`CommandReply::extra`] is `#[serde(flatten)]`,
+    /// which does not receive keys a named field already claimed — so `team` went to `me_team`,
+    /// every field of `TeamView` is `#[serde(default)]`, the settings map deserialised into an
+    /// EMPTY roster without an error, and `resolved_setting_value` found nothing in `extra` and
+    /// fell back to the schema's `default`. The result: **every team-scoped setting in the CLI
+    /// displayed the schema default instead of the value the server had saved.** The founder
+    /// caught it on one row — `Data retention (days)` showing `30` while the wire said `45` — and
+    /// it was never one row.
+    ///
+    /// This is Power-of-Ten rule 8 (one meaning per name) failing at a wire boundary, where the
+    /// name is not ours to change. So the map is captured rather than dropped, and
+    /// `resolved_setting_value` reads it for `team` scope the same way it reads `extra` for
+    /// `personal`. **Do not "tidy" this flatten away** — it is load-bearing and its absence is
+    /// invisible, which is why this paragraph is longer than the field.
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

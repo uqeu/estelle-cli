@@ -1,6 +1,7 @@
 ESTELLE  ·  uqeu/estelle
 
-╌╌ session · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+── session · uqeu/estelle ────────────────────────────────────────────────────────────────────────────────────────────────────────
+   uqeu/estelle · cli/design-book-rust-20260902
 
 
 
@@ -23,12 +24,11 @@ ESTELLE  ·  uqeu/estelle
 
 
 
+── model pool · account-wide ─────────────────────────────────────────────────────────────────────────────────────────────────────
+> 1 claude-opus-4.1           Anthropic · account-wide · current
+  2 claude-sonnet-4.5         Anthropic · account-wide
+  3 gpt-5.5                   OpenAI · account-wide
+  4 gpt-5.5-codex             OpenAI · account-wide
+↑↓ navigate · 1-9 or Enter select · Esc close
 
-┌ MODEL POOL · ACCOUNT-WIDE ─────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│> 1 claude-opus-4.1           Anthropic · account-wide · current                                                                │
-│  2 claude-sonnet-4.5         Anthropic · account-wide                                                                          │
-│  3 gpt-5.5                   OpenAI · account-wide                                                                             │
-│  4 gpt-5.5-codex             OpenAI · account-wide                                                                             │
-│↑↓ navigate · 1-9 or Enter select · Esc close                                                                                   │
-└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-tab focus · shift+tab autonomy · ctrl+t tasks · alt+m context · / commands  |  plan  ·  routing auto
+

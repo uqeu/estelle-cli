@@ -5,6 +5,17 @@ mod binding_probe;
 mod claude_import;
 mod cols;
 mod commands;
+/// 🔴 THE DESIGN BOOK'S SCREENS, AND WHY THEY ARE TEST-ONLY.
+///
+/// Every screen in here is driven by a FIXTURE, not by live state — there is no `/doctor` failure
+/// to stage on demand, no stale index to induce, no eight-worker fleet to summon. The only consumer
+/// is `actual_renderer_gallery_covers_the_product_surfaces`, which renders each one through the
+/// production buffer and writes it into the book. Compiling them into the shipped binary would put
+/// fixture data one wrong `match` arm away from a customer's terminal, which is precisely the
+/// mistake `screens.rs` guards against by stamping `DESIGN FIXTURE · NOT LIVE DATA` on every page
+/// it dumps. Gating the module is the stronger version of that guard.
+#[cfg(test)]
+mod design_book;
 mod copilot_login;
 mod doctor;
 mod gate_refusal;
@@ -216,12 +227,17 @@ impl Theme {
         }
     }
 
+    /// The colour a file path, a symbol and a citation are drawn in.
+    ///
+    /// 🔴 **IT WAS `#65A8FF`, DESCRIBED IN ITS OWN COMMENT AS "Claude-like semantic blue".** A
+    /// colour named after a rival product, in no palette this repo ships, on the most Estelle-ish
+    /// thing on the screen — the path back to the user's own code. The gallery counted it: 17 cells
+    /// on `01b-waiting-answer`, every one of them a character of `billing/charge.rs`.
+    ///
+    /// [`theme::Palette::cite`] is exactly this role and already existed. The name of the role was
+    /// never the problem; the value was borrowed.
     fn semantic(self) -> Color {
-        match self {
-            // Claude-like semantic blue: luminous on an inherited dark terminal, darker on cream.
-            Self::Dark => Color::from_u32(0x65_A8_FF),
-            Self::CreamInk => Color::from_u32(0x1F_5A_A6),
-        }
+        self.screen_palette().cite
     }
 
     fn boot_palette(self) -> BootPalette {
@@ -674,23 +690,35 @@ enum PendingLogin {
 
 /// The lifted band under the user's own turn.
 ///
-/// ⚠️ **THE BAND'S COLOUR IS A FACT ABOUT THE TERMINAL, NOT ABOUT THE THEME, AND THAT IS A REAL
-/// LIMIT.** On Cream Ink the background is a known constant, so the band always exists. On Dark it
-/// is blended against `default_bg()` — the background the terminal *reports* — which is `None`
-/// anywhere that is not an answering tty. A terminal that does not answer the OSC query therefore
-/// gets **no band at all**, and no test can see the Dark path for the same reason.
+/// 🔴 **THE BAND USED TO VANISH ON EVERY TERMINAL THAT DOES NOT ANSWER AN OSC QUERY.** It was
+/// blended against `default_bg()` — the background the terminal *reports* — which is `None`
+/// anywhere that is not an answering tty. On Dark that meant **no band at all**, which is why the
+/// founder's screen showed a bare `you` label over an unhighlighted message and why he asked for
+/// the highlight back: *"When a message arrives it should be visually highlighted the way ChatGPT
+/// and Codex highlight yours. Same treatment, our palette."*
 ///
-/// This was left as-is deliberately: the founder has the band on screen and approved how it looks,
-/// and `theme::Palette::tint` (the role the active plan step lifts its row with) would render a
-/// different colour than the one he signed off. Swapping the owner is a real improvement and it is
-/// his call, not this lane's. The property tests below therefore drive Cream Ink, where the
-/// existing implementation is deterministic.
+/// ⚠️ **"OUR PALETTE" IS THE INSTRUCTION THAT RESOLVED THE OPEN QUESTION.** The previous docstring
+/// said swapping the owner to [`theme::Palette::tint`] — the role the active plan step already
+/// lifts its row with — was a real improvement and the founder's call to make. He made it. So the
+/// blend is still preferred WHEN the terminal answers (nothing he approved changes on those
+/// terminals), and `tint` is the fallback instead of nothing.
+///
+/// ⚠️ And the cream ground is read from the palette rather than written here. It used to be the
+/// literal `(0xE9, 0xE6, 0xDC)`, which made this function a SECOND owner of a colour
+/// [`theme::ScreenTheme::Cream`] already owns — so when the founder asked for a dimmer light ground
+/// it would have gone stale here silently and blended the band against a value nothing renders.
 fn user_turn_background(theme: Theme) -> Option<Color> {
+    let palette = theme.screen_palette();
     let terminal_bg = match theme {
-        Theme::CreamInk => Some((0xE9, 0xE6, 0xDC)),
+        Theme::CreamInk => match palette.ground {
+            Color::Rgb(red, green, blue) => Some((red, green, blue)),
+            _ => None,
+        },
         Theme::Dark => estelle_tui::default_bg(),
     };
-    estelle_tui::user_message_style_for(terminal_bg).bg
+    estelle_tui::user_message_style_for(terminal_bg)
+        .bg
+        .or(Some(palette.tint))
 }
 
 enum InlineLoginOutcome {
@@ -937,15 +965,31 @@ fn resolved_setting_value(
     scope: &str,
     spec: &Value,
 ) -> Value {
-    let owner = if scope == "personal" {
-        "personal"
+    // 🔴 **THE TEAM-SCOPED HALF DOES NOT ARRIVE IN `extra`, AND READING IT THERE MADE EVERY
+    // TEAM SETTING SHOW ITS SCHEMA DEFAULT.**
+    //
+    // `CommandReply` has a typed `me_team` field renamed to `"team"` for `GET /me/team`, and a
+    // `#[serde(flatten)] extra` for everything else. Flatten does not receive a key a named field
+    // already claimed — so `/settings`'s `{"team": {"monitor": {"retention_days": 45}}}` was
+    // deserialised into an empty `TeamView` roster and this lookup fell straight through to
+    // `spec["default"]`. The founder read `30 · team · server` off a frame whose own fixture said
+    // 45. See `TeamView::extra` for the whole story.
+    //
+    // ⚠️ The `personal` path was never broken, and that is exactly why nobody found this: half the
+    // settings screen was correct, which reads as a working screen.
+    let team_scoped = scope != "personal";
+    let values = if team_scoped {
+        settings
+            .me_team
+            .as_ref()
+            .and_then(|team| team.extra.get(suite))
     } else {
-        "team"
+        settings
+            .extra
+            .get("personal")
+            .and_then(|values| values.get(suite))
     };
-    settings
-        .extra
-        .get(owner)
-        .and_then(|values| values.get(suite))
+    values
         .and_then(|values| values.get(key))
         .cloned()
         .or_else(|| spec.get("default").cloned())
@@ -7714,6 +7758,17 @@ mod tests {
             "Ask about uqeu/estelle",
         );
 
+        // 🔴 THE FIXTURE USED TO DATE EVERY WORKER IN THE YEAR 2100, SO THE `last seen` COLUMN SAID
+        // `clock ahead` ON ALL EIGHT ROWS AND THE FOUNDER READ A COLUMN OF ONE REPEATED WORD.
+        //
+        // The far-future constant was there for determinism — a real timestamp would redraw the
+        // frame differently every day. Deriving the observation times FROM the clock keeps that
+        // (the rendered text is `41s` on every run) while showing what the column is actually for.
+        // ⚠️ One worker is left dated ahead on purpose: `clock ahead` is a real state a reader will
+        // meet, and a gallery that never draws it is a gallery that cannot teach it.
+        let observed = |seconds_ago: f64| live_renderer::epoch_seconds() - seconds_ago;
+        let skewed = live_renderer::epoch_seconds() + 600.0;
+
         let mut orchestra = test_app();
         orchestra.prod_panel_visible = false;
         orchestra.context_panel_visible = true;
@@ -7747,14 +7802,14 @@ mod tests {
                     "evidence": "observed"
                 },
                 "agents": [
-                    {"index": 1, "status": "completed", "state_observed_at": 4102444800.0, "current_action": "Bound checkout_timeout to billing/charge.rs:82", "progress": {"completed": 3, "total": 3}},
-                    {"index": 2, "status": "running", "state_observed_at": 4102444800.0, "current_action": "Reading the retry gate", "progress": {"completed": 2, "total": 4}},
-                    {"index": 3, "status": "running", "state_observed_at": 4102444800.0, "current_action": "Grouping deploy-correlated events", "progress": {"completed": 1, "total": 3}},
-                    {"index": 4, "status": "queued", "state_observed_at": 4102444800.0, "current_action": null, "progress": {"completed": 0, "total": 2}},
-                    {"index": 5, "status": "completed", "state_observed_at": 4102444800.0, "current_action": "Verified the symbol range", "progress": {"completed": 4, "total": 4}},
-                    {"index": 6, "status": "running", "state_observed_at": 4102444800.0, "current_action": "Comparing the proposed patch", "progress": {"completed": 1, "total": 3}},
-                    {"index": 7, "status": "unknown", "state_observed_at": 4102444800.0, "unknown_reason": "worker state not reported", "current_action": null},
-                    {"index": 8, "status": "running", "state_observed_at": 4102444800.0, "current_action": "Checking the regression suite", "progress": {"completed": 0, "total": 2}}
+                    {"index": 1, "status": "completed", "state_observed_at": observed(41.0), "current_action": "Bound checkout_timeout to billing/charge.rs:82", "progress": {"completed": 3, "total": 3}},
+                    {"index": 2, "status": "running", "state_observed_at": observed(12.0), "current_action": "Reading the retry gate", "progress": {"completed": 2, "total": 4}},
+                    {"index": 3, "status": "running", "state_observed_at": observed(8.0), "current_action": "Grouping deploy-correlated events", "progress": {"completed": 1, "total": 3}},
+                    {"index": 4, "status": "queued", "state_observed_at": observed(150.0), "current_action": null, "progress": {"completed": 0, "total": 2}},
+                    {"index": 5, "status": "completed", "state_observed_at": observed(96.0), "current_action": "Verified the symbol range", "progress": {"completed": 4, "total": 4}},
+                    {"index": 6, "status": "running", "state_observed_at": observed(31.0), "current_action": "Comparing the proposed patch", "progress": {"completed": 1, "total": 3}},
+                    {"index": 7, "status": "unknown", "state_observed_at": skewed, "unknown_reason": "worker state not reported", "current_action": null},
+                    {"index": 8, "status": "running", "state_observed_at": observed(4.0), "current_action": "Checking the regression suite", "progress": {"completed": 0, "total": 2}}
                 ]
             }))
             .expect("active orchestra"),
@@ -7787,14 +7842,14 @@ mod tests {
                 "attempt": "first",
                 "narrator": {"text": "All 8 agents reported terminal outcomes", "evidence": "measured"},
                 "agents": [
-                    {"index": 1, "status": "completed", "state_observed_at": 4102444800.0, "current_action": "Bound checkout_timeout", "progress": {"completed": 3, "total": 3}},
-                    {"index": 2, "status": "completed", "state_observed_at": 4102444800.0, "current_action": "Verified the retry gate", "progress": {"completed": 4, "total": 4}},
-                    {"index": 3, "status": "completed", "state_observed_at": 4102444800.0, "current_action": "Grouped the production events", "progress": {"completed": 3, "total": 3}},
-                    {"index": 4, "status": "completed", "state_observed_at": 4102444800.0, "current_action": "Checked the proposed repair", "progress": {"completed": 2, "total": 2}},
-                    {"index": 5, "status": "completed", "state_observed_at": 4102444800.0, "current_action": "Resolved the symbol range", "progress": {"completed": 4, "total": 4}},
-                    {"index": 6, "status": "completed", "state_observed_at": 4102444800.0, "current_action": "Compared the proposed patch", "progress": {"completed": 3, "total": 3}},
-                    {"index": 7, "status": "completed", "state_observed_at": 4102444800.0, "current_action": "Verified the worker result", "progress": {"completed": 2, "total": 2}},
-                    {"index": 8, "status": "completed", "state_observed_at": 4102444800.0, "current_action": "Checked the regression suite", "progress": {"completed": 2, "total": 2}}
+                    {"index": 1, "status": "completed", "state_observed_at": observed(340.0), "current_action": "Bound checkout_timeout", "progress": {"completed": 3, "total": 3}},
+                    {"index": 2, "status": "completed", "state_observed_at": observed(300.0), "current_action": "Verified the retry gate", "progress": {"completed": 4, "total": 4}},
+                    {"index": 3, "status": "completed", "state_observed_at": observed(265.0), "current_action": "Grouped the production events", "progress": {"completed": 3, "total": 3}},
+                    {"index": 4, "status": "completed", "state_observed_at": observed(210.0), "current_action": "Checked the proposed repair", "progress": {"completed": 2, "total": 2}},
+                    {"index": 5, "status": "completed", "state_observed_at": observed(180.0), "current_action": "Resolved the symbol range", "progress": {"completed": 4, "total": 4}},
+                    {"index": 6, "status": "completed", "state_observed_at": observed(120.0), "current_action": "Compared the proposed patch", "progress": {"completed": 3, "total": 3}},
+                    {"index": 7, "status": "completed", "state_observed_at": observed(75.0), "current_action": "Verified the worker result", "progress": {"completed": 2, "total": 2}},
+                    {"index": 8, "status": "completed", "state_observed_at": observed(22.0), "current_action": "Checked the regression suite", "progress": {"completed": 2, "total": 2}}
                 ]
             }))
             .expect("completed orchestra"),
@@ -8041,6 +8096,63 @@ mod tests {
             "Checking every claim against your code",
         );
 
+        // 🔴 EVERY SCREEN IN THE BOOK, RENDERED BY THE REAL RENDERER.
+        //
+        // The founder read `CLI-DESIGN-BOOK.html` screen by screen and asked one thing of the next
+        // pass: *"I want you to render all of this now in Rust, so that it's easier for you to port
+        // these over."* Twenty-five of the forty-one screens already came out of `render_frame`
+        // above. The rest were HTML somebody drew, which means their columns were **hand-counted
+        // spaces** — a layout claim no test can falsify and no port can trust.
+        //
+        // These screens have no live App state to drive them (there is no `/doctor` failure to
+        // stage, no stale index to induce), so they render from typed fixtures through the SAME
+        // buffer, the SAME palette and the SAME `cols` column math as everything above. The
+        // fixtures are the data; the LAYOUT is the renderer's.
+        //
+        // ⚠️ They go through the identical box guard and the identical needle assertion, so a book
+        // screen cannot regress in a way a live screen could not.
+        for screen in design_book::SCREENS {
+            let palette = theme::ScreenTheme::Dark.palette();
+            let backend = TestBackend::new(screen.width, screen.height);
+            let mut terminal = Terminal::new(backend).expect("book screen terminal");
+            terminal
+                .draw(|frame| {
+                    frame.render_widget(
+                        Paragraph::new((screen.render)(&palette, 0, true))
+                            .style(Style::default().bg(palette.ground)),
+                        frame.area(),
+                    );
+                })
+                .expect("render book screen");
+            let buffer = terminal.backend().buffer().clone();
+            let text = test_gallery::buffer_text(&buffer);
+            assert!(
+                text.contains(screen.needle),
+                "{} did not render expected text {:?}\n{text}",
+                screen.name,
+                screen.needle
+            );
+            if BOX_CORNERS.iter().any(|corner| text.contains(*corner)) {
+                boxed_frames.push(screen.name);
+            }
+            if let Some(output) = output.as_deref() {
+                test_gallery::write_frame(output, screen.name, &buffer);
+            }
+            names.push(screen.name);
+        }
+
+        // 🔴 THE GALLERY IS THE ACCEPTANCE TEST, SO ITS SIZE IS PART OF THE CONTRACT.
+        //
+        // The founder must be able to SEE every screen. A frame silently dropped from this list is
+        // a screen that stops being reviewed, and nothing else in the suite would notice — the
+        // per-frame assertions all pass on a shorter list. The number is written down so removing a
+        // screen is a decision somebody makes on purpose.
+        assert_eq!(
+            names.len(),
+            18 + design_book::SCREENS.len(),
+            "the gallery changed size: {names:?}"
+        );
+
         assert!(
             boxed_frames.is_empty(),
             "these live frames still draw a boxed panel: {boxed_frames:?}"
@@ -8162,6 +8274,164 @@ mod tests {
         // `enter` and `esc` are NOT on the list because they really are handled.
         assert!(!ASK_HINTS_NOT_BOUND.contains(&"enter"));
         assert!(!ASK_HINTS_NOT_BOUND.contains(&"esc"));
+    }
+
+    /// 🔴 RED FOR DELETIONS, GREEN FOR ADDITIONS — IN BOTH THEMES.
+    ///
+    /// The founder read the proposed-diff screen and said it was *"neither"*. He was half right,
+    /// which is why nobody had noticed: additions really were green, and deletions were `FATE_BG`,
+    /// the same bone every ordinary line of text uses. So the half of a diff that says *this goes
+    /// away* was rendered in the colour of *this is fine*.
+    ///
+    /// ⚠️ Both themes are asserted and the two signs are asserted to DIFFER. A version that painted
+    /// both signs one colour — which is what cream did — passes any check that only looks at one
+    /// of them.
+    #[test]
+    fn a_deletion_is_red_and_an_addition_is_green_in_both_themes() {
+        for theme in [Theme::Dark, Theme::CreamInk] {
+            let mut app = test_app();
+            app.theme = theme;
+            let lines = live_renderer::github_diff_lines(
+                "diff --git a/billing/charge.rs b/billing/charge.rs\n\
+                 @@ -82,1 +82,1 @@\n\
+                 -    let response = charge(card)?;\n\
+                 +    let response = charge_with_retry(card, RETRY_BUDGET)?;\n",
+                100,
+                &app,
+            );
+            let palette = theme.screen_palette();
+            let coloured = |needle: &str| {
+                lines
+                    .iter()
+                    .flat_map(|line| line.spans.iter())
+                    .find(|span| span.content.contains(needle))
+                    .and_then(|span| span.style.fg)
+            };
+            assert_eq!(
+                coloured("charge_with_retry"),
+                Some(palette.green),
+                "{theme:?}: the addition is not green"
+            );
+            assert_eq!(
+                coloured("let response = charge(card)"),
+                Some(palette.red),
+                "{theme:?}: the deletion is not red"
+            );
+            // ⚠️ THE CONTROL. Two signs sharing one colour is the defect cream shipped, and it
+            // passes both assertions above if `red` and `green` are ever set to the same value.
+            assert_ne!(palette.red, palette.green);
+        }
+    }
+
+    /// 🔴 THE POPUP'S SELECTED ROW IS PAINTED IN ESTELLE'S ACCENT, NOT THE TERMINAL'S IDEA OF CYAN.
+    ///
+    /// `style::accent_style_for` is the single owner of the selected-row colour across the slash
+    /// palette, the model picker, the settings list, the hooks browser and the keymap picker. It
+    /// returned ANSI `Color::Cyan`, which means whatever the host theme decides — so the one row
+    /// the user is looking at was the one row we did not choose the colour of. Same cross-crate
+    /// arrangement as the boot palette above, and the same reason for the test.
+    #[test]
+    fn the_popup_accent_is_the_products_cite_token() {
+        assert_eq!(
+            estelle_tui::style_accent_dark(),
+            theme::ScreenTheme::Dark.palette().cite,
+            "the dark popup accent drifted off the cite token"
+        );
+        assert_eq!(
+            estelle_tui::style_accent_cream(),
+            theme::ScreenTheme::Cream.palette().cite,
+            "the cream popup accent drifted off the cite token"
+        );
+    }
+
+    /// 🔴 THE BOOT SCREEN IS PAINTED IN THE PRODUCT'S OWN COLOURS, AND THIS IS THE ONLY PLACE
+    /// THAT CAN SAY SO.
+    ///
+    /// `boot_scene` is in the `estelle_tui` library and `theme` is in this binary, so neither can
+    /// import the other and the four boot colours are necessarily written down twice. That is a
+    /// two-owners situation, and the rule for those is that ONE test has to be able to see both.
+    /// This is it.
+    ///
+    /// ⚠️ Every clause is asserted separately rather than as one tuple compare, because the
+    /// failure message has to name WHICH colour drifted — a single `assert_eq!` on four values
+    /// tells the next reader that something moved and not what.
+    /// 🔴 A TEAM-SCOPED SETTING SHOWS WHAT THE SERVER SAVED, NOT WHAT THE SCHEMA DEFAULTS TO.
+    ///
+    /// This is the founder's `Data retention (days)` row, pinned. The wire says 45 and the schema
+    /// says 30; the screen said 30 for as long as anyone can remember, because
+    /// `CommandReply::me_team` silently ate the `/settings` payload's `team` key.
+    ///
+    /// ⚠️ Both scopes are asserted, and they must DISAGREE with their defaults in opposite ways —
+    /// the personal row was always correct, so a test that only checked personal would have passed
+    /// throughout the bug, and a test that only checked team would not prove the fix left personal
+    /// alone.
+    #[test]
+    fn a_saved_team_setting_beats_the_schema_default() {
+        let settings: CommandReply = serde_json::from_value(json!({
+            "schema": {
+                "monitor": [{
+                    "key": "retention_days", "scope": "team", "type": "int",
+                    "default": 30, "label": "Data retention (days)", "reader": "server"
+                }],
+                "global": [{
+                    "key": "theme", "scope": "personal", "type": "enum",
+                    "default": "dark", "label": "Theme", "options": ["dark", "cream"],
+                    "reader": "server"
+                }]
+            },
+            "team": {"monitor": {"retention_days": 45}},
+            "personal": {"global": {"theme": "cream"}}
+        }))
+        .expect("settings reply");
+
+        let retention_spec = json!({"key": "retention_days", "default": 30});
+        assert_eq!(
+            resolved_setting_value(&settings, "monitor", "retention_days", "team", &retention_spec),
+            json!(45),
+            "the team-scoped value lost to the schema default again"
+        );
+
+        let theme_spec = json!({"key": "theme", "default": "dark"});
+        assert_eq!(
+            resolved_setting_value(&settings, "global", "theme", "personal", &theme_spec),
+            json!("cream"),
+            "the personal path regressed while the team path was being fixed"
+        );
+
+        // ⚠️ THE NEGATIVE CONTROL. With nothing saved, BOTH scopes must fall back to the schema
+        // default — otherwise the two assertions above could be passing on a lookup that ignores
+        // the schema entirely and happens to find the right value some other way.
+        let bare: CommandReply = serde_json::from_value(json!({"schema": {}})).expect("bare reply");
+        assert_eq!(
+            resolved_setting_value(&bare, "monitor", "retention_days", "team", &retention_spec),
+            json!(30)
+        );
+        assert_eq!(
+            resolved_setting_value(&bare, "global", "theme", "personal", &theme_spec),
+            json!("dark")
+        );
+    }
+
+    #[test]
+    fn the_boot_screen_paints_in_the_products_own_tokens() {
+        let dark = theme::ScreenTheme::Dark.palette();
+        let cream = theme::ScreenTheme::Cream.palette();
+
+        assert_eq!(BootPalette::Dark.bone(), dark.ground, "dark boot ground");
+        assert_eq!(BootPalette::Dark.ghost(), dark.dim, "dark boot dither");
+        assert_eq!(BootPalette::Dark.ink(), dark.bright, "dark boot wordmark");
+        assert_eq!(BootPalette::Dark.lily(), dark.red, "dark higanbana");
+
+        assert_eq!(BootPalette::Light.bone(), cream.ground, "light boot ground");
+        assert_eq!(BootPalette::Light.ghost(), cream.dim, "light boot dither");
+        assert_eq!(BootPalette::Light.ink(), cream.bright, "light boot wordmark");
+        assert_eq!(BootPalette::Light.lily(), cream.red, "light higanbana");
+
+        // ⚠️ THE NEGATIVE CONTROL. Eight `assert_eq!`s between two constant tables pass forever if
+        // the tables are the same table. These prove they are not: the two themes really do
+        // differ, so the eight assertions above are comparing two independently-written sets.
+        assert_ne!(BootPalette::Dark.bone(), BootPalette::Light.bone());
+        assert_ne!(BootPalette::Dark.ink(), BootPalette::Light.ink());
     }
 
     #[test]
@@ -12368,11 +12638,17 @@ mod tests {
         let rendered = rendered_frame_at_size(&app, Instant::now(), 120, 32);
         assert!(rendered.contains("Since your last session"));
         assert!(rendered.contains("Welcome back. You were away about 5 hours."));
+        // 🔴 **THE `you` LABEL IS GONE AND ITS ABSENCE IS PART OF THE CONTRACT NOW.**
+        // The founder: *"Delete the word 'you'. I don't want to see that 'you' any more."* What
+        // the label was standing in for — this turn is MINE — is the highlight band, asserted in
+        // `the_users_own_turn_is_a_band_not_a_label` where the background can actually be read.
+        // A text dump cannot see a background, so asserting the absence here and the presence
+        // there is the only honest split.
         assert!(
-            rendered
+            !rendered
                 .lines()
-                .any(|line| line.trim_start_matches('"').starts_with("you")),
-            "{rendered}"
+                .any(|line| line.trim_start_matches('"').trim_end() == "you"),
+            "the `you` label came back\n{rendered}"
         );
         assert!(rendered.contains("› what changed?"));
     }
@@ -14173,6 +14449,54 @@ mod tests {
         assert_eq!(reply.text, "IMAGE PROBE SENTINEL");
     }
 
+    /// 🔴 THE HALF THE TEXT DUMP CANNOT SEE: THE USER'S OWN TURN IS LIFTED ONTO A BAND.
+    ///
+    /// The founder asked for two things about the same rows — delete the word `you`, and highlight
+    /// an arriving message the way ChatGPT and Codex highlight yours. Deleting the label alone
+    /// would have been a regression, because `user_turn_background` returned `None` on every
+    /// terminal that does not answer an OSC background query, so on those terminals the turn had
+    /// NO marker at all once the word was gone.
+    ///
+    /// ⚠️ **THIS IS ASSERTED ON THE BUFFER, NOT ON A TEXT DUMP.** A background is not a character.
+    /// Every existing test of these rows read `format!("{}", backend)`, which is exactly why the
+    /// band could return `None` for months without a single red test.
+    #[test]
+    fn the_users_own_turn_is_a_band_not_a_label() {
+        for theme in [Theme::Dark, Theme::CreamInk] {
+            let mut app = test_app();
+            app.theme = theme;
+            app.transcript
+                .push(TranscriptEntry::User("where does charge fail?".to_string()));
+            let buffer = rendered_buffer_at_size(&app, Instant::now(), 120, 32);
+
+            let banded = (0..buffer.area.height)
+                .filter(|y| {
+                    (0..buffer.area.width).any(|x| {
+                        let cell = &buffer[(x, *y)];
+                        cell.symbol().starts_with('w') && cell.bg != Color::Reset
+                    })
+                })
+                .count();
+            assert!(
+                banded >= 1,
+                "{theme:?}: the user's turn has no background band at all"
+            );
+
+            // ⚠️ THE CONTROL. A frame that painted EVERY row would satisfy the clause above and
+            // mean nothing — the band has to distinguish this turn from the rest of the screen.
+            let painted_rows = (0..buffer.area.height)
+                .filter(|y| {
+                    (0..buffer.area.width)
+                        .all(|x| buffer[(x, *y)].bg != Color::Reset)
+                })
+                .count();
+            assert!(
+                painted_rows < usize::from(buffer.area.height),
+                "{theme:?}: every row is painted, so the band marks nothing"
+            );
+        }
+    }
+
     #[test]
     fn transcript_turns_carry_distinguishable_speaker_labels() {
         let mut app = test_app();
@@ -14191,15 +14515,19 @@ mod tests {
                 .filter(|line| line.contains(needle))
                 .count()
         };
-        // The design has no left border, so the speaker label opens the row instead of
-        // following a `│`. What is asserted is unchanged: exactly one labelled turn each.
-        assert_eq!(
-            rendered
+        // 🔴 **THE USER'S TURN IS A BAND, NOT A WORD.**
+        //
+        // It used to be labelled `you` on its own row and this test counted that row. The founder
+        // deleted the word and asked for the highlight instead — *"the way ChatGPT and Codex
+        // highlight yours. Same treatment, our palette."* So the assertion moved from the text
+        // dump to the BUFFER, because a background is not a character and a text dump cannot see
+        // one. `the_users_own_turn_is_a_band_not_a_label` below carries that half; here we assert
+        // only that the label did not survive.
+        assert!(
+            !rendered
                 .lines()
-                .filter(|line| line.trim_start_matches('"').starts_with("you"))
-                .count(),
-            1,
-            "exactly one user-labelled turn\n{rendered}"
+                .any(|line| line.trim_start_matches('"').trim_end() == "you"),
+            "the `you` label came back\n{rendered}"
         );
         // ⚠️ **UPDATED DELIBERATELY.** The assistant turn used to be labelled `estelle  grounded`
         // on its own line. The founder: *"Claude does not say Claude, Claude just writes a dot.
@@ -14239,18 +14567,35 @@ mod tests {
                 })
                 .unwrap_or_else(|| panic!("no rendered row for {needle:?}"))
         };
-        let user_label = label_cell("you");
+        // ⚠️ The user's row is found by its own TEXT now, not by a `you` label that no longer
+        // exists. The property being asserted is unchanged and is the one that matters: at a
+        // glance, the two speakers are different ink.
+        let user_label = label_cell("where does charge fail?");
         let estelle_label = label_cell("at the retry loop");
         assert_ne!(
             user_label.fg, estelle_label.fg,
-            "speaker labels share ink and are not glanceable"
+            "the two speakers share ink and are not glanceable"
         );
         assert_eq!(
             estelle_label.symbol(),
             "\u{25cf}",
             "the assistant turn does not open with the grounded mark"
         );
-        assert!(!user_label.modifier.contains(Modifier::BOLD));
+        // ⚠️ **THIS CLAUSE WAS REPLACED, NOT DELETED.** It used to read
+        // `assert!(!user_label.modifier.contains(Modifier::BOLD))` — "the `you` label is not
+        // shouted" — and that label no longer exists, so the clause had no subject. Dropping it
+        // would have quietly narrowed what this test covers. The property that took its place is
+        // the channel that took the label's place: the user's row is BANDED and the assistant's
+        // row is not.
+        assert_ne!(
+            user_label.bg, estelle_label.bg,
+            "the user's turn and Estelle's sit on the same ground — the band marks nothing"
+        );
+        assert_eq!(
+            estelle_label.bg,
+            Color::Reset,
+            "Estelle's own turn picked up the user's highlight band"
+        );
     }
 
     #[test]

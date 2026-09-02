@@ -1,0 +1,30 @@
+sessions     ● checkout-api      ◐ payments-worker      ○ infra-terraform      ○ design-book     + new
+
+── sessions · 4 open · 1 in flight ───────────────────────────────────────────────────────────────────────────────────────────────────────
+  session             repo                        state         last activity        spend
+  checkout-api        fernpost/checkout-api       landed        2m ago               $0.41
+  payments-worker     fernpost/payments           in flight     4s ago               $1.07
+  infra-terraform     fernpost/infra              queued        18m ago              $0.00
+  design-book         uqeu/estelle                queued        1h ago               $0.12
+
+◐ payments-worker is mid-repair  ·  round 2 of 3 · $1.07 so far
+
+  Alt+Left/Right switch · Ctrl+W close view
+  closing a view leaves the session running on the server; /resume reopens it where it stopped
+  4 sessions · $1.60 this terminal · spend is counted per session, never per view
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

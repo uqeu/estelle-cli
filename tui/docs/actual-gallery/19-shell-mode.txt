@@ -1,0 +1,30 @@
+── shell · your shell, not Estelle ─────────────────────────────────────────────────────────────────────────────────
+
+  ! cargo test -p estelle-tui --bin estelle
+  !
+  !    Compiling estelle-tui v0.2.31 (/Users/khai/Desktop/estelle/cli-rs/tui)
+  !     Finished `test` profile [unoptimized + debuginfo] target(s) in 41.02s
+  !      Running unittests src/main.rs (target/debug/deps/estelle-3f0a1c9d)
+  !
+  ! running 219 tests
+  ! ......................................................................
+  ! test result: ok. 219 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out
+  !
+  ! exit 0 · 47.8s elapsed · timeout 120s, never reached
+
+  this ran in your shell, not Estelle. no model call, no grounding, no memory write.
+  Estelle did not read the output. ask it to, and that becomes a turn you can see and price.
+
+  shell       /bin/zsh -lc                inherited from $SHELL, not a shell Estelle chose
+  cwd         ~/Desktop/estelle/cli-rs    the command's cwd, not the session's repository root
+  timeout     120s                        overridable per command: !!timeout 600 cargo test --release
+  captured    14 lines · 1.2 KB           held locally; /shell explains what it does not send
+
+  ~/cli-rs · $0.000 · ● exit 0 · not billed
+
+
+
+
+
+
+

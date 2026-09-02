@@ -1,0 +1,34 @@
+── providers · 10 · one pool ───────────────────────────────────────────────────────────────────────────────────────
+
+      provider              how it authenticates  state         in      out  note
+  ›   Anthropic             api key               on file    $5.00   $25.00  sk-ant-…4f2c · added 12 Aug
+      Claude subscription   subscription import   on file     plan     plan  imported from Claude Code
+      OpenAI API            api key               on file    $5.00   $25.00  sk-…9d1a · added 3 Aug
+      ChatGPT plan          oauth device          on file     plan     plan  device code · headless-safe
+      Google Gemini         api key               no key     $1.50    $6.00  login gemini adds it
+      OpenRouter            api key               on file   varies   varies  200+ models, priced per model
+      DeepSeek              api key               no key     $0.95    $3.80
+      GitHub Copilot        oauth device          no key         —        —  device code · no token price
+      Azure OpenAI          api key               no key         —        —  needs an API base as well
+      Ollama                local, none           on file    $0.00    $0.00  localhost:11434 · this machine
+
+  ↑↓ navigate · enter edits · d removes · esc closes · in/out are $ per million tokens
+  keys live in your OS keychain. Estelle prints a prefix and a state, never a value.
+
+── what this key costs · anthropic ─────────────────────────────────────────────────────────────────────────────────
+
+      model                       in       out  this session  spent on
+  ●   claude-opus-5            $5.00    $25.00        $0.104  this session's plan and solve turns
+  ●   claude-opus-4-8          $5.00    $25.00        $0.000  pinned by you, not chosen today
+  ○   claude-haiku-4-5         $1.00     $5.00        $0.000  affinity has not picked it here
+
+  plan  Free · 10M tokens · 6.1M used · 3.9M remaining     run  $0.104 this session, none on the plan
+
+  ~/estelle · main · $0.104 · ◐ affinity
+
+
+
+
+
+
+

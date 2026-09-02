@@ -19,8 +19,27 @@ use crate::theme::{Palette, pulse};
 
 /// The status vocabulary, chosen by the founder from the rendered specimen sheet (set 2A).
 ///
-/// Five marks, five meanings, no synonyms. A sixth state does not get a sixth glyph invented for
+/// Six marks, six meanings, no synonyms. A seventh state does not get a seventh glyph invented for
 /// it here — it gets mapped onto the meaning it actually has, or it gets raised as a gap.
+///
+/// 🔴 **THIS SAID "FIVE" FOR MONTHS WHILE THE PRODUCT DREW SIX.**
+///
+/// `?` was on two shipped screens — the orchestra worker table (`orchestra_view::glyph`, for
+/// `Lost | NeedsInput | Unknown`) and the todo ledger (`commands.rs`, for `TodoStatus::Unknown`) —
+/// as a bare string literal in each, in neither enum, in neither test. The docstring above it was
+/// not describing the product; it was describing the file. **A name that overclaims its own body is
+/// the documentation form of the inert guard**: a reader who wants to know the mark vocabulary
+/// reads "five marks, no synonyms" and stops, and the count is never re-measured.
+///
+/// ⚠️ **AND `?` COULD NOT HAVE BEEN MAPPED ONTO ONE OF THE FIVE.** It is not landed, not blocked,
+/// not in flight, not queued and not refused — it means *the server did not tell us*, which is a
+/// genuinely sixth meaning. Folding it into `Queued` would have made every unreported worker look
+/// idle, and into `Blocked` would have called for a human who is not needed. The honest fix for a
+/// sixth meaning is a sixth name, and the honest fix for a stale count is to change the number the
+/// same day the fact changes.
+///
+/// Its colour is [`Palette::mid`] and not [`Palette::warn`]: unknown is the ABSENCE of a signal,
+/// not a call for attention, and `warn` already means "a human is needed here".
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Mark {
     /// `●` landed · healthy
@@ -33,9 +52,26 @@ pub(crate) enum Mark {
     Queued,
     /// `■` refused
     Refused,
+    /// `?` unknown — the server did not report a state for this row
+    Unknown,
 }
 
 impl Mark {
+    /// 🔴 **EVERY TEST IN THIS MODULE ITERATES THIS, AND THAT IS THE POINT.**
+    ///
+    /// The three property tests below each carried their own hand-written copy of the five
+    /// variants. A sixth mark added to the enum would have compiled, shipped, and been covered by
+    /// none of them — which is exactly how `?` reached two screens with no test and no name. One
+    /// list, one place to forget, and forgetting it is a compile error rather than a silent gap.
+    pub(crate) const ALL: [Self; 6] = [
+        Self::Landed,
+        Self::Blocked,
+        Self::InFlight,
+        Self::Queued,
+        Self::Refused,
+        Self::Unknown,
+    ];
+
     pub(crate) const fn glyph(self) -> &'static str {
         match self {
             Self::Landed => "●",
@@ -43,6 +79,7 @@ impl Mark {
             Self::InFlight => "◐",
             Self::Queued => "○",
             Self::Refused => "■",
+            Self::Unknown => "?",
         }
     }
 
@@ -53,6 +90,7 @@ impl Mark {
             Self::InFlight => palette.cite,
             Self::Queued => palette.dim,
             Self::Refused => palette.red,
+            Self::Unknown => palette.mid,
         }
     }
 
@@ -165,13 +203,7 @@ mod tests {
     #[test]
     fn only_the_mark_pulses_the_words_never_do() {
         let palette = ScreenTheme::Dark.palette();
-        for mark in [
-            Mark::Landed,
-            Mark::Blocked,
-            Mark::InFlight,
-            Mark::Queued,
-            Mark::Refused,
-        ] {
+        for mark in Mark::ALL {
             let steady = mark.colour(&palette);
             let mut mark_colours = std::collections::HashSet::new();
             for tick in 0..56 {
@@ -257,13 +289,7 @@ mod tests {
 
     #[test]
     fn every_mark_is_one_terminal_column_and_no_two_share_a_glyph() {
-        let marks = [
-            Mark::Landed,
-            Mark::Blocked,
-            Mark::InFlight,
-            Mark::Queued,
-            Mark::Refused,
-        ];
+        let marks = Mark::ALL;
         let glyphs = marks
             .iter()
             .map(|mark| mark.glyph())
@@ -297,17 +323,11 @@ mod tests {
     fn no_two_marks_share_a_colour_in_either_theme() {
         for theme in [ScreenTheme::Dark, ScreenTheme::Cream] {
             let palette = theme.palette();
-            let colours = [
-                Mark::Landed,
-                Mark::Blocked,
-                Mark::InFlight,
-                Mark::Queued,
-                Mark::Refused,
-            ]
-            .iter()
-            .map(|mark| format!("{:?}", mark.colour(&palette)))
-            .collect::<std::collections::HashSet<_>>();
-            assert_eq!(colours.len(), 5, "two marks share a colour");
+            let colours = Mark::ALL
+                .iter()
+                .map(|mark| format!("{:?}", mark.colour(&palette)))
+                .collect::<std::collections::HashSet<_>>();
+            assert_eq!(colours.len(), Mark::ALL.len(), "two marks share a colour");
         }
     }
 }

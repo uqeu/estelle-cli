@@ -1,0 +1,34 @@
+── tools · this turn ───────────────────────────────────────────────────────────────
+
+      tool    argument                                        elapsed  result
+  ⏺   Bash    cargo test -p estelle-tui                          8.1s  214 passed · 0 failed
+  ⏺   Read    billing/receipt.rs                                 0.1s  82 lines
+  ⏺   Grep    settle( · billing/                                 0.3s  6 matches in 4 files
+  ◐   Edit    billing/receipt.rs · 1 hunk                        2.4s  running
+  ⏺   Gate    the proposed diff                                  1.2s  refused · 1 finding
+
+  ▾ Bash · cargo test -p estelle-tui   expanded, tail first
+  ⎿   212 lines hidden · ctrl+r expands
+      test billing::charge::retries_three_times ...             ok
+      test billing::charge::gives_up_after_three ...            ok
+      test billing::retry::backoff_is_bounded ...               ok
+      test billing::retry::gate_refuses_unsettled ...           ok
+      test billing::receipt::writes_after_settle ...            ok
+      test billing::receipt::one_receipt_per_charge ...         ok
+      test billing::refund::refunds_are_idempotent ...          ok
+      test billing::settle::settles_once ...                    ok
+      test cols::multibyte_glyphs_count_as_one ...              ok
+      test theme::pulse_never_uses_rapid_blink ...              ok
+      test result: ok. 214 passed; 0 failed; 3 ignored
+      Finished test profile in 8.14s
+
+  ctrl+r expands the selected call · ctrl+o expands every call · c copies this output
+  a collapsed call is one row. nothing is dropped silently: what is hidden is counted.
+
+
+
+
+
+
+
+

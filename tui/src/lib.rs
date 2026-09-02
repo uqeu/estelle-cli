@@ -77,6 +77,18 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 pub use token_usage::TokenUsage;
+
+/// The popup selected-row accent on the dark ground, exported so the BINARY can assert it equals
+/// `theme::Palette::cite`. `style` is in this library and `theme` is in the binary, so a test is
+/// the only thing that can see both — see `main.rs::the_popup_accent_is_the_products_cite_token`.
+pub fn style_accent_dark() -> ratatui::style::Color {
+    style::DARK_ACCENT
+}
+
+/// The popup selected-row accent on cream. Same reason as [`style_accent_dark`].
+pub fn style_accent_cream() -> ratatui::style::Color {
+    style::CREAM_ACCENT
+}
 use tracing::error;
 use tracing::warn;
 use tracing_appender::non_blocking;

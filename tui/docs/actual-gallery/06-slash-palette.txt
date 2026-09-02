@@ -1,31 +1,28 @@
 ESTELLE  ·  uqeu/estelle
 
-╌╌ session · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌  │  ╌╌ production · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-Ask about uqeu/estelle                                                         │  APP HEALTH · repo uqeu/estelle
-                                                                               │  Connecting to Estelle...
-/review  Read current changes                                     ·            │
-/sweep   Index or refresh this repo                                            │  AGENT HEALTH
-?        Show shortcuts                                         ·   ·          │  State unavailable · no read contract · send POST
-                                                                               │  /agent/events.
+── session · uqeu/estelle ───────────────────────────────────────────────────  │  ── production · uqeu/estelle ───────────────────
+   uqeu/estelle · cli/design-book-rust-20260902                                │  ── app · repo uqeu/estelle ─────────────────────
+Ask about uqeu/estelle                                                         │  Connecting to Estelle...
                                                                                │
-                                                                               │  ESTELLE STATUS
-                                                                               │  Waiting for the live issue feed...
+/review  Read current changes                                                  │  ── agents · unread ─────────────────────────────
+/sweep   Index or refresh this repo                                            │  ○   agents            no read yet · GET /agent/…
+?        Show shortcuts                                                        │
+                                                                               │  ── estelle · unread ────────────────────────────
+                                                                               │  ○   issues            no read yet · GET /issues
                                                                                │
-                                                                               │  ESTELLE QUEUE
-                                                                               │  Queue empty · no repair work is reported.
-                                                        ⠠⠂⡐  ⠠⠢                │  Issue selection: /monitor issues
-                                                      ⡀⠂⢴⣜⣷⣿⣼⣣⢶⣰⡃⠢             │
-      ·       ·       ·       ·       ·       ·       · ⠻⣮⣻⣿⣿⡿⣛⣽⢷⠈⠂   · ·      │  GITHUB
-                                                         ⢀⡭⠿⠿⣋⡁ ⠘              │  Waiting for measured GitHub connection state...
-· · ∷   · · · ∷ ∷ · ·   ∷ · ·   · ∷ ·   · · ∷   · · ·   · · · ⠉ ∷   ·   ·   ·  │
-                       ∷ ∷                       ∷ ∷                           │
-  ·   ∷   ·   ·   ·   · · ∷ ∷ · · · ∷ · · · · ∷ · · ∷ · ∷ · · · · ∷ ∷ ∷ · · ∷  │
+                                                                               │  ── queue · 0 repair(s) ─────────────────────────
+                                                                               │  ○   repairs           none reported
+                                                                               │  ○   select            /monitor issues
                                                                                │
-∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ · · · · ∷ · · · · ∷ · · · · ∷ · · ·  │
-∷∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷   ∷                         │
-╌╌ ask · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+                                                                               │  ── github · unknown ────────────────────────────
+                                                                               │  ○   connection        no read yet · GET /github…
+                                                                         ⠠⠶    │
+∷                                                                              │
 
-› /m
+
+── ask · uqeu/estelle ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ /m
+
 
 
   /me           your account: plan, balance, budget, provider, invites
@@ -35,4 +32,7 @@ Ask about uqeu/estelle                                                         �
   /model        browse your BYOK model pool
   /memories     the held-memory listing with trust tiers
   /mcp          list Estelle's MCP tools
-tab focus · shift+tab autonomy · ctrl+t tasks · alt+m context · / commands  |  plan  ·  routing auto
+  /whoami       which credential kinds are present, never their values
+  /team         your team: role, seats, members, invites; /team board ranks members
+  /outcomes     how the team's applied changes fared: accept/revert/reject
+  enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection

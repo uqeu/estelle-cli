@@ -1,23 +1,21 @@
 ESTELLE  ·  uqeu/estelle
 
-╌╌ session · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌  │  ╌╌ production · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-Todo                                                                           │  APP HEALTH · repo uqeu/estelle
-✓ Bind checkout timeout — billing/charge.rs:82                                 │  Connecting to Estelle...
-✓ Run the gate regression — 18/18 passed                                       │
-● Inspect the proposed diff — 2 files                                          │  AGENT HEALTH
-○ Open a reviewable PR                                                         │  State unavailable · no read contract · send POST
-? Unverified: Confirm the account model                                        │  /agent/events.
-✓ Trace the deploy — deploy-8e17                                               │
-○ Check GitHub connection                                                      │  ESTELLE STATUS
-○ Record the final verdict                                                     │  Waiting for the live issue feed...
-ctrl+t to collapse                                                             │
-                                                                               │  ESTELLE QUEUE
-                                                                               │  Queue empty · no repair work is reported.
-                                                                               │  Issue selection: /monitor issues
+── session · uqeu/estelle ───────────────────────────────────────────────────  │  ── production · uqeu/estelle ───────────────────
+   uqeu/estelle · cli/design-book-rust-20260902                                │  ── app · repo uqeu/estelle ─────────────────────
+Todo                                                                           │  Connecting to Estelle...
+✓ Bind checkout timeout — billing/charge.rs:82                                 │
+✓ Run the gate regression — 18/18 passed                                       │  ── agents · unread ─────────────────────────────
+● Inspect the proposed diff — 2 files                                          │  ○   agents            no read yet · GET /agent/…
+○ Open a reviewable PR                                                         │
+? Unverified: Confirm the account model                                        │  ── estelle · unread ────────────────────────────
+✓ Trace the deploy — deploy-8e17                                               │  ○   issues            no read yet · GET /issues
+○ Check GitHub connection                                                      │
+○ Record the final verdict                                                     │  ── queue · 0 repair(s) ─────────────────────────
+ctrl+t to collapse                                                             │  ○   repairs           none reported
+                                                                               │  ○   select            /monitor issues
                                                                                │
-                                                                               │  GITHUB
-                                                                               │  Waiting for measured GitHub connection state...
-                                                                               │
+                                                                               │  ── github · unknown ────────────────────────────
+                                                                               │  ○   connection        no read yet · GET /github…
                                                                                │
                                                                                │
                                                                                │
@@ -26,11 +24,13 @@ ctrl+t to collapse                                                             �
                                                                                │
                                                                                │
                                                                                │
-                                                                               │
-╌╌ ask · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-
-› Ask Estelle
 
 
-  ? for shortcuts
-tab focus · shift+tab autonomy · ctrl+t tasks · alt+m context · / commands  |  plan  ·  routing auto
+── ask · uqeu/estelle ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+
+
+
+
+
+  enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection

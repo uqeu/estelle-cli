@@ -1,0 +1,32 @@
+── memory · uqeu/estelle ───────────────────────────────────────────────────────────────────
+
+                                                  kind       trust        added  cited by
+      the gate is never bypassed by auto-mode     decision   measured    14 Aug  3 citations
+      we ship propose-only by default             decision   observed    12 Aug  1 citation
+      Rows exists so an adapter cannot tell       lesson     measured    11 Aug  2 citations
+  ›   cream is #F1EFE9                            fact       asserted    09 Aug  1 citation
+      opus-4-8 is pinned, do not upgrade          decision   asserted    25 Aug  you, just now
+
+── correcting · that is wrong ──────────────────────────────────────────────────────────────
+
+  you   cream is #E9E6DC                            globals.css:18-32
+  was   cream is #F1EFE9                            asserted · 09 Aug
+
+  ⏺ the new claim supersedes the old one, and stops being served.
+  an edit SUPERSEDES, it does not overwrite. retracted is not deleted.
+  the superseded claim stays readable, dated and cited — you see what was believed when.
+
+  enter reads · e edits · d retracts · c shows citations
+  measured came off an instrument · observed was seen once · asserted is somebody's word.
+
+
+
+
+
+
+
+
+
+
+
+

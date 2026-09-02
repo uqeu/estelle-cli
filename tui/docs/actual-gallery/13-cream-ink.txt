@@ -1,34 +1,34 @@
 ESTELLE  ·  uqeu/estelle  ·  repo graph current
 
-╌╌ session · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌  │  ╌╌ production · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-Ask about uqeu/estelle                                                   │  APP HEALTH · repo uqeu/estelle
-                                                                         │  Connecting to Estelle...
-/review  Read current changes                             ·              │
-/sweep   Refresh this repo's index                                       │  AGENT HEALTH
-?        Show shortcuts                     ·       ·       ·   ·   ·    │  State unavailable · no read contract · send
-                                                                         │  POST /agent/events.
+── session · uqeu/estelle ─────────────────────────────────────────────  │  ── production · uqeu/estelle ───────────────
+   uqeu/estelle · cli/design-book-rust-20260902                          │  ── app · repo uqeu/estelle ─────────────────
+Ask about uqeu/estelle                                                   │  Connecting to Estelle...
                                                                          │
-                                                                         │  ESTELLE STATUS
-                                                                         │  Waiting for the live issue feed...
+/review  Read current changes                                            │  ── agents · unread ─────────────────────────
+/sweep   Refresh this repo's index                                       │  ○   agents            no read yet · GET /ag…
+?        Show shortcuts                                                  │
+                                                                         │  ── estelle · unread ────────────────────────
+                                                                         │  ○   issues            no read yet · GET /is…
                                                                          │
-                                                                         │  ESTELLE QUEUE
-                                                                         │  Queue empty · no repair work is reported.
-                                                                         │  Issue selection: /monitor issues
-                                                   ⢀ ⠄⠂⢀ ⠠⢀              │
-                                      ·       ·   ⠠⠄⣄⢾⣼⣈⣦⣴⢠⠁⢄            │  GITHUB
-                                                   ⣤⣯⣿⣿⣿⣾⡾⣋⣃⠂            │  Waiting for measured GitHub connection
-· · ∷   · · ·   ·   ·   ∷   · · ·   ·   ·   ∷   ·  ⠇⠈⠛⢿⣿⡿⠞⠋⠹·   ∷ · ·    │  state...
-             ·                                      ⠰⠞⠁⡏⠑⠶               │
-  ·   ∷   ·   ∷   ·   ·   ∷   ·   ·   · · · · ∷ ∷ · · · ∷ ·   ·   ∷      │
-                       ∷                       ∷               ∷         │
-∷   · · ·   · · · · ∷ ∷ ∷ · · ∷ · · · · ∷ · · · · ∷ · · · · ∷ ∷ ∷ · · ∷  │
+                                                                         │  ── queue · 0 repair(s) ─────────────────────
+                                                                         │  ○   repairs           none reported
+                                                                         │  ○   select            /monitor issues
                                                                          │
-∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷ ∷   ∷ · ·   · ∷ ·   · · ∷   · · ·  │
-∷      ∷       ∷       ∷       ∷       ∷       ∷                         │
-╌╌ ask · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-
-› Ask Estelle
+                                                                         │  ── github · unknown ────────────────────────
+                                                                         │  ○   connection        no read yet · GET /gi…
+                                                                         │
+                                                                         │
+                                                                         │
+                                                                         │
+                                                                   ⠟⠂    │
+∷   · · ·   · · ·   · ∷ ∷ · · · · · · · · · · · · · · · · · · ∷ ∷ · · ·  │
 
 
-  ? for shortcuts
-tab focus · shift+tab autonomy · ctrl+t tasks · alt+m context · / commands  |  plan  ·  routing auto
+── ask · uqeu/estelle ──────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+
+
+
+
+
+  enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selection
