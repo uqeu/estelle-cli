@@ -30,14 +30,19 @@ stated flatly** — the whole point of the file is that the founder can trust it
 | 12b | **The idle fleet drafting ten queued jobs across ten suites** | ⛔ **Not built as one surface.** The individual suites exist in various states; an idle fleet picking up a queue and drafting propose-only work does not. | probed |
 | 13 | **`/spend` with the same task priced on the API** | Per-role receipts are real and committed. **The two-column "what you paid / what the API costs" view is not a shipped screen.** The arithmetic is on published rates. | repo doc |
 
-## Film 2 · `cartwheel/storefront` · team memory
+## Film 2 · `cartwheel/storefront` · the repo moved without him
 
 | beat | depicted | status | confidence |
 |---|---|---|---|
-| 1–4 | Monitor, root cause to `file:line`, sandboxed repro, propose-only diff | ✅ Built (monitor, issue detection, vendor-drift detection, sandboxed repro). **The consolidated live view is design-book, not shipped.** | repo doc |
-| 5 | **A pattern across 90 days of incidents** | ⛔ **Not built.** Longitudinal incident-pattern detection. | repo doc |
-| 6 | **A teammate already working the same branch** | ⛔ **Not built.** Concurrent-work detection across teammates. | repo doc |
-| 7 | Posting to Slack on his behalf, with the link | ✅ Built — the Slack → PR loop is live and proven. | repo doc |
+| 1 | **A four-day rollup: who merged, who decided, who opened what** | `list_sessions` and team activity are built; **the narrative rollup is not.** | repo doc |
+| 2 | **A team decision volunteered BEFORE he writes the code, with its ADR line** | ⛔ **Not built.** Contradiction detection over the memory graph. The repo's own film notes call it *"the single most valuable unbuilt thing"*. | repo doc |
+| 3 | Recording his own counter-decision, linked to the one it departs from | ⛔ **Not built.** Memory holds decisions; a decision that cites the decision it revises is not a shape we write. | probed |
+| 3b | **A teammate's proposal parked in Slack, and a second teammate's agent answer about it** | ⛔ **Not built.** Requires Slack ingest joined to session memory. | probed |
+| 4 | **A teammate inside the same file right now** | ⛔ **Not built.** Concurrent-work detection across teammates. | repo doc |
+| 5 | 🔴 **What a teammate ASKED THEIR AGENT and what it ANSWERED** | ⛔ **NOT BUILT, AND IT IS THE MOST DIFFERENTIATED FRAME IN THE THREE FILMS.** Sessions are stored per account; a cross-teammate read of question-and-answer pairs is not a surface, a query, or an endpoint today. **This is the one to build.** | probed |
+| 5b | A second agent-conversation frame, used to confirm rather than contradict | ⛔ **Not built.** Same mechanism as beat 5. | probed |
+| 6 | **The memory catch: code that compiles, that the gate passes, that a team decision forbids** | ⛔ **Not built** — the catch itself. ✅ The gate half is real. | repo doc |
+| 8 | Slack + Linear + GitHub in one turn, replying **inside a teammate's own thread** | ✅ The Slack → PR loop is live and proven. ⛔ **Threading a reply into a specific teammate's earlier thread, and the Linear write, are not.** | repo doc |
 
 ## Film 3 · `uqeu/estelle` · production, and the gate refusing
 

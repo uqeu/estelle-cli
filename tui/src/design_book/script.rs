@@ -354,6 +354,33 @@ mod tests {
         }
     }
 
+    /// 🔴 **FILM 2 ARGUES ONE THING: THE TEAM'S REASONING IS IN THE ROOM WITH HIM.**
+    ///
+    /// Its centre is the frame no competitor can build — not *"Devon committed to this file"*,
+    /// which any tool reads from git, but **what Devon asked his agent and what it told him**. Each
+    /// needle is a beat a silent viewer has to see, so trimming one is a test failure rather than a
+    /// quiet loss of the film's whole argument.
+    #[test]
+    fn film_two_stands_alone_with_the_sound_off() {
+        let text = spoken();
+        for statement in [
+            "merged #401",                         // 1 · the repo moved while he was away
+            "0009-upstream-retry-budget.md:31",    // 2 · a decision, volunteered, with its line
+            "record why this path differs",        // 3 · he can disagree, and it is recorded
+            "Sam proposed",                        // 4 · a proposal already parked in Slack
+            "inside billing/capture.py right now", // 5 · a teammate mid-flight in the same file
+            "asked about this same retry path",    // 6 · 🔴 what he ASKED, and what he was TOLD
+            "Only",                                // 7 · memory catches what the gate cannot
+            "posted to #eng",                      // 8 · the work leaves the terminal
+            "waiting on your review",              // 9 · what still needs him
+        ] {
+            assert!(
+                text.contains(statement),
+                "film 2 lost the beat carrying {statement:?} \u{2014} it no longer stands alone"
+            );
+        }
+    }
+
     /// 🔴 **THE RAIL HAS SOMETHING ON IT.** `dress` is the difference between the five bands
     /// carrying Sable's services and them reading `no read yet · GET /agent/health`, which is what
     /// the founder saw. Asserted on the FIELDS rather than on a rendered frame so the failure names
