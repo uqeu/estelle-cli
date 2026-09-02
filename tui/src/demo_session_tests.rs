@@ -64,11 +64,12 @@ fn frame_at_width(film: &'static Film, at_ms: u32, fixtures: bool, width: u16) -
         };
     }
     let now = Instant::now();
+    let mut paintings = Vec::new();
     for step in cue_sheet(film, fixtures, PANE) {
         if step.at_ms > at_ms {
             break;
         }
-        apply(&step.cue, &mut app, now);
+        apply(&step.cue, &mut app, now, &mut paintings);
     }
     let mut terminal = Terminal::new(TestBackend::new(width, TALL)).expect("test terminal");
     terminal
@@ -118,9 +119,10 @@ fn the_transcript_only_ever_grows() {
     for film in script::FILMS {
         let mut app = film_app(film);
         let now = Instant::now();
+        let mut paintings = Vec::new();
         let mut high_water = 0usize;
         for step in cue_sheet(film, true, PANE) {
-            apply(&step.cue, &mut app, now);
+            apply(&step.cue, &mut app, now, &mut paintings);
             assert!(
                 app.transcript.len() >= high_water,
                 "film {} reset its transcript at {} ms",
@@ -248,12 +250,13 @@ fn the_users_own_turn_is_the_only_thing_wearing_the_band() {
     let film = script::film(1).expect("film 1");
     let mut app = film_app(film);
     let now = Instant::now();
+    let mut paintings = Vec::new();
     // Far enough in that a user turn and a reply are both on screen.
     for step in cue_sheet(film, true, PANE) {
         if step.at_ms > 20_000 {
             break;
         }
-        apply(&step.cue, &mut app, now);
+        apply(&step.cue, &mut app, now, &mut paintings);
     }
     let mut terminal = Terminal::new(TestBackend::new(WIDE, TALL)).expect("test terminal");
     terminal
@@ -293,9 +296,10 @@ fn a_reply_arrives_in_many_pieces_rather_than_all_at_once() {
     let film = script::film(1).expect("film 1");
     let mut app = film_app(film);
     let now = Instant::now();
+    let mut paintings = Vec::new();
     let mut lengths = std::collections::BTreeSet::new();
     for step in cue_sheet(film, true, PANE) {
-        apply(&step.cue, &mut app, now);
+        apply(&step.cue, &mut app, now, &mut paintings);
         if let Some(TranscriptEntry::Answer { text, .. }) = app.transcript.last() {
             lengths.insert(text.len());
         }
@@ -438,8 +442,9 @@ fn transcript_text(film: &'static Film, fixtures: bool) -> String {
         script::dress(&mut app, film, false);
     }
     let now = Instant::now();
+    let mut paintings = Vec::new();
     for step in cue_sheet(film, fixtures, PANE) {
-        apply(&step.cue, &mut app, now);
+        apply(&step.cue, &mut app, now, &mut paintings);
     }
     app.transcript
         .iter()
@@ -744,5 +749,272 @@ fn no_receipt_ever_renders_its_text_vertically() {
             "only {inspected} rows inspected for film {} \u{2014} the guard proves nothing",
             film.number
         );
+    }
+}
+
+// ── the flattening, and the guards that would have caught it ─────────────────────────────────
+//
+// 🔴 **THE FILM RENDERED THE REAL GATE AND THREW ITS STYLING AWAY, AND NOTHING WAS RED.** The
+// founder, watching film 3: *"you kind of got rid of all the colours, you got rid of all the
+// styling … you neutered Estelle in the demo."* And again, specifically: *"the gate refused in
+// white for some reason, it should be red."*
+//
+// ⚠️ **EVERY GUARD IN THIS FILE COULD HAVE PASSED OVER IT, AND DID.** They assert on the frame's
+// CHARACTERS — `frame_at` collects `buffer[(x, y)].symbol()` and drops the cell's style on the
+// floor, which is the same `collect::<String>()` the defect was. A text assertion cannot see a
+// colour, so the guards below read `fg` and `modifier` off the buffer instead. That is the whole
+// lesson: **the instrument has to be able to see the thing it is certifying.**
+
+/// The one colour the brand owns, from the one place that declares it (`theme.rs:61`).
+fn brand_red() -> ratatui::style::Color {
+    crate::theme::ScreenTheme::Dark.palette().red
+}
+
+/// When the last row of the film's gate block has arrived, in film-clock milliseconds.
+///
+/// ⚠️ **FOUND, NEVER INDEXED.** `script.rs` is data the founder reorders, so a guard that pins the
+/// gate to a beat number breaks on exactly the edit it exists to survive — the same correction
+/// `credential_lines` already carries next door.
+fn gate_settles_at(film: &'static Film) -> u32 {
+    let steps = cue_sheet(film, true, PANE);
+    let opened = steps
+        .iter()
+        .position(|step| matches!(step.cue, Cue::OpenPainted { .. }))
+        .expect("the film must still carry a painted gate block");
+    steps[opened..]
+        .iter()
+        .take_while(|step| matches!(step.cue, Cue::OpenPainted { .. } | Cue::PaintRow))
+        .map(|step| step.at_ms)
+        .last()
+        .expect("the gate block must reveal at least one row")
+}
+
+/// Every cell of the rendered frame, with the style the renderer actually gave it.
+fn styled_frame(film: &'static Film, at_ms: u32) -> Vec<Vec<(char, ratatui::buffer::Cell)>> {
+    let mut app = film_app(film);
+    let now = Instant::now();
+    let mut paintings = Vec::new();
+    for step in cue_sheet(film, true, PANE) {
+        if step.at_ms > at_ms {
+            break;
+        }
+        apply(&step.cue, &mut app, now, &mut paintings);
+    }
+    let mut terminal = Terminal::new(TestBackend::new(WIDE, TALL)).expect("test terminal");
+    terminal
+        .draw(|frame| live_renderer::render_frame(frame, &app, now))
+        .expect("draw");
+    let buffer = terminal.backend().buffer().clone();
+    (0..buffer.area.height)
+        .map(|y| {
+            (0..buffer.area.width)
+                .map(|x| {
+                    let cell = buffer[(x, y)].clone();
+                    (cell.symbol().chars().next().unwrap_or(' '), cell)
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// 🔴 **THE FOUNDER'S SENTENCE, AS AN ASSERTION ON THE PIXELS.**
+///
+/// *"The gate refused in white for some reason, it should be red."* This finds the row spelling
+/// `Gate refused` on the REAL rendered frame and asserts every character of those two words is
+/// `#c52416` and BOLD — the style `marks::headline` computes and the old `collect::<String>()`
+/// discarded.
+///
+/// ⚠️ **THE NEGATIVE CONTROL IS IN THE SAME TEST.** An assertion that some cell somewhere is red
+/// would pass on a frame that painted the whole session red, so the row's trailing detail —
+/// `· round 1 of 3 · no model call` — is asserted to be DIM. Red where red belongs, and not
+/// elsewhere on the same row.
+#[test]
+fn gate_refused_reaches_the_frame_in_the_brand_red_and_not_in_white() {
+    let film = script::film(1).expect("film 1");
+    let frame = styled_frame(film, gate_settles_at(film));
+    let needle: Vec<char> = "Gate refused".chars().collect();
+
+    let mut checked = 0usize;
+    for row in &frame {
+        let symbols: Vec<char> = row.iter().map(|(character, _)| *character).collect();
+        let Some(at) = symbols
+            .windows(needle.len())
+            .position(|window| window == needle.as_slice())
+        else {
+            continue;
+        };
+        checked += 1;
+        for (offset, (character, cell)) in row[at..at + needle.len()].iter().enumerate() {
+            assert_eq!(
+                cell.fg,
+                brand_red(),
+                "column {} of `Gate refused` rendered {:?} rather than the brand red — \
+                 the film is flattening the gate's styling again",
+                at + offset,
+                cell.fg
+            );
+            assert!(
+                cell.modifier.contains(ratatui::style::Modifier::BOLD),
+                "the character {character:?} in `Gate refused` lost its BOLD"
+            );
+        }
+        // The negative control: the detail beside the headline is DIM, so "red" is a statement
+        // about these twelve characters and not about the row.
+        let detail = row[at + needle.len()..]
+            .iter()
+            .find(|(character, _)| character.is_ascii_alphanumeric());
+        if let Some((_, cell)) = detail {
+            assert_ne!(
+                cell.fg,
+                brand_red(),
+                "the headline's detail is red too — the whole row is being painted, not the words"
+            );
+        }
+    }
+    assert!(
+        checked > 0,
+        "`Gate refused` is not on the frame at all — this guard proves nothing"
+    );
+}
+
+/// 🔴 **THE MARK PULSES AND THE WORDS DO NOT — ON THE FILM'S OWN REPAINT PATH.**
+///
+/// `marks.rs` already proves this property of `headline`. What it could not prove is that the FILM
+/// reaches it: the old player passed `tick: 0, pulse_enabled: false` and baked one frame forever,
+/// so a correct `headline` was called once and photographed. This drives [`repaint`] at the two
+/// ends of the 28-tick cycle and reads the result off the transcript.
+#[test]
+fn the_gates_mark_pulses_in_a_film_and_its_words_hold_still() {
+    let film = script::film(1).expect("film 1");
+    let mut app = film_app(film);
+    let now = Instant::now();
+    let mut paintings = Vec::new();
+    for step in cue_sheet(film, true, PANE) {
+        if step.at_ms > gate_settles_at(film) {
+            break;
+        }
+        apply(&step.cue, &mut app, now, &mut paintings);
+    }
+    assert!(
+        !paintings.is_empty(),
+        "no painted block was registered — the repaint path is unreachable"
+    );
+
+    let headline_of = |app: &App| {
+        app.transcript
+            .iter()
+            .find_map(|entry| match entry {
+                TranscriptEntry::Painted { lines, .. } => lines.iter().find(|line| {
+                    line.spans
+                        .iter()
+                        .any(|span| span.content.contains("Gate refused"))
+                }),
+                _ => None,
+            })
+            .cloned()
+            .expect("the painted gate must carry its headline")
+    };
+
+    repaint(&mut app, &paintings, 0);
+    let hot = headline_of(&app);
+    repaint(&mut app, &paintings, 14);
+    let cool = headline_of(&app);
+
+    // The mark is span 0. It MOVED.
+    assert_ne!(
+        hot.spans[0].style.fg, cool.spans[0].style.fg,
+        "the `\u{25a0}` did not pulse across the cycle — the film is still painting one frame"
+    );
+    assert_eq!(
+        hot.spans[0].content, cool.spans[0].content,
+        "the mark changed GLYPH rather than intensity"
+    );
+    // The words are span 1. They did NOT move — the spec's whole point.
+    assert_eq!(
+        hot.spans[1].style.fg, cool.spans[1].style.fg,
+        "the words pulsed, which the design spec forbids: only the mark may pulse"
+    );
+    assert_eq!(hot.spans[1].style.fg, Some(brand_red()));
+}
+
+/// 🔴 **ONE OWNER: WHAT THE FILM DRAWS IS BYTE-FOR-BYTE WHAT THE PRODUCT DRAWS.**
+///
+/// `gate_refusal.rs`'s own header states the contract — *"This module is the single renderer;
+/// `screens.rs` and `live_renderer::render_gate_modal` both call it"* — and the film is now the
+/// third caller. This asserts the film's rows ARE that function's output, spans and styles
+/// included, so a second implementation of "what the gate looks like" cannot appear without going
+/// red.
+#[test]
+fn a_painted_row_is_the_shipped_renderers_own_output() {
+    let film = script::film(1).expect("film 1");
+    let mut app = film_app(film);
+    let now = Instant::now();
+    let mut paintings = Vec::new();
+    for step in cue_sheet(film, true, PANE) {
+        if step.at_ms > gate_settles_at(film) {
+            break;
+        }
+        apply(&step.cue, &mut app, now, &mut paintings);
+    }
+    let painted = app
+        .transcript
+        .iter()
+        .find_map(|entry| match entry {
+            TranscriptEntry::Painted { lines, .. } => Some(lines.clone()),
+            _ => None,
+        })
+        .expect("film 1 must carry a painted block");
+    let source = paintings[0].source;
+    let expected = paint(source, &Theme::Dark.screen_palette(), 0);
+
+    assert_eq!(
+        painted.len(),
+        expected.len(),
+        "the film revealed {} rows for a {}-row block",
+        painted.len(),
+        expected.len()
+    );
+    for (index, (mine, theirs)) in painted.iter().zip(&expected).enumerate() {
+        assert_eq!(
+            mine.spans.len(),
+            theirs.spans.len(),
+            "row {index} has a different span count from the renderer's own"
+        );
+        for (a, b) in mine.spans.iter().zip(&theirs.spans) {
+            assert_eq!(a.content, b.content, "row {index} lost text");
+            assert_eq!(a.style, b.style, "row {index} lost its style");
+        }
+    }
+    // The vacuity half: a block of one blank row would satisfy everything above.
+    assert!(
+        painted.len() > 6,
+        "the painted block is only {} rows — this guard proves nothing",
+        painted.len()
+    );
+}
+
+/// The claim [`paint_height`]'s docstring makes, pressed rather than asserted in prose.
+///
+/// Planning counts a block's rows with one palette and [`apply`] paints it with another, which is
+/// only sound while colour cannot change a row COUNT. If a theme ever adds or drops a row, the
+/// cue sheet would lay down the wrong number of `PaintRow` cues and the block would arrive
+/// truncated or padded on camera.
+#[test]
+fn every_painted_block_has_the_same_height_in_both_themes() {
+    for film in script::FILMS {
+        for step in cue_sheet(film, true, PANE) {
+            let Cue::OpenPainted { source, .. } = step.cue else {
+                continue;
+            };
+            let dark = paint(source, &Theme::Dark.screen_palette(), 0).len();
+            let cream = paint(source, &Theme::CreamInk.screen_palette(), 0).len();
+            assert_eq!(
+                dark, cream,
+                "film {} has a block that is {dark} rows dark and {cream} rows cream — \
+                 the plan's row count would be wrong in one of them",
+                film.number
+            );
+            assert_eq!(dark, paint_height(source), "paint_height disagrees");
+        }
     }
 }

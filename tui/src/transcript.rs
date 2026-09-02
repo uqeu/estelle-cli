@@ -52,6 +52,28 @@ pub(crate) enum TranscriptEntry {
         name: String,
         lines: Vec<String>,
     },
+    /// A block its OWN module already rendered, spans and styles intact.
+    ///
+    /// 🔴 **EVERY OTHER VARIANT CARRIES `String`, AND THAT IS WHY THE FILM LOST ITS COLOUR.**
+    /// [`TranscriptEntry::Command`] re-styles each of its lines through [`semantic_line`], so a
+    /// caller that had ALREADY computed the right colours had no way in except to flatten to
+    /// `String` first. `demo_session` did exactly that: it called the real
+    /// [`crate::gate_refusal::lines`], collected `span.content` and dropped every `Style` — so
+    /// `Gate refused` was computed in `#c52416` BOLD and drawn as body text. The founder's words
+    /// were *"you got rid of all the colours … you neutered Estelle in the demo."* He was reading
+    /// the flattening, one layer below where the colour was correct.
+    ///
+    /// ⚠️ **THE REDACTOR STILL RUNS, PER SPAN.** A styled block is not a second door around the
+    /// fence: every span's content goes through `mask_secret` exactly as `Command`'s lines do, and
+    /// `a_painted_block_is_still_masked` proves a credential cannot ride in on a `Style`.
+    ///
+    /// ⚠️ **`name` IS OPTIONAL BECAUSE SOME BLOCKS OPEN THEMSELVES.** `gate_refusal` opens on its
+    /// own `── gate · refused ──` rule and `orchestra_view` on its own `● Task(…)`; printing a
+    /// `● /gate` receipt above either one draws two marks for one event.
+    Painted {
+        name: Option<String>,
+        lines: Vec<Line<'static>>,
+    },
     Tool {
         label: String,
         lines: Vec<String>,
@@ -231,6 +253,41 @@ fn stale_lines(
     lines
 }
 
+/// `● /model` rather than `estelle  /model`. The command's OWN name is the informative half and it
+/// stays; the program's name was the noise.
+///
+/// ⚠️ **ONE OWNER.** [`TranscriptEntry::Command`] and [`TranscriptEntry::Painted`] both open on
+/// this row, and when it was written out twice the two drifted on the mark's colour.
+fn command_header(name: &str, palette: TranscriptPalette) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            format!("{} ", marks::Mark::Landed.glyph()),
+            Style::default().fg(palette.grounded),
+        ),
+        Span::styled(
+            format!("/{}", mask_secret(name)),
+            Style::default().fg(palette.semantic),
+        ),
+    ])
+}
+
+/// One already-styled line, with the redactor run over every span and every style kept.
+///
+/// 🔴 **PER SPAN, NOT PER LINE.** `mask_secret` replaces a whole line that merely CONTAINS a
+/// credential shape, and a `Line` here is a sequence of independently coloured runs — masking the
+/// concatenation would have collapsed the row to one span and taken the colour with it, which is
+/// the very defect [`TranscriptEntry::Painted`] exists to end. Masking each span keeps the
+/// boundaries and still refuses the credential.
+fn masked(line: &Line<'static>) -> Line<'static> {
+    Line::from(
+        line.spans
+            .iter()
+            .map(|span| Span::styled(mask_secret(span.content.as_ref()), span.style))
+            .collect::<Vec<_>>(),
+    )
+    .style(line.style)
+}
+
 pub(crate) fn render(
     entries: &[TranscriptEntry],
     include_citations: bool,
@@ -360,19 +417,20 @@ pub(crate) fn render(
                     Some(palette.ghost),
                 )]))
             }
+            TranscriptEntry::Painted { name, lines } => {
+                // 🔴 **THE ONE ARM THAT DOES NOT RE-STYLE WHAT IT WAS GIVEN.** Every span arrives
+                // with the colour its own renderer chose and leaves with it. The only thing done
+                // to it is the redactor, which runs per span so a `Style` cannot smuggle a
+                // credential past a fence that only ever looked at `String`s.
+                let mut rendered = name
+                    .as_deref()
+                    .map(|name| vec![command_header(name, palette)])
+                    .unwrap_or_default();
+                rendered.extend(lines.iter().map(|line| masked(line)));
+                items.push(HistoryTranscriptItem::Lines(rendered));
+            }
             TranscriptEntry::Command { name, lines } => {
-                // `● /model` rather than `estelle  /model`. The command's OWN name is the
-                // informative half and it stays; the program's name was the noise.
-                let mut rendered = vec![Line::from(vec![
-                    Span::styled(
-                        format!("{} ", marks::Mark::Landed.glyph()),
-                        Style::default().fg(palette.grounded),
-                    ),
-                    Span::styled(
-                        format!("/{}", mask_secret(name)),
-                        Style::default().fg(palette.semantic),
-                    ),
-                ])];
+                let mut rendered = vec![command_header(name, palette)];
                 rendered.extend(lines.iter().map(|line| {
                     let safe = if name == "skills" {
                         mask_skill_catalog_line(line)
@@ -452,6 +510,26 @@ pub(crate) fn compaction_messages(entries: &[TranscriptEntry]) -> Vec<Value> {
             TranscriptEntry::Command { name, lines } => {
                 message("assistant", format!("/{name}\n{}", lines.join("\n")))
             }
+            // The styles carry no meaning a language model can read, so the projection is the
+            // block's own text — the same text a reader sees, with the colour dropped.
+            TranscriptEntry::Painted { name, lines } => message(
+                "assistant",
+                format!(
+                    "{}{}",
+                    name.as_deref()
+                        .map(|name| format!("/{name}\n"))
+                        .unwrap_or_default(),
+                    lines
+                        .iter()
+                        .map(|line| line
+                            .spans
+                            .iter()
+                            .map(|span| span.content.as_ref())
+                            .collect::<String>())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                ),
+            ),
             TranscriptEntry::Tool { label, lines, .. } => {
                 message("assistant", format!("{label}\n{}", lines.join("\n")))
             }
@@ -682,6 +760,52 @@ fn mask_skill_catalog_line(line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 🔴 **A STYLE IS NOT A DOOR AROUND THE FENCE.**
+    ///
+    /// [`TranscriptEntry::Painted`] exists so a block can keep the colours its own renderer chose,
+    /// and the obvious way to build it would have been to hand the spans straight through. That
+    /// would have been a second path into the transcript with no redactor on it — the shape the
+    /// repo has now paid for three times under a different tool's name. So [`masked`] runs
+    /// `mask_secret` over EVERY span, and this presses both halves.
+    ///
+    /// ⚠️ **THE POSITIVE CONTROL IS THE STYLE.** A test that only asserted "the credential is
+    /// gone" would pass over an implementation that flattened the line to one grey span — which is
+    /// precisely the defect `Painted` was added to end. So the surviving spans are asserted to
+    /// keep their own colours.
+    #[test]
+    fn a_painted_block_is_masked_per_span_and_keeps_every_colour() {
+        let secret = "sk-ant-api03-notarealkey-demo-fixture-0000000000";
+        let line = Line::from(vec![
+            Span::styled("token ", Style::default().fg(Color::Green)),
+            Span::styled(secret.to_string(), Style::default().fg(Color::Red)),
+            Span::styled(" rotated", Style::default().fg(Color::Blue)),
+        ]);
+        let out = masked(&line);
+
+        // The credential is gone.
+        let text = out
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(
+            !text.contains(secret),
+            "a credential survived a styled row: {text:?}"
+        );
+        assert!(text.contains("[credential hidden]"), "{text:?}");
+
+        // 🔴 And the row is still THREE differently coloured spans, not one flattened one.
+        assert_eq!(out.spans.len(), 3, "masking collapsed the row's spans");
+        assert_eq!(out.spans[0].style.fg, Some(Color::Green));
+        assert_eq!(out.spans[1].style.fg, Some(Color::Red));
+        assert_eq!(out.spans[2].style.fg, Some(Color::Blue));
+        assert_eq!(out.spans[0].content, "token ");
+        assert_eq!(out.spans[2].content, " rotated");
+
+        // The vacuity control: the redactor is genuinely the thing doing the work here.
+        assert_eq!(mask_secret(secret), "[credential hidden]");
+    }
 
     #[test]
     fn semantic_tokens_are_blue_without_recolouring_prose() {

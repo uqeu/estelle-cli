@@ -38,6 +38,7 @@ use crossterm::event::{Event, EventStream, KeyCode, KeyEventKind, KeyModifiers};
 use futures::StreamExt;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui::text::Line;
 
 use crate::design_book::script;
 use crate::design_book::session::{self, Beat, Film, GateFixture, Key, Say};
@@ -126,6 +127,17 @@ enum Cue {
     System(&'static str),
     /// The product's own three-line refusal banner.
     Failure([&'static str; 3]),
+    /// Open a block one of the product's own modules draws, styled. Nothing is revealed yet.
+    ///
+    /// ⚠️ **`name` IS `None` FOR A BLOCK THAT OPENS ITSELF.** `gate_refusal` leads on its own
+    /// `── gate · refused ──` rule; a `● /gate` receipt above it draws a GREEN LANDED mark
+    /// directly over a red refusal, which is the one pair of marks that must never stack.
+    OpenPainted {
+        name: Option<&'static str>,
+        source: Paint,
+    },
+    /// Reveal one more row of the painted block in flight, at the app's own palette.
+    PaintRow,
 }
 
 struct Step {
@@ -299,51 +311,110 @@ fn plan_typing(
     (clock, typed)
 }
 
-/// The gate refusal, drawn by its own owner at the REAL pane width, flattened to plain rows.
+// ── the blocks the product draws for itself ──────────────────────────────────────────────────
+//
+// 🔴 **THE FILM USED TO CALL THE REAL RENDERER AND THEN THROW ITS STYLING AWAY.** The old
+// `gate_lines` did `line.spans.iter().map(|span| span.content).collect::<String>()` — it kept the
+// characters and dropped every `Style`. So `Gate refused` was computed in `#c52416`, BOLD, by
+// `marks::headline`, and reached the screen as body text. The founder, watching film 3: *"you got
+// rid of all the colours, you got rid of all the styling … you neutered Estelle in the demo."* He
+// was reading exactly that `collect::<String>()`.
+//
+// ⚠️ **AND IT COULD NOT HAVE PULSED EITHER.** The old call passed `tick: 0, pulse_enabled: false`,
+// which is the only honest thing a function that renders ONCE can pass. A pulse is a function of
+// the frame clock, so a block that is painted at plan time is a block that cannot move. Hence
+// [`Paint`]: the film records WHICH block is there, and repaints it from the app's own theme on
+// every frame — which is also what lets a worker table's progress advance while it sits on screen.
+
+/// A block whose own module renders it, and which the player repaints every frame.
 ///
-/// 🔴 **THIS IS WHY THE GATE BEAT WRAPPED TO COLUMN 0 AND THE FIX IS ONE ARGUMENT.**
-/// `design_book::render` calls the book screen, which renders at a hard-coded 108 columns; the
-/// session pane is ~91 on a 150-wide terminal. Everything past the pane was re-wrapped by the
-/// transcript, which knows nothing about columns and starts each continuation at the left margin.
-/// `gate_refusal::lines` has taken a `width` all along and wraps its own cells correctly — it was
-/// simply never handed the width that mattered.
-fn gate_lines(pane: usize, fixture: &'static GateFixture) -> Vec<String> {
-    let blockers = fixture
-        .blockers
-        .iter()
-        .map(|(claim, finding)| Blocker {
-            claim,
-            finding: Some(finding),
-        })
-        .collect::<Vec<_>>();
-    let files = fixture
-        .files
-        .iter()
-        .map(|(path, lines)| ((*path).to_string(), *lines))
-        .collect::<Vec<_>>();
-    let palette = crate::theme::ScreenTheme::Dark.palette();
-    crate::gate_refusal::lines(
-        &Refusal {
-            detail: fixture.detail,
-            note: Some(fixture.note),
-            blockers: &blockers,
-            files: &files,
-        },
-        &palette,
-        pane,
-        0,
-        false,
-    )
-    .iter()
-    .map(|line| {
-        line.spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect::<String>()
-            .trim_end()
-            .to_string()
-    })
-    .collect()
+/// ⚠️ **THE PANE TRAVELS WITH THE SOURCE.** It is measured once off the real terminal and every
+/// repaint has to use the SAME width, or a block would re-wrap under its own reader.
+#[derive(Clone, Copy)]
+enum Paint {
+    /// The gate refusing, drawn by [`crate::gate_refusal`] — the one renderer the live modal and
+    /// the catalog screen also call.
+    Gate {
+        fixture: &'static GateFixture,
+        pane: usize,
+    },
+}
+
+/// Where a repainted block lives in the real transcript.
+struct Painting {
+    entry: usize,
+    source: Paint,
+}
+
+/// Draw one block, at this frame's clock, in the caller's palette.
+///
+/// 🔴 **ONE OWNER, CALLED FROM TWO PLACES AND NEVER COPIED.** [`apply`] calls it to reveal a row
+/// as the block streams in, and [`repaint`] calls it to move what is already on screen. Both get
+/// the same bytes for the same `tick`, which is the property `a_painted_row_is_the_renderers_own`
+/// asserts — a second implementation of "what the gate looks like" is the defect
+/// `gate_refusal.rs`'s own header was written to end.
+fn paint(source: Paint, palette: &crate::theme::Palette, tick: u64) -> Vec<Line<'static>> {
+    match source {
+        Paint::Gate { fixture, pane } => {
+            let blockers = fixture
+                .blockers
+                .iter()
+                .map(|(claim, finding)| Blocker {
+                    claim,
+                    finding: Some(finding),
+                })
+                .collect::<Vec<_>>();
+            let files = fixture
+                .files
+                .iter()
+                .map(|(path, lines)| ((*path).to_string(), *lines))
+                .collect::<Vec<_>>();
+            crate::gate_refusal::lines(
+                &Refusal {
+                    detail: fixture.detail,
+                    note: Some(fixture.note),
+                    blockers: &blockers,
+                    files: &files,
+                },
+                palette,
+                pane,
+                tick,
+                // 🔴 **THE PULSE IS ON.** `marks::headline` can only apply it to the MARK — the
+                // words stay steady red and bold — so this is the design's own answer to the
+                // founder's "slow pulsing red", not a licence to blink a sentence at a reader.
+                true,
+            )
+        }
+    }
+}
+
+/// How many rows a block has. Needed at PLAN time, to lay one `PaintRow` cue per row on the clock.
+///
+/// ⚠️ **THE COUNT IS PALETTE-INDEPENDENT AND THE CONTENT IS NOT**, which is why planning may ask
+/// for a count with any palette while [`apply`] paints with the app's real one. Every branch of
+/// [`paint`] emits the same number of rows for every palette — colour changes a `Style`, never a
+/// row — and `every_painted_block_has_the_same_height_in_both_themes` presses both themes to
+/// prove it rather than leaving it as a comment.
+fn paint_height(source: Paint) -> usize {
+    paint(source, &crate::theme::ScreenTheme::Dark.palette(), 0).len()
+}
+
+/// Move every block already on screen to this frame's clock.
+///
+/// ⚠️ **ONLY THE ROWS ALREADY REVEALED.** `zip` stops at the shorter side, so a block still
+/// streaming in keeps its partial height and does not jump to full size on the first repaint.
+fn repaint(app: &mut App, paintings: &[Painting], tick: u64) {
+    let palette = app.theme.screen_palette();
+    for painting in paintings {
+        let fresh = paint(painting.source, &palette, tick);
+        let Some(TranscriptEntry::Painted { lines, .. }) = app.transcript.get_mut(painting.entry)
+        else {
+            continue;
+        };
+        for (row, replacement) in lines.iter_mut().zip(fresh) {
+            *row = replacement;
+        }
+    }
 }
 
 /// Plan one unit of a reply, streamed rather than dropped in whole.
@@ -431,16 +502,20 @@ fn plan_say(steps: &mut Vec<Step>, say: &'static Say, start: u32, pane: usize) -
             }
         }
         Say::Gate(fixture) => {
+            let source = Paint::Gate { fixture, pane };
             clock += CHUNK_MS * 2;
             steps.push(Step {
                 at_ms: clock,
-                cue: Cue::OpenCommand("gate"),
+                cue: Cue::OpenPainted { name: None, source },
             });
-            for line in gate_lines(pane, fixture) {
+            // 🔴 **THE ROWS ARE COUNTED HERE AND PAINTED LATER.** Baking the styled row into the
+            // cue would freeze it at the plan-time clock, and the mark could never pulse. What the
+            // plan owns is TIME — one cue per row — which is all it ever owned.
+            for _ in 0..paint_height(source) {
                 clock += CHUNK_MS * 2;
                 steps.push(Step {
                     at_ms: clock,
-                    cue: Cue::CommandLine(line),
+                    cue: Cue::PaintRow,
                 });
             }
         }
@@ -540,6 +615,9 @@ pub(crate) async fn run(
     app.theme = theme;
     script::dress(&mut app, film, fixtures);
 
+    // Which repainted blocks are on screen, and where. Grows with the transcript and is never
+    // cleared, for the same reason the transcript is never cleared.
+    let mut paintings: Vec<Painting> = Vec::new();
     let mut events = EventStream::new();
     let mut ticker = tokio::time::interval(TICK);
     let opened = Instant::now();
@@ -558,10 +636,17 @@ pub(crate) async fn run(
         if let Some(start) = film_started {
             let elapsed_ms = (start.elapsed().as_millis() as f32 * speed) as u32;
             while next < steps.len() && steps[next].at_ms <= elapsed_ms {
-                apply(&steps[next].cue, &mut app, now);
+                apply(&steps[next].cue, &mut app, now, &mut paintings);
                 next += 1;
             }
         }
+
+        // 🔴 **THE BLOCKS THE PRODUCT DRAWS FOR ITSELF ARE ALIVE, NOT PHOTOGRAPHED.** One call,
+        // every frame, on the SAME clock the live app's own gate modal pulses off
+        // (`live_renderer::pulse_tick`) — so the `■` beside `Gate refused` keeps the design's
+        // 1.4 s cycle in a film exactly as it does in a session.
+        let pulse = live_renderer::pulse_tick(&app, now);
+        repaint(&mut app, &paintings, pulse);
 
         // 🔴 THE RAIL MOVES. One call, every frame: latency jitters, counters climb, timestamps
         // advance, and film 3's outage ramps while he is typing about something else.
@@ -605,8 +690,32 @@ pub(crate) async fn run(
 /// 🔴 **THE ONLY FUNCTION THAT TOUCHES THE TRANSCRIPT, AND IT ONLY EVER PUSHES OR GROWS.** There is
 /// no `clear`, no `truncate`, no assignment. That is the property separating a session from the
 /// gallery he rejected, and `the_transcript_only_ever_grows` presses every cue to prove it.
-fn apply(cue: &Cue, app: &mut App, now: Instant) {
+fn apply(cue: &Cue, app: &mut App, now: Instant, paintings: &mut Vec<Painting>) {
     match cue {
+        Cue::OpenPainted { name, source } => {
+            app.transcript.push(TranscriptEntry::Painted {
+                name: name.map(ToString::to_string),
+                lines: Vec::new(),
+            });
+            paintings.push(Painting {
+                entry: app.transcript.len() - 1,
+                source: *source,
+            });
+        }
+        // 🔴 **PAINTED FROM THE APP'S OWN THEME, NOT FROM A PALETTE THE PLANNER CHOSE.** A film
+        // recorded with `--theme cream-ink` draws its gate in cream ink's red, because the only
+        // palette in this path is the one the frame is about to be drawn with.
+        Cue::PaintRow => {
+            let Some(painting) = paintings.last() else {
+                return;
+            };
+            let rows = paint(painting.source, &app.theme.screen_palette(), 0);
+            if let Some(TranscriptEntry::Painted { lines, .. }) = app.transcript.last_mut()
+                && let Some(next) = rows.into_iter().nth(lines.len())
+            {
+                lines.push(next);
+            }
+        }
         Cue::Compose(text) => app.composer.set_text(text),
         Cue::Submit(text) => {
             app.transcript.push(TranscriptEntry::User(text.clone()));

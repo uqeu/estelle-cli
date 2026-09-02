@@ -222,29 +222,63 @@ pub(crate) fn tick(app: &mut crate::App, film: &Film, elapsed_ms: u32, fixtures:
 fn tick_work(app: &mut crate::App, film: &Film, t: u32, bite: f64, now: f64) {
     // ⛔ No `patch` on any issue: `queue_lines` renders a patch at a hardcoded 96 columns
     // (`live_renderer.rs:1876`) inside a ~30-column rail, which blows the rail out.
-    let issue = match (film.number, bite > 0.0) {
-        (2, _) => Some(("cart-114", "slow image variant on /catalog", "proposed")),
-        (3, true) => Some(("cart-120", "checkout.session.create failing", "proposed")),
-        (3, false) => None,
-        _ => Some(("ink-31", "stripe webhook signature mismatch", "proposed")),
+    // 🔴 **FILM 3 SHOWED THE ONBOARDING EMPTY STATE FOR THE FIRST 21 SECONDS OF AN OUTAGE.**
+    //
+    // This arm used to read `(3, false) => None`, which built `{"issues": []}` — and
+    // `estelle_status_lines` has THREE branches, not two (`live_renderer.rs:1725/1754`): a `None`
+    // field draws `no read yet · GET /issues`, but `Some` with an EMPTY list draws *"No errors
+    // have reached Estelle yet. / Point OTLP or Sentry at api.fatelabs.ca/monitor/ingest."* So the
+    // incident film opened on a **setup prompt for a product the fiction has already onboarded** —
+    // Cartwheel is shipping telemetry; that is the entire premise of the film — and did it again
+    // from 136 s to the end, after the recovery.
+    //
+    // ⚠️ **THREE GUARDS WERE GREEN OVER IT AND ALL THREE WERE POINTED ONE LAYER TOO FAR OUT.**
+    // `dressing_fills_every_band_the_rail_reads` asserts `prod_issues.is_some()`, which an empty
+    // list satisfies exactly — and it dresses FILM 1, which never took this arm.
+    // `the_production_rail_is_on_every_frame_and_is_not_empty` asserts the WORD `estelle` is on
+    // the frame, which the section rule prints in both branches. And `frame_at` never calls
+    // `rail::tick` at all, so no frame test could reach the incident clock.
+    // `film_three_shows_no_onboarding_prompt_at_any_point` below asserts the innermost observable
+    // instead: the sentence itself, at three clocks, on the film that has the bug.
+    //
+    // ⛔ **AND THE `None` PATH IS GONE RATHER THAN FIXED.** No film may render that empty state at
+    // any clock, so the shape that produces it is not reachable from here any more. A calm,
+    // ordinary issue before and after the outage is also the honest picture: a busy storefront
+    // always has something open.
+    //
+    // ⛔ No `patch` on any issue: `queue_lines` renders a patch at a hardcoded 96 columns
+    // (`live_renderer.rs:1876`) inside a ~30-column rail, which blows the rail out.
+    let (key, title, status) = match (film.number, bite > 0.0) {
+        (3, true) => ("cart-120", "checkout.session.create failing", "proposed"),
+        // 🔴 **THE SAME STOREFRONT, SO THE SAME BACKLOG.** Film 3 outside its incident window is
+        // film 2's ordinary night. Falling through to film 1's `ink-31` instead would have put a
+        // solo developer's Stripe webhook on a Cartwheel rail — the continuity error this file
+        // already warns about two functions up.
+        (2, _) | (3, false) => ("cart-114", "slow image variant on /catalog", "proposed"),
+        _ => ("ink-31", "stripe webhook signature mismatch", "proposed"),
     };
-    app.prod_issues = serde_json::from_value(match issue {
-        Some((key, title, status)) => json!({
-            "issues": [{
-                "key": key, "status": "unresolved",
-                "signal": {"title": title},
-                "count": 4 + u64::from(t) / 6,
-                "events_in_window": 4,
-                "bind_status": "bound",
-                "repair": {"status": status, "pr": null, "patch": null,
-                           "patch_absent_reason": "waiting on the repro suite"},
-            }],
-            "counts": {"unresolved": 1},
-            "window_s": 3600,
-        }),
-        None => json!({"issues": [], "counts": {"unresolved": 0}, "window_s": 3600}),
-    })
-    .ok();
+    // ⚠️ `key` is the ONLY field of `MonitorIssue` without a serde default
+    // (`estelle-client/src/types.rs:1261`), so a fixture that loses it parses to `None` and the
+    // band silently switches to the OTHER empty state. Loud in a test, quiet in a release —
+    // the same reasoning as the proposed-PR assert below.
+    let issues = serde_json::from_value(json!({
+        "issues": [{
+            "key": key, "status": "unresolved",
+            "signal": {"title": title},
+            "count": 4 + u64::from(t) / 6,
+            "events_in_window": 4,
+            "bind_status": "bound",
+            "repair": {"status": status, "pr": null, "patch": null,
+                       "patch_absent_reason": "waiting on the repro suite"},
+        }],
+        "counts": {"unresolved": 1},
+        "window_s": 3600,
+    }));
+    debug_assert!(
+        issues.is_ok(),
+        "the monitor-issues fixture does not parse: {issues:?}"
+    );
+    app.prod_issues = issues.ok();
 
     // 🔴 A PR THAT OPENS WHILE HE WATCHES. Film 2's rail has to be alive and CALM: a second PR
     // appearing at 40 s is movement a viewer notices without ever being alarmed by it.
@@ -312,6 +346,48 @@ mod tests {
             .iter()
             .flat_map(|line| line.spans.iter().map(|span| span.content.to_string()))
             .collect()
+    }
+
+    /// 🔴 **THE ONBOARDING PROMPT MAY NOT APPEAR IN AN INCIDENT FILM, AT ANY CLOCK.**
+    ///
+    /// The founder watched film 3 and read *"No errors have reached Estelle yet. / Point OTLP or
+    /// Sentry at api.fatelabs.ca/monitor/ingest."* on screen during an outage. In the fiction
+    /// Cartwheel is already shipping telemetry — that is the premise — so a setup prompt is not a
+    /// cosmetic slip, it contradicts the film.
+    ///
+    /// ⚠️ **THIS ASSERTS THE INNERMOST OBSERVABLE, WHICH IS WHY IT CATCHES WHAT THREE GREENS DID
+    /// NOT.** `prod_issues.is_some()` is satisfied by `{"issues": []}`; the word `estelle` is
+    /// printed by the section rule in every branch. Only the sentence itself can tell an
+    /// onboarding prompt from a populated band.
+    ///
+    /// The clocks are chosen against `severity`'s own boundaries rather than picked: `t = 0` is
+    /// before the ramp, `t = 60` is inside it, and `t = 150` is past the point (136 s) where the
+    /// recovery returns `bite` to zero — which is the second window the old `None` arm reopened.
+    #[test]
+    fn no_film_ever_draws_the_monitor_onboarding_prompt() {
+        for number in [1u8, 2, 3] {
+            let (mut app, film) = app_for(number);
+            for seconds in [0u32, 10, 21, 60, 118, 136, 150, 240] {
+                tick(&mut app, film, seconds * 1_000, true);
+                let rail = rail_text(&app);
+                for prompt in [
+                    "No errors have reached Estelle yet",
+                    "monitor/ingest",
+                    "no read yet \u{b7} GET /issues",
+                ] {
+                    assert!(
+                        !rail.contains(prompt),
+                        "film {number} draws {prompt:?} at {seconds}s:\n{rail}"
+                    );
+                }
+                // The positive control: the band is not merely quiet, it is CARRYING an issue.
+                // Without this the test would pass over a rail that drew nothing at all.
+                assert!(
+                    rail.contains("unresolved"),
+                    "film {number} has no unresolved issue on the rail at {seconds}s:\n{rail}"
+                );
+            }
+        }
     }
 
     /// 🔴 **THE RAIL IS DIFFERENT ON EVERY FRAME IT IS ASKED FOR.**
