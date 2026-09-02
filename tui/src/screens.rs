@@ -135,6 +135,7 @@ fn production_hud(palette: &Palette, tick: u64, pulse_enabled: bool) -> Vec<Line
             ],
             blast_radius: vec!["checkout.py".to_string(), "receipts.py".to_string()],
             chokepoints: vec!["api.py".to_string()],
+            withheld: None,
             core_files: vec!["models.py".to_string()],
             drill_down: false,
         },

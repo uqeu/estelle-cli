@@ -264,7 +264,7 @@ pub(crate) const SCREENS: &[BookScreen] = &[
     },
     BookScreen {
         name: "34-answer-table-diagram",
-        contract: "no markdown table or diagram renderer in this client",
+        contract: "markdown tables render · no diagram renderer, the fence prints source",
         width: 120,
         height: 36,
         needle: "mermaid",
@@ -304,7 +304,7 @@ pub(crate) const SCREENS: &[BookScreen] = &[
     },
     BookScreen {
         name: "39-tool-calls",
-        contract: "no collapsed/expanded tool-call view yet",
+        contract: "collapsed/expanded exists (transcript.rs:44); only shell fills it",
         width: 120,
         height: 34,
         needle: "lines hidden",
@@ -312,7 +312,7 @@ pub(crate) const SCREENS: &[BookScreen] = &[
     },
     BookScreen {
         name: "40-code-graph",
-        contract: "no walkable graph surface yet",
+        contract: "shipped · graph_view · files not symbols, no keys to walk it",
         width: 130,
         height: 32,
         needle: "chokepoint",
@@ -328,7 +328,7 @@ pub(crate) const SCREENS: &[BookScreen] = &[
     },
     BookScreen {
         name: "41-memory-correct",
-        contract: "nothing edits or retracts a memory from the terminal",
+        contract: "edit_memory + POST /facts exist; no CLI surface, and no kind/trust",
         width: 130,
         height: 32,
         needle: "supersedes",
@@ -338,19 +338,12 @@ pub(crate) const SCREENS: &[BookScreen] = &[
 
 /// Re-own a `Line` whose spans borrow local `String`s.
 ///
-/// ⚠️ **THE REASON THIS EXISTS RATHER THAN `Box::leak`.** [`crate::cols::row`] borrows its cells,
-/// so a row built from computed text is a `Line<'_>` tied to locals. `screens.rs` reached for
-/// `Box::leak` to get `'static`, which leaks a string per call and is invisible at the call site.
-/// Copying the spans is the same cost once and no cost forever after.
+/// ⚠️ **MOVED TO [`crate::cols::owned`], BESIDE THE FUNCTION THAT CREATES THE BORROW.** It was
+/// written here, which meant a PRODUCTION renderer computing its own cells had to depend on the
+/// DESIGN BOOK to escape a lifetime `cols` had introduced. This alias keeps the book's call sites
+/// reading as they did; the implementation has one owner and it is not this module.
 pub(crate) fn owned(line: Line<'_>) -> Line<'static> {
-    let style = line.style;
-    Line::from(
-        line.spans
-            .into_iter()
-            .map(|span| ratatui::text::Span::styled(span.content.into_owned(), span.style))
-            .collect::<Vec<_>>(),
-    )
-    .style(style)
+    crate::cols::owned(line)
 }
 
 /// A blank row. Named so a screen never reaches for `Line::from("")` and loses its palette.

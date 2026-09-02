@@ -71,6 +71,28 @@ pub fn row<'a>(cols: &[Col], cells: &[Cell<'a>], indent: usize) -> Line<'a> {
     Line::from(spans)
 }
 
+/// Re-own a `Line` whose spans borrow local `String`s.
+///
+/// ⚠️ **THE REASON THIS EXISTS RATHER THAN `Box::leak`.** [`row`] borrows its cells, so a row built
+/// from computed text is a `Line<'_>` tied to locals. `screens.rs` reached for `Box::leak` to get
+/// `'static`, which leaks a string per call and is invisible at the call site. Copying the spans is
+/// the same cost once and no cost forever after.
+///
+/// 🔴 **IT LIVES HERE, BESIDE THE FUNCTION THAT CREATES THE BORROW.** It was written inside
+/// `design_book`, which meant a PRODUCTION renderer that computes its cells had to depend on the
+/// design book to escape a lifetime `cols` had introduced — or write a second copy. One owner, and
+/// in the module whose API made it necessary.
+pub fn owned(line: Line<'_>) -> Line<'static> {
+    let style = line.style;
+    Line::from(
+        line.spans
+            .into_iter()
+            .map(|span| Span::styled(span.content.into_owned(), span.style))
+            .collect::<Vec<_>>(),
+    )
+    .style(style)
+}
+
 pub fn head<'a>(cols: &[Col], labels: &[&'a str], dim: Color, indent: usize) -> Line<'a> {
     let cells = labels
         .iter()
