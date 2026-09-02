@@ -1,6 +1,5 @@
 ---
 source: tui/src/chatwidget/tests/exec_flow.rs
-assertion_line: 40
 expression: "format!(\"{buf:?}\")"
 ---
 Buffer {
@@ -8,7 +7,7 @@ Buffer {
     content: [
         "                                                                                ",
         "                                                                                ",
-        "  Run the following command?                                  ",
+        "  Run the following command?                                                    ",
         "                                                                                ",
         "  Reason: this is a test reason such as one that would be produced by the       ",
         "  model                                                                         ",
@@ -23,7 +22,7 @@ Buffer {
     styles: [
         x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
-        x: 46, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 28, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 10, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: ITALIC,
         x: 73, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 5, fg: Reset, bg: Reset, underline: Reset, modifier: ITALIC,
@@ -31,7 +30,7 @@ Buffer {
         x: 4, y: 7, fg: Rgb(137, 180, 250), bg: Reset, underline: Reset, modifier: NONE,
         x: 8, y: 7, fg: Rgb(205, 214, 244), bg: Reset, underline: Reset, modifier: NONE,
         x: 20, y: 7, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 0, y: 9, fg: Cyan, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 0, y: 9, fg: Rgb(127, 179, 200), bg: Reset, underline: Reset, modifier: BOLD,
         x: 21, y: 9, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 48, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
         x: 51, y: 10, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
