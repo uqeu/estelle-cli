@@ -691,7 +691,28 @@ struct HeaderState {
     files: Option<u64>,
     chunks: Option<u64>,
     memories: Option<u64>,
+    /// Whether this repo appears in `GET /repos` — a MEMBERSHIP test, and nothing more.
+    ///
+    /// ⚠️ **THE FIELD IS FINE; THE WORD ON SCREEN WAS NOT.** The header rendered this as
+    /// `repo graph current`, which is a claim about FRESHNESS that a membership list cannot make.
+    /// See [`HeaderState::currency`] for the fact that word actually names.
     indexed: Option<bool>,
+    /// The SERVER's verdict on whether the graph is still the commit the repo is on.
+    ///
+    /// 🔴 **THREE OWNERS OF ONE FACT, AND THE CUSTOMER SAW TWO OF THEM DISAGREE.** On 2026-09-02
+    /// MCP navigation refused every question on `uqeu/estelle` — *"STALE — indexed at 6ff03b186acd,
+    /// repo is now f141e241d47f"* — while this header printed `repo graph current · 3,913 files`.
+    /// The gate recomputes against live HEAD; the header was reading a repo-membership list; and
+    /// `GET /graph` carried no currency field at all, so there was nothing truthful to read.
+    /// ⛔ Now READ, never derived: `None` means the server has not answered yet, which renders as
+    /// nothing rather than as a verdict.
+    currency: Option<estelle_client::GraphCurrency>,
+    /// Files in the CODE GRAPH, from `GET /graph` — the subject the header's own words name.
+    ///
+    /// ⚠️ Distinct from [`HeaderState::files`], which is the account's indexed-file footprint from
+    /// `GET /overview`. The two differed by 1,275 on the founder's repo (2,638 vs 3,913) and only
+    /// the first is a fact about the graph.
+    graph_files: Option<u64>,
     connected: bool,
 }
 
@@ -826,6 +847,7 @@ enum UiEvent {
     AffinityModelsSaved(Result<CommandReply, Error>),
     AffinityCapacity(Result<Value, String>),
     Repos(Result<ReposResponse, Error>),
+    Graph(Result<estelle_client::GraphResponse, Error>),
     Scope(Result<CommandReply, Error>),
     Settings(Result<CommandReply, Error>),
     SettingSaved {
@@ -2078,6 +2100,24 @@ const ASK_HINTS: &[(&str, &str)] = &[
 #[cfg(test)]
 const ASK_HINTS_NOT_BOUND: &[&str] = &[];
 
+/// One catalog entry, carrying the dispatcher's own never-guessed verdict.
+///
+/// 🔴 **THE COMPOSER WAS A SECOND DISPATCH TABLE WITH WEAKER RULES.** `commands::NEVER_GUESSED`
+/// stopped `/logot` resolving to `/logout` — the typo that once wiped a user's stored Estelle,
+/// ChatGPT, Claude, Copilot and local-provider credentials while the correct spelling printed
+/// *"no command"*. The completion popup never saw that list: its matcher is a plain subsequence
+/// filter (`logot` is a subsequence of `logout`), the selection clamps to index 0, and its `Enter`
+/// arm for an EXTERNAL command rewrites the draft to the selected name and submits it in the same
+/// keystroke. One fenced door and one unfenced door reaching one destructive command.
+///
+/// ⛔ The verdict is READ from `commands::is_never_guessed`, never re-listed here.
+fn composer_command(name: &str, description: &str) -> ComposerCommand {
+    if commands::is_never_guessed(name) {
+        return ComposerCommand::new_never_guessed(name, description);
+    }
+    ComposerCommand::new(name, description)
+}
+
 fn estelle_composer() -> ComposerInput {
     let mut composer = ComposerInput::with_commands(
         // ⚠️ No placeholder. The demo is a bare prompt and a cursor; `Ask Estelle` was hint text
@@ -2085,7 +2125,7 @@ fn estelle_composer() -> ComposerInput {
         "",
         commands::composer_commands()
             .into_iter()
-            .map(|(name, description)| ComposerCommand::new(name, description)),
+            .map(|(name, description)| composer_command(name, description)),
     );
     // The hint row is rendered by the frame, not by the composer: the composer places its own
     // hints below its chrome, which is what pushed `? for shortcuts` two rows away from the
@@ -3108,7 +3148,7 @@ impl App {
     fn completion_catalog(&self) -> Vec<ComposerCommand> {
         commands::composer_commands()
             .into_iter()
-            .map(|(name, description)| ComposerCommand::new(name, description))
+            .map(|(name, description)| composer_command(name, description))
             .chain(
                 self.skill_names
                     .iter()
@@ -4035,7 +4075,10 @@ impl App {
         )));
     }
 
-    #[allow(dead_code, reason = "the affinity MODELS surface has no key or command to reach it. Its only door was `ctrl+m`, which is carriage return in this binary and was removed rather than moved, because choosing its replacement is a founder ruling open on design-book screen 10. The code is kept, not deleted, so the ruling is one binding away")]
+    #[allow(
+        dead_code,
+        reason = "the affinity MODELS surface has no key or command to reach it. Its only door was `ctrl+m`, which is carriage return in this binary and was removed rather than moved, because choosing its replacement is a founder ruling open on design-book screen 10. The code is kept, not deleted, so the ruling is one binding away"
+    )]
     fn open_affinity_models(&mut self, tx: &mpsc::UnboundedSender<UiEvent>) {
         self.affinity_surface = Some(affinity_cli::Surface::models_loading());
         self.picker = None;
@@ -4595,6 +4638,17 @@ impl App {
             UiEvent::Repos(result) => match result {
                 Ok(repos) => {
                     self.header.indexed = Some(repo_is_listed(&self.repo, &repos.repos));
+                }
+                Err(error) => self.handle_background_error(&error),
+            },
+            // ⛔ READ the verdict, never derive one. A failed read leaves `currency` at `None`,
+            // which the header renders as SILENCE — the one honest thing to say when the only
+            // owner of this fact did not answer. Inferring `current` from a successful `/repos`
+            // is precisely the bug: that call proves the repo is filed, not that it is fresh.
+            UiEvent::Graph(result) => match result {
+                Ok(graph) => {
+                    self.header.currency = graph.currency;
+                    self.header.graph_files = graph.files;
                 }
                 Err(error) => self.handle_background_error(&error),
             },
@@ -6188,6 +6242,20 @@ fn spawn_header_requests(client: Option<Client>, repo: &Repo, tx: &mpsc::Unbound
         let result = repos_client.repos(&CancellationToken::new()).await;
         let _ = repos_tx.send(UiEvent::Repos(result));
     });
+    // ⛔ ONE OWNER FOR "IS THE GRAPH CURRENT", and it is the server's. This fires ONCE, beside the
+    // other header reads, and costs one caller-scoped GitHub HEAD probe — the price of the header
+    // saying something true instead of something derived from a membership list.
+    if !repo.is_unresolved() {
+        let graph_tx = tx.clone();
+        let graph_client = client.clone();
+        let graph_repo = repo.as_str().to_string();
+        tokio::spawn(async move {
+            let result = graph_client
+                .graph(&graph_repo, &CancellationToken::new())
+                .await;
+            let _ = graph_tx.send(UiEvent::Graph(result));
+        });
+    }
     let settings_tx = tx.clone();
     let settings_client = client.clone();
     tokio::spawn(async move {
@@ -6413,7 +6481,10 @@ fn failure_lines(error: &Error) -> [String; 3] {
 /// surface was bound to it until this integration; the binding was removed rather than moved,
 /// because choosing its replacement chord is a design decision the founder has open on screen 10.
 fn control_letter(key: &KeyEvent, letter: char) -> bool {
-    debug_assert!(letter != 'm', "ctrl+m is carriage return and can never be a chord");
+    debug_assert!(
+        letter != 'm',
+        "ctrl+m is carriage return and can never be a chord"
+    );
     debug_assert!(letter.is_ascii_lowercase(), "chords are written lowercase");
     key.modifiers.contains(KeyModifiers::CONTROL)
         && matches!(key.code, KeyCode::Char(c) if c.eq_ignore_ascii_case(&letter))
@@ -9175,7 +9246,8 @@ mod tests {
             let bound = body.contains(pattern);
             let declared_unbound = ASK_HINTS_NOT_BOUND.contains(hint);
             assert_eq!(
-                bound, !declared_unbound,
+                bound,
+                !declared_unbound,
                 "{hint}: handle_key {} it, ledger says {} - the hint row and the keymap disagree",
                 if bound { "binds" } else { "does not bind" },
                 if declared_unbound { "unbound" } else { "bound" }
@@ -15996,6 +16068,141 @@ mod tests {
         );
         let frame = rendered_frame_at_size(&app, Instant::now(), 120, 34);
         assert!(frame.contains("event --> symbol --> diff"));
+    }
+
+    /// 🔴 **THE FENCE IS ONLY ON THE DOOR IT WAS CARRIED TO, AND `--lib` CANNOT SEE THIS ONE.**
+    ///
+    /// `commands::NEVER_GUESSED` guards the DISPATCHER. The completion popup is a second door in a
+    /// different crate whose matcher is a plain subsequence filter and whose `Enter` arm for an
+    /// external command submits the selection in the same keystroke — so `/logot` reached `/logout`
+    /// and deleted every stored credential. The widget-level rule is tested in `estelle-tui`'s lib
+    /// tests; what is untested there, and untestable there, is whether THIS binary actually marks
+    /// its own destructive command. `cargo test --lib` does not link `main.rs`.
+    ///
+    /// ⚠️ Asserted through `composer_command`, the one function both catalog builders call, so a new
+    /// never-guessed name is covered the day it is added to the list rather than the day someone
+    /// remembers to extend this test.
+    #[test]
+    fn the_real_catalog_marks_its_destructive_command_as_never_guessed() {
+        let catalog: Vec<ComposerCommand> = commands::composer_commands()
+            .into_iter()
+            .map(|(name, description)| composer_command(name, description))
+            .collect();
+
+        let logout = catalog
+            .iter()
+            .find(|command| command.name == "logout")
+            .expect("/logout is advertised in SESSION_HELP and must reach the completion catalog");
+        assert!(
+            logout.never_guessed,
+            "/logout is in the composer catalog UNMARKED — the popup's subsequence matcher can \
+             reach it from /logot and its Enter arm submits the selection immediately"
+        );
+
+        // ⚠️ CONTROL 1 — the marking is not a blanket. An ordinary command keeps its full reach, or
+        // the ~250-skill completion the founder asked for stops working.
+        let status = catalog
+            .iter()
+            .find(|command| command.name == "status")
+            .expect("/status is advertised");
+        assert!(!status.never_guessed, "the fence became a blanket");
+
+        // ⚠️ CONTROL 2 — every marked name in the catalog is one the DISPATCHER also refuses to
+        // guess. Two lists that agree today are two lists that will disagree later, so the catalog
+        // is asserted to be a READ of `commands::is_never_guessed`, not a copy of it.
+        for command in &catalog {
+            assert_eq!(
+                command.never_guessed,
+                commands::is_never_guessed(&command.name),
+                "/{} is marked differently in the composer catalog than in the dispatcher",
+                command.name
+            );
+        }
+    }
+
+    fn currency(status: &str, checked: bool) -> estelle_client::GraphCurrency {
+        estelle_client::GraphCurrency {
+            checked,
+            status: Some(status.to_string()),
+            stale: status == "stale",
+            actionable: status != "current",
+            ..Default::default()
+        }
+    }
+
+    /// 🔴 **THE HEADER TOLD A PAYING CUSTOMER THE OPPOSITE OF WHAT THE GATE BELIEVED.**
+    ///
+    /// Measured 2026-09-02 on `uqeu/estelle`: the CLI header read `repo graph current · 3,913
+    /// files` while MCP navigation refused every question on that repo — *"STALE — indexed at
+    /// 6ff03b186acd, repo is now f141e241d47f"* — recomputed against live HEAD in the same minute.
+    /// The header's source was `repo_is_listed(&repo, &GET /repos)`: a **membership** test. It can
+    /// answer *is this repo filed with us*; it cannot support the word *current*, and `/graph`
+    /// carried no currency field for it to read instead.
+    ///
+    /// ⚠️ `header.indexed` is unchanged and still means membership — this pins the WORD, which is
+    /// the half that was a lie.
+    #[test]
+    fn the_header_never_says_current_off_a_membership_test() {
+        let mut app = test_app();
+        app.header.indexed = Some(true);
+        app.header.currency = None;
+        assert_eq!(
+            live_renderer::graph_state(&app),
+            Some(("repo graph indexed", false)),
+            "membership alone may say the repo is filed and nothing more"
+        );
+
+        app.header.currency = Some(currency("stale", true));
+        assert_eq!(
+            live_renderer::graph_state(&app),
+            Some(("repo graph STALE", true)),
+            "the gate's verdict must reach the header, in red"
+        );
+
+        // ⚠️ CONTROL. The word "current" is still reachable — from the ONE owner entitled to it.
+        app.header.currency = Some(currency("current", true));
+        assert_eq!(
+            live_renderer::graph_state(&app),
+            Some(("repo graph current", false))
+        );
+    }
+
+    /// ⛔ UNKNOWN AND NOT-CHECKED ARE NOT "CURRENT", AND THEY ARE NOT EACH OTHER.
+    ///
+    /// `graph_currency`'s own header: *"a currency check that certifies on absent data is the
+    /// fail-open version of itself"*. `checked: false` means nobody asked; `status: unknown` means
+    /// we asked and could not tell. Rendering either as fresh is the defect this lane exists to
+    /// close, and rendering them identically loses the difference the server went to trouble to
+    /// keep.
+    #[test]
+    fn an_unknown_or_unchecked_currency_is_never_rendered_as_fresh() {
+        let mut app = test_app();
+        app.header.indexed = Some(true);
+        for (status, checked, expected) in [
+            ("unknown", true, ("repo graph currency unknown", true)),
+            (
+                "unreachable",
+                true,
+                ("repo graph currency unreadable", true),
+            ),
+            ("current", false, ("repo graph currency not checked", false)),
+        ] {
+            app.header.currency = Some(currency(status, checked));
+            assert_eq!(
+                live_renderer::graph_state(&app),
+                Some(expected),
+                "status={status} checked={checked} rendered wrongly"
+            );
+        }
+
+        // An unswept repo still says so first — that is a fact about the graph's EXISTENCE and it
+        // outranks any verdict about its age.
+        app.header.indexed = Some(false);
+        app.header.currency = Some(currency("current", true));
+        assert_eq!(
+            live_renderer::graph_state(&app),
+            Some(("repo graph absent", true))
+        );
     }
 }
 

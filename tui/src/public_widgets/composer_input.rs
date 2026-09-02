@@ -33,6 +33,13 @@ pub enum ComposerAction {
 pub struct ComposerCommand {
     pub name: String,
     pub description: String,
+    /// This command runs when typed EXACTLY and is never offered as a correction.
+    ///
+    /// Set it on any command that deletes credentials, revokes a key or drops stored memory, on the
+    /// day the command is written. See [`crate::bottom_pane::slash_commands::ExternalCommand`] for
+    /// the measured incident: the popup's subsequence matcher reached `/logout` from `/logot`, and
+    /// this popup's `Enter` arm for an external command submits the selection immediately.
+    pub never_guessed: bool,
 }
 
 /// Brand colours supplied by an application embedding the complete bottom dock.
@@ -48,6 +55,18 @@ impl ComposerCommand {
         Self {
             name: name.into(),
             description: description.into(),
+            never_guessed: false,
+        }
+    }
+
+    /// A command reachable only by its EXACT name — never completed to, never suggested.
+    ///
+    /// ⚠️ Deliberately a separate constructor rather than a mutating setter: a destructive command
+    /// must be declared as one at the point it enters the catalog, not patched into safety later.
+    pub fn new_never_guessed(name: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            never_guessed: true,
+            ..Self::new(name, description)
         }
     }
 }
@@ -95,6 +114,7 @@ impl ComposerInput {
                 .map(|command| ExternalCommand {
                     name: command.name,
                     description: command.description,
+                    never_guessed: command.never_guessed,
                 })
                 .collect(),
         );
@@ -114,6 +134,7 @@ impl ComposerInput {
                 .map(|command| ExternalCommand {
                     name: command.name,
                     description: command.description,
+                    never_guessed: command.never_guessed,
                 })
                 .collect(),
         );
@@ -319,6 +340,55 @@ mod tests {
     ///
     /// The composer is not the dispatcher. It hands the draft on, and `App::submit` — which knows
     /// the aliases, the typo matcher and the server-side skill namespace — decides and SAYS SO.
+    /// 🔴 **PRESS THE KEY. THE TEST ABOVE IS THE DEFECT, WITH A HARMLESS COMMAND IN IT.**
+    ///
+    /// `external_command_popup_submits_the_canonical_command` proves `/doc` + `Enter` **submits
+    /// `/doctor`** — one keystroke, no confirmation, the draft rewritten to the popup's selection.
+    /// Point that at `/logout`, whose 40-line implementation deletes every stored Estelle, ChatGPT,
+    /// Claude, Copilot and local-provider credential, and `/logo` + `Enter` wipes your keys. `/logot`
+    /// does the same through the subsequence tier, because `logot` is a subsequence of `logout` —
+    /// which is the incident this repo already paid for once, arriving through a second door.
+    ///
+    /// ⚠️ Driven with a FAKE never-guessed command, deliberately: verifying the real one means
+    /// destroying real credentials. What is asserted here is the RULE — a marked command is not
+    /// reachable by a partial spelling through the composer's own key handling — plus the two
+    /// controls that keep it from passing for the wrong reason.
+    #[test]
+    fn a_never_guessed_command_is_not_submitted_by_a_partial_spelling() {
+        let compose = |text: &str| {
+            let mut composer = ComposerInput::with_commands(
+                "Ask",
+                [
+                    ComposerCommand::new_never_guessed("wipe-keys", "delete stored credentials"),
+                    ComposerCommand::new("wire", "show the wiring"),
+                ],
+            );
+            composer.set_text(text);
+            composer.input(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        };
+
+        for partial in ["/wipe", "/wipekeys", "/wipe-kes", "/w", "/wp"] {
+            let action = compose(partial);
+            assert!(
+                !matches!(&action, ComposerAction::Submitted(text) if text == "/wipe-keys"),
+                "{partial} + Enter submitted /wipe-keys — the destructive command ran from a \
+                 partial spelling"
+            );
+        }
+
+        // ⚠️ CONTROL 1 — the command still runs when spelled out. Refusing it outright is the OTHER
+        // half of the shipped bug: `/logout` printed "no command" while `/logot` wiped the keys.
+        assert!(
+            matches!(compose("/wipe-keys"), ComposerAction::Submitted(text) if text == "/wipe-keys"),
+            "the exact spelling stopped working — the command is now unreachable, not guarded"
+        );
+        // ⚠️ CONTROL 2 — completion still works for everything else, so the fence is narrow.
+        assert!(
+            matches!(compose("/wir"), ComposerAction::Submitted(text) if text == "/wire"),
+            "ordinary completion broke: the fence became a blanket"
+        );
+    }
+
     #[test]
     fn an_unknown_command_is_handed_to_the_dispatcher_rather_than_silently_eaten() {
         let mut composer = ComposerInput::with_commands(

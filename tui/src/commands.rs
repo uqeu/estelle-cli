@@ -347,6 +347,21 @@ const DROPPED_COMMANDS: &[&str] = &[
 /// the day it is written.
 const NEVER_GUESSED: &[&str] = &["logout"];
 
+/// Whether `name` is on [`NEVER_GUESSED`] — the ONE reader every other door must go through.
+///
+/// 🔴 **A FENCE REACHABLE FROM ONE PATH IS A FENCE ON THAT PATH.** [`resolve_session_name`] and
+/// [`nearest_command`] consult the list directly because they live here. The COMPOSER does not: its
+/// completion popup is a second dispatch table, in a different crate, whose matcher is a plain
+/// subsequence filter — and whose `Enter` arm for an external command rewrites the draft to the
+/// selected name and submits it in the same keystroke. `/logot` therefore reached `/logout` and
+/// deleted every stored credential through a door this list had never been shown to.
+///
+/// ⛔ The composer gets the ANSWER, never a copy of the list. A second list is a list that drifts,
+/// and the drift is only visible the day someone loses their keys.
+pub(crate) fn is_never_guessed(name: &str) -> bool {
+    NEVER_GUESSED.contains(&name.trim().to_ascii_lowercase().as_str())
+}
+
 pub(crate) fn resolve_session_name(raw: &str) -> Option<&'static str> {
     let name = raw.trim().to_ascii_lowercase();
     match name.as_str() {

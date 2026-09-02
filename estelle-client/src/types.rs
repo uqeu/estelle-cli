@@ -624,6 +624,49 @@ pub struct GraphFileEntry {
     pub symbols: Option<u64>,
 }
 
+/// `GET /graph` — the swept code graph as counts, and how old those counts are.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct GraphResponse {
+    /// Files in the CODE GRAPH — not the account's indexed-file footprint, which is a larger and
+    /// different number (`/overview`'s `memory.repo_files`). The two were rendered side by side as
+    /// if they described one subject, and they differed by 1,275 on the founder's own repo.
+    #[serde(default)]
+    pub files: Option<u64>,
+    /// The graph is cold and warming; the counts above are not yet real.
+    #[serde(default)]
+    pub building: Option<bool>,
+    #[serde(default)]
+    pub currency: Option<GraphCurrency>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+/// Whether the server's code graph is still the commit the repository is on.
+///
+/// 🔴 **THE CLIENT MUST NOT DERIVE THIS.** Until 2026-09-02 `GET /graph` carried no currency field
+/// at all, so the header computed its own answer from `GET /repos` — a **membership** list — and
+/// printed `repo graph current` while MCP navigation refused every question on the same repo as
+/// *STALE*. `status` is the server's four-valued verdict (`current` · `stale` · `unknown` ·
+/// `unreachable`); `checked` is the sibling field that distinguishes *nobody asked* from any of
+/// them. ⛔ `checked: false` is never `current`, and a missing block is never either.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct GraphCurrency {
+    #[serde(default)]
+    pub checked: bool,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub stale: bool,
+    #[serde(default)]
+    pub actionable: bool,
+    #[serde(default)]
+    pub indexed_head: String,
+    #[serde(default)]
+    pub current_head: String,
+    #[serde(default)]
+    pub note: String,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct GraphRoot {
     #[serde(default)]

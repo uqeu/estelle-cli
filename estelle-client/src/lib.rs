@@ -235,6 +235,24 @@ impl Client {
         self.get(Endpoint::Repos, &NoQuery, cancel).await
     }
 
+    /// The swept code graph for one repo — counts, and the server's own verdict on how old they are.
+    ///
+    /// ⛔ Scoped to `repo` explicitly. An unscoped read on a multi-repo account is refused by the
+    /// server rather than silently answered from another repository (`_view_scope`), and a currency
+    /// verdict about the wrong repo is worse than none.
+    pub async fn graph(
+        &self,
+        repo: &str,
+        cancel: &CancellationToken,
+    ) -> Result<GraphResponse, Error> {
+        self.get(
+            Endpoint::Graph,
+            &serde_json::json!({ "repo": repo }),
+            cancel,
+        )
+        .await
+    }
+
     /// Read one caller-bound durable job. The strict locator shape prevents a job id from
     /// becoming a path/query injection surface; the bearer credential remains the authority.
     pub async fn job(

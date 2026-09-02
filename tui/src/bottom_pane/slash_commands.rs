@@ -26,6 +26,22 @@ pub(crate) struct ServiceTierCommand {
 pub(crate) struct ExternalCommand {
     pub(crate) name: String,
     pub(crate) description: String,
+    /// This command exists, is advertised, and runs when typed EXACTLY — and is never offered as a
+    /// correction, because a near miss on it destroys something irreversible.
+    ///
+    /// 🔴 **THE FENCE WAS BUILT ON ONE DOOR AND THE COMPOSER IS A SECOND ONE.** `/logout` deletes
+    /// every stored Estelle, ChatGPT, Claude, Copilot and local-provider credential. The dispatcher
+    /// stopped guessing it (`commands.rs::NEVER_GUESSED`) after `/logot` — one edit away — wiped a
+    /// user's keys while the correct spelling printed *"no command"*. But the popup's own matcher is
+    /// a **plain subsequence** filter (`logot ⊂ logout`), the selection clamps to index 0, and the
+    /// `Enter` arm for an external command **rewrites the draft to `/logout` and submits it in the
+    /// same keystroke** (`slash_input.rs`, `KeyCode::Enter`). So the fenced door refused the typo and
+    /// the unfenced one ran it — the identical outcome, one surface over.
+    ///
+    /// ⚠️ The embedding application sets this; the composer only honours it. Keeping the flag on the
+    /// catalog entry (rather than a name list inside the widget) is what stops it becoming a THIRD
+    /// list that can disagree with the dispatcher's.
+    pub(crate) never_guessed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -174,11 +190,29 @@ pub(crate) fn find_external_command<'a>(
     commands.iter().find(|command| command.name == name)
 }
 
+/// Whether `name` is a partial spelling of something in the catalog — i.e. whether the popup opens.
+///
+/// ⛔ A [`ExternalCommand::never_guessed`] entry counts only on an EXACT match. It is the same rule
+/// [`CommandPopup::filtered`] applies, in the same terms, because the two answers are one fact: a
+/// popup opened for `/logot` on a fuzzy hit the popup itself then refuses to show is a popup with
+/// nothing in it — and the version that DID show it submitted `/logout` on the next Enter.
 pub(crate) fn has_external_command_prefix(name: &str, commands: &[ExternalCommand]) -> bool {
     commands
         .iter()
-        .any(|command| fuzzy_match(&command.name, name).is_some())
+        .any(|command| external_command_matches(command, name))
         || find_external_namespace(name, commands).is_some()
+}
+
+/// Whether `filter` may reach `command` at all — the ONE owner of the never-guessed rule.
+///
+/// An empty filter is the browse-everything list and is handled by the caller; here a non-empty
+/// filter reaches a never-guessed command only by naming it exactly. Every other candidate keeps the
+/// full subsequence reach the ~250-skill catalog needs.
+pub(crate) fn external_command_matches(command: &ExternalCommand, filter: &str) -> bool {
+    if command.never_guessed {
+        return command.name.eq_ignore_ascii_case(filter.trim());
+    }
+    fuzzy_match(&command.name, filter).is_some()
 }
 
 /// The namespace entry that owns `name`, when a catalog entry ends in `:`.

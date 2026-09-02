@@ -80,35 +80,73 @@ pub(super) fn header_line(app: &App, _width: u16) -> Line<'static> {
             Style::default().fg(palette.mid),
         ));
     }
-    if let Some(indexed) = app.header.indexed {
+    if let Some((label, alarming)) = graph_state(app) {
         spans.push(Span::styled(
             "  ·  ",
             Style::default().fg(app.theme.ghost()),
         ));
         spans.push(Span::styled(
-            if indexed {
-                "repo graph current"
-            } else {
-                "repo graph absent"
-            },
-            Style::default().fg(if indexed {
-                app.theme.primary()
-            } else {
+            label,
+            Style::default().fg(if alarming {
                 FATE_RED
+            } else {
+                app.theme.primary()
             }),
         ));
     }
-    if let Some(files) = app.header.files {
+    // ⚠️ THE COUNT AND THE WORD BESIDE IT MUST DESCRIBE ONE SUBJECT. `header.files` is the
+    // account's indexed-file footprint from `GET /overview`; the words to its left say "repo
+    // graph". On the founder's own repo those were 3,913 and 2,638 — rendered as one phrase,
+    // 1,275 apart. The graph's own count wins here; the footprint is only a fallback, and then
+    // it says which number it is.
+    let count = app
+        .header
+        .graph_files
+        .map(|files| format!("{} files", commas(files)))
+        .or_else(|| {
+            app.header
+                .files
+                .map(|files| format!("{} files indexed", commas(files)))
+        });
+    if let Some(count) = count {
         spans.push(Span::styled(
             "  ·  ",
             Style::default().fg(app.theme.ghost()),
         ));
-        spans.push(Span::styled(
-            format!("{} files", commas(files)),
-            Style::default().fg(palette.mid),
-        ));
+        spans.push(Span::styled(count, Style::default().fg(palette.mid)));
     }
     Line::from(spans)
+}
+
+/// What the header may say about this repo's graph, and whether to say it in red.
+///
+/// 🔴 **`repo graph current` WAS RENDERED OFF A MEMBERSHIP LIST.** `header.indexed` is
+/// `repo_is_listed(&repo, &GET /repos)` — it answers *is this repo filed with us*, which cannot
+/// support the word "current". Measured 2026-09-02: the header said `repo graph current · 3,913
+/// files` while the grounding gate, recomputing against live HEAD in the same minute, refused every
+/// navigation on that repo as *"STALE — indexed at 6ff03b186acd, repo is now f141e241d47f"*.
+///
+/// ⛔ The freshness word now comes from ONE owner — the server's `graph.currency`, the same
+/// `graph_currency.health_reader` MCP navigation and `memory_chat` are built from. Until that
+/// answer arrives the header says only what the membership list can support, and `checked: false`
+/// is reported as *not checked*, never quietly as fresh.
+pub(super) fn graph_state(app: &App) -> Option<(&'static str, bool)> {
+    if app.header.indexed == Some(false) {
+        return Some(("repo graph absent", true));
+    }
+    match app.header.currency.as_ref() {
+        Some(currency) if !currency.checked => Some(("repo graph currency not checked", false)),
+        Some(currency) => match currency.status.as_deref() {
+            Some("current") => Some(("repo graph current", false)),
+            Some("stale") => Some(("repo graph STALE", true)),
+            Some("unreachable") => Some(("repo graph currency unreadable", true)),
+            // ⛔ `unknown` is its own status and is NEVER "current" — a graph nobody can date is a
+            // graph nobody can trust, and rendering it quietly is how it stays that way.
+            _ => Some(("repo graph currency unknown", true)),
+        },
+        // Indexed, and the currency owner has not answered yet. Say the fact we have.
+        None => app.header.indexed.map(|_| ("repo graph indexed", false)),
+    }
 }
 
 pub(super) fn session_tabs_line(app: &App) -> Line<'static> {

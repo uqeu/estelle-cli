@@ -230,6 +230,16 @@ impl CommandPopup {
                     exact.push((item, indices_for(offset)));
                     return;
                 }
+                // ⛔ A NEVER-GUESSED COMMAND STOPS HERE — the exact arm above is the only one it can
+                // reach under a non-empty filter. Not because a prefix is a bad completion in
+                // general, but because THIS popup's `Enter` arm for an external command rewrites the
+                // draft to the selected name and SUBMITS it in the same keystroke: `/logo` + Enter
+                // would run `/logout` and delete every stored credential. `resolve_session_name` and
+                // `nearest_command` already refuse both the one-edit and the prefix relation for
+                // exactly this list; a third door with weaker rules is how the bug came back before.
+                if item.never_guessed() {
+                    return;
+                }
                 let display_prefix = display_lower.starts_with(&filter_lower);
                 let name_prefix = name_lower
                     .as_ref()
@@ -278,6 +288,11 @@ impl CommandPopup {
             .commands
             .iter()
             .filter(|command| !already.contains(command.command()))
+            // ⛔ AND THE SUBSEQUENCE TIER IS WHERE THE TYPO ACTUALLY LANDED. `logot ⊂ logout`, so
+            // this filter matched, `clamp_selection` put it at index 0, and one Enter submitted
+            // `/logout`. The measured incident this list exists for, reproduced through the widest
+            // matcher we own.
+            .filter(|command| !command.never_guessed())
             .filter_map(|command| {
                 fuzzy_match(command.command(), filter)
                     .map(|(indices, score)| (score, command.clone(), indices))
@@ -360,6 +375,18 @@ impl CommandItem {
             Self::Builtin(cmd) => cmd.description(),
             Self::ServiceTier(command) => &command.description,
             Self::External(command) => &command.description,
+        }
+    }
+
+    /// Whether this entry may be reached by anything short of its exact name.
+    ///
+    /// See [`ExternalCommand::never_guessed`]. Only the embedding application's catalog can carry
+    /// the flag: a built-in or a service tier has no destructive member, and inventing a second
+    /// name list inside this widget is what would let it drift from the dispatcher's.
+    pub(crate) fn never_guessed(&self) -> bool {
+        match self {
+            Self::Builtin(_) | Self::ServiceTier(_) => false,
+            Self::External(command) => command.never_guessed,
         }
     }
 }
@@ -490,14 +517,17 @@ mod tests {
                 ExternalCommand {
                     name: "skill:improve-codebase-architecture".to_string(),
                     description: "find deepening opportunities".to_string(),
+                    never_guessed: false,
                 },
                 ExternalCommand {
                     name: "skill:claude-api".to_string(),
                     description: "reference for caching, tool use".to_string(),
+                    never_guessed: false,
                 },
                 ExternalCommand {
                     name: "skill:zebra".to_string(),
                     description: "unrelated".to_string(),
+                    never_guessed: false,
                 },
             ]);
             popup.on_composer_text_change(format!("/{filter}"));
@@ -814,5 +844,115 @@ mod tests {
             !cmds.iter().any(|name| name.starts_with("debug")),
             "expected no /debug* command in popup menu, got {cmds:?}"
         );
+    }
+
+    /// 🔴 **`/logot` MUST NOT REACH `/logout`, AND THE POPUP IS A DOOR THE FENCE HAD NEVER SEEN.**
+    ///
+    /// `/logout` deletes every stored Estelle, ChatGPT, Claude, Copilot and local-provider
+    /// credential. `commands::NEVER_GUESSED` stopped the DISPATCHER guessing it, after `/logot` —
+    /// one edit away — wiped a user's keys while the correct spelling printed *"no command"*. This
+    /// popup's matcher is a plain subsequence filter and `logot` is a subsequence of `logout`; the
+    /// selection clamps to index 0; and `slash_input.rs`'s `Enter` arm for an EXTERNAL command
+    /// rewrites the draft to the selected name and calls `handle_submission` **in the same
+    /// keystroke**. One fenced door and one unfenced door reaching one destructive command.
+    ///
+    /// ⚠️ Verified by READING the list, never by pressing the real key: the whole hazard is that
+    /// running it destroys real credentials. The fixture below is a stand-in that is marked exactly
+    /// as `/logout` is, so this asserts the RULE rather than one name.
+    #[test]
+    fn a_never_guessed_command_is_unreachable_by_typo_prefix_or_subsequence() {
+        let catalog = || {
+            vec![
+                ExternalCommand {
+                    name: "logout".to_string(),
+                    description: "remove local Estelle and plan credentials".to_string(),
+                    never_guessed: true,
+                },
+                // ⚠️ THE NEGATIVE CONTROL, in the same catalog. If the fence were a blanket, this
+                // ordinary command would stop matching too and the assertions above would pass for
+                // the wrong reason.
+                ExternalCommand {
+                    name: "logs".to_string(),
+                    description: "tail the run log".to_string(),
+                    never_guessed: false,
+                },
+            ]
+        };
+        let names = |filter: &str| {
+            let mut popup = CommandPopup::external_only(catalog());
+            popup.on_composer_text_change(format!("/{filter}"));
+            popup
+                .filtered_items()
+                .into_iter()
+                .map(|item| item.command().to_string())
+                .collect::<Vec<_>>()
+        };
+
+        // The typo that cost a user their keys, and its neighbours — every one a subsequence or a
+        // near miss that the widest matcher we own would otherwise admit.
+        for typo in ["logot", "logut", "loout", "ogout", "lgout", "lout", "lgt"] {
+            assert!(
+                !names(typo).contains(&"logout".to_string()),
+                "/{typo} reached /logout through the popup: {:?}",
+                names(typo)
+            );
+        }
+        // A genuine prefix is refused too, and for the same reason: Enter on the selection SUBMITS.
+        for partial in ["l", "lo", "log", "logo", "logou"] {
+            assert!(
+                !names(partial).contains(&"logout".to_string()),
+                "/{partial} offered /logout as a completion, and one Enter would have run it"
+            );
+        }
+        // …while the ordinary command in the same catalog keeps its full reach.
+        assert!(
+            names("lgs").contains(&"logs".to_string()),
+            "the fence became a blanket"
+        );
+        assert!(
+            names("log").contains(&"logs".to_string()),
+            "prefix matching broke for everyone"
+        );
+
+        // 🔴 THE COMMAND STILL EXISTS AND STILL RUNS. Dropping it is the OTHER half of the bug we
+        // already shipped once: `/logout` printed "no command" while `/logot` wiped the keys.
+        assert!(
+            names("logout").contains(&"logout".to_string()),
+            "/logout became unreachable"
+        );
+        assert!(
+            names("LogOut").contains(&"logout".to_string()),
+            "exact match is case-sensitive"
+        );
+        // And browsing the whole palette still shows it — the popup with no filter is the one
+        // surface where a person is looking at the list rather than being completed at.
+        assert!(
+            names("").contains(&"logout".to_string()),
+            "/logout vanished from the palette"
+        );
+    }
+
+    /// ⚠️ The popup must not even OPEN on a near miss, or it opens empty.
+    ///
+    /// `is_editing_command_name` asks `has_external_command_prefix`, which was the same subsequence
+    /// matcher. Two answers to one question — *may this filter reach this command?* — is how the
+    /// fence came to cover one of them.
+    #[test]
+    fn the_popup_gate_and_the_popup_filter_agree_about_a_never_guessed_command() {
+        let guarded = ExternalCommand {
+            name: "logout".to_string(),
+            description: "remove local Estelle and plan credentials".to_string(),
+            never_guessed: true,
+        };
+        let catalog = [guarded];
+        assert!(!super::super::slash_commands::has_external_command_prefix(
+            "logot", &catalog
+        ));
+        assert!(!super::super::slash_commands::has_external_command_prefix(
+            "logo", &catalog
+        ));
+        assert!(super::super::slash_commands::has_external_command_prefix(
+            "logout", &catalog
+        ));
     }
 }
