@@ -20,6 +20,23 @@ pub enum ScreenTheme {
     Cream,
 }
 
+/// 🩷 **THE PINK, SAMPLED OFF THE FOUNDER'S OWN MOCK — NOT CHOSEN.**
+///
+/// `docs/design/cli-reference-2026-08-24/skill.png` and `skill 4.png` are the accepted spec for the
+/// skills surfaces, and every glyph the mock draws in pink — the offered skill's name, the typed
+/// palette's selected row, and the rule above the bound composer — is **exactly this value**. It was
+/// read out of the PNG with a pixel histogram rather than eyeballed, and the same histogram
+/// confirmed that every OTHER colour in that mock is already a token this file ships:
+/// `#938E83`≈[`Palette::mid`], `#6E6A5F`≈[`Palette::dim`], `#6E9D72`≈[`Palette::green`],
+/// `#8AB2C6`≈[`Palette::cite`], `#231F1A`≈[`Palette::tint`]. **The pink was the only role that had
+/// drifted** — it shipped as `#D48FB0`, a lighter and pinker value nobody measured — which is why
+/// this is a correction with a citation and not a redesign.
+///
+/// ⚠️ **THE CREAM VARIANT IS DELIBERATELY LEFT ALONE.** There is no cream skills mock in that
+/// folder, so a "matching" cream nudge would be swapping one unmeasured guess for another and
+/// calling the second one evidence. The cream pink stays `#B06A8C` and stays honestly unmeasured.
+const SKILL_PINK: Color = Color::Rgb(0xca, 0x92, 0xaf);
+
 pub struct Palette {
     pub ground: Color,
     pub dim: Color,
@@ -49,7 +66,7 @@ impl ScreenTheme {
                 warn: Color::Rgb(0xc9, 0xa2, 0x27),
                 cite: Color::Rgb(0x7f, 0xb3, 0xc8),
                 plan: Color::Rgb(0x9f, 0xc4, 0xe0),
-                skill: Color::Rgb(0xd4, 0x8f, 0xb0),
+                skill: SKILL_PINK,
                 tint: Color::Rgb(0x24, 0x1f, 0x19),
                 diff_add: Color::Rgb(0x1b, 0x2e, 0x1d),
                 diff_del: Color::Rgb(0x36, 0x1a, 0x18),
@@ -96,6 +113,28 @@ fn dampen(color: Color) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 🔴 **THE PINK IS PINNED TO THE PIXELS IT WAS SAMPLED FROM.**
+    ///
+    /// The value shipped as `#D48FB0` for months and nobody could say where it came from, which is
+    /// how it drifted from the mock without anyone noticing. Written down here it cannot drift
+    /// again silently: the next person to change it has to change this line too, and this line
+    /// names the file the number came out of.
+    #[test]
+    fn the_skill_pink_is_the_value_sampled_from_the_founders_mock() {
+        // docs/design/cli-reference-2026-08-24/skill.png · skill 4.png — the offered skill name,
+        // the typed palette's selected row and the rule above the bound composer are all #CA92AF.
+        assert_eq!(
+            ScreenTheme::Dark.palette().skill,
+            Color::Rgb(0xca, 0x92, 0xaf)
+        );
+        // The cream variant is NOT claimed to be measured; it is pinned only so a change to it is
+        // a deliberate one. There is no cream skills mock in that folder.
+        assert_eq!(
+            ScreenTheme::Cream.palette().skill,
+            Color::Rgb(0xb0, 0x6a, 0x8c)
+        );
+    }
 
     #[test]
     fn pulse_has_two_intensities_on_a_twenty_eight_tick_cycle() {

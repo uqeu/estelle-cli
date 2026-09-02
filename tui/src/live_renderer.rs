@@ -399,7 +399,10 @@ fn queue_entry_summary(label: &str, width: usize) -> String {
     let suffix = format!(" \u{23ce} +{remaining} more");
     // Measured the same way `truncate_display` measures, so the reservation and the truncation
     // cannot disagree about how wide the suffix is.
-    let reserved = suffix.chars().map(|ch| ch.width().unwrap_or(0)).sum::<usize>();
+    let reserved = suffix
+        .chars()
+        .map(|ch| ch.width().unwrap_or(0))
+        .sum::<usize>();
     let room = width.saturating_sub(reserved);
     format!("{}{suffix}", truncate_display(first, room))
 }
@@ -467,7 +470,36 @@ pub(super) fn render_picker(frame: &mut Frame<'_>, picker: &PickerSurface, area:
     // the only one whose rows name a SKILL, and `title` is what distinguishes it. The filtered
     // titles read `Skills · 3 of 247 · type to filter`, so the test is a prefix, not equality.
     let skill_rows = picker.title.starts_with("Skills");
-    let context_height = login_context.as_ref().map_or(0, |lines| lines.len());
+    // 🔴 **THE MOCK'S BROWSE PANEL CARRIES FOUR FACTS THIS SERVER DOES NOT SEND, AND THE PANEL SAYS
+    // SO INSTEAD OF INVENTING THEM.**
+    //
+    // `docs/design/cli-reference-2026-08-24/skill 4.png` §7 draws
+    // `Skills 238 · 189 on`, per-row `on`/`off`, a per-skill cost `~640`, and a footer
+    // `3 max compose · 1,800 tok budget`. Measured against the running server:
+    //
+    // * **the on-count and the per-skill toggle DO NOT EXIST ANYWHERE.** `GET /skills` returns
+    //   `{"name", "category", "summary", "short"}` per skill (`src/estelle/serve/skills_api.py:25`)
+    //   and the `Skill` dataclass (`src/estelle/skills/registry.py:99`) has no enablement field.
+    //   There is no per-account store either. `189 on` has no backing fact in this system.
+    // * **the per-skill cost is not sent.** It is computable — `count_memory_tokens`
+    //   (`src/estelle/serve/metering.py:246`) over `skill.body` — but nothing computes it today.
+    // * **the compose limit and budget are REAL and are simply not on the wire.**
+    //   `MAX_COMPOSED_SKILLS = 3` and `SKILL_PROMPT_TOKEN_BUDGET = 1_800`
+    //   (`src/estelle/agent/skill_tools.py:34-35`) match the mock exactly. Hardcoding them HERE
+    //   would put a second owner on a server constant, which is how two tables came to disagree
+    //   about ten model prices.
+    //
+    // So this line is the honest form of the mock: the total is real, and the three fields that are
+    // not measured are NAMED as not measured. ⚠️ Rendering `off` on every row, or `~0` as a cost,
+    // would make an absent value and a zero the same bytes on the wire — the defect family that
+    // produced four separate findings in this repo. A missing toggle drawn as `off` is worse than a
+    // missing toggle: it is a lie the user can act on.
+    let skills_context = skill_rows.then_some([
+        Line::from("A playbook is offered when your draft names it, and run only when you press tab."),
+        Line::from("on/off · per-skill cost · compose budget: not measured · the server does not send them."),
+    ]);
+    let context_height = login_context.as_ref().map_or(0, |lines| lines.len())
+        + skills_context.as_ref().map_or(0, |lines| lines.len());
     let height = u16::try_from(
         picker
             .rows
@@ -488,7 +520,11 @@ pub(super) fn render_picker(frame: &mut Frame<'_>, picker: &PickerSurface, area:
     let inner_width = usize::from(modal.width.saturating_sub(3));
     let label_width = (inner_width / 3).clamp(12, 24);
     let detail_width = inner_width.saturating_sub(label_width.saturating_add(3));
-    let mut lines = login_context.into_iter().flatten().collect::<Vec<_>>();
+    let mut lines = login_context
+        .into_iter()
+        .flatten()
+        .chain(skills_context.into_iter().flatten())
+        .collect::<Vec<_>>();
     lines.extend(
         picker
             .rows
@@ -766,8 +802,7 @@ pub(super) fn symbol_ground_layout(width: usize, height: usize) -> Arc<SymbolGro
             // not visual fit. The lily is drawn only where the box can hold its proportions;
             // elsewhere the flourish is pure dither, which is the graceful degradation.
             if x >= lily_x0
-                && let Some(symbol) =
-                    red_lily_braille(x - lily_x0, y, lily_width, height, opacity)
+                && let Some(symbol) = red_lily_braille(x - lily_x0, y, lily_width, height, opacity)
             {
                 cells[index] = symbol;
                 ink[index] = 2;
@@ -2346,6 +2381,127 @@ fn collapse_composer_tail(
 ///
 /// ⚠️ It is a PLACEHOLDER, so it may only occupy space the user's own draft is not using. It is
 /// drawn only when the composer is empty; a draft in progress always wins its own row.
+/// The offer: *"this looks like this skill"*, drawn directly above the input block.
+///
+/// 🔴 **IT OFFERS, NEVER AUTO-RUNS. A SKILL THAT FIRES WITHOUT YOU ASKING IS AN AGENT CHOOSING FOR
+/// YOU.** That sentence is printed on the founder's own mock beside this exact band
+/// (`docs/design/cli-reference-2026-08-24/skill.png`, §5) and it is the same rule as propose-only
+/// auto-repair, applied to skills. Nothing on this path runs anything: the band draws, `tab` puts a
+/// runnable command in the composer, and a human still presses enter. **Any future change that lets
+/// a match fire a playbook by itself breaks the product's founding constraint, not just this file.**
+///
+/// ## This is the INFERENCE, and it is not the picker
+///
+/// `/skills` is a menu the user has to remember to open; this appears because Estelle read the
+/// draft. The mock draws both, side by side, under the headings `YOU TYPE IT — / THEN TAB` and
+/// `YOU DIDN'T — ESTELLE OFFERS YOUR TRIAGE IDEA`. Both ship; they are different products.
+///
+/// ## Every glyph here is read off the mock, not invented
+///
+/// `skill 4.png` §7, panel three (`OFFERED — NEVER AUTO-RUN`), renders exactly two rows:
+///
+/// ```text
+/// » This looks like deepen-architecture.
+///   tab to use · enter to answer normally
+/// ```
+///
+/// * `»` and the skill NAME and the trailing full stop are pink (`palette.skill`); `This looks
+///   like ` is `palette.mid`; the whole hint row is `palette.dim`. Sampled from the PNG with a pixel
+///   histogram — `#CA92AF`, `#938E83`, `#6E6A5F` — which is how the pink token got corrected.
+/// * **There is no box and no overline.** §5's panel shows a horizontal rule below the hint row and
+///   before the next prompt; §7's shows none, because §7's panel ENDS there. So the rule is the
+///   frame's own separator before the composer, and this frame already draws it — it is
+///   `── ask · <repo> ──`. Adding a second rule here would put two rules two lines apart for one
+///   separation. ⚠️ The founder's spoken description asked for *"an underline and an overline"*;
+///   the mock he then found has neither on THIS panel, and the mock is the spec. The bracketed
+///   language he was remembering is on the TYPED panel (`┌ skills ────`), which is the picker.
+/// * `enter to answer normally` is not filler. **It is what stops this being a modal**: naming the
+///   do-nothing key in the same breath says out loud that ignoring the band is a supported move.
+///
+/// ⚠️ **THE DRAFT IS NOT ECHOED, AND THAT IS A DEPARTURE FROM THE MOCK, STATED HERE RATHER THAN
+/// HIDDEN.** The mock's panel carries the user's prompt on a tinted row above the offer. In a live
+/// frame that prompt is already on screen three rows below, inside the composer, so echoing it would
+/// print the same sentence twice. The mock is a still image and had nowhere else to put it.
+fn render_skill_suggestion(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    suggestion: &crate::skill_suggest::Suggestion,
+    palette: &crate::theme::Palette,
+) {
+    let width = usize::from(area.width);
+    const SENTENCE: &str = "This looks like ";
+    const HINT: &str = "  tab to use \u{b7} enter to answer normally";
+    let pink = Style::default().fg(palette.skill);
+    let lines = vec![
+        // One blank row, so the offer is not clumped against whatever the transcript ended on.
+        // The mock gives the offer air above it and this is the terminal's cheapest form of that.
+        Line::default(),
+        Line::from(vec![
+            Span::styled("\u{bb} ", pink),
+            Span::styled(SENTENCE, Style::default().fg(palette.mid)),
+            Span::styled(
+                truncate_display(
+                    &suggestion.name,
+                    // The trailing full stop is part of the mock's sentence, so it is part of the
+                    // budget: a name truncated to the last column would otherwise push it off.
+                    width
+                        .saturating_sub(2)
+                        .saturating_sub(SENTENCE.chars().count())
+                        .saturating_sub(1),
+                ),
+                pink.add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(".", pink),
+        ]),
+        Line::styled(
+            truncate_display(HINT, width),
+            Style::default().fg(palette.dim),
+        ),
+    ];
+    frame.render_widget(Paragraph::new(lines), area);
+}
+
+/// The mock's `TYPED` panel: the playbook this draft has already bound, named above the composer.
+///
+/// 🔴 **THE OFFER AND THIS ARE THE SAME AFFORDANCE AT TWO MOMENTS.** The offer says *this could be
+/// `deepen-architecture`*; this says *it now is*. `docs/design/cli-reference-2026-08-24/skill 4.png`
+/// §7 panel two draws `~/estelle · deepen-architecture` beneath the prompt with the path dim and
+/// the name in pink. The repo label replaces the mock's `~/estelle` because this frame already names
+/// the repo everywhere else — `── ask · uqeu/estelle ──` is two rows below — and a home-relative
+/// path here would be the only surface in the product that identifies the workspace differently.
+///
+/// ⚠️ **IT CLAIMS NO KEY.** The mock shows no affordance on this panel and none is invented: there
+/// is no bound "unbind" key in this binary, and this frame has already had to take back a hint row
+/// advertising three bindings that did not exist. It states a fact and stops.
+fn render_bound_skill(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    name: &str,
+    app: &App,
+    palette: &crate::theme::Palette,
+) {
+    let width = usize::from(area.width);
+    let repo = repo_label(app).to_string();
+    let budget = width.saturating_sub(repo.chars().count()).saturating_sub(5);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::default(),
+            Line::from(vec![
+                Span::styled("  ", Style::default().fg(palette.dim)),
+                Span::styled(repo, Style::default().fg(palette.dim)),
+                Span::styled(" \u{b7} ", Style::default().fg(palette.dim)),
+                Span::styled(
+                    truncate_display(name, budget),
+                    Style::default()
+                        .fg(palette.skill)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+        ]),
+        area,
+    );
+}
+
 fn render_queue_affordance(
     frame: &mut Frame<'_>,
     app: &App,
@@ -2400,6 +2556,21 @@ pub(super) const COMPOSER_MAX_ROWS: u16 = 14;
 /// The composer's own chrome above the text area: the status row, one blank, and the ask rule.
 const COMPOSER_CHROME_ROWS: u16 = 3;
 
+/// The offered-skill band: one blank, the sentence, the hint row.
+///
+/// 🔴 **THREE ROWS BECAUSE THE MOCK IS TWO PLUS AIR, NOT BECAUSE THREE LOOKED RIGHT.**
+/// `docs/design/cli-reference-2026-08-24/skill 4.png` §7 draws the offer as exactly two rows — the
+/// sentence and the hint — with whitespace above it. The separating rule the mock shows in §5 is
+/// this frame's own `── ask · <repo> ──`, which is already drawn three rows below, so the band does
+/// not draw a second one.
+const SKILL_SUGGESTION_ROWS: u16 = 3;
+
+/// The bound-playbook band: one blank, then `<repo> · <name>`.
+///
+/// Two rows, because the mock's `TYPED` panel is one line plus air. It replaces the offer rather
+/// than stacking with it — see `render_frame`, where `bound` wins the slot.
+const SKILL_BOUND_ROWS: u16 = 2;
+
 /// The demo's prompt: U+276F HEAVY RIGHT-POINTING ANGLE QUOTATION MARK ORNAMENT.
 ///
 /// 🔴 **CHOSEN FOR FONT COVERAGE, NOT FOR COLUMN ARITHMETIC.** The previous glyph was U+3009, the
@@ -2451,6 +2622,29 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
     let modal_owns_input =
         app.picker.is_some() || app.resume_picker.is_some() || app.gate_modal.is_some();
     let composer_rows = if modal_owns_input { 0 } else { composer_rows };
+    // Asked ONCE per frame, and asked of `App` rather than computed here: the Tab handler asks the
+    // same method, so the band on screen and the playbook Tab inserts are the same answer to one
+    // question. Rows are reserved only when there IS an answer, so an ordinary prompt costs the
+    // transcript nothing.
+    // 🔴 THE TWO PANELS SHARE ONE SLOT, AND `TYPED` WINS. The mock draws them as two separate
+    // states of the same composer (`skill 4.png` §7, panels two and three), never both at once: once
+    // a playbook is bound there is nothing left to offer, and an offer floating over a bound
+    // composer would be Estelle arguing with a choice the user has already made.
+    let bound = if modal_owns_input {
+        None
+    } else {
+        app.bound_skill()
+    };
+    let suggestion = if modal_owns_input || bound.is_some() {
+        None
+    } else {
+        app.skill_suggestion()
+    };
+    let suggestion_rows = match (bound.is_some(), suggestion.is_some()) {
+        (true, _) => SKILL_BOUND_ROWS,
+        (false, true) => SKILL_SUGGESTION_ROWS,
+        (false, false) => 0,
+    };
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -2461,7 +2655,9 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             Constraint::Length(if composer_rows == 0 {
                 0
             } else {
-                composer_rows.saturating_add(COMPOSER_CHROME_ROWS)
+                composer_rows
+                    .saturating_add(COMPOSER_CHROME_ROWS)
+                    .saturating_add(suggestion_rows)
             }),
             // ⚠️ Always one row, even when a modal owns the input and nothing is drawn on it.
             // A row that appears and disappears would move every modal surface by one row and
@@ -2812,6 +3008,31 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
     let composer_area = if modal_owns_input {
         Rect::default()
     } else {
+        // 🔴 THE BAND SITS ABOVE THE WHOLE INPUT BLOCK, NOT BETWEEN THE RULE AND THE PROMPT.
+        // Placing it directly above the `── ask ·` rule would have stacked two rules on adjacent
+        // rows, and placing it below the rule would have put an inference inside the box the user
+        // types in. Above the status row it reads exactly as the founder described it: he is typing
+        // at the bottom and the recognition appears at the top, framed and separate.
+        //
+        // ⚠️ The rows come off the composer block, which means the four rows are taken from the
+        // TRANSCRIPT and never from the typing area. A suggestion that shrank the box you are
+        // typing in as you typed would be the worst possible moment to shrink it.
+        let ask_block = if suggestion_rows == 0 {
+            rows[2]
+        } else {
+            let bands = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(suggestion_rows), Constraint::Min(1)])
+                .split(rows[2]);
+            match (bound.as_deref(), suggestion.as_ref()) {
+                (Some(name), _) => render_bound_skill(frame, bands[0], name, app, &palette),
+                (None, Some(suggestion)) => {
+                    render_skill_suggestion(frame, bands[0], suggestion, &palette);
+                }
+                (None, None) => {}
+            }
+            bands[1]
+        };
         let ask_rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -2820,7 +3041,7 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
                 Constraint::Length(1),
                 Constraint::Min(1),
             ])
-            .split(rows[2]);
+            .split(ask_block);
         frame.render_widget(
             Paragraph::new(status_bar_line(app, now, usize::from(ask_rows[0].width))),
             ask_rows[0],
