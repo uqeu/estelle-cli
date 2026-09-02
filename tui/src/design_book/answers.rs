@@ -354,11 +354,14 @@ pub(crate) fn code_graph(palette: &Palette, tick: u64, pulse: bool) -> Vec<Line<
             // is the kind of fixture nobody re-reads.
             total: 812,
             nodes: &nodes,
-            // ⚠️ NO SELECTION BAND, BECAUSE NOTHING CAN SELECT. The founder's version tinted the
-            // first row. Nothing in this binary binds a key on this pane, so a tinted row in the
-            // book would be the fixture claiming an interaction the product does not have — and
-            // the pane's own last footnote says so two lines below it.
-            selected: None,
+            // ✅ **THE BAND IS BACK, AND ONLY BECAUSE THE KEY THAT MOVES IT EXISTS NOW.** This was
+            // `None` with a comment saying a tinted row would be the fixture claiming an
+            // interaction the product does not have. `crate::graph_walk` binds `↑↓`, so the claim
+            // is true and the picture may make it. ⚠️ It is the same slice the keymap dispatches
+            // on — `graph_walk::KEYS` — so the book cannot advertise a chord the walk drops.
+            selected: Some(0),
+            hints: crate::graph_walk::KEYS,
+            detail: None,
         },
         palette,
         WIDTH_40,

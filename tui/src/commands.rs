@@ -69,7 +69,7 @@ const SESSION_HELP: [(&str, &str); 49] = [
     ("init", "a grounded brief of this repo"),
     (
         "graph",
-        "the swept code graph; /graph nodes draws the dependency view",
+        "the swept code graph; /graph walk opens the walkable one",
     ),
     (
         "me",

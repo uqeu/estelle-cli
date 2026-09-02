@@ -133,6 +133,24 @@ impl Node {
     }
 }
 
+/// What `enter` opens on the selected row.
+///
+/// 🔴 **EVERY FIELD IS A REPLY ALREADY IN HAND, AND THAT IS WHY OPENING A ROW COSTS NO REQUEST.**
+/// `subsystems` and `import_cycles` are fetched once for the whole walk, so the peers and the
+/// cycle chain for any row are a lookup rather than a call. [`Self::dependents`] is the one field
+/// that is not — it is `None` until `b` measures it, and `None` here means NOT ASKED, never
+/// "nothing depends on this". An empty slice means asked and empty. Three states, three bytes.
+pub(crate) struct Detail<'a> {
+    pub node: &'a Node,
+    /// The other files `subsystems` put in the same component. Empty is a real answer: a file can
+    /// be the only member of its own component.
+    pub subsystem: &'a [String],
+    /// The `import_cycles` chain this file sits on, verbatim, arrows and all. Empty = on none.
+    pub cycle: &'a [String],
+    /// What `blast_radius` said depends on this file. `None` until `b` is pressed.
+    pub dependents: Option<&'a [String]>,
+}
+
 /// The pane's whole state.
 pub(crate) enum Surface<'a> {
     /// The graph answered.
@@ -146,11 +164,29 @@ pub(crate) enum Surface<'a> {
         nodes: &'a [Node],
         /// Which row carries the `palette.tint` band, when anything does.
         ///
-        /// 🔴 **`Option`, NOT A SENTINEL INDEX.** Nothing in this binary binds a key on this pane,
-        /// so "no row is selected" is the ONLY state it has today — and `usize::MAX` would have
-        /// been a second meaning for a number. An absent selection and row `MAX` must not share
-        /// bytes, for the same reason an absent measurement and `0` must not.
+        /// 🔴 **`Option`, NOT A SENTINEL INDEX.** `usize::MAX` would have been a second meaning
+        /// for a number. An absent selection and row `MAX` must not share bytes, for the same
+        /// reason an absent measurement and `0` must not — and a pane with no rows at all still
+        /// has to say "nothing is selected" rather than "row 18446744073709551615 is".
         selected: Option<usize>,
+        /// The keys THIS pane binds, in the order the footer prints them.
+        ///
+        /// 🔴 **A FIELD, NOT A CONSTANT, BECAUSE TWO PANES DRAW THIS TABLE AND ONLY ONE OF THEM
+        /// TAKES KEYS.** [`crate::production_hud`] renders the same rows inside a read-only rail;
+        /// [`crate::graph_walk`] renders them under a keymap. Baking one footer into the renderer
+        /// would advertise a binding on the pane that does not have it, which is the exact defect
+        /// the previous version of this footer was written to avoid. An EMPTY slice draws the
+        /// read-only sentence instead — absent keys and no keys are the same fact here, and it is
+        /// spelled out rather than left as a blank row.
+        ///
+        /// ⚠️ The walk passes [`crate::graph_walk::KEYS`], which is the same slice its key handler
+        /// dispatches on, so the hint row cannot advertise a chord the handler drops.
+        hints: &'a [(&'a str, &'a str)],
+        /// The row the user opened with `enter`, when one is open.
+        ///
+        /// ⚠️ Composed only from replies already in hand — see [`Detail`]. Opening a row costs no
+        /// request, which is why `enter` and `b` are different keys.
+        detail: Option<&'a Detail<'a>>,
     },
     /// The server declined to answer, in its own words.
     Withheld { repo: &'a str, reason: &'a str },
@@ -228,8 +264,11 @@ pub(crate) fn lines(
             total,
             nodes,
             selected,
+            hints,
+            detail,
         } => walk(
-            repo, filter, *matched, *total, nodes, *selected, palette, width, tick, pulse,
+            repo, filter, *matched, *total, nodes, *selected, hints, *detail, palette, width, tick,
+            pulse,
         ),
     }
 }
@@ -297,6 +336,8 @@ fn walk(
     total: usize,
     nodes: &[Node],
     selected: Option<usize>,
+    hints: &[(&str, &str)],
+    detail: Option<&Detail<'_>>,
     palette: &Palette,
     width: usize,
     tick: u64,
@@ -372,20 +413,148 @@ fn walk(
         output.push(crate::cols::owned(line));
     }
 
+    if let Some(detail) = detail {
+        output.extend(detail_lines(detail, palette, width));
+    }
+
     output.push(blank());
     // 🔴 **NO FOOTNOTE ADVERTISES A KEY THAT IS NOT BOUND.** The screen this renderer replaced
     // promised `enter opens the symbol · space filters · b shows the blast radius · d exports dot`,
-    // and not one of those four is bound in this binary. A hint the binding cannot keep is the
-    // defect `ASK_HINTS` in `main.rs` is still carrying, and repeating it here would be choosing to
-    // pay for it twice. What the pane can do it says; the walk is named as missing, out loud.
+    // and not one of those four was bound in this binary. The row below is no longer a sentence
+    // written here: it is `hints`, which the walk fills from the same slice its key handler
+    // dispatches on. A chord can therefore be advertised here only if the handler takes it, and a
+    // pane that binds nothing says so instead of printing an empty row.
     for footnote in [
         "moves is the blast radius: how many files the graph says touching this one moves.",
         "centrality is the server's own figure, printed verbatim · — means not measured, not zero",
-        "not walkable yet: nothing binds a key here, so no row can be selected or drilled into.",
     ] {
         output.push(note(palette, footnote));
     }
+    output.push(hint_row(hints, palette));
     output
+}
+
+/// The key row, or the sentence a pane with no keys owes the reader.
+///
+/// ⚠️ **THE EMPTY CASE IS COPY, NOT A BLANK.** A footer that simply disappears when nothing is
+/// bound reads as "there are no keys worth mentioning", which is what a reader concludes right
+/// before pressing enter and getting nothing.
+fn hint_row(hints: &[(&str, &str)], palette: &Palette) -> Line<'static> {
+    if hints.is_empty() {
+        // ⚠️ **"NO ROW IS SELECTABLE", NOT "NO KEY IS BOUND".** The production rail that draws this
+        // table with no hints DOES bind `enter` — it drills into the mermaid path — so the wider
+        // sentence would have been false on the only pane that prints it.
+        return note(
+            palette,
+            "no row is selectable here: this table is read-only. /graph walk is the walkable one.",
+        );
+    }
+    note(
+        palette,
+        &hints
+            .iter()
+            .map(|(key, label)| format!("{key} {label}"))
+            .collect::<Vec<_>>()
+            .join(" \u{b7} "),
+    )
+}
+
+/// The opened row: what the four replies already say about one file.
+///
+/// 🔴 **THREE SECTIONS, AND EACH ONE PRINTS A SENTENCE WHEN IT IS EMPTY.** A blank under
+/// `subsystem` is indistinguishable from a subsystem that was never fetched, and this pane exists
+/// because that distinction is the product. `dependents` carries the third state — `None` is *not
+/// asked*, and it names the key that would ask.
+fn detail_lines(detail: &Detail<'_>, palette: &Palette, width: usize) -> Vec<Line<'static>> {
+    let mut output = vec![
+        blank(),
+        crate::cols::owned(crate::cols::rule(
+            "open",
+            &detail.node.path,
+            width,
+            palette.dim,
+            palette.mid,
+            palette.cite,
+        )),
+        blank(),
+    ];
+    output.push(note(
+        palette,
+        &format!(
+            "role  {}   centrality  {}",
+            detail.node.role.label(),
+            detail.node.score.as_deref().unwrap_or("\u{2014}")
+        ),
+    ));
+    output.push(blank());
+    output.push(section(palette, "in the same subsystem"));
+    if detail.subsystem.is_empty() {
+        output.push(note(
+            palette,
+            "  nothing: the graph put no other file in this component.",
+        ));
+    } else {
+        // Bounded read: the pane shows a window and says how wide the whole thing is, because a
+        // capped list that reports its cap as a total is the claim nobody checked.
+        for peer in detail.subsystem.iter().take(DETAIL_ROWS) {
+            output.push(note(palette, &format!("  {peer}")));
+        }
+        if detail.subsystem.len() > DETAIL_ROWS {
+            output.push(note(
+                palette,
+                &format!(
+                    "  \u{2026} {} more in this subsystem, not shown",
+                    detail.subsystem.len() - DETAIL_ROWS
+                ),
+            ));
+        }
+    }
+    output.push(blank());
+    output.push(section(palette, "on an import cycle"));
+    if detail.cycle.is_empty() {
+        output.push(note(palette, "  no: this file is on none of the reported cycles."));
+    } else {
+        for chain in detail.cycle.iter().take(DETAIL_ROWS) {
+            output.push(note(palette, &format!("  {chain}")));
+        }
+    }
+    output.push(blank());
+    output.push(section(palette, "what depends on it"));
+    match detail.dependents {
+        // 🔴 NOT ASKED IS ITS OWN SENTENCE AND IT NAMES THE KEY. Printing "0 files" here would be
+        // "safe to change" over a file nobody measured — the same defect the `\u{2014}` in the
+        // `moves` column exists to prevent, one screen deeper.
+        None => output.push(note(
+            palette,
+            "  not measured. press b to take this file's blast radius.",
+        )),
+        Some([]) => output.push(note(
+            palette,
+            "  measured: nothing in the graph depends on this file.",
+        )),
+        Some(files) => {
+            for file in files.iter().take(DETAIL_ROWS) {
+                output.push(note(palette, &format!("  {file}")));
+            }
+            if files.len() > DETAIL_ROWS {
+                output.push(note(
+                    palette,
+                    &format!("  \u{2026} {} more, not shown", files.len() - DETAIL_ROWS),
+                ));
+            }
+        }
+    }
+    output
+}
+
+/// How many rows of a list the opened row shows before it says how many it is not showing.
+const DETAIL_ROWS: usize = 6;
+
+fn section(palette: &Palette, label: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::raw("  "),
+        Span::styled(label.to_string(), Style::default().fg(palette.mid)),
+    ])
 }
 
 /// `5608` -> `5,608`.
@@ -506,6 +675,8 @@ mod tests {
                     total: 1,
                     nodes: std::slice::from_ref(node),
                     selected: None,
+                    hints: &[],
+                    detail: None,
                 },
                 &palette,
                 120,
@@ -587,6 +758,59 @@ mod tests {
         assert!(!drawn.contains("centrality"), "no table header: {drawn}");
     }
 
+    /// 🔴 **A PANE THAT BINDS NOTHING MAY NOT PRINT A CHORD, AND ONE THAT BINDS KEYS MUST PRINT
+    /// THEM.** Both halves, because a footer that is always silent passes the first assertion and
+    /// a footer that always prints the walk's row passes the second. The read-only side is the one
+    /// that ships inside the production rail, where a `b blast radius` hint would name a key that
+    /// pane has never had.
+    #[test]
+    fn the_footer_names_a_chord_only_where_a_chord_is_bound() {
+        let palette = ScreenTheme::Dark.palette();
+        let nodes = [Node::from_tool_line("serve/api.py  (0.81)", Role::Chokepoint)];
+        let drawn = |hints: &[(&str, &str)]| {
+            text(&lines(
+                &Surface::Walk {
+                    repo: "uqeu/estelle",
+                    filter: "",
+                    matched: 1,
+                    total: 1,
+                    nodes: &nodes,
+                    selected: None,
+                    hints,
+                    detail: None,
+                },
+                &palette,
+                130,
+                0,
+                false,
+            ))
+        };
+
+        let read_only = drawn(&[]);
+        assert!(
+            read_only.contains("no row is selectable here"),
+            "a keyless pane must say so rather than print an empty footer:\n{read_only}"
+        );
+        for (key, label) in crate::graph_walk::KEYS {
+            assert!(
+                !read_only.contains(&format!("{key} {label}")),
+                "the read-only table advertised `{key} {label}`, which reaches nothing here:\n{read_only}"
+            );
+        }
+
+        let walkable = drawn(crate::graph_walk::KEYS);
+        for (key, label) in crate::graph_walk::KEYS {
+            assert!(
+                walkable.contains(&format!("{key} {label}")),
+                "the walkable pane dropped `{key} {label}` from its footer:\n{walkable}"
+            );
+        }
+        assert!(
+            !walkable.contains("no row is selectable here"),
+            "the walkable pane called itself read-only:\n{walkable}"
+        );
+    }
+
     #[test]
     fn no_box_corner_reaches_either_state() {
         let palette = ScreenTheme::Dark.palette();
@@ -604,6 +828,8 @@ mod tests {
                     total: nodes.len(),
                     nodes: &nodes,
                     selected: Some(1),
+                    hints: &[("enter", "open")],
+                    detail: None,
                 },
                 &palette,
                 130,

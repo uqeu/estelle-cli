@@ -347,6 +347,12 @@ pub fn lines(
                 total: nodes.len(),
                 nodes: &nodes,
                 selected: None,
+                // 🔴 THE READ-ONLY RAIL BINDS NOTHING, AND SAYS SO. This pane is a section of the
+                // production HUD; its keys belong to the HUD (`enter` drills the mermaid path).
+                // Advertising the walk's keys here would print seven chords none of which reach
+                // this surface — the exact defect `hints` was made a field to prevent.
+                hints: &[],
+                detail: None,
             },
             palette,
             width,
@@ -776,6 +782,43 @@ mod tests {
         assert!(drawn.contains("no walk from here"), "{drawn}");
         assert!(!drawn.contains("centrality"), "no node table: {drawn}");
         assert!(!drawn.contains("models.py"), "no surviving row: {drawn}");
+    }
+
+    /// 🔴 **THE PRODUCTION RAIL'S GRAPH TABLE IS READ-ONLY, AND ITS FOOTER MUST SAY SO.**
+    ///
+    /// The rail draws the same table [`crate::graph_walk`] does, and the walk's keys reach only
+    /// the walk. A footer copied across would print `b blast radius` on a pane where `b` has never
+    /// been a key — the defect the `hints` field was made a parameter to prevent. Asserted here
+    /// rather than in `graph_view`, because the thing being checked is which slice THIS caller
+    /// passes.
+    #[test]
+    fn the_production_rail_advertises_none_of_the_walks_keys() {
+        let graph = ProductionGraph {
+            issue_key: "issue-17".to_string(),
+            failing_symbol: "charge_card".to_string(),
+            failing_file: "billing.py".to_string(),
+            chokepoints: vec!["billing/charge.py  (0.81)".to_string()],
+            core_files: vec!["billing/settle.py  (0.64)".to_string()],
+            healthy_subsystems: vec!["billing/refund.py".to_string()],
+            blast_radius: vec!["billing/api.py".to_string()],
+            drill_down: false,
+            withheld: None,
+        };
+        let drawn = text(&lines(&graph, &ScreenTheme::Dark.palette(), 130, 0, false));
+        assert!(
+            drawn.contains("centrality"),
+            "the table did not draw, so its footer proves nothing:\n{drawn}"
+        );
+        assert!(
+            drawn.contains("no row is selectable here"),
+            "the read-only table must name itself read-only:\n{drawn}"
+        );
+        for (key, label) in crate::graph_walk::KEYS {
+            assert!(
+                !drawn.contains(&format!("{key} {label}")),
+                "the production rail advertised `{key} {label}`, which reaches nothing here:\n{drawn}"
+            );
+        }
     }
 
     #[tokio::test]

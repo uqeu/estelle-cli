@@ -86,8 +86,20 @@ pub(super) fn header_line(app: &App, _width: u16) -> Line<'static> {
             Style::default().fg(app.theme.ghost()),
         ));
         spans.push(Span::styled(
+            // 🔴 **"INDEXED", NOT "CURRENT" — A NAME THAT OVERCLAIMED ITS OWN BODY.**
+            //
+            // `App::header.indexed` is `repo_is_listed(&self.repo, &repos.repos)` (`main.rs`),
+            // i.e. *this repo's name appears in `GET /repos`*. That proves a graph EXISTS. It says
+            // nothing about whether the graph matches HEAD, and the word `current` claims exactly
+            // the thing it cannot see.
+            //
+            // ⚠️ **MEASURED AGAINST PRODUCTION, 2026-09-02, ON THE FOUNDER'S OWN REPO.** The
+            // header read `repo graph current` while every graph tool refused the same repo in the
+            // same second: *"uqeu/estelle: STALE — indexed at 6ff03b18, repo is now f141e241 …"*.
+            // Two surfaces on one screen, one saying current and one saying stale, and the one a
+            // reader trusts first was the one that had never checked.
             if indexed {
-                "repo graph current"
+                "repo graph indexed"
             } else {
                 "repo graph absent"
             },
@@ -2452,6 +2464,29 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
     //
     // It returns early, exactly as the original did: these surfaces own the whole frame, so the
     // transcript, composer and rails below must not draw underneath them.
+    // 🔴 **THE WALK OWNS THE WHOLE FRAME, AND ITS DRAW SITS BESIDE THE KEYS THAT FEED IT.** The
+    // comment below records what happens when those two drift: `ctrl+s` held state and handled
+    // keys and painted nothing for a release, because the render call was lost in a refactor and
+    // no warning ties a missing screen to a live keymap. It returns early for the same reason the
+    // affinity surfaces do — a transcript drawn under a full-screen pane is a second frame.
+    if let Some(walk) = &app.graph_walk {
+        let palette = app.theme.screen_palette();
+        let lines = walk.lines(
+            &palette,
+            usize::from(area.width),
+            pulse_tick(app, now),
+            true,
+        );
+        frame.render_widget(
+            Paragraph::new(lines).style(
+                Style::default()
+                    .fg(app.theme.primary())
+                    .bg(app.theme.background()),
+            ),
+            area,
+        );
+        return;
+    }
     if let Some(surface) = &app.affinity_surface {
         surface.render(
             frame,

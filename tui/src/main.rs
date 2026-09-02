@@ -38,6 +38,7 @@ mod design_book;
 mod doctor;
 mod gate_refusal;
 mod graph_view;
+mod graph_walk;
 mod history_import;
 mod hook_distil;
 mod hook_guard;
@@ -851,6 +852,16 @@ enum UiEvent {
         proposed_prs: Result<estelle_client::ProposedPrsResponse, Error>,
     },
     ProdGraph(Result<production_hud::ProductionGraph, String>),
+    /// The four graph tools, fetched for the walkable pane.
+    GraphWalk(Result<graph_walk::Fetched, String>),
+    /// One file's blast radius, measured because somebody pressed `b` on its row.
+    ///
+    /// ⚠️ The path travels WITH the answer. A reply that only carried the file list would land on
+    /// whichever row the band happened to be on when it arrived, which is a different file.
+    GraphBlast {
+        path: String,
+        result: Result<crate::mcp_tool::Outcome, String>,
+    },
     Answer {
         id: u64,
         result: Result<AnswerReply, Error>,
@@ -1961,6 +1972,10 @@ struct App {
     /// modal is opened, so it is a fact about what the user was actually shown.
     gate_refusals: u64,
     affinity_surface: Option<affinity_cli::Surface>,
+    /// The walkable code graph, when it is open. `None` is closed — there is no third state, and
+    /// the loading and refused states live INSIDE the walk so the pane owns its own honesty.
+    graph_walk: Option<graph_walk::Walk>,
+    graph_walk_in_flight: bool,
     affinity_costs: affinity_cli::CostLedger,
     shell_timeout: Duration,
     gate_modal: Option<GateModal>,
@@ -2308,6 +2323,8 @@ impl App {
             session_spend_usd: None,
             gate_refusals: 0,
             affinity_surface: None,
+            graph_walk: None,
+            graph_walk_in_flight: false,
             affinity_costs: affinity_cli::CostLedger::default(),
             shell_timeout: shell_timeout_from_value(
                 std::env::var(SHELL_TIMEOUT_ENV).ok().as_deref(),
@@ -2686,6 +2703,11 @@ impl App {
                 "/compact takes no argument; the caller-owned session journal is the input."
                     .to_string(),
             )),
+            // 🔴 **`/graph walk` IS A LOCAL COMMAND AND `/graph` IS NOT.** `/graph` and
+            // `/graph nodes` are remote reads that print a summary; `walk` opens a pane that then
+            // makes its own four calls. Routing it through the remote dispatcher would have sent
+            // a `GET /graph?walk` nobody serves and printed the summary anyway.
+            "graph" if argument.trim() == "walk" => self.open_graph_walk(tx),
             "context" => self.toggle_context_panel(),
             "prod" => self.toggle_prod_panel(tx),
             "diff" => self.toggle_diff_panel(),
@@ -3344,6 +3366,81 @@ impl App {
                 "closed"
             }
         )));
+    }
+
+    /// Open the walkable code graph (`/graph walk`).
+    ///
+    /// 🔴 **THE DOOR IS A COMMAND, NOT A CHORD.** Every free control chord in this binary is one
+    /// keystroke away from a chord that already means something (`ctrl+g` context, `ctrl+o`
+    /// selection, `ctrl+t` todo), and a screen reached only by a chord is a screen nobody finds —
+    /// the founder learned `ctrl+o` existed from a message rather than from the product. `/graph`
+    /// is already advertised in `/help`, so the walk is one word further along a road the user is
+    /// already on.
+    fn open_graph_walk(&mut self, tx: &mpsc::UnboundedSender<UiEvent>) {
+        if self.graph_walk_in_flight {
+            return;
+        }
+        let Some(client) = self.client.clone() else {
+            self.transcript.push(TranscriptEntry::System(
+                "The code graph needs a credential. Run /login first.".to_string(),
+            ));
+            return;
+        };
+        self.graph_walk_in_flight = true;
+        let repo = self.repo.clone();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let _ = tx.send(UiEvent::GraphWalk(fetch_graph_walk(&client, &repo).await));
+        });
+    }
+
+    /// Ask for one file's blast radius, because `b` was pressed on its row.
+    fn request_graph_blast(&mut self, path: String, tx: &mpsc::UnboundedSender<UiEvent>) {
+        let Some(client) = self.client.clone() else {
+            if let Some(walk) = self.graph_walk.as_mut() {
+                walk.refused(&path, "no credential: run /login first.".to_string());
+            }
+            return;
+        };
+        let repo = self.repo.clone();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let cancel = CancellationToken::new();
+            let result = crate::mcp_tool::call(
+                &client,
+                &repo,
+                "blast_radius",
+                serde_json::json!({"file": path.clone()}),
+                &cancel,
+            )
+            .await;
+            let _ = tx.send(UiEvent::GraphBlast { path, result });
+        });
+    }
+
+    /// Write the walk as Graphviz `dot` beside the repo, and say exactly where it went.
+    ///
+    /// ⚠️ **THE PATH IS REPORTED, NOT ASSUMED.** A silent write is indistinguishable from a
+    /// failed one, and a user who cannot name the file cannot open it.
+    fn export_graph_walk(&mut self) {
+        let Some(walk) = self.graph_walk.as_ref() else {
+            return;
+        };
+        let name = format!(
+            "estelle-graph-{}.dot",
+            walk.repo().replace(['/', ' ', ':'], "-")
+        );
+        let path = self.root.join(&name);
+        let dot = walk.dot();
+        let notice = match std::fs::write(&path, dot) {
+            Ok(()) => format!("wrote {} \u{b7} nodes and the measured edges only.", path.display()),
+            // 🔴 THE FAILURE IS THE OS's OWN SENTENCE. "export failed" tells a reader with a
+            // read-only checkout nothing they can act on.
+            Err(error) => format!("could not write {}: {error}", path.display()),
+        };
+        if let Some(walk) = self.graph_walk.as_mut() {
+            walk.note(notice);
+        }
     }
 
     fn request_production_graph(&mut self, tx: &mpsc::UnboundedSender<UiEvent>) {
@@ -4756,6 +4853,33 @@ impl App {
                     self.request_production_graph(tx);
                 }
             }
+            UiEvent::GraphWalk(result) => {
+                self.graph_walk_in_flight = false;
+                match result {
+                    Ok(fetched) => self.graph_walk = Some(graph_walk::Walk::new(fetched)),
+                    // 🔴 A TRANSPORT FAILURE IS NOT A REFUSAL AND DOES NOT OPEN THE PANE. The
+                    // walk's `withheld` state is the SERVER declining to date the graph; a request
+                    // that never arrived is a different fact and belongs in the transcript, where
+                    // the user can see it beside whatever else failed.
+                    Err(error) => self.transcript.push(TranscriptEntry::System(format!(
+                        "The code graph could not be read: {error}"
+                    ))),
+                }
+            }
+            UiEvent::GraphBlast { path, result } => {
+                if let Some(walk) = self.graph_walk.as_mut() {
+                    match result {
+                        Ok(crate::mcp_tool::Outcome::Answered(text)) => walk.measured(
+                            path,
+                            crate::mcp_tool::Outcome::Answered(text).lines(),
+                        ),
+                        Ok(crate::mcp_tool::Outcome::CannotAnswer(reason)) => {
+                            walk.refused(&path, reason);
+                        }
+                        Err(error) => walk.refused(&path, error),
+                    }
+                }
+            }
             UiEvent::ProdGraph(result) => {
                 self.prod_graph_in_flight = false;
                 match result {
@@ -6071,6 +6195,51 @@ fn spawn_prod_issues_request(
     });
 }
 
+/// The four graph tools, for the walkable pane.
+///
+/// 🔴 **ONE REFUSAL WITHHOLDS THE WHOLE WALK, FOR THE REASON [`production_hud::fetch`] GIVES.**
+/// All four read one graph through one currency guard, so rows from the three that answered would
+/// be "some of the graph" — a risk map the server has already declined to stand behind.
+///
+/// ⚠️ **`blast_radius` IS NOT IN HERE.** It is per-file and the walk asks for it on `b`, so a pane
+/// costs four requests plus one per row the user actually measures, not one per file.
+async fn fetch_graph_walk(
+    client: &Client,
+    repo: &Repo,
+) -> Result<graph_walk::Fetched, String> {
+    let cancel = CancellationToken::new();
+    let call = |name: &'static str| {
+        crate::mcp_tool::call(client, repo, name, serde_json::json!({}), &cancel)
+    };
+    let (chokepoints, core_files, cycles, subsystems) = tokio::try_join!(
+        call("chokepoints"),
+        call("core_files"),
+        call("import_cycles"),
+        call("subsystems"),
+    )?;
+    let withheld = [&chokepoints, &core_files, &cycles, &subsystems]
+        .into_iter()
+        .find_map(|outcome| match outcome {
+            crate::mcp_tool::Outcome::CannotAnswer(reason) => Some(reason.clone()),
+            crate::mcp_tool::Outcome::Answered(_) => None,
+        });
+    if let Some(reason) = withheld {
+        return Ok(graph_walk::Fetched {
+            repo: repo.as_str().to_string(),
+            withheld: Some(reason),
+            ..graph_walk::Fetched::default()
+        });
+    }
+    Ok(graph_walk::Fetched {
+        repo: repo.as_str().to_string(),
+        chokepoints: chokepoints.lines(),
+        core_files: core_files.lines(),
+        cycles: cycles.lines(),
+        subsystems: subsystems.lines(),
+        withheld: None,
+    })
+}
+
 fn spawn_prod_graph_request(
     client: Client,
     repo: Repo,
@@ -6442,6 +6611,34 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
             app.open_affinity_costs(tx);
         }
         return false;
+    }
+    // 🔴 **THE WALK OWNS ITS KEYS, AND IT OWNS THEM ABOVE THE COMPOSER.** `b`, `x`, `space` and
+    // `/` are ordinary letters everywhere else in this binary, so a walk that let them fall
+    // through would type them into the prompt instead of walking. It sits BELOW `ctrl+c` and
+    // `ctrl+s` on purpose: cancelling and the spend surface belong to the app in every state, and
+    // `graph_walk::Walk::key` refuses any chord for the same reason.
+    if let Some(walk) = app.graph_walk.as_mut() {
+        match walk.key(key) {
+            // 🔴 **PASSTHROUGH IS NOT "IGNORED", IT IS "NOT MINE".** The walk refuses every chord,
+            // and a pane that swallowed them would take `ctrl+t`, `ctrl+g` and `ctrl+o` away from
+            // the app for as long as it is open — a modal surface quietly disabling the product's
+            // own shortcuts. The two outcomes have to be different values, because the difference
+            // is exactly whether this `return` runs.
+            graph_walk::Action::Passthrough => {}
+            graph_walk::Action::Handled => return false,
+            graph_walk::Action::Close => {
+                app.graph_walk = None;
+                return false;
+            }
+            graph_walk::Action::Blast(path) => {
+                app.request_graph_blast(path, tx);
+                return false;
+            }
+            graph_walk::Action::Export => {
+                app.export_graph_walk();
+                return false;
+            }
+        }
     }
     if app.affinity_surface.is_some() {
         match key.code {
@@ -10467,6 +10664,267 @@ mod tests {
     ///
     /// Limit: it proves each key CHANGES the state the label names. It does not prove the
     /// label is the best word for that state.
+    /// 🔴 **THE HEADER MAY NOT CLAIM CURRENCY IT HAS NOT MEASURED.**
+    ///
+    /// `header.indexed` is `repo_is_listed(&self.repo, &repos.repos)` — the repo's NAME appears in
+    /// `GET /repos`. That is *a graph exists*. Measured against production on 2026-09-02, this
+    /// header printed `repo graph current` on `uqeu/estelle` while every graph tool refused the
+    /// same repo in the same second as `STALE — indexed at 6ff03b18, repo is now f141e241`.
+    ///
+    /// ⚠️ The forbidden list is words that make a CURRENCY claim, not the one word that was there.
+    /// Renaming the defect to `fresh` would satisfy a test that only banned `current`.
+    #[test]
+    fn the_header_says_a_graph_exists_and_never_that_it_is_current() {
+        let mut app = test_app();
+        app.header.indexed = Some(true);
+        let frame = rendered_frame_at_size(&app, Instant::now(), 200, 30);
+        assert!(
+            frame.contains("repo graph indexed"),
+            "the header dropped the fact it can actually prove:\n{frame}"
+        );
+        for claim in ["graph current", "graph fresh", "graph up to date", "graph in sync"] {
+            assert!(
+                !frame.contains(claim),
+                "the header claimed `{claim}` from a check that only proves the repo is listed"
+            );
+        }
+        // POSITIVE CONTROL: the detector fires on a frame that really does carry the claim.
+        assert!(format!("{frame} graph current").contains("graph current"));
+
+        // And the absent state still reads as absent, in the product's own red.
+        let mut absent = test_app();
+        absent.header.indexed = Some(false);
+        let drawn = rendered_frame_at_size(&absent, Instant::now(), 200, 30);
+        assert!(drawn.contains("repo graph absent"), "{drawn}");
+    }
+
+    fn walk_fixture() -> graph_walk::Fetched {
+        graph_walk::Fetched {
+            repo: "uqeu/estelle".to_string(),
+            chokepoints: vec!["serve/api.py  (0.81)".to_string()],
+            core_files: vec!["agent/graph_tools.py  (0.31)".to_string()],
+            cycles: vec!["serve/a.py -> serve/b.py -> serve/a.py".to_string()],
+            subsystems: vec!["serve/api.py, serve/plans.py".to_string()],
+            withheld: None,
+        }
+    }
+
+    /// 🔴 **THE WALK'S KEYS REACH IT THROUGH `handle_key`, AND THE FRAME MOVES.**
+    ///
+    /// `graph_walk`'s own tests press [`graph_walk::Walk::key`] directly, which proves the STATE
+    /// machine and nothing about whether the binary ever calls it. This drives the same keys
+    /// through the live keymap and compares the DRAWN TERMINAL, so a walk that held state and
+    /// painted nothing — the exact failure `ctrl+s` shipped with for a release — goes red here.
+    #[test]
+    fn the_walkable_graph_takes_its_keys_through_the_live_keymap_and_the_frame_moves() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let now = Instant::now();
+        let mut app = test_app();
+        app.graph_walk = Some(graph_walk::Walk::new(walk_fixture()));
+
+        let opened = rendered_frame_at_size(&app, now, 130, 40);
+        assert!(
+            opened.contains("serve/api.py"),
+            "the walk did not draw at all:\n{opened}"
+        );
+        assert!(
+            opened.contains("x export dot"),
+            "the footer must advertise the keys the pane binds:\n{opened}"
+        );
+
+        // NEGATIVE CONTROL: a key the walk does not bind leaves the frame identical, so every
+        // comparison below is about the key and not about a pane that redraws differently.
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE), &tx);
+        assert_eq!(
+            rendered_frame_at_size(&app, now, 130, 40),
+            opened,
+            "an unbound key redrew the pane"
+        );
+
+        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &tx);
+        let row_open = rendered_frame_at_size(&app, now, 130, 40);
+        assert_ne!(row_open, opened, "enter opened nothing through handle_key");
+        assert!(
+            row_open.contains("in the same subsystem"),
+            "enter must open the selected row's neighbourhood:\n{row_open}"
+        );
+        assert!(
+            row_open.contains("not measured. press b"),
+            "an unmeasured blast radius must name the key that measures it:\n{row_open}"
+        );
+
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE), &tx);
+        for c in "graph".chars() {
+            handle_key(&mut app, KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE), &tx);
+        }
+        let filtered = rendered_frame_at_size(&app, now, 130, 40);
+        assert!(
+            filtered.contains("/ graph"),
+            "the filter line does not show what was typed:\n{filtered}"
+        );
+        assert!(
+            !filtered.contains("serve/api.py"),
+            "the filter narrowed nothing:\n{filtered}"
+        );
+
+        // 🔴 THE LETTERS WENT TO THE PANE, NOT THE PROMPT. A modal surface that lets its text
+        // fall through types `graph` into the composer and sends it on the next enter.
+        // 🔴 **THE KEYS WENT TO THE PANE, PROVEN BY A KEY THAT WOULD OTHERWISE DO SOMETHING
+        // LOUD.** The obvious assertion — `app.composer.is_empty()` — is INERT in this harness:
+        // measured 2026-09-02, a plain `test_app()` given `handle_key(Char('z'))` also leaves the
+        // composer empty, drawn frame or not, because the composer's text only moves through
+        // `handle_paste` here. It would have passed with the walk's `return` deleted, which is the
+        // guard-that-cannot-fail this repo pays for most. `?` is the right probe: with nothing
+        // owning the keyboard it SUBMITS `/help`, so its silence is a fact about ownership.
+        let before_help = app.transcript.len();
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE), &tx);
+        assert_eq!(
+            app.transcript.len(),
+            before_help,
+            "a key the walk does not bind escaped the pane and ran an app command"
+        );
+
+        // ⚠️ AND THE OTHER HALF: the pane refuses CHORDS, so the app's own shortcuts still work
+        // while it is open. A modal surface that swallowed ctrl+t would disable the task ledger
+        // for as long as the graph was on screen, and nothing would say so.
+        assert!(app.todo.is_none());
+        handle_key(&mut app, KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL), &tx);
+        assert!(
+            app.transcript.len() > before_help,
+            "ctrl+t did not reach the app while the walk was open"
+        );
+
+        // esc leaves the filter line; a second esc closes the pane. Two presses, two meanings,
+        // each asserted, because a single esc that did both would pass a "does esc close it" test.
+        handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &tx);
+        assert!(app.graph_walk.is_some(), "esc closed the pane from the filter line");
+        handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &tx);
+        assert!(app.graph_walk.is_none(), "esc did not close the walk");
+    }
+
+    /// `b` reaches the request, and it names the row under the band rather than the first row.
+    #[test]
+    fn b_asks_for_the_selected_rows_blast_radius_and_the_answer_lands_on_that_row() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let now = Instant::now();
+        let mut app = test_app();
+        app.graph_walk = Some(graph_walk::Walk::new(walk_fixture()));
+        handle_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), &tx);
+        let selected = app
+            .graph_walk
+            .as_ref()
+            .and_then(graph_walk::Walk::selected_path)
+            .map(str::to_string);
+        assert_eq!(selected.as_deref(), Some("agent/graph_tools.py"));
+
+        // The answer carries the path it was asked about, so it cannot land on whatever row the
+        // band moved to while the request was in flight.
+        app.handle_ui_event(
+            UiEvent::GraphBlast {
+                path: "agent/graph_tools.py".to_string(),
+                result: Ok(crate::mcp_tool::Outcome::Answered(
+                    "serve/api.py\nserve/plans.py".to_string(),
+                )),
+            },
+            &tx,
+        );
+        let frame = rendered_frame_at_size(&app, now, 130, 40);
+        assert!(
+            frame.contains("2 files depend on it, measured just now"),
+            "the measured radius did not reach the pane:\n{frame}"
+        );
+    }
+
+    /// A refusal owns the pane, and a transport failure does not open one at all.
+    ///
+    /// 🔴 **THE TWO ARE DIFFERENT FACTS AND THEY GET DIFFERENT PICTURES.** A server that declines
+    /// to date the graph has said something the user can act on; a request that never arrived has
+    /// not. Collapsing them would draw "no walk from here" over a dropped connection.
+    #[test]
+    fn a_withheld_graph_opens_the_pane_and_a_dead_request_does_not() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let now = Instant::now();
+        let mut app = test_app();
+        app.handle_ui_event(
+            UiEvent::GraphWalk(Ok(graph_walk::Fetched {
+                repo: "uqeu/estelle".to_string(),
+                withheld: Some("uqeu/estelle: currency UNKNOWN - never swept.".to_string()),
+                ..graph_walk::Fetched::default()
+            })),
+            &tx,
+        );
+        let frame = rendered_frame_at_size(&app, now, 130, 40);
+        assert!(frame.contains("no walk from here"), "{frame}");
+        assert!(!frame.contains("centrality"), "rows drawn beside a refusal:\n{frame}");
+
+        let mut dead = test_app();
+        dead.handle_ui_event(UiEvent::GraphWalk(Err("connection reset".to_string())), &tx);
+        assert!(
+            dead.graph_walk.is_none(),
+            "a transport failure opened a pane that would have read as a server refusal"
+        );
+        let said = transcript::render(
+            &dead.transcript,
+            false,
+            TranscriptPalette {
+                primary: Color::White,
+                ghost: Color::Gray,
+                semantic: Color::Cyan,
+                user_background: None,
+                warn: Color::Yellow,
+                cite: Color::Blue,
+                failure: Color::Red,
+                grounded: Color::Green,
+                ungrounded: Color::Gray,
+            },
+            80,
+            Path::new("."),
+        );
+        let text = said
+            .text
+            .lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            text.contains("connection reset"),
+            "the transport failure was swallowed:\n{text}"
+        );
+    }
+
+    /// `/graph walk` with no credential says so rather than opening an empty pane.
+    #[test]
+    fn the_walk_door_refuses_without_a_credential_instead_of_opening_nothing() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        assert!(app.client.is_none(), "the test app must have no credential");
+        assert!(
+            app.handle_local_command("graph", "walk", &tx),
+            "/graph walk did not resolve locally, so it went to the remote /graph route"
+        );
+        assert!(app.graph_walk.is_none());
+        assert!(
+            !app.graph_walk_in_flight,
+            "a refused open must not leave the pane latched in flight forever"
+        );
+        // ⚠️ AND `/graph` ALONE IS STILL THE REMOTE READ. A local arm that swallowed every
+        // spelling would have deleted the summary this command has always printed.
+        assert!(
+            !app.handle_local_command("graph", "", &tx),
+            "/graph with no argument must still go to the server"
+        );
+        assert!(
+            !app.handle_local_command("graph", "nodes", &tx),
+            "/graph nodes must still go to the server"
+        );
+    }
+
     #[test]
     fn every_advertised_key_is_a_binding_the_live_tui_actually_handles() {
         let hints = "tab focus · shift+tab autonomy · ctrl+t tasks · ctrl+g context · / commands";
