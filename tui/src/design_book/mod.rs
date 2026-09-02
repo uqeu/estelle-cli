@@ -212,7 +212,13 @@ pub(crate) const SCREENS: &[BookScreen] = &[
     },
     BookScreen {
         name: "14-skills-browse",
-        contract: "no per-skill token cost on the wire",
+        // 🔴 **MEASURED AGAINST PRODUCTION, 2026-09-02, AND THE GAP IS WIDER THAN THIS LINE SAID.**
+        // `GET /skills` on api.fatelabs.ca returns `{"skills": [{category, name, short, summary}]}`
+        // and nothing else — no enabled state, no per-skill token cost, no compose budget, no
+        // total. So THREE of this screen's columns have no wire, not one: the `on`/`off` cell, the
+        // `tok` cell and the `max compose · tok budget` line. `space toggle` is drawn over a
+        // permission the server does not store, which is why this screen stays FIXTURE.
+        contract: "no enabled state, token cost or compose budget on the wire",
         width: 120,
         height: 34,
         needle: "max compose",

@@ -3260,6 +3260,19 @@ impl App {
     ///
     /// ⚠️ Leaving the catalog loaded would make every subsequent picker swallow typed characters —
     /// the filter's own affordance leaking into surfaces that never advertised it.
+    /// Whether the open picker narrows on typed letters.
+    ///
+    /// 🔴 **ONE OWNER, BECAUSE THE KEYMAP AND THE FOOTER BOTH NEED IT AND THEY DISAGREED.** The
+    /// keymap consumed letters when the skill catalog was loaded; the footer printed
+    /// `↑↓ navigate · 1-9 or Enter select · Esc close` in every state. So the one picker in the
+    /// product that can be typed into was the one that never said so — and `skills_filtered`'s own
+    /// docstring recorded that as *"a real discoverability gap … reported rather than papered
+    /// over"*. A user cannot press a key they have never been told exists; the founder learned
+    /// `ctrl+o` existed from a message rather than from the product, and this is the same shape.
+    fn picker_takes_letters(&self) -> bool {
+        !self.skill_catalog.is_empty()
+    }
+
     fn clear_skill_filter(&mut self) {
         self.skill_catalog.clear();
         self.skill_filter.clear();
@@ -6880,7 +6893,14 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
         }
         return false;
     }
-    if let Some(picker) = app.picker.as_mut() {
+    if app.picker.is_some() {
+        // ⚠️ READ BEFORE THE MUTABLE BORROW. `picker_takes_letters` reads `app.skill_catalog`, and
+        // the arms below hold `app.picker` mutably — one owner for the predicate does not mean one
+        // borrow, and the borrow checker is right to say so.
+        let takes_letters = app.picker_takes_letters();
+        let Some(picker) = app.picker.as_mut() else {
+            return false;
+        };
         match key.code {
             KeyCode::Esc if !app.login_required => {
                 app.picker = None;
@@ -6902,13 +6922,12 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
             // the filter would turn an advertised affordance into a lie. The cost is that a
             // playbook can only be narrowed by its letters and dashes; the digits in a name are
             // still reachable, just not typeable into the filter.
-            KeyCode::Backspace if !app.skill_catalog.is_empty() => {
+            KeyCode::Backspace if takes_letters => {
                 app.skill_filter.pop();
                 app.refilter_skills();
             }
             KeyCode::Char(c)
-                if !app.skill_catalog.is_empty()
-                    && (c.is_ascii_alphabetic() || c == '-')
+                if takes_letters && (c.is_ascii_alphabetic() || c == '-')
                     && !key.modifiers.contains(KeyModifiers::CONTROL)
                     && !key.modifiers.contains(KeyModifiers::ALT) =>
             {
@@ -10926,6 +10945,120 @@ mod tests {
         absent.header.indexed = Some(false);
         let drawn = rendered_frame_at_size(&absent, Instant::now(), 200, 30);
         assert!(drawn.contains("repo graph absent"), "{drawn}");
+    }
+
+    /// 🔴 **THE FILTER HINT AND THE FILTER BINDING ARE THE SAME PREDICATE, BOTH HALVES PRESSED.**
+    ///
+    /// `handle_key` has narrowed the skills picker on any typed letter since it was written, and
+    /// the picker footer printed one fixed row in every state — so the only picker in the product
+    /// that can be typed into was the only one that never said so. `skills_filtered`'s own
+    /// docstring called that "a real discoverability gap … reported rather than papered over".
+    ///
+    /// ⚠️ **BOTH DIRECTIONS.** A footer that always advertised typing would satisfy the first
+    /// assertion; a picker that never took letters would satisfy the second. The settings picker
+    /// is the negative case and it is asserted, not assumed.
+    #[test]
+    fn only_the_picker_that_takes_letters_says_it_takes_letters() {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let now = Instant::now();
+
+        // The settings picker takes no letters, and does not claim to.
+        let mut settings = test_app();
+        settings.picker = Some(PickerSurface::settings(&settings));
+        assert!(!settings.picker_takes_letters());
+        let plain = rendered_frame_at_size(&settings, now, 120, 40);
+        assert!(
+            plain.contains("navigate"),
+            "the footer did not draw at all:\n{plain}"
+        );
+        assert!(
+            !plain
+                .lines()
+                .find(|line| line.contains("navigate"))
+                .unwrap_or_default()
+                .contains("type to filter"),
+            "a picker that ignores letters advertised typing:\n{plain}"
+        );
+        let before = rendered_frame_at_size(&settings, now, 120, 40);
+        handle_key(&mut settings, KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE), &tx);
+        assert_eq!(
+            rendered_frame_at_size(&settings, now, 120, 40),
+            before,
+            "a letter changed a picker that does not filter"
+        );
+
+        // The skills picker takes letters, says so, and narrows when one is pressed.
+        let mut skills = test_app();
+        skills.skill_catalog = vec![
+            PickerRow {
+                label: "adr-forge".to_string(),
+                detail: "capture one architecture decision".to_string(),
+                action: PickerAction::InvokeSkill("adr-forge".to_string()),
+            },
+            PickerRow {
+                label: "zebra-check".to_string(),
+                detail: "a second row that the filter must remove".to_string(),
+                action: PickerAction::InvokeSkill("zebra-check".to_string()),
+            },
+        ];
+        skills.picker = Some(PickerSurface::skills_filtered(&skills.skill_catalog, ""));
+        assert!(skills.picker_takes_letters());
+        let listed = rendered_frame_at_size(&skills, now, 120, 40);
+        // 🔴 **THE ASSERTION IS ON THE FOOTER ROW, NOT ON THE FRAME.** `skills_filtered`'s TITLE
+        // already reads `Skills · N of M · type to filter`, so `frame.contains("type to filter")`
+        // passed with the footer's condition mutated to `false` — a needle found in the wrong
+        // place, which is the inert guard this repo pays for most. The row is picked out by the
+        // word only the footer carries.
+        let footer = |frame: &str| {
+            frame
+                .lines()
+                .find(|line| line.contains("navigate"))
+                .unwrap_or_default()
+                .to_string()
+        };
+        assert!(
+            footer(&listed).contains("type to filter"),
+            "the filterable picker's FOOTER did not say it takes letters:\n{listed}"
+        );
+        assert!(listed.contains("zebra-check"), "{listed}");
+
+        // ⚠️ `d`, NOT `a`. Both fixture labels contain an `a` (`zebr-a-check`), so filtering on it
+        // removed nothing and the first version of this assertion went red on correct behaviour —
+        // a fixture that cannot discriminate is the same defect as a control that cannot fire.
+        handle_key(&mut skills, KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE), &tx);
+        let filtered = rendered_frame_at_size(&skills, now, 120, 40);
+        assert!(
+            !filtered.contains("zebra-check"),
+            "the letter was advertised and narrowed nothing:\n{filtered}"
+        );
+        assert!(filtered.contains("adr-forge"), "{filtered}");
+    }
+
+    /// 🔴 **SCREEN 14 STAYS FIXTURE, AND ITS CONTRACT NAMES EVERY FIELD THAT IS MISSING.**
+    ///
+    /// Measured against production on 2026-09-02: `GET /skills` returns
+    /// `{"skills": [{category, name, short, summary}]}` and nothing else. Three of the screen's
+    /// cells have no wire — the `on`/`off` state, the per-skill `tok` cost, and the
+    /// `max compose · tok budget` line — so `space toggle` is drawn over a permission the server
+    /// does not store. Promoting the badge without the wire is the defect the badge prevents.
+    #[test]
+    fn the_skills_browse_contract_names_the_state_the_wire_does_not_carry() {
+        let screen = design_book::SCREENS
+            .iter()
+            .find(|screen| screen.name == "14-skills-browse")
+            .expect("screen 14 is in the catalog");
+        for missing in ["enabled state", "token cost", "compose budget"] {
+            assert!(
+                screen.contract.contains(missing),
+                "screen 14's contract does not name the missing `{missing}`: {:?}",
+                screen.contract
+            );
+        }
+        // NEGATIVE CONTROL: the same check must reject a field the wire DOES carry.
+        assert!(
+            !screen.contract.contains("summary"),
+            "`summary` is on the wire and must not be listed as missing"
+        );
     }
 
     fn transcript_text(app: &App) -> String {

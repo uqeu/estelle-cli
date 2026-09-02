@@ -548,8 +548,18 @@ pub(super) fn render_picker(frame: &mut Frame<'_>, picker: &PickerSurface, area:
                     ),
                 ])
             })
+            // 🔴 **THE ONE PICKER THAT CAN BE TYPED INTO WAS THE ONE THAT NEVER SAID SO.** This
+            // row was a single fixed string in every state, while `handle_key` narrowed the skills
+            // picker on any letter. `skills_filtered`'s own docstring called that "a real
+            // discoverability gap … reported rather than papered over" — this is the reporting
+            // turned into the fix, and both halves read `App::picker_takes_letters`, so the hint
+            // and the binding cannot drift.
             .chain(std::iter::once(Line::styled(
-                "↑↓ navigate · 1-9 or Enter select · Esc close",
+                if app.picker_takes_letters() {
+                    "type to filter · ↑↓ navigate · 1-9 or Enter select · Esc close"
+                } else {
+                    "↑↓ navigate · 1-9 or Enter select · Esc close"
+                },
                 Style::default().fg(palette.dim),
             ))),
     );
