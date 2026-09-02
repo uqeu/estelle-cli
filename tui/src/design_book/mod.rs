@@ -212,7 +212,8 @@ pub(crate) const SCREENS: &[BookScreen] = &[
     },
     BookScreen {
         name: "14-skills-browse",
-        contract: "no per-skill token cost on the wire",
+        contract: "GET /skills sends name+category+summary+short only · no total, enabled, \
+                   token cost or compose budget, and NO write route to toggle one",
         width: 120,
         height: 34,
         needle: "max compose",
@@ -268,7 +269,8 @@ pub(crate) const SCREENS: &[BookScreen] = &[
     },
     BookScreen {
         name: "33b-model-cost",
-        contract: "no per-model cost breakdown on the wire",
+        contract: "per-model cost IS on the wire (usage_breakdown.by_model, read by \
+                   run_spend) · what is missing is a per-million PRICE catalog and a role lock",
         width: 130,
         height: 34,
         needle: "run spend",
@@ -332,7 +334,8 @@ pub(crate) const SCREENS: &[BookScreen] = &[
     },
     BookScreen {
         name: "42-stats-activity",
-        contract: "no per-phase clock and no per-tool tally in this client",
+        contract: "both exist PER RUN — /work result.phases, /trajectory summary.tools · \
+                   neither is per-SESSION, and this client reads neither",
         width: 130,
         height: 48,
         needle: "where the 3h02m went",
@@ -340,7 +343,8 @@ pub(crate) const SCREENS: &[BookScreen] = &[
     },
     BookScreen {
         name: "41-memory-correct",
-        contract: "edit_memory + POST /facts exist; no CLI surface, and no kind/trust",
+        contract: "kind AND trust are on GET /memories (trust is grounded|acquired) · the \
+                   book's measured|observed|asserted has NO source · no CLI surface",
         width: 130,
         height: 32,
         needle: "supersedes",
