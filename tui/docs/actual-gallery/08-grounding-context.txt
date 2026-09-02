@@ -1,0 +1,30 @@
+ESTELLE  ·  uqeu/estelle  ·  repo graph current  ·  1,993 files
+
+── session · uqeu/estelle ───────────────────────────────────────────────────  │  ── context · ctrl+g · /context ─────────────────
+   uqeu/estelle · main                                                         │  Repo graph · team's swept copy
+                                                                               │  1,993 files indexed
+                                                                               │  billing/charge.rs:82
+                                                                               │    symbol  charge_card
+                                                                               │
+                                                                               │  Working memory · local request context
+                                                                               │  Sent through the configured Estelle model path.
+                                                                               │  Not added to the team's Repo graph.
+                                                                               │  billing/charge.rs · local, not pushed
+                                                                               │  billing/retry.rs · local, not pushed
+                                                                               │
+                                                                               │  ctrl+g or /context closes
+                                                                               │
+                                                                               │
+                                                                               │
+                                                                               │
+                                                                               │
+
+
+── ask · uqeu/estelle ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+
+
+
+
+
+  enter send · tab repo · ctrl+s spend · ctrl+g context · esc stop · ctrl+o selection

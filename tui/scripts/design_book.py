@@ -60,17 +60,22 @@ DARK = {
     # as a BACKGROUND on a selected row; the background maps below own the second meaning.
     "#241F19": "tn",
 }
+# ⚠️ RE-SEATED 2026-09-02, AND THIS DICT IS WHY THAT IS A TWO-FILE CHANGE. Every cell is matched
+# against these hexes EXACTLY; a value the product ships that is missing here is counted as an
+# untokened DEFECT, so a palette change made in `theme.rs` alone makes the book report the product's
+# own new colours as a regression. Six accents and four bands moved — see the cream block in
+# `theme.rs` for the measurements.
 CREAM = {
     "#DDDAD1": None,  # ground
-    "#8B8578": "d",
+    "#645F56": "d",
     "#575043": "m",
     "#1F1C17": "b",
     "#B0210F": "r",
-    "#3D7550": "g",
-    "#96751A": "w",
-    "#38708C": "c",
-    "#356A8C": "pl",
-    "#B06A8C": "sk",
+    "#2D553A": "g",
+    "#5C4810": "w",
+    "#264B5E": "c",
+    "#1B3247": "pl",
+    "#6F2046": "sk",
     "#D1CCBE": "tn",
 }
 # `adg`/`delg` are the diff GUTTER grounds. They were four `Color::from_u32` literals
@@ -79,8 +84,8 @@ CREAM = {
 # `diff_del_gutter` now, same values, one owner.
 DARK_BG = {"#241F19": "sel", "#1B2E1D": "add", "#361A18": "del",
            "#162E20": "adg", "#4A221D": "delg"}
-CREAM_BG = {"#D1CCBE": "sel", "#D2DFCC": "add", "#EBD3CF": "del",
-            "#ACEEBB": "adg", "#FFCECB": "delg"}
+CREAM_BG = {"#D1CCBE": "sel", "#B1C8A7": "add", "#E4C3BE": "del",
+            "#8FBE85": "adg", "#EFA49E": "delg"}
 
 # The two raw-ANSI values `test_gallery::color_hex` emits for a colour that is in no palette. They
 # are rendered with a dotted outline so a defect is visible in the book rather than merely present.
@@ -88,119 +93,56 @@ DEFECTS = {"#65A8FF": "bad", "#70C6CC": "badc"}
 
 CREAM_FRAMES = {"13-cream-ink"}
 
-# ── The screens the book DESCRIBED and could not show, now rendered ────────────────────────
+# ── Which gallery frame belongs to which numbered screen ───────────────────────────────────
 #
-# 🔴 These are the twelve SPEC and four PROPOSED screens, plus seven SHIPPED renderer states the
-# gallery had never captured. Every one of them was hand-drawn HTML in the previous book — or, for
-# the seven, a sentence saying "no gallery frame exists". They come out of the production renderer
-# now, through `cols`, in the product's own palette, under the same no-box guard as everything else.
+# 🔴 **THIS TABLE USED TO CARRY TITLES, BADGES AND PROSE, AND THAT WAS THE DEFECT THE FOUNDER
+# FOUND.** It held a second copy of each screen's title and a second paragraph of purpose, which
+# the generator APPENDED under the one already in the book — so a screen ended up with two
+# descriptions, one of them written about the hand-drawn mock it had replaced. He read the result
+# and said the notes were decayed, and pointed at a screen whose own note argued for showing a
+# different screen instead while the badge said SHIPPED.
 #
-# `book` is the screen number in the founder's own numbering, so a note about "screen 14" still
-# lands on the screen he meant. Frames with no number in his book (`33b`) are additions and say so.
-NEW_SCREENS: list[tuple[str, str, str, str, str]] = [
-    ("02-login-two-stage", "2", "Login, two stage: who you are, then who pays", "b-spec",
-     "Stage one is identity. Stage two is <b>who pays for model tokens</b>, which is a different "
-     "question with a different answer — an Estelle plan buys grounding and never buys inference. "
-     "The five options are the ones the shipped credential picker already offers. "
-     "<b>It fills the frame now</b>: the founder's note was that it was cut off halfway."),
-    ("06-no-repository-here", "6", "No repository here", "b-ship",
-     "Estelle started outside a git repo. Memory and the code graph are per-repo, so there is "
-     "nothing to ground against — and the screen says what to do rather than stopping. "
-     "<b>A shipped renderer state that had never been looked at</b> (<code>live_renderer.rs:997</code>)."),
-    ("09-gate-refused", "9", "Gate refused: a package that does not exist", "b-ship",
-     "The deterministic gate refusing an import of a package that is not on PyPI. No model was "
-     "asked. 🔴 <b>The refusal is a step in a loop, not a stop</b> — the mark pulses, the reason is "
-     "given in full, and the turn visibly continues into round 2. Rendered by "
-     "<code>gate_refusal.rs</code>, the same function the live modal calls."),
-    ("10-navigation-stale", "10", "Navigation refuses: the index is stale", "b-prop",
-     "The repo moved since the last sweep, so a new symbol would be answered with a plausible "
-     "wrong citation. Refusing is the only answer that cannot be confidently wrong. The server "
-     "verdict is real; this is the screen it had nowhere to appear on."),
-    ("11-compaction-refused", "11", "Compaction refuses: one line instead of a context bar", "b-spec",
-     "One message is larger than the window, so there is nothing to compact against — it can only "
-     "be split. <b>Deliberately no percentage bar</b>: the founder replaced the bar with the "
-     "sentence, and the parts add up to the number in it."),
-    ("12-skills-typed", "12", "Skills, typed", "b-spec",
-     "<code>/</code> then tab. 🔴 <b>No box.</b> The selected row is a band, not a frame, and "
-     "<code>enter</code> preloads the skill so you never finish typing a slash command."),
-    ("13-skills-offered", "13", "Skills, offered — before the message is sent", "b-spec",
-     "🔴 <b>The offer fires on send, not after the answer.</b> Your draft sits highlighted, the "
-     "match is named with its provenance, and <code>tab</code> sends it with the skill. "
-     "The principle is printed on the frame: it offers, it never auto-runs."),
-    ("14-skills-browse", "14", "Skills, browse and toggle", "b-spec",
-     "The density the shipped screen lacks: a total and an on-count, a per-skill token cost, and a "
-     "compose budget. The on/off toggle is a <b>permission</b>, not a filter — a skill that is off "
-     "may not be recommended or auto-used."),
-    ("18-every-command", "18", "Every command, and which ones actually work", "b-prop",
-     "🔴 <b>The audit the founder asked for, made visible.</b> 63 commands are advertised. Ten show "
-     "at a time with a real gutter between the name and its description. Rows are coloured by what "
-     "they actually do: live, inert, duplicate, or advertised-and-refused."),
-    ("19-shell-mode", "19", "Shell mode, and why it must not look like Estelle", "b-spec",
-     "<code>!cargo test</code> running on your machine. Visually distinct from Estelle's own output "
-     "without a box: a different gutter, a different weight, an exit code and a visible timeout."),
-    ("25-panels-one-terminal", "25", "Panels, one terminal", "b-spec",
-     "Several agents as tabs, production over the orchestra fleet on the right. 🔴 <b>The fleet "
-     "columns are labelled in words a person reads</b> — model, task, state, tokens, price, "
-     "last seen — and the footnote says which of them the wire does not yet carry."),
-    ("30-provider-keys", "30", "Provider API key picker", "b-ship",
-     "Ten providers, each naming <b>how it authenticates</b> and what the key costs to use. "
-     "🔴 <b>The corners are gone.</b> The founder's note on this screen was the third time he said "
-     "no boxes; the selected row is a band now."),
-    ("32-memory-remaining", "32", "How much memory do I have left", "b-prop",
-     "🔴 <b>The whole <code>POST /sweep/estimate</code> answer.</b> Fourteen fields are returned on "
-     "every sweep and <code>top_level.rs:2314</code> reads one of them. Held, cap, remaining, net "
-     "new, blocked, billable, the suggested plan, the largest paths and the server's own sentence — "
-     "all of it was already on the wire."),
-    ("33-usage-spend", "33", "Spend — what ctrl+s opens", "b-prop",
-     "🔴 <b><code>ctrl+s</code> shows the spend instead of naming a shortcut.</b> "
-     "\"This session you spent $5.46\", in words, with the per-model breakdown that backs it and "
-     "the turn broken into input, output and cache."),
-    ("33b-model-cost", "—", "The costing panel", "b-prop",
-     "🔴 <b>The panel the founder said he misses most</b>, and the four things he asked for on one "
-     "screen: per model what it costs, what the run is spending, what is left in the plan, and how "
-     "much memory is used. The model lock is <b>per role</b> — planning and solving can be "
-     "different — and an unlocked role reads <code>affinity</code>, never a blank."),
-    ("34-answer-table-diagram", "34", "The answer itself: a table, and a diagram", "b-spec",
-     "🔴 <b>Estelle draws in mermaid.</b> A rendered markdown table with citations still clickable "
-     "inside it, and a drawn flowchart. The footnote names which diagram types are drawn and which "
-     "fall back to their fenced source — a wrong picture is worse than the source."),
-    ("35-session-tabs", "35", "Session tabs", "b-ship",
-     "Several sessions in one terminal, each carrying its repo, its state and its spend. "
-     "A shipped renderer state (<code>live_renderer.rs:114</code>) the gallery had never captured."),
-    ("36-doctor-failing", "36", "Doctor, failing", "b-spec",
-     "A failing check whose last line states <b>what the failure is not</b> — the clause that stops "
-     "a reader debugging the wrong layer. Passing rows are shown too, so the failing one has "
-     "contrast rather than a bare red row on an empty screen."),
-    ("37-resume-session", "37", "Resume a session", "b-spec",
-     "Frecency-ranked, zoxide-style, and every row carries <b>how that session ended</b>: answered, "
-     "refused, closed, or still running on the server."),
-    ("38-sweep-running", "38", "Sweep, running", "b-ship",
-     "The five real states with their real percentages. 🔴 <b>The capacity check shows its answer</b> "
-     "— the founder's rule that cost and budget are always visible, applied to the one step that is "
-     "literally a call to <code>/sweep/estimate</code>."),
-    ("39-tool-calls", "39", "Tool calls, collapsed and open", "b-spec",
-     "One row per call, expandable. 🔴 <b>What is hidden is counted, first, before the tail</b> — "
-     "never a silent truncation, because a capped read means \"cannot answer\", not \"that is all "
-     "there is\"."),
-    ("40-code-graph", "40", "The code graph", "b-spec",
-     "Walkable and filterable, with fan-in and fan-out off the swept graph rather than inferred. "
-     "🔴 <b>A chokepoint is not a label</b>: the row says how many files touching it moves."),
-    ("42-stats-activity", "\u2014", "Stats and activity: where the time and the tokens went", "b-prop",
-     "\U0001f534 <b>The costing panel's missing half.</b> Screens 32, 33 and 33b answer <i>what did "
-     "it cost</i>; this answers <i>what did it go to</i> \u2014 wall clock split across startup, "
-     "prefill, first token, generation, reasoning, tools and compaction, and 25.7M tokens split by "
-     "what each kind is priced at. <b>24.7M prompt tokens read from cache against 768k computed is "
-     "a 32x difference in what a BYOK user pays</b>, and nothing the CLI renders today shows it, "
-     "even though <code>token_usage::TokenUsage::cached_input_tokens</code> has carried the number "
-     "all along. The activity timeline is a density strip of block glyphs on a <code>cols</code> "
-     "row, never a framed chart. \u26a0\ufe0f The frame names which of its own numbers were counted: "
-     "the cache split is measured; the per-phase clock and the per-tool tallies are not."),
-    ("41-memory-correct", "41", "Memory: what Estelle knows, and correcting it", "b-prop",
-     "Held memory with trust tiers — measured, observed, asserted — plus the half that does not "
-     "exist yet: saying \"that is wrong\" without leaving the terminal. 🔴 <b>An edit supersedes; "
-     "it does not overwrite</b>, and the superseded claim stays on the screen, dated."),
-]
+# So the source book owns every word now. This table is one fact per row: **this frame is the
+# picture for that numbered screen.** Sections whose `src` already names their frame are not
+# listed here at all — step 2 finds those by name.
+FRAME_FOR_SCREEN: dict[str, int] = {
+    "02-login-two-stage": 2,
+    "06-no-repository-here": 6,
+    "09-gate-refused": 9,
+    "10-navigation-stale": 10,
+    "11-compaction-refused": 11,
+    "12-skills-typed": 12,
+    "13-skills-offered": 13,
+    "14-skills-browse": 14,
+    "18-every-command": 16,
+    "19-shell-mode": 17,
+    "25-panels-one-terminal": 23,
+    "30-provider-keys": 28,
+    "32-memory-remaining": 30,
+    "33-usage-spend": 31,
+    "34-answer-table-diagram": 34,
+    "35-session-tabs": 35,
+    "36-doctor-failing": 36,
+    "37-resume-session": 37,
+    "38-sweep-running": 38,
+    "39-tool-calls": 39,
+    "40-code-graph": 40,
+    "41-memory-correct": 41,
+}
 
+# 🔴 **A FRAME THE BOOK DELIBERATELY DOES NOT SHOW, AND THE REASON, SO IT IS NOT A LEAK.**
+#
+# `12-skills` is the skills picker AS IT SHIPS TODAY — three rows, no counts, no cost column, no
+# toggle. It was screen 15, beside screen 14's redesign of the same surface, and the founder's
+# instruction was exact: *"We are making NEW screens, so I want to see the new screens — not what we
+# have now in our old CLI."* The frame stays in the gallery, because the gallery is a record of what
+# the binary renders; it is out of the BOOK, because the book is what we are building.
+#
+# ⚠️ Listed rather than deleted so `frames still unplaced` stays a real number. A frame that fell out
+# of the book by accident and one taken out on purpose look identical in a directory listing.
+NOT_IN_THE_BOOK = {
+    "12-skills": "the old skills picker — screen 14 is the redesign of the same surface",
+}
 
 
 RECT = re.compile(
@@ -333,6 +275,60 @@ def frame_html(name: str, gallery: Path, defects: dict) -> tuple[str, int, int]:
     return f'<div class="{css}">{body}</div>', width, height
 
 
+def read_badges(gallery: Path) -> dict[str, str]:
+    """`frame -> "LIVE DATA" | "FIXTURE DATA"`, derived from the code rather than typed here.
+
+    🔴 **EVERY SCREEN IN THE PREVIOUS BOOK SAID SHIPPED, AND ONE OF THEM ARGUED AGAINST ITSELF.**
+    Screen 14's own note read *"until `/skills` returns tokens per skill, the honest screen is 15,
+    not this one"* — under a SHIPPED badge. The founder read that and said the notes were decayed.
+    They were; so was the badge. Both cannot be right and neither was checkable.
+
+    The distinction already had exactly one owner in the Rust: `design_book::BookScreen::contract`
+    begins `shipped ·` when the live app renders that screen from real state, and names the missing
+    endpoint otherwise. `actual_renderer_gallery` writes those out as `contracts.tsv`. A frame with
+    no row there is a plain live-renderer state — boot, home, the settings list — and is LIVE.
+
+    🔴 **THE BADGE NAMES THE THING IT IS ABOUT, WHICH IS THE DATA.** They were `SHIPPED` and
+    `DESIGN` for one pass, and `DESIGN` fails the only test a badge has to pass: a reader who has
+    not read the legend cannot tell from it that the PICTURE is real and the NUMBERS are not. The
+    founder reviews these in front of people who ask *"is that real?"* one screen at a time, so the
+    badge answers exactly that question and nothing else: **LIVE DATA** or **FIXTURE DATA**.
+    Whether the picture is real is not a per-screen variable — every frame here comes out of the
+    production renderer — so it is stated once in the lede and repeated on each screen's source
+    line, which reads `… · rendered in Rust`.
+
+    ⚠️ **THIS IS NOT `SPEC`/`PROPOSED` COMING BACK.** Those marked screens that DID NOT EXIST, and
+    he was right to refuse them. Every screen here exists and renders; what varies is whether the
+    server can fill it yet.
+    """
+    manifest = gallery / "contracts.tsv"
+    if not manifest.exists():
+        raise SystemExit(
+            f"{manifest} is missing — run the gallery with ESTELLE_ACTUAL_GALLERY_DIR set, "
+            "otherwise every badge would silently default to LIVE DATA"
+        )
+    badges: dict[str, str] = {}
+    for line in manifest.read_text(encoding="utf-8").splitlines():
+        if line.startswith("#") or not line.strip():
+            continue
+        name, _, contract = line.partition("\t")
+        badges[name] = LIVE if contract.startswith("shipped ·") else FIXTURE
+    if not badges:
+        raise SystemExit(f"{manifest} parsed to zero rows — the badge would mean nothing")
+    return badges
+
+
+# The badge's visible words, and the class each lands in. Two owners of one label would be a
+# contents row and a section header disagreeing, which is the defect this pass started with.
+LIVE = "LIVE DATA"
+FIXTURE = "FIXTURE DATA"
+
+
+def badge_html(kind: str) -> str:
+    css = {LIVE: "b-ship", FIXTURE: "b-design"}[kind]
+    return f'<span class="badge {css}">{kind}</span>'
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gallery", required=True, type=Path)
@@ -346,15 +342,46 @@ def main() -> int:
         print(f"no frames in {gallery} — did the gallery run?", file=sys.stderr)
         return 2
 
+    badges = read_badges(gallery)
     book = args.book.read_text(encoding="utf-8")
     defects: dict[str, int] = defaultdict(int)
 
-    # ── 1. The cream tokens in the book's own CSS moved, so the book's swatches must too. ──
-    # The founder said the light ground *"kind of hurt my eye"*; `theme.rs` came down 5% and these
-    # two variables are the book's copy of that value. A book still painting #E9E6DC would be
-    # showing him the thing he asked to change.
-    book = book.replace("--c-ground:#E9E6DC;", "--c-ground:#DDDAD1;")
-    book = book.replace("--c-tint:#DCD7C9;", "--c-tint:#D1CCBE;")
+    # ── 1. The book's CSS palette is WRITTEN from the dicts above, not patched value by value. ──
+    #
+    # 🔴 **IT USED TO BE A LIST OF (STALE, CURRENT) PAIRS AND THAT LIST WENT STALE, WHICH IS THE
+    # ONLY THING SUCH A LIST CAN DO.** The book's `<style>` block holds a `--t-*` and a `--c-*`
+    # variable per role — a third copy of the palette, after `theme.rs` and the dicts at the top of
+    # this file. Patching named pairs means a role nobody remembered keeps its old value silently:
+    # `--t-skill` was `#CA92AF` while the product shipped `#D48FB0`, for months, in the book that
+    # exists to show the founder what the product looks like.
+    #
+    # Now every variable is rewritten from the same dict the cell read-back matches against. A
+    # value that disagrees with `theme.rs` still shows up — as untokened cells in the census — so
+    # the two remaining owners cannot drift apart quietly in either direction.
+    ROLE_VARS = {
+        "d": "dim", "m": "mid", "b": "bright", "r": "red", "g": "green",
+        "w": "warn", "c": "cite", "pl": "plan", "sk": "skill", "tn": "tint",
+    }
+    for prefix, palette, grounds in (("t", DARK, DARK_BG), ("c", CREAM, CREAM_BG)):
+        wrote = 0
+        for value, code in palette.items():
+            role = "ground" if code is None else ROLE_VARS.get(code)
+            if role is None:
+                continue
+            book, count = re.subn(
+                rf"--{prefix}-{role}:#[0-9A-Fa-f]{{6}};", f"--{prefix}-{role}:{value};", book
+            )
+            wrote += count
+        for value, code in grounds.items():
+            if code in ("add", "del"):
+                book, count = re.subn(
+                    rf"--{prefix}-{code}:#[0-9A-Fa-f]{{6}};", f"--{prefix}-{code}:{value};", book
+                )
+                wrote += count
+        # ⚠️ A rewrite that matched nothing reports success identically. The dark block declares
+        # every role; cream declares all but the two diff grounds.
+        if wrote < 10:
+            raise SystemExit(f"only {wrote} --{prefix}-* variables were written; the CSS moved")
     # The class an untokened colour lands in. Outlined so it cannot be mistaken for a design choice.
     if ".untok{" not in book:
         book = book.replace(
@@ -373,13 +400,24 @@ def main() -> int:
             ".adg{background:#162E20}\n"
             ".delg{background:#4A221D}\n"
             ".frame.cream .tn{color:var(--c-tint)}\n"
-            ".frame.cream .adg{background:#ACEEBB}\n"
-            ".frame.cream .delg{background:#FFCECB}\n"
+            ".frame.cream .adg{background:#8FBE85}\n"
+            ".frame.cream .delg{background:#EFA49E}\n"
             ".untok{",
             1,
         )
+    if ".b-design{" not in book:
+        book = book.replace(
+            ".b-ship{",
+            ".b-design{background:#241d24;color:var(--t-skill);border:1px solid #40303a}\n"
+            ".b-ship{",
+            1,
+        )
 
-    # ── 2. Replace every frame the gallery now renders. ──────────────────────────────────
+    # ── 2. EVERY SECTION GETS ITS FRAME, ITS SOURCE LINE AND ITS BADGE. ──────────────────────
+    #
+    # A section names its frame one of two ways: its `src` already contains the frame name, or
+    # `FRAME_FOR_SCREEN` says which frame belongs to its number. Both paths land here, so there is
+    # one place that writes a frame into the book and one place that writes a badge.
     sections = list(
         re.finditer(
             r'<section class="screen" id="(s\d+)">\n<div class="sh">(.*?)</div>\n(.*?)\n</section>',
@@ -387,18 +425,21 @@ def main() -> int:
             re.S,
         )
     )
-    replaced: dict[str, str] = {}
+    by_number = {number: frame for frame, number in FRAME_FOR_SCREEN.items()}
+    placed: dict[str, str] = {}
+    unframed: list[str] = []
+
     for match in sections:
-        header = match.group(2)
+        sid, header, body = match.group(1), match.group(2), match.group(3)
+        number = int(sid[1:])
         src = re.search(r'<span class="src">(.*?)</span>', header)
-        if src is None:
+        named = [frame for frame in frames if src and frame in src.group(1)]
+        frame = named[0] if named else by_number.get(number)
+        if frame is None or frame not in frames:
+            unframed.append(sid)
             continue
-        named = [frame for frame in frames if frame in src.group(1)]
-        if not named:
-            continue
-        frame = named[0]
+
         block, width, height = frame_html(frame, gallery, defects)
-        body = match.group(3)
         updated = re.sub(
             r'<div class="frame[^"]*">.*?</div>(?=\n<p class="keys")',
             lambda _m, block=block: block,
@@ -416,247 +457,153 @@ def main() -> int:
             header,
             count=1,
         )
-        replaced[frame] = match.group(1)
-        book = book.replace(match.group(0), (
-            f'<section class="screen" id="{match.group(1)}">\n'
-            f'<div class="sh">{new_header}</div>\n{updated}\n</section>'
-        ), 1)
-
-    # ── 3. THE SCREENS THE BOOK DESCRIBED, SPLICED INTO THE SECTIONS THAT DESCRIBED THEM. ──
-    #
-    # 🔴 THE PREVIOUS PASS APPENDED THESE AS A SECTION "M" AND THAT WAS THE WRONG CALL.
-    # The reasoning was sound — his review cites screens by number, so renumbering the book would
-    # silently redirect every note — but appending left the book carrying the SAME SCREEN TWICE:
-    # the hand-drawn HTML under his number, still badged SPEC, and the Rust render at the end. He
-    # read that and said one sentence: *"I don't want to see spec and proposed anymore. I want to
-    # see all of that shipped."*
-    #
-    # ⚠️ Splicing keeps his numbering intact — the frame is replaced INSIDE `#sN`, the id and the
-    # number do not move — so a note about "screen 14" still lands on screen 14. What changes is
-    # the picture, the source line and the badge. His own `<p class="purpose">` is KEPT and the
-    # build note is added under it: the prose is his review material, and regenerating it to
-    # refresh a picture would be a bad trade.
-    known = {frame for frame, *_ in NEW_SCREENS}
-    appended: list[str] = []
-    added = 0
-    for frame, number, title, badge, purpose in NEW_SCREENS:
-        if frame in replaced or frame not in frames:
-            continue
-        block, width, height = frame_html(frame, gallery, defects)
-        host = (
-            re.search(
-                rf'<section class="screen" id="s{number}">\n<div class="sh">(.*?)</div>\n(.*?)\n</section>',
-                book,
-                re.S,
-            )
-            if number != "\u2014"
-            else None
+        new_header = re.sub(
+            r'<span class="badge b-[a-z]+">[A-Z ]+</span>',
+            badge_html(badges.get(frame, LIVE)),
+            new_header,
+            count=1,
         )
-        if host is not None:
-            header, body = host.group(1), host.group(2)
-            header = re.sub(
-                r'<span class="badge b-[a-z]+">[A-Z]+</span>',
-                '<span class="badge b-ship">SHIPPED</span>',
-                header,
-                count=1,
-            )
-            header = re.sub(
-                r'<span class="src">.*?</span>',
-                f'<span class="src">{frame} \u00b7 {width}x{height} \u00b7 rendered in Rust</span>',
-                header,
-                count=1,
-            )
-            updated = re.sub(
-                r'<div class="frame[^"]*">.*?</div>', lambda _m: block, body, count=1, flags=re.S
-            )
-            if updated == body:
-                updated = body + "\n" + block
-            updated = updated.replace("</p>", "</p>\n<p class=\"purpose\">" + purpose + "</p>", 1)
-            book = book.replace(
-                host.group(0),
-                (
-                    f'<section class="screen" id="s{number}">\n'
-                    f'<div class="sh">{header}</div>\n{updated}\n</section>'
-                ),
-                1,
-            )
-            replaced[frame] = f"s{number}"
-            added += 1
-            continue
-        # No numbered home: a screen the founder never numbered (33b, 42). These are additions and
-        # say so, and they are the ONLY thing that lands in a trailing section now.
-        number_html = number if number != "\u2014" else "&mdash;"
-        appended.append(
-            f'<section class="screen" id="{frame}">\n'
-            f'<div class="sh"><span class="num">{number_html}</span>'
-            f'<span class="name">{title}</span>'
-            f'<span class="badge b-ship">SHIPPED</span>'
-            f'<span class="src">{frame} \u00b7 {width}x{height} \u00b7 rendered in Rust</span></div>\n'
-            f'<p class="purpose">{purpose}</p>\n{block}\n</section>'
+        placed[frame] = sid
+        book = book.replace(
+            match.group(0),
+            f'<section class="screen" id="{sid}">\n'
+            f'<div class="sh">{new_header}</div>\n{updated}\n</section>',
+            1,
         )
-        # ⚠️ AN UN-NUMBERED SCREEN IS ITS OWN ANCHOR, AND IT HAS TO BE RECORDED AS PLACED OR THE
-        # CONTENTS LIST SKIPS IT. The first version left `replaced` unset for these, so the book
-        # carried 43 sections and 41 contents rows — a table of contents that is silently short is
-        # the second-owner defect in the one place a reader uses to check for completeness.
-        replaced[frame] = frame
-    if appended:
-        blocks = [
-            '\n<h2 class="sec">M &middot; Added since the numbering &mdash; screens with no number '
-            "in the review</h2>\n"
-            '<p class="lede">Everything the founder numbered is spliced into his own section above, '
-            "rendered by <code>cargo test -p estelle-tui --bin estelle actual_renderer_gallery</code> "
-            "and badged SHIPPED. What is left here is the handful of screens his numbering has no "
-            "slot for. <b>The LAYOUT is the real renderer's. The DATA is a design fixture</b>, off "
-            "by default: <code>estelle demo --list</code> names what each screen still needs, and "
-            "without <code>--demo</code> every one of them renders that sentence instead of a "
-            "number.</p>\n"
-        ] + appended
-        anchor = '<hr class="big">'
-        marker = anchor if anchor in book else '<p class="foot"'
-        book = book.replace(marker, "\n".join(blocks) + "\n" + marker, 1)
-        added += len(appended)
 
-    # ── 3b. One section in the founder's book carries TWO frames. ────────────────────────
+    # ── 2b. One section carries TWO frames. ─────────────────────────────────────────────────
     #
-    # Screen 26 is titled "Todos, expanded and collapsed" and the previous book showed one of them.
-    # ⚠️ A title that promises two states and a frame that shows one is the small version of the
-    # partial-guard defect: the section reads as complete. The second frame goes in beside the
-    # first rather than becoming a screen 42 the founder never numbered.
-    if "10-todo-collapsed" in frames and "10-todo-collapsed" not in replaced:
+    # "Todos, expanded and collapsed" promises two states. ⚠️ A title that promises two and a frame
+    # that shows one is the small version of the partial-guard defect: the section reads complete.
+    if "10-todo-collapsed" in frames and "10-todo-collapsed" not in placed:
         host = re.search(
-            r'(<section class="screen" id="s\d+">\n<div class="sh">(?:(?!</section>).)*?'
+            r'(<section class="screen" id="(s\d+)">\n<div class="sh">(?:(?!</section>).)*?'
             r'09-todo-expanded(?:(?!</section>).)*?</div>)',
             book,
             re.S,
         )
         if host is not None:
-            block, width, height = frame_html("10-todo-collapsed", gallery, defects)
-            book = book.replace(
-                host.group(0) + "\n",
-                host.group(0) + "\n" + block + "\n",
-                1,
-            )
-            replaced["10-todo-collapsed"] = "s26"
-            added += 1
+            block, _width, _height = frame_html("10-todo-collapsed", gallery, defects)
+            book = book.replace(host.group(0) + "\n", host.group(0) + "\n" + block + "\n", 1)
+            placed["10-todo-collapsed"] = host.group(2)
 
-    # ── 4. THE CONTENTS LIST IS A SECOND COPY OF EVERY TITLE AND BADGE. ──
+    # ── 3. THE CONTENTS LIST IS BUILT FROM THE SECTIONS, NOT MAINTAINED BESIDE THEM. ────────
     #
-    # ⚠️ Two owners of one fact, and the list is the one nobody reads twice. A section re-badged
-    # SHIPPED whose contents row still says SPEC is exactly the shape that made the founder ask
-    # for this pass. The rows are rewritten by ANCHOR, so a row can only be missed by not existing.
-    for frame, number, title, badge, _purpose in NEW_SCREENS:
-        if frame not in replaced:
-            continue
-        anchor = replaced[frame]
-        book = re.sub(
-            rf'(<li><span class="n">[^<]*</span><a class="t" href="#{anchor}">.*?</a>)'
-            r'<span class="badge b-[a-z]+">[A-Z]+</span></li>',
-            r'\1<span class="badge b-ship">SHIPPED</span></li>',
-            book,
-            count=1,
-        )
-    rows = "".join(
-        f'<li><span class="n">{number if number != "\u2014" else "&mdash;"}</span>'
-        f'<a class="t" href="#{frame}">{title}</a>'
-        f'<span class="badge b-ship">SHIPPED</span></li>'
-        for frame, number, title, badge, _purpose in NEW_SCREENS
-        if frame in frames and replaced.get(frame) == frame
+    # 🔴 It was a hand-written second copy of every number, title and badge, and it went stale
+    # exactly where nobody re-reads: a section re-badged in one place and not the other. It is
+    # derived now, so a contents row can only be wrong by its section being wrong.
+    headers = re.findall(
+        r'<section class="screen" id="(s\d+)">\n<div class="sh">(.*?)</div>', book, re.S
     )
-    if rows:
-        book = book.replace("</ol>", rows + "</ol>", 1)
-
-    # 🔴 THE FOUNDER'S INSTRUCTION, ENFORCED RATHER THAN INTENDED.
-    #
-    # *"I don't want to see spec and proposed anymore."* A generator that merely tries to re-badge
-    # every screen is a generator that reports success over the one it missed. Counting the badges
-    # in the OUTPUT is the only version of this check that cannot pass on a partial pass.
-    #
-    # ⚠️ COUNTED IN THE TWO PLACES A SCREEN'S BADGE LIVES — a section header and its contents row —
-    # and nowhere else. The first version counted every badge on the page and fired on the LEGEND,
-    # which explains what the badges mean, and on the tally line, which reports them. A guard that
-    # cannot tell a screen from a description of one gets suppressed within a week.
-    unshipped = re.findall(
-        r'<section class="screen"[^>]*>\n<div class="sh">[^\n]*?'
-        r'<span class="badge b-(?:spec|prop)">([A-Z]+)</span>',
-        book,
-    ) + re.findall(
-        r'<li><span class="n">[^<]*</span><a class="t"[^>]*>.*?</a>'
-        r'<span class="badge b-(?:spec|prop)">([A-Z]+)</span></li>',
-        book,
-    )
-
-    # ⚠️ THE OTHER HALF OF THE SAME QUESTION, AND THE ONE A BADGE CANNOT ANSWER. A section can be
-    # badged SHIPPED and still show a picture somebody drew; the badge is a claim about the PRODUCT
-    # and this counts the claim about the FRAME. They came apart on exactly one section.
-    hand_drawn = [
-        sid
-        for sid, header in re.findall(
-            r'<section class="screen" id="([^"]+)">\n<div class="sh">([^\n]*)</div>', book
+    rows = []
+    for sid, header in headers:
+        number = re.search(r'<span class="num">(.*?)</span>', header).group(1)
+        title = re.search(r'<span class="name">(.*?)</span>', header).group(1)
+        kind = re.search(r'<span class="badge b-[a-z]+">([A-Z ]+)</span>', header).group(1)
+        rows.append(
+            f'<li><span class="n">{number}</span>'
+            f'<a class="t" href="#{sid}">{title}</a>{badge_html(kind)}</li>'
         )
-        if "rendered in Rust" not in header
+    book = re.sub(r"<ol>.*?</ol>", "<ol>" + "".join(rows) + "</ol>", book, count=1, flags=re.S)
+
+    # ── 4. THE GUARDS. Each one names a way the book could report complete while being wrong. ──
+    numbers = [
+        int(re.search(r'<span class="num">(\d+)</span>', header).group(1))
+        for _sid, header in headers
     ]
+    gaps = numbers != list(range(1, len(numbers) + 1))
+    strays = [
+        sid for sid, header in headers if not re.search(r'<span class="num">\d+</span>', header)
+    ]
+    unplaced = [
+        frame for frame in frames if frame not in placed and frame not in NOT_IN_THE_BOOK
+    ]
+    hand_drawn = [sid for sid, header in headers if "rendered in Rust" not in header]
 
-    # The legend and the tally are the book's own description of the badge vocabulary, and both
-    # went stale the moment the last SPEC screen shipped. A book whose summary says "SPEC 12" over
-    # a body with none is the two-owners defect in its cheapest form.
-    shipped_screens = len(
-        re.findall(r'<div class="sh">[^\n]*?<span class="badge b-ship">SHIPPED</span>', book)
-    )
+    # The book's own summary of its badge vocabulary. Two owners of one count, and the summary is
+    # the one nobody re-reads — so it is computed from the output rather than typed.
+    shipped = sum(1 for _sid, header in headers if f'b-ship">{LIVE}' in header)
+    design = sum(1 for _sid, header in headers if f'b-design">{FIXTURE}' in header)
     book = re.sub(
-        r'<p class="lede" style="margin-top:14px"><span class="badge b-ship">SHIPPED</span>[^<]*'
-        r'<span class="badge b-spec">SPEC</span>[^<]*'
-        r'<span class="badge b-prop">PROPOSED</span>[^<]*?(?=</p>)',
-        '<p class="lede" style="margin-top:14px"><span class="badge b-ship">SHIPPED</span> '
-        f'{shipped_screens} &middot; <b>SPEC 0 &middot; PROPOSED 0</b> &nbsp;&nbsp;'
-        "Every screen the review numbered now renders in the real binary. The layouts are the "
-        "production renderer's; where no server contract exists yet the DATA is a design fixture, "
-        "off unless <code>--demo</code> or <code>ESTELLE_DEMO_FIXTURES=1</code> is set, and the "
-        "screen names the contract it is waiting for instead.",
+        r'<p class="lede" style="margin-top:14px"><span class="badge b-ship">SHIPPED</span>.*?(?=</p>)',
+        '<p class="lede" style="margin-top:14px">'
+        f'{badge_html(LIVE)} {shipped} &middot; {badge_html(FIXTURE)} {design} &nbsp;&nbsp;'
+        f"total {len(headers)}, numbered 1 to {len(headers)} with no gaps. "
+        "<b>Every frame in this book is drawn by the production renderer</b> at a real terminal "
+        "size &mdash; each screen's source line says <code>rendered in Rust</code> &mdash; so the "
+        "badge is never about the picture. It answers the one question somebody will ask you over "
+        "your shoulder: <b>are those numbers real?</b> "
+        f"<b>{LIVE}</b> means the running app produces them today. <b>{FIXTURE}</b> means the "
+        "layout is real and the numbers are staged, because the screen is waiting on a server "
+        "field it names on its own face.",
         book,
         count=1,
+        flags=re.S,
     )
-    book = book.replace(
-        '<tr><td><span class="badge b-spec">SPEC</span></td><td>in your mocks, not built</td>',
-        '<tr><td><span class="badge b-spec">SPEC</span></td>'
-        "<td><b>retired &mdash; no screen carries this any more</b></td>",
-        1,
+    book = re.sub(
+        r'<tr><td><span class="badge b-spec">SPEC</span></td><td>.*?</tr>',
+        f"<tr><td>{badge_html(FIXTURE)}</td>"
+        "<td>the picture is real; the numbers are staged</td>"
+        f"<td>Same renderer as {LIVE}, at a real terminal size. What is missing is the server "
+        "field the screen names on its own face, not the screen. Without <code>--demo</code> it "
+        "draws that sentence where the numbers would be.</td></tr>",
+        book,
+        count=1,
+        flags=re.S,
     )
-    book = book.replace(
-        '<tr><td><span class="badge b-prop">PROPOSED</span></td><td>mine, and I say why</td>',
-        '<tr><td><span class="badge b-prop">PROPOSED</span></td>'
-        "<td><b>retired &mdash; no screen carries this any more</b></td>",
-        1,
+    book = re.sub(
+        r'<tr><td><span class="badge b-prop">PROPOSED</span></td><td>.*?</tr>',
+        "",
+        book,
+        count=1,
+        flags=re.S,
     )
 
-    # ⚠️ COMPUTED HERE, NOT EARLIER. The first version measured this before step 3b ran and
-    # reported a frame as unplaced that the very next block had placed — a report that describes an
-    # earlier state of the world is a report nobody can act on.
-    unlisted = [frame for frame in frames if frame not in replaced and frame not in known]
     args.out.write_text(book, encoding="utf-8")
 
-    print(f"frames in gallery      : {len(frames)}")
-    print(f"book frames replaced   : {len(replaced)}")
-    print(f"new sections appended   : {added}")
-    print(f"frames still unplaced   : {len(unlisted)}")
-    print(f"screens still SPEC/PROPOSED : {len(unshipped)}")
+    print(f"frames in gallery           : {len(frames)}")
+    print(f"sections                    : {len(headers)}  ({shipped} shipped, {design} design)")
+    print(f"contents rows rebuilt       : {len(rows)}")
+    print(f"sections with no frame      : {len(unframed)}")
+    for sid in unframed:
+        print(f"  · {sid}")
+    print(f"frames still unplaced       : {len(unplaced)}")
+    for frame in unplaced:
+        print(f"  · {frame}")
+    print(f"frames deliberately omitted : {len(NOT_IN_THE_BOOK)}")
+    for frame, reason in NOT_IN_THE_BOOK.items():
+        print(f"  · {frame} — {reason}")
     print(f"frames still hand-drawn     : {len(hand_drawn)}")
     for sid in hand_drawn:
-        print(f"  \u00b7 {sid}")
-    for frame in unlisted:
-        print(f"  · {frame}")
+        print(f"  · {sid}")
     if defects:
         print("untokened colours still on the page:")
         for value, count in sorted(defects.items()):
             print(f"  · {value}  {count} cells")
     else:
         print("untokened colours still on the page: none")
-    if unshipped:
+
+    failed = False
+    if unframed:
+        print("  a numbered screen has no frame", file=sys.stderr)
+        failed = True
+    if unplaced:
         print(
-            "  a screen is still badged SPEC or PROPOSED; the book is not what he asked for",
+            "  a rendered frame reaches no screen and is not on the deliberate-omission list",
             file=sys.stderr,
         )
-        return 3
-    return 0
+        failed = True
+    if hand_drawn:
+        print("  a section still shows a picture nothing rendered", file=sys.stderr)
+        failed = True
+    if gaps or strays:
+        # 🔴 THE FOUNDER'S STRUCTURAL NOTE, AS A CHECK. The previous book had 41 numbered ids and
+        # 43 rows: two screens were appended with no number at all, because appending was easier
+        # than integrating. A contents list that skips a number, or carries a row that has none,
+        # is the same defect in the one place a reader uses to check for completeness.
+        print(f"  the numbering is not 1..{len(headers)}: {numbers} strays={strays}", file=sys.stderr)
+        failed = True
+    return 3 if failed else 0
 
 
 if __name__ == "__main__":

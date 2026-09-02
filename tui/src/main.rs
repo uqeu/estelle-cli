@@ -2017,29 +2017,46 @@ enum FocusSurface {
     Auxiliary,
 }
 
-/// The demo frame's hint row, verbatim: `enter send · tab repo · ctrl+s spend · ctrl+m models ·
-/// esc stop`.
+/// The demo frame's hint row: `enter send · tab repo · ctrl+s spend · ctrl+g context · esc stop`.
 ///
-/// 🔴 **THREE OF THESE FIVE ARE NOT BOUND IN THIS BINARY YET**, and that is recorded in code by
-/// `the_advertised_keys_that_are_not_yet_bound_are_exactly_these` rather than papered over by
-/// quietly substituting keys that do work. The founder picked this line off the demo three times;
-/// the honest response is to ship it and carry the debt where a test will trip over it, not to
-/// print a different line and call it his.
+/// 🔴 **THE FOURTH PAIR WAS `ctrl+m models` AND IT ADVERTISED A CHORD THAT CANNOT EXIST.**
+///
+/// `Ctrl+M` is ASCII carriage return (0x0D). This binary never calls
+/// `PushKeyboardEnhancementFlags` — that lives in `tui/keyboard_modes.rs`, on the Codex path
+/// `main.rs` cannot reach — so input takes crossterm's legacy byte parser, where the `b'\r'` arm
+/// shadows the `\x01..=\x1A` control-character arm and yields `KeyCode::Enter` with NO modifier.
+/// Binding it would swallow every Enter before the composer submits: **sending a message would
+/// stop working.** The other unbound hints are debts. This one was a promise that could not be
+/// kept, printed on every frame of the founder's own demo.
+///
+/// ⚠️ **THE ROW WAS HIS, VERBATIM, AND CHANGING IT IS A DECISION SOMEBODY MADE ON PURPOSE.**
+/// The rule that settles it: *the hint and the binding must agree, and when they cannot both be
+/// right, the working binding wins.* His words were written before anyone had measured the
+/// constraint; the feature he wanted reachable is reachable — the model pool is `/model`, named on
+/// screen 27 of the design book, and screen 8 records this change so he can see it was deliberate.
+///
+/// `ctrl+g context` takes the slot because it is the pair's opposite: a real binding that had no
+/// hint at all, on a panel a user cannot press a key they were never told about.
 const ASK_HINTS: &[(&str, &str)] = &[
     ("enter", "send"),
     ("tab", "repo"),
     ("ctrl+s", "spend"),
-    ("ctrl+m", "models"),
+    ("ctrl+g", "context"),
     ("esc", "stop"),
 ];
 
 /// The subset of [`ASK_HINTS`] the live keymap does NOT handle today.
 ///
 /// Test-only because it is a LEDGER, not a switch: nothing reads it to change what renders, and
-/// wiring it into the renderer would be the first step towards quietly hiding the three hints
-/// instead of binding the three keys.
+/// wiring it into the renderer would be the first step towards quietly hiding the two hints
+/// instead of binding the two keys.
+///
+/// ⚠️ **IT WAS THREE UNTIL 2026-09-02, AND ONE OF THE THREE WAS NOT A DEBT.** `ctrl+m` is
+/// carriage return in this binary and could never have been bound; it is off the row now, and the
+/// reason is enforced by `the_advertised_keys_that_are_not_yet_bound_are_exactly_these` rather than
+/// left as a sentence. `tab` and `ctrl+s` are genuine debts: nothing stops them being bound.
 #[cfg(test)]
-const ASK_HINTS_NOT_BOUND: &[&str] = &["tab", "ctrl+s", "ctrl+m"];
+const ASK_HINTS_NOT_BOUND: &[&str] = &["tab", "ctrl+s"];
 
 fn estelle_composer() -> ComposerInput {
     let mut composer = ComposerInput::with_commands(
@@ -8669,7 +8686,7 @@ mod tests {
     /// closed.
     #[test]
     fn the_advertised_keys_that_are_not_yet_bound_are_exactly_these() {
-        assert_eq!(ASK_HINTS_NOT_BOUND, ["tab", "ctrl+s", "ctrl+m"]);
+        assert_eq!(ASK_HINTS_NOT_BOUND, ["tab", "ctrl+s"]);
         for key in ASK_HINTS_NOT_BOUND {
             assert!(
                 ASK_HINTS.iter().any(|(hint, _)| hint == key),
@@ -8679,6 +8696,51 @@ mod tests {
         // `enter` and `esc` are NOT on the list because they really are handled.
         assert!(!ASK_HINTS_NOT_BOUND.contains(&"enter"));
         assert!(!ASK_HINTS_NOT_BOUND.contains(&"esc"));
+
+        // 🔴 **`ctrl+m` IS OFF THE ROW, AND IT MAY NOT COME BACK BY EITHER DOOR.**
+        //
+        // It was the fourth pair until 2026-09-02 and it is carriage return in this binary's input
+        // path, so it could never have been bound: a `ctrl+m` arm in `handle_key` swallows every
+        // Enter and sending a message stops working. The founder's rule settled which half moved —
+        // the hint and the binding must agree, and when they cannot both be right the WORKING
+        // binding wins.
+        //
+        // ⚠️ **BOTH DOORS ARE SHUT, AND THAT IS THE POINT.** Advertising it again is one assertion;
+        // binding it is the other, and a guard on only the first would pass over a `ctrl+m` arm
+        // that broke Enter for every user while the hint row looked clean.
+        assert!(
+            !ASK_HINTS.iter().any(|(key, _)| *key == "ctrl+m"),
+            "ctrl+m is carriage return here — it cannot be advertised on the hint row"
+        );
+        assert!(
+            !include_str!("main.rs")
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("//"))
+                .any(|line| line.contains("KeyCode::Char('m')")
+                    && line.contains("KeyModifiers::CONTROL")),
+            "something bound ctrl+m: it is carriage return here, so that arm eats every Enter"
+        );
+
+        // ⚠️ THE OTHER HALF: the pair that replaced it must be a chord that actually reaches the
+        // toggle. A hint row swapped onto a second dead key would satisfy every check above.
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut app = test_app();
+        let before = app.context_panel_visible;
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
+            &tx,
+        );
+        assert_ne!(
+            app.context_panel_visible, before,
+            "the hint row advertises ctrl+g and nothing handles it"
+        );
+        assert!(
+            ASK_HINTS
+                .iter()
+                .any(|(key, label)| *key == "ctrl+g" && *label == "context"),
+            "ctrl+g reaches the toggle but the row does not say so"
+        );
     }
 
     /// 🔴 RED FOR DELETIONS, GREEN FOR ADDITIONS — IN BOTH THEMES.
@@ -9803,10 +9865,14 @@ mod tests {
 
     /// 🔴 A HINT THE KEY DOES NOT HONOUR IS A HALLUCINATED AFFORDANCE.
     ///
-    /// The catalog's screen-9 footer advertises `tab repo · ctrl+s spend · ctrl+m models`, and
-    /// **none of those three bindings exists in this binary**. A fixture screen may print an
+    /// The catalog's screen-9 footer advertised `tab repo · ctrl+s spend · ctrl+m models`, and
+    /// **none of those three bindings existed in this binary**. A fixture screen may print an
     /// unbuilt binding; the live footer may not. This pins every advertised key to the effect
     /// the label claims for it.
+    ///
+    /// ⚠️ `ctrl+m` is off both rows as of 2026-09-02: it is carriage return here, so it was not an
+    /// unbuilt binding but an impossible one. `ctrl+g context` took the slot and IS bound, which
+    /// is why this test now presses it rather than listing it as a promise.
     ///
     /// ⚠️ The footer this guarded is gone - the demo puts the hints under the prompt - but the
     /// BINDINGS are still real and this still presses them. Read it beside
@@ -9883,6 +9949,9 @@ mod tests {
         // because these three keys do nothing here.
         assert!(!hints.contains("ctrl+s spend"), "{hints}");
         assert!(!hints.contains("ctrl+m models"), "{hints}");
+        // ⚠️ AND THE CHORD ITSELF, not just the pair. `ctrl+m` is carriage return in this binary;
+        // a live row carrying it under ANY label is advertising a key that eats Enter.
+        assert!(!hints.contains("ctrl+m"), "{hints}");
         assert!(!hints.contains("tab repo"), "{hints}");
     }
 
