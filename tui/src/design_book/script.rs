@@ -547,8 +547,9 @@ mod tests {
 
     /// 🔴 **FILM 3 ARGUES ONE THING: HE FOUND OUT FROM ESTELLE, NOT FROM A DASHBOARD.**
     ///
-    /// Its centre is an interrupt he did not ask for, a refusal of our OWN repair at the worst
-    /// possible moment, and a recovery on camera. Each needle is a beat a silent viewer has to see.
+    /// Its centre is an interrupt he did not ask for, **three more turns nobody asked for after
+    /// it**, a refusal of our OWN repair at the worst possible moment, and a recovery on camera.
+    /// Each needle is a beat a silent viewer has to see.
     #[test]
     fn film_three_stands_alone_with_the_sound_off() {
         let text = spoken();
@@ -556,20 +557,123 @@ mod tests {
             "serve/sweep.py:112", // 1 · ordinary work, cited, before anything breaks
             "142 checkouts failed since 23:04", // 2 · 🔴 the user-visible fact, not a metric
             "I would not normally interrupt", // 3 · the trust line
-            "put it back when this is over", // 4 · his sentence is held, and he is told so
-            "Nobody bought anything", // 5 · what the outage means to the business
-            "2026-09-01",         // 6 · the cause, to the version
-            "no such method in stripe 12.4.0", // 7 · 🔴 the gate refuses OUR repair
-            "nothing left the sandbox", // 8 · the refusal cost nothing
-            "recovered 23:15",    // 9 · it comes back, on camera
-            "held it while we worked", // 10 · the sentence returns
-            "billed by Estelle",  // 11 · the bill
+            "Nobody bought anything", // 4 · volunteered: what the outage means to the business
+            "2026-09-01",         // 5 · volunteered: the cause, to the version
+            "I start on checkout now", // 6 · 🔴 it began without being asked
+            "stop, and wait for you", // 7 · the plan streams back, and its last step is the promise
+            "put it back when this is over", // 8 · his sentence is held, and he is told so
+            "1 active",           // 9 · 🔴 he is the only session open, off the shipped /presence
+            "We fix it together", // 10 · and he is not alone anyway
+            "Not for this one",   // 11 · 🔴 the local-model question, ANSWERED NO, with a reason
+            "no such method in stripe 12.4.0", // 12 · 🔴 the gate refuses OUR repair
+            "nothing left the sandbox", // 13 · the refusal cost nothing
+            "I will not merge it for you", // 14 · propose-only, in his own favourite words
+            "recovered 23:15",    // 15 · it comes back, on camera
+            "held it while we worked", // 16 · the sentence returns
+            "not a better model", // 17 · the local fleet finishes, with no comparative claim
+            "billed by Estelle",  // 18 · the bill
         ] {
             assert!(
                 text.contains(statement),
                 "film 3 lost the beat carrying {statement:?} \u{2014} it no longer stands alone"
             );
         }
+    }
+
+    /// 🔴 **ESTELLE SENDS THE NEXT MESSAGE ITSELF, AND THE COUNT IS THE ASSERTION.**
+    ///
+    /// The founder's note is that the product does not wait to be asked: *"I want Estelle to
+    /// autonomously just send its next message instead of waiting for him to type a message, if it
+    /// finds an unresolved error."* One interrupt satisfies "it spoke first" and says nothing about
+    /// "it kept going", so this counts the [`Key::Interrupt`] blocks in film 3 and requires
+    /// **more than one** — the second and later ones are the turns nobody typed anything to
+    /// provoke, which is the whole note.
+    ///
+    /// ⚠️ It counts INTERRUPT BLOCKS, not `Say`s: a single interrupt carrying six lines is still
+    /// one turn, and inflating the number that way is exactly the green this must not give.
+    #[test]
+    fn film_three_keeps_talking_without_being_asked() {
+        use crate::design_book::session::Key;
+        let interrupts = film(3)
+            .expect("film 3")
+            .beats
+            .iter()
+            .flat_map(|beat| beat.typed.iter())
+            .filter(|key| matches!(key, Key::Interrupt(_)))
+            .count();
+        assert!(
+            interrupts > 1,
+            "film 3 speaks unprompted {interrupts} time(s) \u{2014} it waits to be asked again"
+        );
+    }
+
+    /// 🔴 **THE FLEET IS THE PRODUCT'S RENDERER, AND NO HAND-TYPED CELL NAMES A MODEL.**
+    ///
+    /// Film 3 drew its work as a `Say::Command { name: "work" }` whose rows read
+    /// `checkout   serve/checkout.py \u{b7} claude-opus-4-8` — **a per-worker model column, which is
+    /// the one cell `orchestra_view` refuses to draw**, because `FleetAgent` carries neither a
+    /// model nor a cost. The founder read the difference off the screen unaided: *"in orchestra it
+    /// actually shows each model going… it kind of seems like you faked it."*
+    ///
+    /// ⚠️ **TWO CLAUSES, TWO ASSERTIONS.** "Use the real renderer" and "name no model in a typed
+    /// cell" are different properties, and a film could satisfy either alone. The first is a
+    /// count of [`Say::Orchestra`]; the second sweeps every `Command` line and every `Table` row
+    /// for a model name. The fleet's own `models` roster is untouched by the sweep on purpose —
+    /// that line is where a model name IS true.
+    #[test]
+    fn film_three_draws_its_workers_with_the_products_own_renderer() {
+        let beats = film(3).expect("film 3").beats;
+        let fleets = beats
+            .iter()
+            .flat_map(|beat| {
+                beat.reply
+                    .iter()
+                    .chain(beat.typed.iter().flat_map(|key| match key {
+                        crate::design_book::session::Key::Interrupt(says) => says.iter(),
+                        _ => [].iter(),
+                    }))
+            })
+            .filter(|say| matches!(say, Say::Orchestra(_)))
+            .count();
+        assert!(
+            fleets >= 2,
+            "film 3 draws {fleets} orchestra block(s) \u{2014} the work is hand-typed again"
+        );
+
+        // Every model name that could plausibly be typed into a cell. The catalogue names are the
+        // local fleet's own, so a film cannot smuggle one in under a different spelling either.
+        let mut names = vec!["claude-opus", "claude-sonnet", "gpt-", "codex"];
+        names.extend(crate::design_book::session::LOCAL_FLEET.iter().copied());
+        let mut swept = 0usize;
+        for beat in beats {
+            for say in beat.reply.iter().chain(beat.typed.iter().flat_map(|key| {
+                match key {
+                    crate::design_book::session::Key::Interrupt(says) => says.iter(),
+                    _ => [].iter(),
+                }
+            })) {
+                let cells: Vec<&str> = match say {
+                    Say::Command { lines, .. } => lines.to_vec(),
+                    Say::Table { rows, .. } => rows.to_vec(),
+                    _ => Vec::new(),
+                };
+                for cell in cells {
+                    swept += 1;
+                    for name in &names {
+                        assert!(
+                            !cell.contains(name),
+                            "film 3 types the model {name:?} into a cell: {cell:?} \u{2014}                              the roster line is the only honest place for it"
+                        );
+                    }
+                }
+            }
+        }
+        // The positive control. Without it the sweep passes identically over a film with no
+        // tables at all, which is the vacuous half of every absence check we have written.
+        assert!(
+            swept > 20,
+            "only {swept} cells swept \u{2014} the model-cell guard proves nothing"
+        );
     }
 
     /// 🔴 **THE RAIL HAS SOMETHING ON IT.** `dress` is the difference between the five bands

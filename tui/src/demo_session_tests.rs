@@ -1137,7 +1137,7 @@ fn the_worker_table_never_prints_a_per_worker_model_or_price() {
     for film in script::FILMS {
         for step in cue_sheet(film, true, PANE) {
             let Cue::OpenPainted {
-                source: source @ Paint::Fleet { .. },
+                source: source @ Paint::Fleet { fixture, .. },
                 ..
             } = step.cue
             else {
@@ -1148,14 +1148,32 @@ fn the_worker_table_never_prints_a_per_worker_model_or_price() {
                 .iter()
                 .position(|row| row.contains("models \u{b7}"))
                 .expect("the fleet must still name its model roster");
+            // 🔴 **THE CONTROL IS THE FIXTURE'S OWN ROSTER, NOT ONE FILM'S MODEL NAME.** This read
+            // `contains("claude-opus-4-8")`, which is a fact about film 1 wearing the shape of a
+            // property about every fleet — so film 3's local batch, whose roster is honestly two
+            // Qwen models, failed a guard it satisfies perfectly. Asserting the fixture's OWN
+            // names is strictly stronger: a lost roster still fails, and a film that changes
+            // implementer no longer has to change this test.
             assert!(
-                rows[roster].contains("claude-opus-4-8"),
-                "the roster line lost the model: {:?}",
-                rows[roster]
+                !fixture.models.is_empty(),
+                "a fleet with an empty roster names no model anywhere"
             );
+            for model in fixture.models {
+                assert!(
+                    rows[roster].contains(model),
+                    "the roster line lost {model:?}: {:?}",
+                    rows[roster]
+                );
+            }
             // Every WORKER row — the ones beginning with a `w<n>` cell — carries no model and no
             // price. `$` catches a price in any column.
             for row in worker_rows(&rows) {
+                for model in fixture.models {
+                    assert!(
+                        !row.contains(model),
+                        "a worker row names a model the server does not send: {row:?}"
+                    );
+                }
                 assert!(
                     !row.contains("claude-opus"),
                     "a worker row names a model the server does not send: {row:?}"
