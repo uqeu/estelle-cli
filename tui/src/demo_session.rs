@@ -51,14 +51,20 @@ const TICK: Duration = Duration::from_millis(40);
 
 // ── the hands ────────────────────────────────────────────────────────────────────────────────
 //
-// 🔴 **FIFTY WORDS A MINUTE IS 240 ms PER KEYSTROKE ON AVERAGE, AND A PERSON WHO ACTUALLY
-// PRODUCED ONE EVERY 240 ms WOULD READ AS A MACHINE.** A real typist bursts inside a word and
-// stops between them, so the mean is assembled from a fast base rate plus a gap at every space
-// plus whatever the script asks for — never from one interval.
+// 🔴 **THESE WERE 96/52/145 AND HE ASKED TWICE FOR THEM TO COME DOWN.** That was ~96 WPM on paper
+// and read slower, because the word gap lands on every space and the eye reads the PAUSES, not the
+// mean. At 62/38/95 it is ~140 WPM: a fast engineer, still legible on camera.
+//
+// ⚠️ **THE UNEVENNESS IS THE POINT AND IT SURVIVES THE SPEED-UP.** A person who produced a
+// keystroke every N ms at any N reads as a machine, so the rate is still assembled from a base,
+// plus a gap at every space, plus the jitter, plus whatever the script asks for — never from one
+// interval. The typo-and-backspace beats are untouched: they are what make it read as a person.
+//
+// ⛔ **IF A FILM DROPS UNDER TWO MINUTES, THE FIX IS MORE CONTENT, NEVER SLOWER TYPING.**
 
-const CHAR_MS: u32 = 96;
-const BURST_CHAR_MS: u32 = 52;
-const WORD_GAP_MS: u32 = 145;
+const CHAR_MS: u32 = 62;
+const BURST_CHAR_MS: u32 = 38;
+const WORD_GAP_MS: u32 = 95;
 /// How long a typo sits before the hand notices. Shorter reads as scripted, longer as hesitation.
 const NOTICE_MS: u32 = 340;
 const BACKSPACE_MS: u32 = 78;

@@ -6343,7 +6343,26 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
         app.focus = FocusSurface::Composer;
         return false;
     }
-    if key.code == KeyCode::Char('m') && key.modifiers.contains(KeyModifiers::ALT) {
+    // 🔴 **THIS WAS `alt+m` UNTIL 2026-09-02, DIRECTLY ABOVE THE COMMENT FORBIDDING IT.**
+    //
+    // The rule below names `alt+m → µ` as its own worked example, and the binding it forbids sat
+    // four lines above it for the life of the file. Nobody read them together, which is the whole
+    // lesson: a rule written next to its own violation is a rule that reads as being obeyed.
+    //
+    // The founder's instruction is the general form: *"Windows users don't have an option/command
+    // key. Mac users don't have an alt key. We both have control."* **`ctrl` is the only modifier
+    // both platforms share**, so this is `ctrl+g` on every platform and the hint row says the same
+    // thing everywhere — no per-platform label to keep in sync with a per-platform binding.
+    //
+    // ⚠️ **IT IS `ctrl+g` AND NOT `ctrl+m`, AND THE REASON IS NOT PREFERENCE.** `Ctrl+M` is ASCII
+    // carriage return. This binary never calls `PushKeyboardEnhancementFlags` — that lives in
+    // `tui/keyboard_modes.rs`, on the Codex path `main.rs` cannot reach — so input takes crossterm's
+    // legacy byte parser, where the `b'\r'` arm shadows the `\x01..=\x1A` control-char arm and
+    // emits `KeyCode::Enter` with NO modifier. A `ctrl+m` guard here would swallow every Enter
+    // before the composer ever submits, i.e. it would break sending a message. `ctrl+g` is free:
+    // `handle_key` binds only c/o/t/w/x/Tab, and the `open_external_editor: ctrl+g` default in
+    // `keymap.rs` is dispatched solely by `app/input.rs` on the private Codex path.
+    if key.code == KeyCode::Char('g') && key.modifiers.contains(KeyModifiers::CONTROL) {
         app.toggle_context_panel();
         return false;
     }
@@ -9883,7 +9902,7 @@ mod tests {
     /// label is the best word for that state.
     #[test]
     fn every_advertised_key_is_a_binding_the_live_tui_actually_handles() {
-        let hints = "tab focus · shift+tab autonomy · ctrl+t tasks · alt+m context · / commands";
+        let hints = "tab focus · shift+tab autonomy · ctrl+t tasks · ctrl+g context · / commands";
         let (tx, _rx) = mpsc::unbounded_channel();
 
         assert!(hints.contains("tab focus"), "{hints}");
@@ -9926,17 +9945,17 @@ mod tests {
         );
         assert!(app.todo_visible, "ctrl+t did not open tasks");
 
-        assert!(hints.contains("alt+m context"), "{hints}");
+        assert!(hints.contains("ctrl+g context"), "{hints}");
         let mut app = test_app();
         let before = app.context_panel_visible;
         handle_key(
             &mut app,
-            KeyEvent::new(KeyCode::Char('m'), KeyModifiers::ALT),
+            KeyEvent::new(KeyCode::Char('g'), KeyModifiers::CONTROL),
             &tx,
         );
         assert_ne!(
             app.context_panel_visible, before,
-            "alt+m did not toggle the context panel"
+            "ctrl+g did not toggle the context panel"
         );
 
         assert!(hints.contains("/ commands"), "{hints}");

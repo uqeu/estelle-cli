@@ -88,6 +88,23 @@ fn frame_at_width(film: &'static Film, at_ms: u32, fixtures: bool, width: u16) -
     (text, buffer.area.width)
 }
 
+/// The session column of a rendered row, cut at the DIVIDER'S COLUMN.
+///
+/// ⚠️ **SPLITTING ON THE `\u{2502}` CHARACTER WAS WRONG AND IT HID REAL ROWS.** The divider is that
+/// glyph, but so is `gate_refusal`'s own blocker marker — so a `split('\u{2502}').next()` on a
+/// blocker row returned the empty string before the marker, and every blocker line vanished from
+/// the guards and from the frames I was reading. The divider is a POSITION, and
+/// `session_view::split` is the one owner of it.
+fn session_of(row: &str, width: u16) -> String {
+    let cut = crate::session_view::split(width)
+        .map_or(usize::from(width), |columns| columns[0].w + columns[0].gap);
+    row.chars()
+        .take(cut)
+        .collect::<String>()
+        .trim_end()
+        .to_string()
+}
+
 /// 🔴 **THE ONE PROPERTY THAT SEPARATES A SESSION FROM THE GALLERY HE REJECTED.**
 ///
 /// Every cue of every film is applied in order and the transcript's length is asserted to be
@@ -301,9 +318,13 @@ fn every_film_is_bounded_and_long_enough_to_talk_over() {
             film.number,
             session::MAX_FILM_MS
         );
+        // ⚠️ **A FLOOR, NEVER A TARGET.** Runtime is now decided by the arc; this only catches a
+        // film that lost most of its beats to a bad edit. The founder's note that killed the
+        // ceiling applies here too: long is not the goal, SUBSTANCE is, and a short film is a
+        // symptom of missing content rather than a thing to pad.
         assert!(
-            ms > 100_000,
-            "film {} runs {ms} ms — too fast to narrate",
+            ms > 90_000,
+            "film {} runs {ms} ms — it has lost most of its beats",
             film.number
         );
     }
@@ -568,7 +589,7 @@ fn no_receipt_ever_renders_its_text_vertically() {
             let frame = frame_at(film, total * fraction / 16, true);
             let mut consecutive = 0usize;
             for row in frame.lines() {
-                let session = row.split('\u{2502}').next().unwrap_or("");
+                let session = session_of(row, WIDE);
                 let visible = session.trim().chars().count();
                 inspected += 1;
                 if visible > 0 && visible <= THIN {

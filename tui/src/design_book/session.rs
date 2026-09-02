@@ -414,10 +414,15 @@ mod tests {
         static ONE: &[Col] = &[Col::l(40)];
         let lines = table_lines(
             ONE,
-            &["A deterministic check against this repo's symbol graph. No model was asked, and no model can overrule it."],
+            &[
+                "A deterministic check against this repo's symbol graph. No model was asked, and no model can overrule it.",
+            ],
             40,
         );
-        assert!(lines.len() > 1, "a one-column block did not wrap: {lines:?}");
+        assert!(
+            lines.len() > 1,
+            "a one-column block did not wrap: {lines:?}"
+        );
         for line in &lines {
             assert!(line.chars().count() <= 40, "{line:?} overran the pane");
             assert!(
