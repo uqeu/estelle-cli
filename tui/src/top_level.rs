@@ -2566,12 +2566,18 @@ where
         )
         .await
         .map_err(SweepFailure::Client)?;
+    // 🔴 **READ THE WHOLE ANSWER, ON BOTH BRANCHES.** `fit_report` measures fourteen fields and
+    // this call site used to read one of them, then rendered the refusal through `concise_value`
+    // — whose `sensitive_key` guard strikes out every key containing `token`, which is every token
+    // COUNT in the body. A user was refused with no number and no sentence. See `sweep_estimate`.
+    let estimate_report = crate::sweep_estimate::estimate_lines(&estimate);
     if estimate.get("fits") == Some(&Value::Bool(false)) {
         return Err(SweepFailure::Local(format!(
-            "this sweep does not fit the account capacity: {}",
-            concise_value(&estimate)
+            "this sweep does not fit the account capacity:\n{}",
+            estimate_report.join("\n")
         )));
     }
+    lines.extend(estimate_report);
     match sweep_transport(file_count) {
         SweepTransport::Sync => {
             report(SweepProgress {

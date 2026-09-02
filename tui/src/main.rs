@@ -51,10 +51,12 @@ mod production_hud;
 mod provider_catalog;
 mod provider_keys;
 mod provider_store;
+mod run_spend;
 mod screens;
 mod session_server;
 mod session_view;
 mod setup_flow;
+mod sweep_estimate;
 #[cfg(test)]
 mod test_gallery;
 mod theme;

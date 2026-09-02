@@ -2173,6 +2173,14 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
             {
                 lines.push("A reviewable diff is ready. Use /apply to write it.".to_string());
             }
+            // 🔴 `usage_breakdown` has ridden on every /work result since it was written and no
+            // CLI surface read it — `grep by_model tui/src` returned zero. See `run_spend`.
+            // ⚠️ BEFORE the completion line, which is server-owned and pinned as the LAST line by
+            // `work_ends_with_the_server_owned_completion_line`.
+            lines.extend(crate::run_spend::spend_lines(
+                reply.extra.get("usage"),
+                reply.extra.get("savings"),
+            ));
             if let Some(completion) = reply.completion.as_ref() {
                 lines.push(render_work_completion(completion));
             }
@@ -2226,6 +2234,10 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                     ));
                 }
             }
+            lines.extend(crate::run_spend::spend_lines(
+                reply.extra.get("usage"),
+                reply.extra.get("savings"),
+            ));
             lines
         }
         "gate" | "review" => {
