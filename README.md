@@ -47,6 +47,13 @@ For editors that are not Claude Code, `estelle install-hooks` writes the same te
 events (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `Stop`, `PreCompact`,
 `SessionEnd`) for both Claude Code and the Codex CLI.
 
+Every hook fails silently by design (`tui/src/top_level.rs:378`): no credentials, no network, a slow
+server or an empty memory all produce nothing rather than an error on the hot path. **The
+`UserPromptSubmit` handler is the slow one.** It asks the server for a full search
+(`top_level.rs:384`) and reads only the recall text (`top_level.rs:389`), so on a long prompt it can
+exceed its timeout, and when the host kills it the turn simply proceeds with no added context. Nothing
+tells you that happened.
+
 **What the edit hook does, exactly.** It grounds the edit and reports one of four verdicts to you and to
 the model: PASSED, FLAGGED, ABSTAINED, or UNREACHABLE. ABSTAINED says in its own words that it is not a
 pass. **It does not block the edit** (`tui/src/top_level.rs:717`). The finding is advisory while the

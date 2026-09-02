@@ -82,6 +82,12 @@ Writes ten handlers across seven events (`PreToolUse`, `PostToolUse`, `UserPromp
 `Stop`, `PreCompact`, `SessionEnd`), for both Claude Code and the Codex CLI. This is door 1's mechanism,
 available to editors that are not Claude Code.
 
+Every hook fails silently by design: no credentials, no network, a slow server or an empty memory all
+produce nothing rather than an error on the hot path. **The `UserPromptSubmit` handler is the slow one.**
+It asks the server for a full search and reads only the recall text, so on a long prompt it can exceed
+its timeout, and when the host kills it the turn simply proceeds with no added context. Nothing tells you
+that happened.
+
 **What the edit hook does, exactly.** It grounds the edit and reports one of four verdicts to you and to
 the model: PASSED, FLAGGED, ABSTAINED, or UNREACHABLE. ABSTAINED says in its own words that it is not a
 pass. **It does not block the edit.** The finding is advisory while the server does not attest index
