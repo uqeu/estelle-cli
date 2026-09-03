@@ -482,6 +482,141 @@
       "path": "tui/src/work_plan.rs",
       "blob": "699de25acfb6cc060b4e07c924b35055b1e8ae03",
       "reason": "Mechanical egress scan on 2026-08-29 found no new network destination and no new credential source in this file. Terminal UI composition \u2014 layout, theme, screens, slash-command routing and history rendering. No I/O added."
+    },
+    {
+      "path": "tui/src/bottom_pane/mcp_server_elicitation.rs",
+      "blob": "07a83f7d166ab0450e74c4041d54cd8bbd376d6b",
+      "reason": "COPY PASS, 2 added / 2 removed, both `const &str` values: ANSWER_PLACEHOLDER `Type your answer` -> `Type an answer` and OPTIONAL_ANSWER_PLACEHOLDER `Type your answer (optional)` -> `Type an answer (optional)`. Second-person removal only; the constant names, their types, every reader of them and the elicitation control flow are byte-identical. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/bottom_pane/memories_settings_view.rs",
+      "blob": "1c99358631275cb8d0c12480e96fb8ed57f23229",
+      "reason": "COPY PASS, 2 added / 2 removed, both human-readable strings inside `.dim()` help lines: `Choose how Codex uses and creates memories. Changes are saved to config.toml` -> `Choose how Estelle uses and creates memories. Saved to config.toml`, and `... for the current Codex home.` -> `... for the current Estelle home.` This is the brand pass taking another company's product name out of our binary. No identifier, no path and no clearing behaviour changed - the sentence describing what the clear does is the same claim in fewer words. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/bottom_pane/mod.rs",
+      "blob": "d1cc52ccee9537a4c24d9d07083227be325da6e7",
+      "reason": "COPY PASS, 1 added / 1 removed, one `.to_string()` literal: `Install this app in your browser, then return here.` -> `Install this app in the browser, then return here.` Second-person removal only. Nothing in this module's dispatch, layout or view-stack handling is touched. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/bottom_pane/request_user_input/mod.rs",
+      "blob": "19dad3467be2f096ebf25f1ce0a11a783f6304ba",
+      "reason": "COPY PASS, 2 added / 2 removed: the `ANSWER_PLACEHOLDER` const `Type your answer (optional)` -> `Type an answer (optional)`, and the one rendered example line inside this file that quotes it, kept in step so the fixture still matches what the widget draws. Second-person removal only; no field, no key handling and no submission path changed. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/bottom_pane/skills_toggle_view.rs",
+      "blob": "5d318938c3426badb1c8dc4f8efc955d26c59ef9",
+      "reason": "COPY PASS, 1 added / 1 removed, one `.dim()` help string: `Turn skills on or off. Your changes are saved automatically.` -> `Turn skills on or off. Changes save automatically.` Second-person removal only; the toggle, its persistence and every enabled/disabled decision are untouched, and the sentence still makes the same claim about saving. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/bottom_pane/status_line_setup.rs",
+      "blob": "ed58e6c83f7867facb8569ec151e202d907ca385",
+      "reason": "COPY PASS, 1 added / 1 removed, one match-arm LABEL: `StatusLineItem::CodexVersion => \"Codex application version\"` -> `... => \"Estelle application version\"`. The ENUM VARIANT NAME `CodexVersion` is deliberately unchanged, so no other file, no serialised config key and no match exhaustiveness is affected - only the string a human reads. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/bottom_pane/title_setup.rs",
+      "blob": "d1f7aa6d04d51120353eb9285c198a91ef3b524d",
+      "reason": "COPY PASS, 2 added / 2 removed, two match-arm LABELS: `TerminalTitleItem::AppName => \"Codex app name\"` and `TerminalTitleItem::CodexVersion => \"Codex application version\"` both take `Estelle`. As in status_line_setup.rs the variant names are unchanged, so the config surface and the exhaustiveness check are identical; only the human-readable label moved. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/chatwidget/connectors.rs",
+      "blob": "45dbf0c42f6fed73436354367dedb2717725d6a2",
+      "reason": "COPY PASS, 3 added / 3 removed, three human-readable strings: `Use $ to insert an installed app into your prompt.` -> `Type $ ... into the prompt.`, `Manage this app in your browser.` -> `... in the browser.`, `Install this app in your browser, then reload Codex.` -> `... in the browser, then reload Codex.` Second-person removal only. No connector is added, removed or reordered, and no install/manage action is wired differently - these lines only describe actions the user performs elsewhere. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/chatwidget/ide_context.rs",
+      "blob": "f629d28c179ef326f6c5fb76804c322e482f6f24",
+      "reason": "COPY PASS, 2 added / 2 removed, two human-readable strings describing IDE attachment: `Future messages will include your current IDE selection and open tabs.` -> `Future messages include the open IDE tabs and the current selection.`, and `Connected to your IDE.` -> `Connected to the IDE.` The first sentence is a DISCLOSURE of what gets sent, and the rewrite states exactly the same two items (open tabs, current selection) - it neither widens nor narrows the claim, and no code deciding what is attached was touched. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/chatwidget/model_popups.rs",
+      "blob": "33d64891bc56ef8473fad328c6d8284a8bde492e",
+      "reason": "COPY PASS, 2 added / 2 removed, two human-readable strings: `Models are being updated; please try /model again in a moment.` -> `The model list is updating. Run /model again.`, and `Access legacy models by running codex -m <model_name> or in your config.toml` -> `Legacy models: run codex -m <model_name>, or name one in config.toml`. The `-m` flag and `config.toml` remain the same two instructions; no model id, no catalog fetch and no popup state machine changed. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/chatwidget/notifications.rs",
+      "blob": "efc720f9544a0fc705c41290b7c5d684bd21e1f5",
+      "reason": "COPY PASS, 1 added / 1 removed, one `format!` template: `Codex wants to edit {}` -> `Estelle wants to edit {}`. Brand pass; the positional argument, the notification trigger and every approval decision downstream are untouched. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/chatwidget/permission_popups.rs",
+      "blob": "f65ba727ddbc8746763390b7c44900a158db2e07",
+      "reason": "COPY PASS over SECURITY-FACING TEXT - read twice for that reason. 2 added / 2 removed, both human-readable warnings in the sandbox popup. `The non-admin sandbox protects your files and prevents network access under most circumstances. However, it carries greater risk if prompt injected. To upgrade to the default sandbox, run ` -> `The non-admin sandbox protects files and blocks network access under most circumstances. It carries greater risk under prompt injection. To upgrade to the default sandbox, run `; and `When Codex runs with full access, it can edit any file on your computer and run commands with network, without your approval. ` -> `With full access, Codex edits any file on this machine and runs networked commands without approval. ` Both rewrites preserve every clause that carries risk information: the `most circumstances` hedge on network blocking, the prompt-injection caveat, and the unqualified statement that full access edits ANY file and runs NETWORKED commands with NO approval. Nothing was softened or dropped. No sandbox policy, no approval threshold and no popup branch is touched - this file only renders the warning. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/chatwidget/reset_credits.rs",
+      "blob": "8eb0f977c1a048dbd09f5ba0ba120cd235c4298d",
+      "reason": "COPY PASS, 2 added / 2 removed, the same sentence in its two occurrences (the `unwrap_or` fallback description and the constructed `description` field): `Reset your current usage limits.` -> `Reset the current usage limits.` Second-person removal only; the reset command itself, its route and its confirmation are untouched. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/chatwidget/safety_buffering.rs",
+      "blob": "69e0e47035563ba62dd045c0b8eb6b76171ba45e",
+      "reason": "COPY PASS, 4 added / 4 removed (the extra line each way is rustfmt re-wrapping a shortened literal), three `const &str` values: SAFETY_BUFFERING_HEADER `Our systems are thinking a bit more about this request before responding.` -> `An extra safety pass is running on this turn.`; SAFETY_BUFFERING_MESSAGE_WITH_RETRY -> `Retry on a faster model for a quicker answer, at lower capability.`; SAFETY_BUFFERING_FOOTER -> `Still waiting. This closes when the response lands.` The rewrite names the mechanism (a safety pass) instead of anthropomorphising it, and keeps the same two facts: a faster model trades capability for latency, and the menu closes by itself. No buffering threshold, retry path or model choice is implemented here. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/chatwidget/session_flow.rs",
+      "blob": "2b8a1289d750efa7b44e5cb08d919032fa100d4f",
+      "reason": "COPY PASS, 1 added / 1 removed, one `.into()` literal: `You're continuing from this point in a new conversation` -> `A new conversation continues from this point`. Second-person removal only; the fork/continue behaviour it labels is unchanged. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/chatwidget/settings_popups.rs",
+      "blob": "258289498bbbd934066e62aa2e04524c0e2b183e",
+      "reason": "COPY PASS, 3 added / 1 removed: one header string `Choose a communication style for Codex.` -> `Choose a communication style for Estelle.`, with the two extra added lines being rustfmt breaking the now-longer `Line::from(...)` call across three lines. Brand pass; no setting, no persisted key and no popup branch changed. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/keymap_setup.rs",
+      "blob": "f0877b498df6f6a94048d5c198ee8b2e6bd66d21",
+      "reason": "COPY PASS in TEST CODE, 2 added / 2 removed, two assertions re-pinned to the hint text rewritten in keymap_setup/debug.rs: `assert!(rendered.contains(\"Still waiting?\"))` -> `contains(\"If nothing changes on a keypress\")`, and the negative assertion `assert!(!rendered.contains(\"Still waiting?\"))` -> `!contains(\"Only received keys can be assigned as shortcuts\")`. The pair still asserts the same thing - the delayed hint appears only after the delay - and the negative control is retained rather than deleted, which is the property that matters here. No production code in this file changed. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/keymap_setup/debug.rs",
+      "blob": "93af9019b028db55fdecdd1b8c7ef45be0ceeb09",
+      "reason": "COPY PASS, 2 added / 2 removed, two `const &str` hints: SHORT_MISSING_KEY_HINT `Tip: Codex can only inspect keys your terminal sends.` -> `Codex can only inspect keys the terminal sends.`, and DELAYED_MISSING_KEY_HINT `Still waiting? If nothing changes when you press a key, your terminal is not sending that key to Codex. Only received keys can be assigned as shortcuts.` -> `If nothing changes on a keypress, the terminal is not sending that key to Codex. Only received keys can be assigned as shortcuts.` Second-person removal; the diagnostic claim is unchanged, and the assertions in keymap_setup.rs were updated in the same pass so the test still covers both hints. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/keymap_setup/picker.rs",
+      "blob": "4564d6df4134ad925949cd107c888acc7f16bad3",
+      "reason": "COPY PASS, 1 added / 1 removed, one `.to_string()` literal: `Inspect keypresses from your terminal.` -> `Inspect keypresses from the terminal.` Second-person removal only; the picker's key capture is untouched. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/diff_render.rs",
+      "blob": "48f4ec29e9b0c42426cd0e5df7a12731d0bb4cc9",
+      "reason": "GLYPH PASS, 1 added / 1 removed: the tree prefix `\"  └ \"` -> `\"  │ \"` in the one header push in this file. U+2514 and U+2502 are both single-column box-drawing glyphs of 3 UTF-8 bytes, so the string stays 4 characters and 4 display columns wide and no width arithmetic anywhere is affected - the change is which line the eye follows, not how much room it takes. No diff parsing, hunk selection or file handling is touched. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/exec_cell/render.rs",
+      "blob": "c9c05f832e5c938d449e232f8516d3eddf2b7f7c",
+      "reason": "GLYPH PASS, 3 added / 3 removed: the same `\"  └ \"` -> `\"  │ \"` substitution at its three occurrences here - the bare prefix, the `prefix_lines(out_indented, ...)` call and the `PrefixedBlock::new(\"  │ \", \"    \")` construction. Same-width substitution (see diff_render.rs), and the continuation indent `\"    \"` is unchanged, so the block still aligns. No command text, exit status or output capture is touched. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/history_cell/exec.rs",
+      "blob": "1514000db2b497cb9686ba8609aadbad8493d670",
+      "reason": "GLYPH PASS, 1 added / 1 removed: `initial_indent(Line::from(\"  └ \".dim()))` -> `\"  │ \".dim()`. Same-width substitution; the wrapper's subsequent-indent is unchanged. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/history_cell/mcp.rs",
+      "blob": "3bd9462e65bf06d1eb1d0444719ed4190970b984",
+      "reason": "GLYPH PASS, 3 added / 3 removed: two `\"  └ \"` -> `\"  │ \"` substitutions plus the COMMENT above them updated in step, so the note `Reserve four columns for the tree prefix (\"  │ \"/\"    \")` still quotes the string it describes. That comment is the reason to check the width claim, and it holds: both glyphs are one display column, so four columns are still exactly what is reserved and the `at least one cell` guard behaves identically. No MCP tool invocation, argument rendering or result handling is touched. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/history_cell/patches.rs",
+      "blob": "88ee9d456229dc2b865f395c6e397b36dc64de18",
+      "reason": "GLYPH PASS, 3 added / 3 removed: `\"  └ \"` -> `\"  │ \"` at its three occurrences (the display-path line, the detail line and the `Saved to: ` line). Same-width substitution; the paths and the `Saved to: ` label they prefix are unchanged, and no patch is applied, written or parsed differently. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/history_cell/plans.rs",
+      "blob": "0cca20e8919df67cfd2def489a798cee5cebad20",
+      "reason": "GLYPH PASS, 1 added / 1 removed: `prefix_lines(indented_lines, \"  └ \".dim(), \"    \".into())` -> `\"  │ \".dim()`. Same-width substitution; plan content and step state are untouched. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/multi_agents.rs",
+      "blob": "7afa4d4b15c9296434016807a100d24ba56149e2",
+      "reason": "GLYPH PASS, 1 added / 1 removed: `prefix_lines(details, \"  └ \".dim(), \"    \".into())` -> `\"  │ \".dim()`. Same-width substitution. No agent is spawned, addressed or scheduled differently by this file's change; it renders detail lines only. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
+    },
+    {
+      "path": "tui/src/status_indicator_widget.rs",
+      "blob": "a7e27f6c5fb9ec583471b33f9952eec7499acc39",
+      "reason": "GLYPH PASS, 1 added / 1 removed: `const DETAILS_PREFIX: &str = \"  └ \"` -> `\"  │ \"`. This is the const the other seven glyph-pass files match, and the same-width argument applies (U+2514 and U+2502 are both one display column, 3 UTF-8 bytes). No status computation, timer or spinner behaviour changed. Mechanically 0 new URL or host literals, 0 network calls, 0 process/exec, 0 filesystem writes, 0 environment reads and 0 credential reads."
     }
   ],
   "owners": [
