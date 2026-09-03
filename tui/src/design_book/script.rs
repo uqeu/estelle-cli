@@ -510,8 +510,8 @@ mod tests {
 
     /// 🔴 **FILM 2 ARGUES ONE THING: THE TEAM'S REASONING IS IN THE ROOM WITH HIM.**
     ///
-    /// Its centre is the frame no competitor can build — not *"Devon committed to this file"*,
-    /// which any tool reads from git, but **the words Devon typed at his own agent**. Each needle is
+    /// Its centre is the frame no competitor can build — not *"Michael committed to this file"*,
+    /// which any tool reads from git, but **the words Michael typed at his own agent**. Each needle is
     /// a beat a silent viewer has to see, so trimming one is a test failure rather than a quiet loss
     /// of the film's whole argument.
     ///
@@ -528,7 +528,7 @@ mod tests {
             "merged #401",                           // 1 · the repo moved while he was away
             "0009-upstream-retry-budget.md:31",      // 2 · a decision, volunteered, with its line
             "reads it instead of guessing",          // 3 · he disagrees, and his reason is kept
-            "Sam proposed",                          // 4 · a proposal already parked in Slack
+            "Kyle proposed",                          // 4 · a proposal already parked in Slack
             "can never certify a claim",             // 4b · 🔴 memory says HOW it knows
             "stays readable and dated",              // 4c · 🔴 memory can be WRONG, and says so
             "where do we bound the capture retries", // 5 · 🔴 a teammate's PROMPT, word for word

@@ -426,9 +426,9 @@ pub(crate) const INCIDENT: &[Beat] = &[
                 lines: &[
                     "1 active  |  3 overnight",
                     "you@cartwheel.shop  |  since 22:41  |  serve/sweep.py",
-                    "overnight  priya@cartwheel.shop  |  at 02:10",
-                    "overnight  devon@cartwheel.shop  |  at 01:55",
-                    "overnight  marcus@cartwheel.shop  |  at 03:20",
+                    "overnight  anna@cartwheel.shop     |  at 02:10",
+                    "overnight  michael@cartwheel.shop  |  at 01:55",
+                    "overnight  marcus@cartwheel.shop   |  at 03:20",
                     "files in flight  serve/sweep.py",
                 ],
             },

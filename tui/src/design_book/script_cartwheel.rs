@@ -1,8 +1,8 @@
 //! 🎬 **FILM 2 · `cartwheel/storefront` — "the repo moved without me". DATA ONLY.**
 //!
-//! 🔴 **THE THESIS: TWO PEOPLE, TWO PLANS, ONE MEMORY.** Ravi comes back to a repository that moved
-//! while he was away. Devon has been prompting his own agent on his own Claude plan for three hours,
-//! inside the same file. Neither of them has spoken to the other. **Estelle reads what Devon TYPED**,
+//! 🔴 **THE THESIS: TWO PEOPLE, TWO PLANS, ONE MEMORY.** Ben comes back to a repository that moved
+//! while he was away. Michael has been prompting his own agent on his own Claude plan for three hours,
+//! inside the same file. Neither of them has spoken to the other. **Estelle reads what Michael TYPED**,
 //! and that is the frame no competitor can build — every tool on the market reads his commits.
 //!
 //! ## 🔴 MEMORY IS THE SPINE, NOT A BEAT
@@ -45,7 +45,7 @@
 //!
 //! ⚠️ **AND THE LOG HOLDS ONLY WHAT A PERSON TYPED.** `prepare_turn` is called once in production
 //! (`scripts/estelle_server.py:4891`) with no `role`, so every row is `role="user"`. **The answers
-//! Devon got are not in it.** The earlier version of beat 6 drew a table headed *"what they asked,
+//! Michael got are not in it.** The earlier version of beat 6 drew a table headed *"what they asked,
 //! and what they were told"* — half of that table had no store behind it. Estelle now says the limit
 //! out loud, on camera, in the film's centre beat. A product that refuses to tell you what it does
 //! not know is the product; drawing the second half would have been the exact failure it sells against.
@@ -122,7 +122,7 @@ const CAPTURE_HALF: FleetFixture = FleetFixture {
             unknown_reason: None,
         },
         FleetWorker {
-            action: Some("reading Devon's branch for the key name"),
+            action: Some("reading Michael's branch for the key name"),
             steps: 1,
             starts_s: 3,
             ends_s: Some(20),
@@ -162,15 +162,15 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
                 columns: PRESENT,
                 rows: &[
                     "who | since | files in flight",
-                    "Devon | 09:12 today | billing/capture.py, billing/keys.py",
-                    "Priya | overnight 23:40 | \u{2014}",
+                    "Michael | 09:12 today | billing/capture.py, billing/keys.py",
+                    "Anna | overnight 23:40 | \u{2014}",
                     "Marcus | overnight 22:10 | \u{2014}",
-                    "Sam | overnight 22:55 | \u{2014}",
+                    "Kyle | overnight 22:55 | \u{2014}",
                 ],
             },
             Say::Wait(1_800),
             Say::Answer {
-                text: "Four days moved this repo. Priya merged #401 on Friday and Marcus reverted \
+                text: "Four days moved this repo. Anna merged #401 on Friday and Marcus reverted \
                        the Redis status cache on Monday. Both touch the file you opened this morning.",
                 grounded: true,
             },
@@ -188,7 +188,7 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
         reply: &[
             Say::Failure([
                 "Your team decided this on 14 August, and the code compiles either way.",
-                "Priya capped the fetcher retries at 2. The insurer rate-limits per minute.",
+                "Anna capped the fetcher retries at 2. The insurer rate-limits per minute.",
                 "docs/adr/0009-upstream-retry-budget.md:31",
             ]),
             Say::Wait(1_900),
@@ -227,7 +227,7 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
         think_ms: 4_200,
         reply: &[
             Say::Answer {
-                text: "You may be right. Priya wrote that decision about the insurer fetcher. The \
+                text: "You may be right. Anna wrote that decision about the insurer fetcher. The \
                        capture path talks to Stripe, and Stripe retries for three days on its own.",
                 grounded: true,
             },
@@ -244,9 +244,9 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
     //       model on the path. `estelle-client/src/endpoint.rs` has no `Turns` variant, so no
     //       command can ask for it.
     //
-    //       🔴 **THE MECHANISM IS DEMONSTRATED ON HIM BEFORE IT IS USED ON DEVON.** He watches his
+    //       🔴 **THE MECHANISM IS DEMONSTRATED ON HIM BEFORE IT IS USED ON MICHAEL.** He watches his
     //       own sentence land, word for word, casing and all — then two beats later the same door
-    //       hands him Devon's. A viewer who saw the first frame cannot call the second one a trick.
+    //       hands him Michael's. A viewer who saw the first frame cannot call the second one a trick.
     //
     //       ⚠️ The text is NOT tidied. `turn_log.py:prepare_turn` strips the ends and stops:
     //       *"a store that tidies what was said cannot later prove what was said."*
@@ -261,7 +261,7 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
                 columns: TURN,
                 rows: &[
                     "at | who | what was typed, word for word",
-                    "11:26 | ravi | stripe retries capture for 3 days on the same idempotency key, so retrying here risks a double charge",
+                    "11:26 | ben | stripe retries capture for 3 days on the same idempotency key, so retrying here risks a double charge",
                 ],
             },
             Say::Wait(1_700),
@@ -287,13 +287,13 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
         think_ms: 4_000,
         reply: &[
             Say::Answer {
-                text: "Sam proposed one retry policy module in #eng on Thursday. Three people \
+                text: "Kyle proposed one retry policy module in #eng on Thursday. Three people \
                        reacted and nobody replied. Your design already has him behind it.",
                 grounded: true,
             },
             Say::Wait(1_600),
             Say::System(
-                "No ticket exists for it. Open one, and Sam gets an answer four days late instead of never.",
+                "No ticket exists for it. Open one, and Kyle gets an answer four days late instead of never.",
             ),
         ],
         read_ms: 6_800,
@@ -314,7 +314,7 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
     //        take — in the one frame whose whole job is showing that Estelle marks what it knows.
     Beat {
         typed: &[
-            Key::Type("how do you know sam "),
+            Key::Type("how do you know kyle "),
             Key::Pause(900),
             Key::Type("actually said that"),
         ],
@@ -348,17 +348,17 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
     },
     // ── 6 · 🔴🔴 THE CENTRE OF THE FILM, AND THE FRAME NOBODY ELSE CAN BUILD.
     //
-    //       🟡 BUILT, NOT SURFACED · `POST /turns`, team-scoped. Devon is on his own Claude plan in
-    //       his own terminal; his key and Ravi's resolve to one team namespace, so his prompts come
-    //       back here. Every tool on the market can read Devon's COMMITS. This reads what he TYPED.
+    //       🟡 BUILT, NOT SURFACED · `POST /turns`, team-scoped. Michael is on his own Claude plan in
+    //       his own terminal; his key and Ben's resolve to one team namespace, so his prompts come
+    //       back here. Every tool on the market can read Michael's COMMITS. This reads what he TYPED.
     //
     //       ⚠️ **AND THE SECOND HALF DOES NOT EXIST, SO ESTELLE SAYS SO.** The log stores
-    //       `role="user"` rows only. Devon's ANSWERS are not in it. The old version of this beat
+    //       `role="user"` rows only. Michael's ANSWERS are not in it. The old version of this beat
     //       drew them anyway, under a column headed "what they were told". The refusal is now the
     //       strongest line in the film.
     Beat {
         typed: &[Key::Type(
-            "what has devon been asking about the capture retries",
+            "what has michael been asking about the capture retries",
         )],
         think_ms: 4_600,
         reply: &[
@@ -367,15 +367,15 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
                 columns: TURN,
                 rows: &[
                     "at | who | what was typed, word for word",
-                    "09:40 | devon | where do we bound the capture retries? i cant find a cap anywhere",
-                    "09:52 | devon | does stripe retry the capture on its own or do i need to",
-                    "10:07 | devon | adding the idempotency key on my branch, is that the right place",
-                    "10:41 | devon | whats the column type for idempotency_key on payments",
+                    "09:40 | michael | where do we bound the capture retries? i cant find a cap anywhere",
+                    "09:52 | michael | does stripe retry the capture on its own or do i need to",
+                    "10:07 | michael | adding the idempotency key on my branch, is that the right place",
+                    "10:41 | michael | whats the column type for idempotency_key on payments",
                 ],
             },
             Say::Wait(2_400),
             Say::Answer {
-                text: "Devon asked where the capture retries are bounded at 09:40. He adds the \
+                text: "Michael asked where the capture retries are bounded at 09:40. He adds the \
                        idempotency key on his branch, which is the half that makes your change safe.",
                 grounded: true,
             },
@@ -391,12 +391,12 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
                 columns: PRESENT,
                 rows: &[
                     "who | since | files in flight",
-                    "Devon | 09:12 today | billing/capture.py, billing/keys.py",
+                    "Michael | 09:12 today | billing/capture.py, billing/keys.py",
                 ],
             },
             Say::Wait(1_400),
             Say::Answer {
-                text: "Devon is inside billing/capture.py right now. You are both an hour from a \
+                text: "Michael is inside billing/capture.py right now. You are both an hour from a \
                        merge conflict neither of you has heard about.",
                 grounded: true,
             },
@@ -420,13 +420,13 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
                     "at | who | what was typed, word for word",
                     "Mon 10:22 | marcus | what should the status cache use if not redis",
                     "Mon 11:30 | marcus | reverting the redis status cache, main is clean",
-                    "Mon 14:10 | sam | does postgres add latency on the capture path",
+                    "Mon 14:10 | kyle | does postgres add latency on the capture path",
                 ],
             },
             Say::Wait(2_400),
             Say::Answer {
                 text: "Nobody disagrees. Marcus asked your question on Monday and reverted the \
-                       Redis cache an hour later. Sam asked the latency question you would ask next.",
+                       Redis cache an hour later. Kyle asked the latency question you would ask next.",
                 grounded: true,
             },
             Say::Wait(1_600),
@@ -460,7 +460,7 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
     //         prose. `docs/demos/SHOWN-NOT-BUILT.md` carries the row.
     Beat {
         typed: &[Key::Type(
-            "the card saying we run payments through the legacy charge api is wrong, priya moved us off it in march",
+            "the card saying we run payments through the legacy charge api is wrong, anna moved us off it in march",
         )],
         think_ms: 4_000,
         reply: &[
@@ -469,7 +469,7 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
                 lines: &[
                     "purged: 1",
                     "retracted: payments run through the legacy charge API",
-                    "reason: Priya migrated capture off it in March",
+                    "reason: Anna migrated capture off it in March",
                 ],
             },
             Say::Wait(2_000),
@@ -519,7 +519,7 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
         typed: &[
             Key::Type("while thats going "),
             Key::Pause(1_200),
-            Key::Type("what did priya actually change in the fetch"),
+            Key::Type("what did anna actually change in the fetch"),
             // The four workers report in. Nothing below touches his composer.
             Key::Interrupt(&[Say::Orchestra(&FLEET_MID)]),
             Key::Pause(1_600),
@@ -528,7 +528,7 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
         think_ms: 3_800,
         reply: &[
             Say::Answer {
-                text: "Priya put a two-deep retry with a backoff in claims/upstream.py. She capped \
+                text: "Anna put a two-deep retry with a backoff in claims/upstream.py. She capped \
                        it because the insurer counts requests per minute, not per call.",
                 grounded: true,
             },
@@ -552,7 +552,7 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
         think_ms: 3_600,
         reply: &[
             Say::Answer {
-                text: "Sam wrote it on Monday for the new webhook. Read it after this merges, \
+                text: "Kyle wrote it on Monday for the new webhook. Read it after this merges, \
                        because it covers the retry path you are changing.",
                 grounded: true,
             },
@@ -607,7 +607,7 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
             },
             Say::Wait(1_800),
             Say::Answer {
-                text: "Your half is ready. It writes the same key Devon's branch writes, so the two \
+                text: "Your half is ready. It writes the same key Michael's branch writes, so the two \
                        branches merge without a second design.",
                 grounded: true,
             },
@@ -637,13 +637,13 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
                 columns: NOTES,
                 rows: &[
                     "who | the note they left | at",
-                    "Sam | retry policy module, no ticket yet | Thu 16:20",
+                    "Kyle | retry policy module, no ticket yet | Thu 16:20",
                     "Marcus | redis is out of the status path, keep it out | Mon 10:31",
                 ],
             },
             Say::Wait(2_000),
             Say::Answer {
-                text: "Marcus, Priya and Sam worked overnight and none of them is here now. You are \
+                text: "Marcus, Anna and Kyle worked overnight and none of them is here now. You are \
                        the only person active on this repo.",
                 grounded: true,
             },
@@ -654,7 +654,7 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
                 grounded: true,
             },
             Say::Wait(1_600),
-            Say::System("Three people come back to a note that names your half and Devon's."),
+            Say::System("Three people come back to a note that names your half and Michael's."),
         ],
         read_ms: 8_800,
     },
@@ -665,7 +665,7 @@ pub(crate) const CARTWHEEL: &[Beat] = &[
         think_ms: 3_600,
         reply: &[
             Say::Answer {
-                text: "One thing. Priya opened a rate-limit branch on Friday and it is waiting on \
+                text: "One thing. Anna opened a rate-limit branch on Friday and it is waiting on \
                        your review. Everything else moves without you.",
                 grounded: true,
             },
