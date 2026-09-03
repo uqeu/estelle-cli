@@ -2183,14 +2183,40 @@ async fn reindex(
         lines.push("--dry-run: nothing was sent.".to_string());
         return Ok(lines);
     }
-    let response = api
-        .post_scoped(
-            Endpoint::Reindex,
-            repo,
-            &with_measured_head(json!({"files": files, "removed": deleted_set}), root),
-        )
-        .await?;
-    lines.push("Memory current. Untouched files kept their symbols.".to_string());
+    // Asked BEFORE the write, because the question is *what did the graph hold when this run started*
+    // — reading it afterwards would be reading our own write back and calling it agreement.
+    let marker = server_indexed_head(api, repo).await;
+    let body = reindex_body(
+        json!({"files": files, "removed": deleted_set}),
+        root,
+        marker.as_deref(),
+    );
+    let covered = body.get("head").is_some();
+    let response = api.post_scoped(Endpoint::Reindex, repo, &body).await?;
+    if covered {
+        // 🔑 ⚠️ **ANY LOCAL FRESHNESS STAMP BELONGS INSIDE THIS BRANCH, NOT AFTER IT.** Branch
+        // `cli/gate-block-20260901` adds `mark_index_current(repo)` on this line — the grounding
+        // gate's licence to REFUSE an edit. Writing it while the server's graph is commits behind
+        // licenses the gate to block real code against a stale index: the same fail-open this
+        // function exists to close, one layer down. `covered` is the fact that licenses both, and it
+        // is a local `let` precisely so a merge lands inside the guard instead of beside it. Not
+        // stamping costs a block; stamping wrongly causes one.
+        lines.push("Memory current. Untouched files kept their symbols.".to_string());
+    } else {
+        lines.push(match marker.as_deref() {
+            Some(marker) => format!(
+                "Sent, but NOT marked current: Estelle's graph is anchored at {}, and this command \
+                 only ever sees your working tree — it cannot describe the commits in between. Run \
+                 `estelle sweep` to re-anchor.",
+                &marker[..marker.len().min(12)]
+            ),
+            None => {
+                "Sent, but NOT marked current: Estelle did not say which commit its graph holds, \
+                     so nothing here can prove this reindex covered it."
+                    .to_string()
+            }
+        });
+    }
     lines.extend(dropped_lines(&response));
     Ok(lines)
 }
@@ -2218,6 +2244,71 @@ fn with_measured_head(mut body: Value, root: &Path) -> Value {
         body["head"] = Value::String(head);
     }
     body
+}
+
+/// The `/reindex` request body, stamped with `head` ONLY when this run provably covered the range
+/// that stamp would claim.
+///
+/// 🔴 **`estelle reindex` DERIVES ITS CHANGE SET FROM THE WORKING TREE AND USED TO STAMP THE WHOLE
+/// HISTORY.** `git diff --name-only HEAD` plus untracked files consults NO COMMIT: the set it
+/// produces describes the range `HEAD..HEAD` and nothing else. Stamping `head = HEAD` on the back of
+/// it claims the graph *is* that commit — so with the graph anchored 19 commits back and one
+/// uncommitted edit, the command sent ONE file and certified twenty commits. Reproduced against real
+/// git before this existed: change set 1 file, commits between marker and HEAD 19, head stamped
+/// `526aa8e5`.
+///
+/// ⛔ **AND THAT IS WORSE THAN THE STALE MARKER IT REPLACED.** A stale marker produces an honest
+/// refusal — *"indexed at X, repo is now Y"* — which is correct, actionable, and what customers see
+/// today. This produced a confident FALSE NEGATIVE: a graph that reports itself current, answers
+/// questions about code it has never seen, and makes every real symbol in those commits read as
+/// invented. The whole point of the marker is to make that impossible.
+///
+/// So the stamp is licensed by exactly one fact: **the server's marker already equals this HEAD.**
+/// Then, and only then, does a working-tree change set cover the range it is about to claim — which
+/// is the common case (a repo swept a moment ago, one file edited since) and the case the marker was
+/// built for. Every other state omits the field:
+///
+/// * `None` — we could not ask the server. ⛔ *Not knowing what the graph holds is not evidence about
+///   what the graph holds*, and reading an unanswered question as agreement is the fail-open in its
+///   politest costume — it would fire hardest on never-swept repos, where the graph holds nothing.
+/// * `Some("")` — the server holds NO marker: `never swept` or `undated`. An absent marker and a
+///   matching one must never be the same bytes.
+/// * a DIFFERENT sha — the graph is anchored somewhere this run did not start from. The files still
+///   go (they are real and current); the claim does not.
+/// * an unreadable local HEAD — nothing to compare, and the pre-existing rule that a head is never
+///   invented still holds through this path.
+///
+/// ⚠️ **STATED LIMIT.** This makes the stamp honest; it does not make `estelle reindex` able to close
+/// a gap. A repo whose marker is behind still needs a run that actually sends the intervening
+/// commits — `estelle sweep`, or the Python client's `--since`, which diffs the server's marker
+/// against HEAD. The refusal here is deliberately the weaker, correct outcome.
+fn reindex_body(body: Value, root: &Path, server_marker: Option<&str>) -> Value {
+    match (git_head(root), server_marker) {
+        (Some(head), Some(marker)) if !marker.is_empty() && marker == head => {
+            with_measured_head(body, root)
+        }
+        _ => body,
+    }
+}
+
+/// The commit the SERVER says it has indexed for `repo`, or `None` when it cannot say.
+///
+/// `POST /graph/edges {"head": true}` is the one owner of *"which commit is this graph?"* — the same
+/// door the navigation refusal reads — so asking it here means the CLI and that refusal cannot
+/// disagree about the same repo in the same second. ⛔ Every failure degrades to `None`, never to a
+/// value: a blip, an older build, or a repo the server has never seen must all read as *we could not
+/// ask*, which `reindex_body` treats as no licence at all.
+async fn server_indexed_head(api: &Api, repo: &Repo) -> Option<String> {
+    let answer = api
+        .post_scoped(Endpoint::GraphEdges, repo, &json!({"head": true}))
+        .await
+        .ok()?;
+    answer
+        .get("indexed_head")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|marker| !marker.is_empty())
+        .map(str::to_string)
 }
 
 fn dropped_lines(response: &Value) -> Vec<String> {
@@ -5263,6 +5354,144 @@ tests/test_serve.py:88: AssertionError\n\
 
         let plain = tempfile::tempdir().expect("non-repo");
         let body = with_measured_head(json!({"files": []}), plain.path());
+        assert!(
+            body.get("head").is_none(),
+            "an unreadable HEAD must omit the field, never invent one"
+        );
+    }
+
+    /// A repo whose graph is anchored at commit 1 while the checkout is at commit N, with ONE
+    /// uncommitted edit — the exact state `estelle reindex` meets on any active repository.
+    /// Returns `(root, first_commit, head_commit)`.
+    fn stale_marker_repo(commits: usize) -> (tempfile::TempDir, String, String) {
+        use std::fs;
+        let root = tempfile::tempdir().expect("git source root");
+        let git = |arguments: &[&str]| {
+            let output = ProcessCommand::new("git")
+                .arg("-C")
+                .arg(root.path())
+                .args([
+                    "-c",
+                    "user.name=Estelle Test",
+                    "-c",
+                    "user.email=test@example.com",
+                ])
+                .args(arguments)
+                .output()
+                .expect("git");
+            assert!(output.status.success(), "git {arguments:?} failed");
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        };
+        git(&["init"]);
+        fs::write(root.path().join("first.rs"), "fn first() {}\n").expect("source");
+        git(&["add", "."]);
+        git(&["commit", "-m", "one"]);
+        let first = git(&["rev-parse", "HEAD"]);
+        for index in 1..commits {
+            fs::write(
+                root.path().join(format!("later{index}.rs")),
+                format!("fn later{index}() {{}}\n"),
+            )
+            .expect("source");
+            git(&["add", "."]);
+            git(&["commit", "-m", "later"]);
+        }
+        let head = git(&["rev-parse", "HEAD"]);
+        // The one uncommitted edit. A CLEAN tree returns early from `reindex`; a dirty one is the
+        // hazard, because it gives the command something real to send and therefore a reason to stamp.
+        fs::write(
+            root.path().join("first.rs"),
+            "fn first() { /* edited */ }\n",
+        )
+        .expect("edit");
+        (root, first, head)
+    }
+
+    /// 🔴 **THE FAIL-OPEN, REPRODUCED WITH REAL GIT: A ONE-FILE REINDEX STAMPS THE WHOLE HISTORY.**
+    ///
+    /// `estelle reindex` derives its change set from `git diff --name-only HEAD` plus untracked
+    /// files — the WORKING TREE ONLY, no commit consulted — and then stamps `head = HEAD` through
+    /// `with_measured_head`. So with the graph anchored 19 commits back and one uncommitted edit, the
+    /// command sends ONE file and tells the server the graph is now commit 20.
+    ///
+    /// **That is worse than the stale marker it replaces.** A stale marker produces an honest refusal
+    /// — *"indexed at X, repo is now Y"* — which is correct and is what customers see today. This
+    /// produces a confident FALSE NEGATIVE: the graph reports itself current, answers questions about
+    /// 19 commits of code it has never seen, and every real symbol in them reads as invented.
+    ///
+    /// This test asserts the FIXED behaviour. Before the fix it fails on the second assertion, and the
+    /// first two assertions are the reproduction: they show the change set is one file while the range
+    /// the stamp would claim is nineteen commits wide.
+    #[test]
+    fn a_reindex_that_covered_one_file_may_not_stamp_a_graph_anchored_19_commits_back() {
+        let (root, first, head) = stale_marker_repo(20);
+        let changed = git_paths(root.path(), &["diff", "--name-only", "-z", "HEAD"])
+            .expect("the shipped change-set derivation");
+        assert_eq!(
+            changed.len(),
+            1,
+            "the change set is the WORKING TREE only — this is the reproduction, not the bug"
+        );
+        assert_ne!(first, head, "the fixture must actually have moved");
+
+        let stale = reindex_body(json!({"files": []}), root.path(), Some(first.as_str()));
+        assert!(
+            stale.get("head").is_none(),
+            "a reindex whose change set covers HEAD..HEAD may NOT stamp a graph anchored at an \
+             EARLIER commit — that certifies {} commits of code the graph has never seen",
+            19
+        );
+    }
+
+    /// The other half, and the reason this is a guard rather than a blanket refusal: when the graph
+    /// is ALREADY anchored at HEAD, a working-tree reindex genuinely covers the range it claims, so
+    /// the stamp is honest and must survive. A fix that simply deleted the stamp would pass the test
+    /// above and silently retire the marker for the one case it is correct in.
+    #[test]
+    fn a_reindex_on_a_graph_already_anchored_at_head_still_stamps() {
+        let (root, _first, head) = stale_marker_repo(3);
+        let body = reindex_body(json!({"files": []}), root.path(), Some(head.as_str()));
+        assert_eq!(
+            body["head"].as_str(),
+            Some(head.as_str()),
+            "the marker must still advance where the change set provably covers the range"
+        );
+    }
+
+    /// ⛔ **AN UNREADABLE MARKER IS NOT AN ABSENT ONE AND NEITHER IS A LICENCE.** `None` here means
+    /// *we could not ask the server* — a network blip, an older build, a repo it has never seen. The
+    /// tempting reading is "no marker, so nothing to contradict, so stamp"; that is the fail-open
+    /// wearing its politest costume, and it fires on exactly the never-swept repos where the graph
+    /// holds nothing at all.
+    #[test]
+    fn a_marker_the_client_could_not_read_never_licenses_a_stamp() {
+        let (root, _first, _head) = stale_marker_repo(3);
+        let body = reindex_body(json!({"files": []}), root.path(), None);
+        assert!(
+            body.get("head").is_none(),
+            "not knowing what the graph holds is not evidence about what the graph holds"
+        );
+    }
+
+    /// A graph the server holds NO marker for is the `never swept` / `undated` state, and it is the
+    /// one a working-tree reindex can help with least: the graph either does not exist or was built
+    /// by a door that recorded no commit. Sending the files is still useful; claiming a commit is not.
+    #[test]
+    fn an_empty_server_marker_never_licenses_a_stamp() {
+        let (root, _first, _head) = stale_marker_repo(3);
+        let body = reindex_body(json!({"files": []}), root.path(), Some(""));
+        assert!(
+            body.get("head").is_none(),
+            "an empty marker means UNDATED, which is never the same bytes as `current`"
+        );
+    }
+
+    /// A checkout whose own HEAD cannot be read cannot be compared to anything, so there is no
+    /// agreement to find. The pre-existing rule — never invent a head — still holds through the guard.
+    #[test]
+    fn an_unreadable_local_head_never_licenses_a_stamp() {
+        let plain = tempfile::tempdir().expect("non-repo");
+        let body = reindex_body(json!({"files": []}), plain.path(), Some(&"a".repeat(40)));
         assert!(
             body.get("head").is_none(),
             "an unreadable HEAD must omit the field, never invent one"

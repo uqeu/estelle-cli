@@ -93,6 +93,10 @@ endpoints! {
     (Wiki, "wiki", [Get], true),
     (Graph, "graph", [Get], true),
     (GraphNodes, "graph/nodes", [Get], true),
+    // `POST {"head": true}` is the ONE owner of "which commit is this graph?" — the same door the
+    // navigation refusal reads, which is why `estelle reindex` asks it rather than deciding for
+    // itself whether its change set covered the range it is about to stamp.
+    (GraphEdges, "graph/edges", [Post], true),
     (SkillRun, "skill/run", [Post], true),
     (Autonomy, "autonomy", [Post], false),
     (AutonomyScope, "autonomy/scope", [Get, Post], true),
