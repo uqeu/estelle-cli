@@ -47,6 +47,12 @@ PLUGIN_CONTRACT_SHA256_BY_VERSION = {
     # the bundle was regenerated from the Rust owner, which is exactly what an unreleased version's
     # digest is for. The two above it are published and are byte-untouched.
     "0.2.33": "4ff63c24250febb7c079a15570e177ec86b5341659f6725568f82133583fff0a",
+    # 0.3.0. The 0.2.33 line above never shipped — the tree went straight from published 0.2.32 to
+    # this, so no customer ever held a 0.2.33 cache key and its row is kept only as history. This
+    # digest was not typed: the guard refused v0.3.0 for having none and printed the value it
+    # measured over the 5 shipping files, which is the only way a pin like this should ever be
+    # obtained. The two PUBLISHED rows above are byte-untouched.
+    "0.3.0": "75f530879a621faaa93960b0219fc194a78ace7442c8897db841518255822e95",
 }
 
 #: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.

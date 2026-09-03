@@ -14,7 +14,7 @@
       "name": "estelle",
       "source": "./estelle-plugin",
       "description": "Code memory + the grounding gate, always on. Grounds every model in your real codebase and refuses to ship what isn't true.",
-      "version": "0.2.33",
+      "version": "0.3.0",
       "category": "development",
       "keywords": [
         "mcp",
