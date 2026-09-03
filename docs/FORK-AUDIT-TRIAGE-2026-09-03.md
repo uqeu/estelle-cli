@@ -60,3 +60,40 @@ It is a **routing decision**, not a verdict. A file in group A is cheap *to read
 group; each still gets its own row from its own diff. The axis scan cannot see semantics — it would score
 a deliberate exfiltration written with an already-imported client as zero on `network` if the call reused
 an existing helper name. Zeros are evidence, not proof.
+
+## 🔴 The refusal message understates the blocker: it is 126 files, not 92
+
+`verify_provenance` refuses on the **set comparison** (`risky != sorted(reviewed)`) *before* it
+reaches the per-row `git hash-object` loop. So the 92-undeclared message is the FIRST refusal, not
+the only one. Checking every declared row's blob directly, ahead of that gate:
+
+```
+python3 - <<'PY'   # (in the worktree)
+import json, subprocess, os
+m = json.load(open('fork-manifest.yaml'))
+for r in m['reviewed_changes_after_audited_commit']:
+    p = r['path']
+    if r['blob'] == 'deleted' or not os.path.exists(p): continue
+    a = subprocess.run(['git','hash-object',p], capture_output=True, text=True).stdout.strip()
+    if a != r['blob']: print(p, a, r['blob'])
+PY
+```
+
+**34 of the 87 existing rows have drifted blobs**, totalling **14,254 added / 2,348 removed lines**
+against the hash each row attests. Added to the 92 undeclared files (~19,000 added lines), the tag
+is blocked on **126 files**, not 92. The drifted set includes the four largest files in the fork:
+
+| File | delta vs. its ATTESTED blob |
+|------|------------------------------|
+| `tui/src/main.rs` | +6,218 / −785 |
+| `tui/src/top_level.rs` | +1,726 / −216 |
+| `tui/src/live_renderer.rs` | +1,609 / −834 |
+| `tui/src/screens.rs` | +1,283 / −144 |
+| `tui/src/commands.rs` | +620 / −47 |
+| `tui/src/theme.rs` | +510 / −12 |
+| `tui/src/production_hud.rs` | +507 / −109 |
+| (27 more, each under 300 added) | |
+
+This is the audit working exactly as designed — a blob is the mechanism by which a row stops being
+true when its file moves — but it means **no honest count of this work is 92**. Anyone planning
+around the error message's number is planning around a third of the job.
