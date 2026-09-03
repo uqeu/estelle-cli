@@ -7621,7 +7621,17 @@ async fn main() -> ExitCode {
                 (lines, ExitCode::FAILURE)
             }
         };
+        // 🔴 EMPTY MEANS ZERO BYTES, NOT A BARE NEWLINE. Every silent hook path — offline, no
+        // credential, nothing recalled, and now the deadline — returns `Ok(vec![])` and the
+        // contract those paths are written against is "emit NOTHING and exit 0". `format!("{}\n",
+        // [].join("\n"))` is `"\n"`, so until this branch existed each of them wrote one byte to
+        // stdout. A `UserPromptSubmit` hook's stdout is additionalContext: a lone newline is a
+        // write where the code, the docstrings and the tests all say there is none. The exit code
+        // is unchanged — silence is success.
         let mut stdout = tokio::io::stdout();
+        if lines.is_empty() {
+            return code;
+        }
         let body = format!("{}\n", lines.join("\n"));
         return if stdout.write_all(body.as_bytes()).await.is_ok() {
             code

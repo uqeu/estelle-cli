@@ -434,21 +434,84 @@ async fn run_hook_with(
     }
     // Every arm here is a mode the installer table can declare — the dispatch test walks the
     // table so a declared mode can never error "unknown mode" at runtime.
-    let result = match mode {
-        "ground" => ground_hook(&payload, repo, root).await,
-        "guard" => Ok(guard_hook(&payload)),
-        "shift" => Ok(file_shift_hook(&payload, repo, root).await),
-        "sync" => sync_hook(&payload, repo, root).await,
-        "distil" => Ok(distil_hook(&payload)),
-        "checkpoint" => checkpoint_hook(&payload).await,
-        "welcome" => Ok(welcome_hook(&payload).await),
-        "context" => context_hook(&payload, repo).await,
-        _ => Err(format!(
-            "unknown hook mode {mode:?}; expected one of: {}",
-            hook_modes().join(", ")
-        )),
+    let dispatch = async {
+        match mode {
+            "ground" => ground_hook(&payload, repo, root).await,
+            "guard" => Ok(guard_hook(&payload)),
+            "shift" => Ok(file_shift_hook(&payload, repo, root).await),
+            "sync" => sync_hook(&payload, repo, root).await,
+            "distil" => Ok(distil_hook(&payload)),
+            "checkpoint" => checkpoint_hook(&payload).await,
+            "welcome" => Ok(welcome_hook(&payload).await),
+            "context" => context_hook(&payload, repo).await,
+            _ => Err(format!(
+                "unknown hook mode {mode:?}; expected one of: {}",
+                hook_modes().join(", ")
+            )),
+        }
     };
+    let result = run_hook_bounded(hook_budget(mode), dispatch).await;
     result.map_err(|error| hook_failure(&event, mode, "execute", hook_execution_need(mode), &error))
+}
+
+/// The host kill this mode must fit inside — the SHORTEST row that can install it.
+///
+/// ⚠️ `min`, NOT `first`. `checkpoint` is installed by three rows (`Stop`, `PreCompact`,
+/// `SessionEnd`); a mode's budget has to survive the tightest host budget it can run under, and
+/// picking any one row would make the deadline correct on that door and wrong on the others. The
+/// three agree at 30 s today, so this clause is latent — written for the day one of them moves.
+///
+/// An unlisted mode falls back to the `context` row's kill. That arm returns "unknown hook mode"
+/// immediately, so the number is never load-bearing; it exists so the lookup has no panic in it.
+fn hook_host_timeout_secs(mode: &str) -> u64 {
+    HOOK_TABLE
+        .iter()
+        .filter(|row| row.mode == mode)
+        .map(|row| row.timeout)
+        .min()
+        .unwrap_or(CONTEXT_HOOK_HOST_TIMEOUT_SECS)
+}
+
+/// Every verb's own give-up, derived from [`HOOK_TABLE`] by [`hook_budget_secs`].
+fn hook_budget(mode: &str) -> Duration {
+    Duration::from_secs(hook_budget_secs(hook_host_timeout_secs(mode)))
+}
+
+/// 🔴 THE DEADLINE ON **EVERY** VERB — the half `CONTEXT_HOOK_BUDGET` never covered.
+///
+/// Claude Code kills a hook at its declared timeout and lets the turn proceed WITHOUT its output,
+/// silently: no certificate, no error, the model answering from its weights exactly as if Estelle
+/// were not installed. Until this wrapper existed exactly one of the eight verbs bounded itself
+/// (`context`, inside [`context_recall_lines`]); the other seven — `ground`, `guard`, `shift`,
+/// `sync`, `distil`, `checkpoint`, `welcome` — inherited whatever the server took, and three of
+/// them (`ground`, `sync`, `context`) are server-bound on a hot path.
+///
+/// ⚠️ ITS LIMIT, NAMED RATHER THAN HIDDEN — AND IT IS THE SAME LIMIT THE INNER ONE HAS. A
+/// `tokio::time::timeout` bounds a future that YIELDS. It cannot interrupt a call that blocks the
+/// thread, and wrapped around one it is decoration that reads as a bound in review. Everything
+/// before this point is deliberately outside it: the blocking stdin read, repo discovery, and the
+/// synchronous `Api::resolve` inside `context_hook`. This bounds the AWAIT-ing body of each verb,
+/// which is where every network call lives. If a blocking call on this path ever stops being
+/// negligible the answer is `spawn_blocking`, not a wider wrapper.
+///
+/// 🔬 IT IS A NAMED FUNCTION TAKING ITS BUDGET AS AN ARGUMENT SO THE BOUND CAN BE SHOWN FIRING —
+/// the same reason [`context_recall_lines`] was split out. A structural check proves a timeout
+/// EXISTS and can never prove it RUNS; `the_hook_deadline_fires_and_emits_nothing` drives a real
+/// future past a real budget and asserts it returned empty AND early, and its sibling positive
+/// control asserts a fast future still returns its lines (without which "always empty" would pass).
+///
+/// On exhaustion: `Ok(vec![])` — emit NOTHING, exit 0. Never a partial write, because no verb
+/// writes to stdout itself; every line reaches the terminal through this return value, so a
+/// cancelled future has printed nothing by construction. Silence is the correct outcome: the model
+/// simply does not get the enrichment this turn, and the human's prompt survives.
+async fn run_hook_bounded<F>(budget: Duration, dispatch: F) -> Result<Vec<String>, String>
+where
+    F: std::future::Future<Output = Result<Vec<String>, String>>,
+{
+    match tokio::time::timeout(budget, dispatch).await {
+        Ok(result) => result,
+        Err(_elapsed) => Ok(Vec::new()),
+    }
 }
 
 fn hook_event_label(mode: &str, expected: Option<&str>, payload: Option<&str>) -> String {
@@ -591,7 +654,7 @@ fn context_hook_offline(payload: &HookPayload, gate_disabled: bool) -> Option<Ve
 /// customer — it is not in v0.2.31 (it postdates the build) and it is not in v0.2.32 (it was
 /// never merged to `main`), so **the artifact people are running has no client bound at all**.
 const CONTEXT_HOOK_BUDGET: Duration =
-    Duration::from_secs(CONTEXT_HOOK_HOST_TIMEOUT_SECS - CONTEXT_HOOK_MARGIN_SECS);
+    Duration::from_secs(hook_budget_secs(CONTEXT_HOOK_HOST_TIMEOUT_SECS));
 
 /// The exact body the context hook puts on the wire, as one named function, so the shape is
 /// assertable without a network and pinned by a test that reads the real request bytes.
@@ -1780,7 +1843,34 @@ const CONTEXT_HOOK_HOST_TIMEOUT_SECS: u64 = 30;
 /// The margin is the point: being killed by the host is the original defect, because the host
 /// discards the hook's output AND the prompt with it. Giving up ourselves returns exit 0 with an
 /// empty enrichment, which costs the model some context and costs the human nothing.
-const CONTEXT_HOOK_MARGIN_SECS: u64 = 10;
+///
+/// ⚠️ IT WAS NAMED `CONTEXT_HOOK_MARGIN_SECS` WHILE GOVERNING ONE VERB OF EIGHT. The name was
+/// accurate and the coverage was the defect — see [`hook_budget`].
+const HOOK_MARGIN_SECS: u64 = 10;
+
+/// The client's own give-up for a hook whose host kill is `host_timeout_secs`.
+///
+/// 🔴 ONE OWNER FOR EVERY VERB'S DEADLINE, DERIVED, NEVER TYPED. [`CONTEXT_HOOK_BUDGET`] and
+/// [`hook_budget`] both come from here, so the `context` budget cannot drift from the rule the
+/// other seven verbs obey. At the `context` row's 30 s host kill this returns exactly the 20 s
+/// that constant already had — the generalisation is asserted to reproduce it, which is the only
+/// way to know a refactor of a live constant changed nobody's behaviour.
+///
+/// ⚠️ THE MARGIN IS CAPPED AT HALF THE HOST BUDGET, AND THAT CLAUSE IS LATENT TODAY. A flat
+/// `host - 10` underflows on the two 5 s rows (`shift`, `welcome`) — in a `const` context that is
+/// a compile error and at runtime a debug panic, which is a deadline that takes the process down
+/// instead of bounding it. Halving keeps every row positive (30→20, 10→5, 5→3) and keeps the
+/// margin proportional rather than swallowing a short budget whole.
+const fn hook_budget_secs(host_timeout_secs: u64) -> u64 {
+    let half = host_timeout_secs / 2;
+    let margin = if HOOK_MARGIN_SECS < half {
+        HOOK_MARGIN_SECS
+    } else {
+        half
+    };
+    let budget = host_timeout_secs - margin;
+    if budget == 0 { 1 } else { budget }
+}
 
 /// THE hook contract — every row `install-hooks` writes, for both hosts, plus the plugin
 /// manifest, from one table.
@@ -6334,9 +6424,108 @@ tests/test_serve.py:88: AssertionError\n\
         }
         assert_eq!(
             CONTEXT_HOOK_BUDGET,
-            Duration::from_secs(CONTEXT_HOOK_HOST_TIMEOUT_SECS - CONTEXT_HOOK_MARGIN_SECS),
+            Duration::from_secs(CONTEXT_HOOK_HOST_TIMEOUT_SECS - HOOK_MARGIN_SECS),
             "the budget is derived from the host kill, never typed independently"
         );
+        // 🔬 THE REFACTOR'S OWN DISCRIMINATING CHECK. `hook_budget_secs` generalised a constant
+        // that was already live; the only way to know it changed nobody's behaviour is to assert
+        // the general rule reproduces the specific number it replaced, by BOTH routes.
+        assert_eq!(
+            CONTEXT_HOOK_BUDGET,
+            Duration::from_secs(20),
+            "the shipped context budget is 20 s and the generalisation must not have moved it"
+        );
+        assert_eq!(
+            hook_budget("context"),
+            CONTEXT_HOOK_BUDGET,
+            "the per-verb lookup and the context constant are one owner"
+        );
+    }
+
+    /// 🔴 EVERY VERB HAS A DEADLINE, AND EVERY DEADLINE SITS UNDER ITS HOST'S KILL.
+    ///
+    /// The predecessor of this test covered `context` alone, and covered it correctly — that is
+    /// the shape of a partial guard: green over the one clause somebody wrote, silent about the
+    /// seven it never enumerated. This walks [`HOOK_TABLE`] itself, so a verb added tomorrow is
+    /// covered the day it is added rather than the day someone remembers to extend a list.
+    #[test]
+    fn every_hook_verb_gives_up_before_its_host_does() {
+        for mode in hook_modes() {
+            let host = Duration::from_secs(hook_host_timeout_secs(mode));
+            let budget = hook_budget(mode);
+            assert!(
+                budget < host,
+                "{mode}: the host kills at {host:?} and the client waits {budget:?} — the work \
+                 finishes and is thrown away with the user's turn"
+            );
+            assert!(
+                budget > Duration::ZERO,
+                "{mode}: a zero budget expires before the verb can start, so the hook is \
+                 permanently silent while looking installed"
+            );
+        }
+        // Negative control: the scan is only meaningful if it is looking at every declared verb.
+        assert_eq!(
+            hook_modes().len(),
+            8,
+            "eight verbs are declared; a change to that number must be looked at, not absorbed"
+        );
+        // The two 5 s rows are the ones a flat `host - 10` underflows on. Assert the values, not
+        // just the inequality — an underflow that wrapped would satisfy `budget < host` too.
+        assert_eq!(hook_budget("welcome"), Duration::from_secs(3));
+        assert_eq!(hook_budget("shift"), Duration::from_secs(3));
+        assert_eq!(hook_budget("guard"), Duration::from_secs(5));
+        assert_eq!(hook_budget("ground"), Duration::from_secs(20));
+        assert_eq!(hook_budget("sync"), Duration::from_secs(20));
+        assert_eq!(hook_budget("checkpoint"), Duration::from_secs(20));
+    }
+
+    /// 🔬 THE BOUND FIRES, AND THE CONTROL PROVES THE TEST CAN FAIL.
+    ///
+    /// A structural check proves a `tokio::time::timeout` EXISTS in the source and can never
+    /// prove it RUNS — wrapped around a future that blocks its thread it never fires at all, and
+    /// reads as a deadline in review while being decoration at runtime. So: drive a real future
+    /// past a real budget and assert BOTH halves of the contract — it returned NOTHING, and it
+    /// returned EARLY. Without the positive control below, an implementation that always returned
+    /// `Ok(vec![])` would pass this and ship a hook that is silent forever.
+    #[tokio::test]
+    async fn the_hook_deadline_fires_and_emits_nothing() {
+        let started = Instant::now();
+        let lines = run_hook_bounded(Duration::from_millis(50), async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            Ok(vec!["THIS LINE MUST NEVER REACH STDOUT".to_string()])
+        })
+        .await
+        .expect("an expired budget is success, not an error — the human's turn must survive");
+        assert!(
+            lines.is_empty(),
+            "budget exhaustion must emit NOTHING, never a partial write: {lines:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "it waited {:?} for a 50 ms budget — the timeout did not fire, so it is decoration",
+            started.elapsed()
+        );
+
+        // POSITIVE CONTROL: the same wrapper, a future that finishes, must return its lines.
+        let kept = run_hook_bounded(Duration::from_secs(30), async {
+            Ok(vec!["kept".to_string()])
+        })
+        .await
+        .expect("a fast hook still succeeds");
+        assert_eq!(
+            kept,
+            vec!["kept".to_string()],
+            "the wrapper must not swallow the output of a hook that finished in time"
+        );
+
+        // And an error still propagates — the deadline must not convert a real failure into
+        // silence, which would hide exactly the breakage the failure text exists to report.
+        let failed = run_hook_bounded(Duration::from_secs(30), async {
+            Err::<Vec<String>, String>("boom".to_string())
+        })
+        .await;
+        assert_eq!(failed, Err("boom".to_string()));
     }
 
     #[test]
