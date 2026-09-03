@@ -6528,6 +6528,99 @@ tests/test_serve.py:88: AssertionError\n\
         assert_eq!(failed, Err("boom".to_string()));
     }
 
+    /// 🔴 THE VERSION THE MANIFEST'S OWN `@0` SPEC RESOLVES TO, AND THE VERBS THAT BINARY ANSWERS.
+    ///
+    /// Read off the published artifact on 2026-09-03, not remembered:
+    /// `npm view '@fatelabs/estelle@0' version` -> 0.2.32, and `git show v0.2.32:tui/src/top_level.rs`
+    /// has dispatch arms for exactly these eight. Written out by hand, because a list derived from
+    /// the tree it is checking agrees with that tree by construction and could never catch the
+    /// thing this exists to catch.
+    const FLOATING_SPEC_RESOLVES_TO: &str = "0.2.32";
+    const MODES_THAT_RELEASE_ANSWERS: &[&str] = &[
+        "checkpoint",
+        "context",
+        "distil",
+        "ground",
+        "guard",
+        "shift",
+        "sync",
+        "welcome",
+    ];
+
+    /// 🔴 A VERB ENTERS THE BINARY FIRST AND THE MANIFEST A RELEASE LATER — AS ARITHMETIC.
+    ///
+    /// Clause 5 of the host-adapter contract — *nothing proves the shipped binary answers the
+    /// verbs the shipped manifest names* — is already enforced WITHIN one build, by two tests in
+    /// this file that chain: `the_plugin_manifest_is_generated_from_the_one_hook_table` pins the
+    /// shipped manifest byte-for-byte against [`HOOK_TABLE`], and `every_table_mode_has_a_dispatch_arm`
+    /// drives every table mode through the real dispatch. Same-version is covered.
+    ///
+    /// ⚠️ ACROSS VERSIONS IT IS NOT, AND THAT IS THE HALF THAT REACHES CUSTOMERS. Every command in
+    /// the manifest is `npx -y @fatelabs/estelle@0 hook <mode>` — a FLOATING spec. The manifest is
+    /// data that installs on every customer machine; the binary is fetched separately and can be
+    /// older (a shadowing global install pins it there indefinitely). So a manifest shipped at
+    /// 0.3.0 naming a verb added at 0.3.0 is executed by whatever `@0` resolves to — today
+    /// 0.2.32 — which answers `Err("unknown hook mode")`. That is `ExitCode::FAILURE` on EVERY
+    /// matching event, on every machine, for a feature nobody asked to enable.
+    ///
+    /// Hence the ordering: the runner ships FIRST in a released version, the manifest adds the
+    /// verb SECOND. An unused verb in a binary harms nobody; a manifest entry executes at install.
+    /// This test is that rule with the prose taken out. To add a verb to the plugin door: publish
+    /// a release whose binary answers it, move [`FLOATING_SPEC_RESOLVES_TO`] and
+    /// [`MODES_THAT_RELEASE_ANSWERS`] to that release, THEN add the row with `plugin: true`.
+    ///
+    /// ⚠️ ITS LIMIT: the pin is hand-written from a probe taken on one day. It cannot notice that
+    /// `@0` has since moved — it can only refuse a manifest that outruns the version recorded
+    /// here, which is the safe direction to be wrong in.
+    #[test]
+    fn no_plugin_verb_outruns_the_binary_the_floating_spec_resolves_to() {
+        let manifest: Value =
+            serde_json::from_str(SHIPPED_PLUGIN_MANIFEST).expect("the shipped manifest is JSON");
+        let mut named = Vec::new();
+        for groups in manifest["hooks"]
+            .as_object()
+            .expect("the manifest declares events")
+            .values()
+        {
+            for group in groups.as_array().expect("each event holds groups") {
+                for hook in group["hooks"].as_array().expect("each group holds hooks") {
+                    let command = hook["command"].as_str().expect("each hook has a command");
+                    let mode = command
+                        .split_whitespace()
+                        .skip_while(|word| *word != "hook")
+                        .nth(1)
+                        .unwrap_or_else(|| panic!("no `hook <mode>` in command {command:?}"));
+                    assert!(
+                        command.contains("@fatelabs/estelle@0 "),
+                        "the pin below reasons about the `@0` spec; {command:?} uses another, so \
+                         this guard no longer means what its name says"
+                    );
+                    named.push(mode.to_string());
+                }
+            }
+        }
+        // Vacuity: a manifest that parsed to nothing would pass every assertion below.
+        assert!(
+            named.len() >= 9,
+            "only {} manifest commands parsed — the walk is not reading the manifest",
+            named.len()
+        );
+        for mode in &named {
+            assert!(
+                MODES_THAT_RELEASE_ANSWERS.contains(&mode.as_str()),
+                "the plugin manifest names `hook {mode}`, but `@0` resolves to \
+                 v{FLOATING_SPEC_RESOLVES_TO}, whose binary has no dispatch arm for it. Every \
+                 matching event on every customer machine would exit FAILURE with \"unknown hook \
+                 mode\". Ship the runner in a release first, move the pin, then add this row."
+            );
+        }
+        // NEGATIVE CONTROL: the membership test must be capable of refusing something.
+        assert!(
+            !MODES_THAT_RELEASE_ANSWERS.contains(&"axiom"),
+            "if this list ever contains an unreleased verb the guard above is decoration"
+        );
+    }
+
     #[test]
     fn every_table_mode_is_recognised_as_an_estelle_hook() {
         for row in HOOK_TABLE {
