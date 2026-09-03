@@ -105,12 +105,22 @@ jobs:
           - runner: macos-15-intel
             target: x86_64-apple-darwin
             file_marker: "Mach-O 64-bit executable x86_64"
-          - runner: ubuntu-24.04
+          # 🔴 22.04, NOT 24.04, AND THE REASON IS MEASURED. A binary linked on ubuntu-24.04
+          # (glibc 2.39) demands GLIBC_2.38 and GLIBC_2.39 at LOAD time. On 2026-09-03 the published
+          # 0.2.x binary installed cleanly on a stock Debian 12 image in a Firecracker microVM and then
+          # could not start: bookworm ships glibc 2.36. 22.04 ships 2.35, which covers Ubuntu 22.04 LTS,
+          # Debian 12, Ubuntu 24.04 and Debian 13.
+          # ⚠️ AND CI COULD NOT SEE IT: all ten fixed `runs-on:` values in this repo were ubuntu-24.04,
+          # including every job that verifies the published binary — so every green they produced was
+          # measured on the one image where the artifact works. `check-glibc-floor.py` below is the
+          # durable guard, because it reads the binary's OWN symbol requirements and so survives the
+          # next runner bump; this line alone would not.
+          - runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             file_marker: "x86-64"
           # GitHub's standard ARM runner keeps target-native OpenSSL and other C dependencies native too.
           # https://docs.github.com/en/actions/reference/runners/github-hosted-runners
-          - runner: ubuntu-24.04-arm
+          - runner: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
             file_marker: "ARM aarch64"
     runs-on: ${{ matrix.runner }}
@@ -133,6 +143,7 @@ jobs:
           binary="target/${{ matrix.target }}/release/estelle"
           test -x "$binary"
           python3 scripts/check-ip-boundary.py "$binary"
+          python3 scripts/check-glibc-floor.py "$binary"
           description=$(file "$binary")
           grep -F -- "${{ matrix.file_marker }}" <<<"$description"
           test "$("$binary" --version)" = "estelle ${ESTELLE_RELEASE_TAG#v}"
