@@ -430,17 +430,48 @@ mod tests {
     use wiremock::matchers::{body_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    /// Mount a graph tool whose call is EXPECTED to happen exactly once.
     async fn mount_graph_tool(
         server: &MockServer,
         name: &str,
         arguments: Value,
         text: Option<&str>,
     ) {
+        mount_graph_tool_counted(server, name, arguments, text, Some(1)).await;
+    }
+
+    /// Mount a graph tool WITHOUT asserting it is called.
+    ///
+    /// 🔴 `fetch` joins its four tool calls with `tokio::try_join!`, which short-circuits on the
+    /// first `Err` and DROPS the sibling futures. So in the case where `core_files` comes back
+    /// vacuous, `blast_radius` and `chokepoints` may be cancelled BEFORE their requests ever leave
+    /// the client — and a `.expect(1)` on those mocks then fails on SCHEDULING, not on behaviour.
+    ///
+    /// Measured, not guessed: runs 33785692730 (CI) and 33785737381 (release) both failed with
+    /// `Mock #0 … matched 0` while a third run at the SAME SHA `1915ec8e4` passed — 650 passed,
+    /// 1 failed, the same test each time. The call COUNT is not what that test is about; the
+    /// refusal message is, and it is asserted directly.
+    async fn mount_graph_tool_uncounted(
+        server: &MockServer,
+        name: &str,
+        arguments: Value,
+        text: Option<&str>,
+    ) {
+        mount_graph_tool_counted(server, name, arguments, text, None).await;
+    }
+
+    async fn mount_graph_tool_counted(
+        server: &MockServer,
+        name: &str,
+        arguments: Value,
+        text: Option<&str>,
+        expect_calls: Option<u64>,
+    ) {
         let result = text.map_or_else(
             || json!({"content": []}),
             |text| json!({"content": [{"type": "text", "text": text}], "isError": false}),
         );
-        Mock::given(method("POST"))
+        let mock = Mock::given(method("POST"))
             .and(path("/mcp"))
             .and(body_json(json!({
                 "jsonrpc": "2.0",
@@ -452,10 +483,12 @@ mod tests {
                 "jsonrpc": "2.0",
                 "id": 1,
                 "result": result
-            })))
-            .expect(1)
-            .mount(server)
-            .await;
+            })));
+        let mock = match expect_calls {
+            Some(n) => mock.expect(n),
+            None => mock,
+        };
+        mock.mount(server).await;
     }
 
     fn overview(value: Value) -> MonitorOverviewResponse {
@@ -789,7 +822,7 @@ mod tests {
             ("chokepoints", json!({"repo": "uqeu/estelle"})),
             ("subsystems", json!({"repo": "uqeu/estelle"})),
         ] {
-            mount_graph_tool(&server, name, arguments, Some("measured row")).await;
+            mount_graph_tool_uncounted(&server, name, arguments, Some("measured row")).await;
         }
         mount_graph_tool(&server, "core_files", json!({"repo": "uqeu/estelle"}), None).await;
         let client = Client::new(
