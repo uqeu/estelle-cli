@@ -27,6 +27,7 @@ codex-protocol = { workspace = true }
 codex-rollout = { workspace = true }
 codex-rollout-trace = { workspace = true }
 codex-secrets = { workspace = true }
+estelle-client = { workspace = true }
 codex-state = { workspace = true }
 codex-terminal-detection = { workspace = true }
 codex-utils-absolute-path = { workspace = true }

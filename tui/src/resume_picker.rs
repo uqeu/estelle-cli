@@ -79,6 +79,10 @@ const SESSION_META_DATE_WIDTH: usize = 12;
 const SESSION_META_FIELD_GAP_WIDTH: usize = 2;
 const SESSION_META_MIN_CWD_WIDTH: usize = 30;
 const SESSION_META_MAX_CWD_WIDTH: usize = 72;
+/// The single owner of the transcript-preview gutter. Five call sites repeated this literal
+/// and a sixth branched on it with two identical arms; one owner means a glyph change cannot
+/// land in four places out of five.
+const TRANSCRIPT_GUTTER: &str = "  │ ";
 const SESSION_META_BRANCH_ICON: &str = "";
 const SESSION_META_CWD_ICON: &str = "⌁";
 const FOOTER_COMPACT_BREAKPOINT: u16 = 120;
@@ -3137,11 +3141,17 @@ fn render_transcript_preview_lines(
     };
     let preview_lines = match state.transcript_previews.get(&thread_id) {
         Some(TranscriptPreviewState::Loading) => {
-            vec![vec!["  │ ".dim(), "Loading recent transcript...".italic().dim()].into()]
+            vec![
+                vec![
+                    TRANSCRIPT_GUTTER.dim(),
+                    "Loading recent transcript...".italic().dim(),
+                ]
+                .into(),
+            ]
         }
         Some(TranscriptPreviewState::Failed) => vec![
             vec![
-                "  │ ".dim(),
+                TRANSCRIPT_GUTTER.dim(),
                 "Could not load transcript preview".italic().red(),
             ]
             .into(),
@@ -3190,7 +3200,7 @@ fn render_expanded_session_details(
         expanded_detail_line("Directory:", &directory, width),
         expanded_detail_line("Branch:", &branch, width),
         vec!["  │".dim()].into(),
-        vec!["  │ ".dim(), "Conversation:".dim()].into(),
+        vec![TRANSCRIPT_GUTTER.dim(), "Conversation:".dim()].into(),
     ]
 }
 
@@ -3201,7 +3211,7 @@ fn render_conversation_preview_lines(
     if lines.is_empty() {
         return vec![
             vec![
-                "  │ ".dim(),
+                TRANSCRIPT_GUTTER.dim(),
                 "No transcript preview available".italic().dim(),
             ]
             .into(),
@@ -3212,18 +3222,13 @@ fn render_conversation_preview_lines(
     for line in lines {
         rendered.extend(render_transcript_content_lines(line, width));
     }
-    let rendered_len = rendered.len();
+    // Every preview line carries the same gutter. This was an `if idx + 1 == rendered_len` with
+    // two IDENTICAL arms — inherited at `50edb00a7` and dead from the day it landed, because no
+    // last-line glyph was ever written. A branch whose arms agree is a claim that they differ,
+    // and it is the kind of claim nobody audits. The single owner of the gutter is the const.
     rendered
         .into_iter()
-        .enumerate()
-        .map(|(idx, line)| {
-            let prefix = if idx + 1 == rendered_len {
-                "  │ "
-            } else {
-                "  │ "
-            };
-            prefix_transcript_line(prefix, line)
-        })
+        .map(|line| prefix_transcript_line(TRANSCRIPT_GUTTER, line))
         .collect()
 }
 
@@ -3304,7 +3309,7 @@ fn expanded_detail_line(label: &'static str, value: &str, width: u16) -> Line<'s
         .saturating_sub(prefix_width + LABEL_WIDTH + gap_width)
         .max(1);
     vec![
-        "  │ ".dim(),
+        TRANSCRIPT_GUTTER.dim(),
         format!("{label:<LABEL_WIDTH$}").dim(),
         "  ".dim(),
         truncate_text(value, value_width).into(),

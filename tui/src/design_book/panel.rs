@@ -81,7 +81,18 @@ pub(crate) fn model_cost(palette: &Palette, _tick: u64, _pulse: bool) -> Vec<Lin
     ];
 
     // `role` is the override, and `affinity` is what it reads when nobody has overridden it.
-    let pool: &[(&str, &str, &str, &str, &str, &str, &str, &str)] = &[
+    /// One provider row, exactly as the table draws it, left to right.
+    type PoolRow<'a> = (
+        &'a str,
+        &'a str,
+        &'a str,
+        &'a str,
+        &'a str,
+        &'a str,
+        &'a str,
+        &'a str,
+    );
+    let pool: &[PoolRow<'_>] = &[
         (
             "●",
             "claude-opus-5",

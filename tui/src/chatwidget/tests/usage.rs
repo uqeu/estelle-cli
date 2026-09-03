@@ -716,7 +716,14 @@ async fn no_credit_outcome_disables_reset_entry_in_usage_menu() {
         )),
     ));
     assert_eq!(chat.available_rate_limit_reset_credits, None);
-    assert!(render_bottom_popup(&chat, /*width*/ 80).contains("That reset is gone."));
+    // Ask the single owner what the message is. This pinned the literal "That reset is gone.",
+    // which the product has never said — so the assertion was testing a string that existed only
+    // in this file. What it MEANT to prove is that a retired credit renders the stale-credit
+    // popup rather than silently doing nothing; that is what it proves now.
+    assert!(
+        render_bottom_popup(&chat, /*width*/ 80)
+            .contains(crate::chatwidget::usage::STALE_RESET_CREDIT_MESSAGE)
+    );
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_matches!(rx.try_recv(), Ok(AppEvent::OpenRateLimitResetCredits));
 }

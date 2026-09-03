@@ -102,7 +102,7 @@ fn opening(label: &'static str, mode: &'static str, palette: &Palette) -> Line<'
 
 /// One table row, each cell's colour chosen by the caller.
 fn table_row(columns: &[Col], cells: &[(&str, Color)], indent: usize) -> Line<'static> {
-    let cells: Vec<_> = cells.iter().map(|(t, c)| Cell(*t, *c)).collect();
+    let cells: Vec<_> = cells.iter().map(|(t, c)| Cell(t, *c)).collect();
     owned(row(columns, &cells, indent))
 }
 

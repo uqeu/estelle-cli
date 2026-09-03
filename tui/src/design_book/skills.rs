@@ -439,7 +439,9 @@ mod tests {
     /// checked, and the registration is LOOKED UP rather than repeated here.
     #[test]
     fn each_skill_screen_renders_the_needle_its_book_entry_promises() {
-        let screens: [(&str, fn(&Palette, u64, bool) -> Vec<Line<'static>>); 3] = [
+        /// A named screen and the renderer that draws it.
+        type Screen = (&'static str, fn(&Palette, u64, bool) -> Vec<Line<'static>>);
+        let screens: [Screen; 3] = [
             ("12-skills-typed", typed),
             ("13-skills-offered", offered),
             ("14-skills-browse", browse),

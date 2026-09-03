@@ -217,6 +217,7 @@ pub fn pulse(base: Color, tick: u64, enabled: bool) -> Style {
 }
 
 /// The slow, heavy pulse a refusal or an error state gets.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn dread(base: Color, tick: u64, enabled: bool) -> Style {
     pulse_with(DREAD, base, tick, enabled)
 }
@@ -544,6 +545,13 @@ mod tests {
     ///
     /// ⚠️ The dark fraction is asserted rather than the beat length, because the beat is what makes
     /// this read as a heartbeat rather than a blinker: an even split at any period is an animation.
+    #[allow(
+        clippy::assertions_on_constants,
+        reason = "these assert a RELATIONSHIP BETWEEN CONSTANTS, which is the whole point. Clippy sees a \
+        constant value; a reader sees the invariant that survives someone editing one of the \
+        two numbers. Deleting them — which `clippy --fix` would do — removes a real guard and \
+        leaves no red behind."
+    )]
     #[test]
     fn dread_is_slower_and_deeper_than_the_attention_pulse() {
         assert!(

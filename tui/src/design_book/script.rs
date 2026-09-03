@@ -35,6 +35,7 @@ use crate::design_book::session::{Film, Say};
 ///
 /// 🔴 The positive half is why this is a list and not an `assert!(!contains)`: an absence check
 /// passes identically over a player that drew nothing at all.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const FIXTURE_NEEDLES: &[&str] =
     &["billing/hooks.py:88", "amount_capturable_updated", "$52.65"];
 

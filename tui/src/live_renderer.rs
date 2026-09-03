@@ -2306,16 +2306,14 @@ fn collapse_composer_tail(
     area: Rect,
     background: Color,
 ) -> Option<(u16, u16)> {
-    let Some((prompt_row, prompt_col)) = (area.y..area.bottom()).find_map(|y| {
+    let (prompt_row, prompt_col) = (area.y..area.bottom()).find_map(|y| {
         (area.x..area.right())
             .find(|x| {
                 let symbol = frame.buffer_mut()[(*x, y)].symbol();
                 symbol == COMPOSER_PROMPT_GLYPH || symbol == PROMPT_GLYPH
             })
             .map(|x| (y, x))
-    }) else {
-        return None;
-    };
+    })?;
     // The composer widget draws U+203A, a small angle quote. Repainted HERE rather than in the
     // composer, because 80 lib snapshots carry that glyph and another lane is editing those same
     // files; the prompt is one cell, and taking it is cheaper than taking their diff.
@@ -2788,10 +2786,8 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             // empty-state ground: the art lives in the session column, which is still empty.
             // A rail the user asked for (diff, context, evidence) still displaces it.
             && (!show_auxiliary_pane || prod_as_rail);
-        if show_ground {
-            if let Some(flourish) = flourish_area(transcript_root) {
-                render_symbol_ground(frame, flourish, app);
-            }
+        if show_ground && let Some(flourish) = flourish_area(transcript_root) {
+            render_symbol_ground(frame, flourish, app);
         }
         frame.render_widget(paragraph.scroll((scroll, 0)), transcript_root);
         if show_ground {

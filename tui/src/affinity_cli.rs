@@ -17,7 +17,10 @@ pub(crate) enum Surface {
 }
 
 impl Surface {
-    #[allow(dead_code, reason = "the affinity MODELS surface has no key or command to reach it. Its only door was `ctrl+m`, which is carriage return in this binary and was removed rather than moved, because choosing its replacement is a founder ruling open on design-book screen 10. The code is kept, not deleted, so the ruling is one binding away")]
+    #[allow(
+        dead_code,
+        reason = "the affinity MODELS surface has no key or command to reach it. Its only door was `ctrl+m`, which is carriage return in this binary and was removed rather than moved, because choosing its replacement is a founder ruling open on design-book screen 10. The code is kept, not deleted, so the ruling is one binding away"
+    )]
     pub(crate) fn models_loading() -> Self {
         Self::Models(Box::new(ModelsScreen::loading()))
     }
@@ -48,7 +51,10 @@ impl Surface {
         matches!(self, Self::Costs)
     }
 
-    #[allow(dead_code, reason = "the affinity MODELS surface has no key or command to reach it. Its only door was `ctrl+m`, which is carriage return in this binary and was removed rather than moved, because choosing its replacement is a founder ruling open on design-book screen 10. The code is kept, not deleted, so the ruling is one binding away")]
+    #[allow(
+        dead_code,
+        reason = "the affinity MODELS surface has no key or command to reach it. Its only door was `ctrl+m`, which is carriage return in this binary and was removed rather than moved, because choosing its replacement is a founder ruling open on design-book screen 10. The code is kept, not deleted, so the ruling is one binding away"
+    )]
     pub(crate) fn is_models(&self) -> bool {
         matches!(self, Self::Models(_))
     }

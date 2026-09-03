@@ -1363,7 +1363,12 @@ async fn enter_submits_when_plan_stream_is_not_active() {
     assert!(chat.input_queue.queued_user_messages.is_empty());
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
-            personality: Some(Personality::Pragmatic),
+            // No `personality` clause: `personality` is in DROPPED_COMMANDS (founder,
+            // 2026-08-07 — "style comes from the repo, not a picker") and no shipped model
+            // carries the `{{ personality }}` placeholder, so the submit path in
+            // input_submission.rs:332-335 always filters it to None. Upstream's rider on a test
+            // about collaboration mode is not this test's subject; see
+            // `dropped_personality_never_reaches_the_wire` for the one that owns it.
             ..
         } => {}
         other => panic!("expected Op::UserTurn, got {other:?}"),
@@ -1652,7 +1657,12 @@ async fn collab_mode_is_sent_after_enabling() {
                     mode: ModeKind::Default,
                     ..
                 }),
-            personality: Some(Personality::Pragmatic),
+            // No `personality` clause: `personality` is in DROPPED_COMMANDS (founder,
+            // 2026-08-07 — "style comes from the repo, not a picker") and no shipped model
+            // carries the `{{ personality }}` placeholder, so the submit path in
+            // input_submission.rs:332-335 always filters it to None. Upstream's rider on a test
+            // about collaboration mode is not this test's subject; see
+            // `dropped_personality_never_reaches_the_wire` for the one that owns it.
             ..
         } => {}
         other => {
@@ -1676,7 +1686,12 @@ async fn collab_mode_applies_default_preset() {
                     mode: ModeKind::Default,
                     ..
                 }),
-            personality: Some(Personality::Pragmatic),
+            // No `personality` clause: `personality` is in DROPPED_COMMANDS (founder,
+            // 2026-08-07 — "style comes from the repo, not a picker") and no shipped model
+            // carries the `{{ personality }}` placeholder, so the submit path in
+            // input_submission.rs:332-335 always filters it to None. Upstream's rider on a test
+            // about collaboration mode is not this test's subject; see
+            // `dropped_personality_never_reaches_the_wire` for the one that owns it.
             ..
         } => {}
         other => {
@@ -1688,9 +1703,28 @@ async fn collab_mode_applies_default_preset() {
     assert_eq!(chat.current_collaboration_mode().mode, ModeKind::Default);
 }
 
+/// 🔴 **PERSONALITY IS DROPPED, AND THE DROP IS ONLY REAL IF BOTH HALVES HOLD.**
+///
+/// `"personality"` sits in [`crate::commands::DROPPED_COMMANDS`] on a founder decision of
+/// 2026-08-07 — *"style comes from the repo, not a picker"*. The submit path enforces that with
+/// two filters (`input_submission.rs:332-335`): the `Personality` feature flag, and
+/// `current_model_supports_personality()`, which is true only when the model's
+/// `instructions_template` carries the `{{ personality }}` placeholder.
+///
+/// This test used to be upstream's `user_turn_includes_personality_from_config`, asserting the
+/// OPPOSITE — that a configured personality reaches the wire. It arrived red at `50edb00a7` and
+/// stayed red for a month, because the lib suite aborted on a stack overflow ~136 tests in and
+/// never printed a result line.
+///
+/// It is inverted here rather than deleted, because deleting it would leave the drop unguarded.
+/// The strong form is the PAIR: the feature flag is forced ON, so a personality reaching the wire
+/// can only mean a model started advertising support — which is a product decision, not a test
+/// fixture. Then the drop is re-derived from the shipped catalog rather than assumed, so this
+/// cannot pass vacuously by the feature being off.
 #[tokio::test]
-async fn user_turn_includes_personality_from_config() {
+async fn dropped_personality_never_reaches_the_wire() {
     let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    // Force the flag ON. With it off this test would pass for the wrong reason.
     chat.set_feature_enabled(Feature::Personality, /*enabled*/ true);
     chat.thread_id = Some(ThreadId::new());
     chat.set_model("gpt-5.4");
@@ -1701,11 +1735,39 @@ async fn user_turn_includes_personality_from_config() {
     chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
-            personality: Some(Personality::Friendly),
-            ..
+            personality: None, ..
         } => {}
-        other => panic!("expected Op::UserTurn with friendly personality, got {other:?}"),
+        other => panic!(
+            "a personality reached the wire while `/personality` is a DROPPED_COMMAND. Either a \
+             shipped model started advertising `{{{{ personality }}}}` support, or the submit-path \
+             filter in input_submission.rs was removed. Decide which, then update this guard: \
+             {other:?}"
+        ),
     }
+}
+
+/// The premise of [`dropped_personality_never_reaches_the_wire`], asserted separately so the pair
+/// cannot both be true by accident. If a catalog update ever ships a personality-capable model,
+/// THIS goes red first and names the model — rather than the drop quietly becoming reachable.
+#[test]
+fn no_shipped_model_advertises_personality_support() {
+    let advertising: Vec<String> = crate::test_support::TEST_MODEL_PRESETS
+        .iter()
+        .filter(|preset| preset.supports_personality)
+        .map(|preset| preset.model.clone())
+        .collect();
+
+    // Vacuity guard: a catalog that failed to load would make the filter above trivially empty.
+    assert!(
+        !crate::test_support::TEST_MODEL_PRESETS.is_empty(),
+        "the bundled model catalog is empty, so the emptiness below proves nothing"
+    );
+    assert!(
+        advertising.is_empty(),
+        "these shipped models now advertise personality support: {advertising:?}. \
+         `/personality` is a DROPPED_COMMAND, so the picker cannot be reached — decide whether to \
+         un-drop the command or keep the placeholder out of the catalog."
+    );
 }
 
 #[tokio::test]

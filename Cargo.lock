@@ -3214,6 +3214,7 @@ dependencies = [
  "codex-utils-output-truncation",
  "codex-utils-template",
  "core_test_support",
+ "estelle-client",
  "futures",
  "pretty_assertions",
  "serde",

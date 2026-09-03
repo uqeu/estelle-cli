@@ -196,12 +196,12 @@ fn plan_typing(steps: &mut Vec<Step>, beat: &'static Beat, start: u32) -> u32 {
     let mut clock = start;
     let mut typed = String::new();
     let mut strokes = 0usize;
-    let mut press = |clock: &mut u32,
-                     steps: &mut Vec<Step>,
-                     typed: &mut String,
-                     base: u32,
-                     character: char,
-                     strokes: &mut usize| {
+    let press = |clock: &mut u32,
+                 steps: &mut Vec<Step>,
+                 typed: &mut String,
+                 base: u32,
+                 character: char,
+                 strokes: &mut usize| {
         *clock = clock.saturating_add_signed(gap(base, character, *strokes));
         *strokes += 1;
         typed.push(character);

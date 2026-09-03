@@ -425,8 +425,16 @@ mod tests {
             if status == 401 {
                 assert!(!store.path().exists());
             } else {
+                // `resolve()` reads ESTELLE_API_KEY / ESTELLE_KEY off the AMBIENT process
+                // environment (`estelle-client/src/auth.rs:154`) and returns before ever opening
+                // the file. On a machine with a key exported — the normal state for anyone using
+                // the product — this asserted the environment branch instead of the login write it
+                // exists to check. Fourth test in this family; drive the hermetic seam.
                 assert_eq!(
-                    store.resolve().expect("stored key").source,
+                    store
+                        .resolve_with_environment(None)
+                        .expect("stored key")
+                        .source,
                     CredentialSource::Stored
                 );
             }

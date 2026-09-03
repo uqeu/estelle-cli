@@ -848,7 +848,13 @@ fn credential_file_is_created_with_mode_0600_and_secret_is_masked() {
         .mode()
         & 0o777;
     assert_eq!(mode, 0o600);
-    let resolved = store.resolve().expect("read credential");
+    // `resolve()` reads ESTELLE_API_KEY / ESTELLE_KEY from the AMBIENT process environment
+    // (auth.rs:154). On any machine where a developer has exported one — which is the normal
+    // state for anyone actually using the product — that short-circuits at auth.rs:167 and
+    // this test never reaches the stored file it exists to check. Drive the hermetic seam.
+    let resolved = store
+        .resolve_with_environment(None)
+        .expect("read credential");
     assert_eq!(resolved.source, CredentialSource::Stored);
     let masked = mask_secret("estelle_live_never-render-this");
     assert_eq!(masked, "[credential hidden]");
@@ -867,11 +873,18 @@ fn two_independent_default_stores_share_one_file_without_a_build_identity() {
         .expect("first binary writes");
 
     assert_eq!(first_binary.path(), second_binary.path());
+    // `resolve()` reads ESTELLE_API_KEY / ESTELLE_KEY from the AMBIENT process environment
+    // (auth.rs:154). On any machine where a developer has exported one — which is the normal
+    // state for anyone actually using the product — that short-circuits at auth.rs:167 and
+    // this test never reaches the stored file it exists to check. Drive the hermetic seam.
     assert_eq!(
-        second_binary.resolve().expect("second binary reads").source,
+        second_binary
+            .resolve_with_environment(None)
+            .expect("second binary reads")
+            .source,
         CredentialSource::Stored
     );
-    assert!(second_binary.resolve().is_ok());
+    assert!(second_binary.resolve_with_environment(None).is_ok());
 }
 
 #[cfg(unix)]
@@ -885,13 +898,17 @@ fn world_readable_credential_file_is_refused_with_the_required_mode() {
     std::fs::set_permissions(store.path(), std::fs::Permissions::from_mode(0o644))
         .expect("make fixture unsafe");
 
+    // `resolve()` reads ESTELLE_API_KEY / ESTELLE_KEY from the AMBIENT process environment
+    // (auth.rs:154). On any machine where a developer has exported one — which is the normal
+    // state for anyone actually using the product — that short-circuits at auth.rs:167 and
+    // this test never reaches the stored file it exists to check. Drive the hermetic seam.
     assert!(matches!(
-        store.resolve(),
+        store.resolve_with_environment(None),
         Err(Error::InsecureCredentialPermissions { mode: 0o644 })
     ));
     assert!(
         store
-            .resolve()
+            .resolve_with_environment(None)
             .expect_err("world-readable credential must fail closed")
             .to_string()
             .contains("0600")
@@ -1656,4 +1673,144 @@ fn a_short_head_is_not_padded_or_clipped_into_a_plausible_one() {
     assert_eq!(CodeCurrency::short("abc"), "abc");
     assert_eq!(CodeCurrency::short(""), "");
     assert_eq!(CodeCurrency::short("6ff03b1857ab4c0d"), "6ff03b1857ab");
+}
+
+/// 🔴 **A TEST THAT READS THE AMBIENT ENVIRONMENT IS A TEST THAT RUNS DIFFERENTLY ON YOUR MACHINE.**
+///
+/// [`CredentialStore::resolve`] reads `ESTELLE_API_KEY` / `ESTELLE_KEY` off the real process
+/// environment (`auth.rs:154`) and short-circuits before ever touching the stored file
+/// (`auth.rs:167`). **Four** tests across **two** crates called it while asserting things about the
+/// STORED backend:
+///
+/// * `credential_file_is_created_with_mode_0600_and_secret_is_masked` (this file)
+/// * `two_independent_default_stores_share_one_file_without_a_build_identity` (this file)
+/// * `world_readable_credential_file_is_refused_with_the_required_mode` (this file)
+/// * `login::tests::login_stores_success_refuses_rejection_and_keeps_failure_to_ask` (`codex-tui`)
+///
+/// On a developer machine with a key exported — the normal state for anyone using the product —
+/// all four took the environment branch. Three failed loudly; one asserted only `is_ok()`, which
+/// the environment branch also satisfies, so it **passed for the wrong reason**.
+///
+/// ⚠️ **The first version of this guard scanned only this file with `include_str!`, and the fourth
+/// instance was in another crate — so it was a guard on one path, which is the exact defect it was
+/// written to catch.** It walks the workspace now.
+///
+/// ⚠️ **Limits, stated:** this is a STRUCTURAL check over source text. It proves which function a
+/// call site NAMES, never which function runs; it cannot see an ambient read reached through a
+/// helper, and a call spelled differently is invisible to it. It is a ratchet on the shape we have
+/// paid for four times, not a proof of isolation.
+#[test]
+fn no_test_in_the_workspace_resolves_through_the_ambient_environment() {
+    use std::path::Path;
+    use std::path::PathBuf;
+
+    // Split so the needle does not appear literally in this file — a guard that matches its own
+    // source reports itself as the offender, which is how the first run of this test failed.
+    let ambient = concat!(".re", "solve()");
+    let hermetic = concat!(".resolve_with_env", "ironment(");
+
+    // The one sanctioned ambient reader: an #[ignore]d test that needs a live credential.
+    const SANCTIONED: &str = "production_deep_search_contract";
+
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("estelle-client has a parent directory")
+        .to_path_buf();
+
+    fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if path.is_dir() {
+                // Build output and vendored trees are not ours to police, and walking them is slow.
+                if name == "target" || name == "vendor" || name.starts_with('.') {
+                    continue;
+                }
+                collect(&path, out);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    collect(&workspace, &mut files);
+
+    // Only TEST functions are in scope. Production code is SUPPOSED to read the ambient
+    // environment — `resolve_credential` (`tui/src/main.rs:6322`), `provider_keys.rs:90` and three
+    // others are the real credential path, and an earlier version of this guard flagged all five.
+    // The enclosing function is found by scanning back to its `fn` line and checking the few lines
+    // above it for a test attribute.
+    ///
+    /// Returns the enclosing TEST function's declaration line, or `None` when the enclosing
+    /// function is not a test. Returning the declaration rather than a bool is what lets the
+    /// sanctioned reader be exempted by FUNCTION instead of by file — an earlier version exempted
+    /// any file mentioning the sanctioned name, which made this guard **inert across the very file
+    /// that held three of the four defects**. Proven by mutation: it passed on a reverted call
+    /// site until this changed.
+    fn enclosing_test_fn<'a>(lines: &[&'a str], index: usize) -> Option<&'a str> {
+        let fn_line = (0..=index).rev().find(|&n| {
+            lines[n].trim_start().starts_with("fn ") || lines[n].contains("async fn ")
+        })?;
+        let is_test = lines[fn_line.saturating_sub(6)..=fn_line]
+            .iter()
+            .any(|line| {
+                let line = line.trim_start();
+                line.starts_with("#[test]") || line.starts_with("#[tokio::test]")
+            });
+        is_test.then_some(lines[fn_line])
+    }
+
+    let mut offenders = Vec::new();
+    let mut hermetic_sites = 0usize;
+    for file in &files {
+        let Ok(text) = std::fs::read_to_string(file) else {
+            continue;
+        };
+        hermetic_sites += text.matches(hermetic).count();
+        let lines: Vec<&str> = text.lines().collect();
+        for (number, line) in lines.iter().enumerate() {
+            // Only credential stores are in scope; `resolve()` is a common method name.
+            let is_credential_store = line.contains("store.re") || line.contains("binary.re");
+            // Exempt the ONE sanctioned ambient reader by the name of the function it lives in.
+            let enclosing = enclosing_test_fn(&lines, number);
+            let is_sanctioned = enclosing.is_some_and(|decl| decl.contains(SANCTIONED));
+            if is_credential_store
+                && line.contains(ambient)
+                && enclosing.is_some()
+                && !is_sanctioned
+            {
+                offenders.push(format!(
+                    "{}:{}",
+                    file.strip_prefix(&workspace).unwrap_or(file).display(),
+                    number + 1
+                ));
+            }
+        }
+    }
+
+    // Two vacuity guards. The walk finding no files, or the hermetic seam having been renamed,
+    // would each make `offenders` trivially empty while proving nothing.
+    assert!(
+        files.len() > 100,
+        "the workspace walk found only {} .rs files — it is pointed at the wrong root, so the \
+         emptiness below is a claim about the walk, not about the tests",
+        files.len()
+    );
+    assert!(
+        hermetic_sites >= 5,
+        "found only {hermetic_sites} uses of the hermetic seam across the workspace — it has \
+         probably been renamed, and this guard is measuring nothing"
+    );
+    assert!(
+        offenders.is_empty(),
+        "these call sites resolve a credential through the AMBIENT process environment, so they \
+         assert different things depending on whether ESTELLE_API_KEY is exported: {offenders:#?}. \
+         Use `resolve_with_environment(None)` for the stored backend, or \
+         `resolve_with_environment(Some(..))` to test the environment branch on purpose."
+    );
 }

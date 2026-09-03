@@ -9,6 +9,15 @@ use uuid::Uuid;
 use super::reset_credits::reset_credit_options;
 use super::*;
 
+/// Shown when the user redeems a reset credit that the server has since retired.
+///
+/// Named, and asserted by name in `tests::usage`, because the test used to pin a *different*
+/// sentence — "That reset is gone." — that existed nowhere in the product. Two owners of one
+/// string is one owner too many, and the disagreement was invisible while the lib suite aborted.
+/// A copy edit should not turn a test red; the message NOT RENDERING should.
+pub(super) const STALE_RESET_CREDIT_MESSAGE: &str =
+    "That reset is no longer available. Refresh to see the current resets.";
+
 const USAGE_MENU_VIEW_ID: &str = "usage-menu";
 const RATE_LIMIT_RESET_VIEW_ID: &str = "rate-limit-reset";
 const RATE_LIMIT_RESET_CONFIRMATION_VIEW_ID: &str = "rate-limit-reset-confirmation";
@@ -386,7 +395,7 @@ impl ChatWidget {
                     ConsumeAccountRateLimitResetCreditOutcome::NoCredit if credit_id.is_some() => {
                         self.available_rate_limit_reset_credits = None;
                         self.replace_rate_limit_reset_popup(Self::reset_refresh_params(
-                            "That reset is no longer available. Refresh to see the current resets.",
+                            STALE_RESET_CREDIT_MESSAGE,
                         ));
                         return false;
                     }

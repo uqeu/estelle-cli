@@ -570,8 +570,7 @@ pub(crate) fn feedback_upload_consent_params(
             super::SelectionItem {
                 name: "Yes".to_string(),
                 description: Some(
-                    "Share this session's logs and diagnostics with the team."
-                        .to_string(),
+                    "Share this session's logs and diagnostics with the team.".to_string(),
                 ),
                 actions: vec![yes_action],
                 dismiss_on_select: true,

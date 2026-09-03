@@ -63,6 +63,7 @@ impl Mark {
     /// variants. A sixth mark added to the enum would have compiled, shipped, and been covered by
     /// none of them — which is exactly how `?` reached two screens with no test and no name. One
     /// list, one place to forget, and forgetting it is a compile error rather than a silent gap.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) const ALL: [Self; 6] = [
         Self::Landed,
         Self::Blocked,

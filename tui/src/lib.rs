@@ -220,6 +220,8 @@ mod table_detect;
 #[cfg(test)]
 pub(crate) mod test_backend;
 #[cfg(test)]
+mod test_stack_budget;
+#[cfg(test)]
 pub(crate) mod test_support;
 
 use crate::onboarding::onboarding_screen::OnboardingScreenArgs;

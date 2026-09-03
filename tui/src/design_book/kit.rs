@@ -25,7 +25,7 @@ use crate::theme::Palette;
 /// `rustfmt` has had it, and this file holds sixty of them. ⚠️ The arity is asserted in BOTH
 /// directions: a row that quietly lost a field renders its note under `state` and still looks
 /// like a perfectly good table.
-pub(crate) fn fields<'a, const N: usize>(source: &'a str) -> [&'a str; N] {
+pub(crate) fn fields<const N: usize>(source: &str) -> [&str; N] {
     let mut cells = [""; N];
     let mut count = 0usize;
     for part in source.split('|') {
@@ -50,7 +50,7 @@ pub(crate) fn table<const N: usize, const M: usize>(
     rows.iter()
         .enumerate()
         .map(|(index, source)| {
-            let (texts, inks, highlight) = paint(palette, index, fields::<N>(*source));
+            let (texts, inks, highlight) = paint(palette, index, fields::<N>(source));
             let cells = texts
                 .into_iter()
                 .zip(inks)

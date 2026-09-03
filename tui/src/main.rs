@@ -4035,7 +4035,10 @@ impl App {
         )));
     }
 
-    #[allow(dead_code, reason = "the affinity MODELS surface has no key or command to reach it. Its only door was `ctrl+m`, which is carriage return in this binary and was removed rather than moved, because choosing its replacement is a founder ruling open on design-book screen 10. The code is kept, not deleted, so the ruling is one binding away")]
+    #[allow(
+        dead_code,
+        reason = "the affinity MODELS surface has no key or command to reach it. Its only door was `ctrl+m`, which is carriage return in this binary and was removed rather than moved, because choosing its replacement is a founder ruling open on design-book screen 10. The code is kept, not deleted, so the ruling is one binding away"
+    )]
     fn open_affinity_models(&mut self, tx: &mpsc::UnboundedSender<UiEvent>) {
         self.affinity_surface = Some(affinity_cli::Surface::models_loading());
         self.picker = None;
@@ -6413,7 +6416,10 @@ fn failure_lines(error: &Error) -> [String; 3] {
 /// surface was bound to it until this integration; the binding was removed rather than moved,
 /// because choosing its replacement chord is a design decision the founder has open on screen 10.
 fn control_letter(key: &KeyEvent, letter: char) -> bool {
-    debug_assert!(letter != 'm', "ctrl+m is carriage return and can never be a chord");
+    debug_assert!(
+        letter != 'm',
+        "ctrl+m is carriage return and can never be a chord"
+    );
     debug_assert!(letter.is_ascii_lowercase(), "chords are written lowercase");
     key.modifiers.contains(KeyModifiers::CONTROL)
         && matches!(key.code, KeyCode::Char(c) if c.eq_ignore_ascii_case(&letter))
@@ -9043,6 +9049,7 @@ mod tests {
     /// * the status row is no longer required to carry a mark — `● Ready` is gone (clause 1);
     /// * the hint row is the FRAME'S LAST ROW, not the row under the prompt (clause 7);
     /// * the prompt is U+276F, not U+3009, which Terminal.app rendered as `)` (clause 3).
+    ///
     /// The clauses themselves are all still enforced; only their expected values moved.
     #[test]
     fn the_input_bar_is_the_demo_frames_five_rows_and_nothing_else() {
@@ -9175,7 +9182,8 @@ mod tests {
             let bound = body.contains(pattern);
             let declared_unbound = ASK_HINTS_NOT_BOUND.contains(hint);
             assert_eq!(
-                bound, !declared_unbound,
+                bound,
+                !declared_unbound,
                 "{hint}: handle_key {} it, ledger says {} - the hint row and the keymap disagree",
                 if bound { "binds" } else { "does not bind" },
                 if declared_unbound { "unbound" } else { "bound" }
@@ -15331,7 +15339,7 @@ mod tests {
         let buffer = terminal.backend().buffer().clone();
         let layout = live_renderer::symbol_ground_layout(48, 40);
         assert!(
-            layout.ink.iter().any(|level| *level == 2),
+            layout.ink.contains(&2),
             "this fixture must actually DRAW the motif, or it asserts nothing about its colour"
         );
         let reds = (0..buffer.area.height)
@@ -15429,7 +15437,7 @@ mod tests {
         // Given a box with room, it may use all of it; what must never happen is a squashed one.
         let tall = live_renderer::symbol_ground_layout(60, 30);
         assert_eq!(tall.cells.len(), 60 * 30);
-        assert!(tall.ink.iter().any(|level| *level == 2));
+        assert!(tall.ink.contains(&2));
     }
 
     /// 🔴 A REPLY OPENS WITH A MARK, NOT WITH THE WORD "ESTELLE".
