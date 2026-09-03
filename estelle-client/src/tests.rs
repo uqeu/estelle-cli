@@ -848,7 +848,13 @@ fn credential_file_is_created_with_mode_0600_and_secret_is_masked() {
         .mode()
         & 0o777;
     assert_eq!(mode, 0o600);
-    let resolved = store.resolve().expect("read credential");
+    // `resolve()` consults the process environment, where ESTELLE_API_KEY wins by design. That
+    // is correct production precedence and the wrong thing for a test about the STORED file: with
+    // the variable set — the normal state for anyone who uses the product — this asserted on the
+    // environment instead. Inject the environment explicitly so the fixture owns every input.
+    let resolved = store
+        .resolve_with_environment(None)
+        .expect("read credential");
     assert_eq!(resolved.source, CredentialSource::Stored);
     let masked = mask_secret("estelle_live_never-render-this");
     assert_eq!(masked, "[credential hidden]");
@@ -868,10 +874,13 @@ fn two_independent_default_stores_share_one_file_without_a_build_identity() {
 
     assert_eq!(first_binary.path(), second_binary.path());
     assert_eq!(
-        second_binary.resolve().expect("second binary reads").source,
+        second_binary
+            .resolve_with_environment(None)
+            .expect("second binary reads")
+            .source,
         CredentialSource::Stored
     );
-    assert!(second_binary.resolve().is_ok());
+    assert!(second_binary.resolve_with_environment(None).is_ok());
 }
 
 #[cfg(unix)]
@@ -886,12 +895,12 @@ fn world_readable_credential_file_is_refused_with_the_required_mode() {
         .expect("make fixture unsafe");
 
     assert!(matches!(
-        store.resolve(),
+        store.resolve_with_environment(None),
         Err(Error::InsecureCredentialPermissions { mode: 0o644 })
     ));
     assert!(
         store
-            .resolve()
+            .resolve_with_environment(None)
             .expect_err("world-readable credential must fail closed")
             .to_string()
             .contains("0600")

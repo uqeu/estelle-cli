@@ -8,6 +8,35 @@ Every scoped request carries `repo=<owner/name>`. Every account-owned request de
 credential rather than accepting a caller-provided account identifier. Unknown and cross-tenant identifiers
 return the same 404 response.
 
+---
+
+## MEASURED AGAINST PRODUCTION - 2026-09-03, build `feb7ed1630ca`
+
+**A needs-list that has gone stale in the "we already have it" direction is a list nobody trusts.** Every
+row below was probed live with a normal (non-admin) account credential on the date and build named above.
+Read this section before quoting any status further down; where the two disagree, this section is the
+measurement and the entry below it is the older claim.
+
+| Route / field | Probed result | Status |
+| --- | --- | --- |
+| `POST /gate` -> `arity` | **PRESENT.** Serves `{state, checked, violations, undetermined}`; observed `state: "unchecked"`, `checked: 0`. | ✅ **AVAILABLE — and the CLI never reads it.** `grep -rn '"arity"' tui/src estelle-client/src` matches nothing outside `arity_errors` (the `/verify` leg). This is the field that separates "checked and clean" from "not checked", which is exactly the distinction `8b0d12754` had to approximate client-side. Binding it is CLI work, not server work. |
+| `POST /verify` -> `index{head, indexed_at, covers_answer, stale_reason}` | **ABSENT.** Response keys are exactly `abstained, arity_errors, complete, false_counts, grounded, hallucination_spans, incomplete_work, missing_required, ok, reason, referenced, style_violations, third_party, type_errors, ungrounded, unverified_reason, verdict, verified`. None of `index`, `head`, `indexed_at`, `covers_answer`, `stale_reason`. | ⛔ **ENTRY 13 IS STILL OPEN.** The grounding gate's refusal stays opt-in. Do not mark this satisfied. |
+| `GET /admin/load` -> `requests_total`, `client_disconnects_total`, `pool_exhaustion_total` | `403 {"error":{"message":"admin only — invalid or missing X-Admin-Token"}}` — a **handler's own refusal**, not the router's generic not-found, so the route EXISTS and is DECLINING. | 🟡 **ROUTE PRESENT, FIELDS UNVERIFIED.** Field-level contents cannot be read without an admin token, and this document never tracked these routes. Whoever holds the admin token owns closing this row. |
+| `GET /admin/errors` -> `fault_class`, `limit`, `truncated`, `history_complete` | Same handler refusal shape as above. | 🟡 **ROUTE PRESENT, FIELDS UNVERIFIED.** Same owner, same reason. |
+
+⚠️ **Scope correction, stated out loud:** `/admin/load`, `/admin/errors` and `/gate` appear **nowhere** in
+the numbered backlog below - not as satisfied rows, not as open ones. A search of this file for
+`requests_total`, `client_disconnects_total`, `pool_exhaustion_total`, `fault_class`, `truncated` and
+`history_complete` returns zero hits. They were never contracts this document asked for, so nothing here
+could have "gone stale" about them; the only actionable item among them is the `/gate` `arity` row above,
+and it is a CLI binding job.
+
+⚠️ **What this section does not prove:** it is one probe per route from one account at one minute. It
+proves a field is SERVED, never that it is correct, and a `403` proves a route exists without proving
+what it returns to someone who gets in.
+
+---
+
 ## Audited control surfaces - existing wire versus client reachability
 
 These are not requests for replacement endpoints. They record which server-owned controls already exist so

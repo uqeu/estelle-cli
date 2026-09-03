@@ -9,3 +9,21 @@ rustflags = ["-C", "link-arg=/STACK:8388608", "-C", "link-arg=/arm64hazardfree"]
 
 [target.'cfg(all(windows, target_env = "gnu"))']
 rustflags = ["-C", "link-arg=-Wl,--stack,8388608"]
+
+# 🔴 THE DEFAULT TEST STACK ABORTS THIS WORKSPACE'S LARGEST TEST BINARY.
+#
+# libtest runs each test on a worker thread whose stack defaults to 2 MiB. The largest full-`App`
+# fixtures in `estelle-tui` measured between 5 and 6 MiB, so on the default the worker overflows and
+# takes the WHOLE process down with `fatal runtime error: stack overflow` — SIGABRT, no `failures:`
+# block, and no `test result:` line at all. Measured 2026-09-03 on `estelle-tui --lib`: 3,219 tests
+# declared, ~137 reported, the remaining ~96% never ran, and the run still printed `test result: ok`
+# for every OTHER target. An abort is not a red test; it is a silent hole that reads like a pass.
+#
+# This was already diagnosed and fixed once — in `.github/workflows/release.yml` only. A guard that
+# runs on one path is a guard on that path, not on the system: every developer, agent and lane that
+# typed `cargo test` locally got the aborting run. The budget belongs here, where every invocation
+# gets it. 8 MiB is the same bounded value CI chose, and it is a named constant, not a literal.
+#
+# `force` is left at its default (false), so an explicit RUST_MIN_STACK in the environment still wins.
+[env]
+RUST_MIN_STACK = "8388608"

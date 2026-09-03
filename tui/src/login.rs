@@ -425,8 +425,15 @@ mod tests {
             if status == 401 {
                 assert!(!store.path().exists());
             } else {
+                // Inject the environment rather than reading the process's own: `resolve()`
+                // lets ESTELLE_API_KEY win by design, so with that variable set — the normal
+                // state for anyone using the product — this asserted on the environment and
+                // this test was red for a reason that had nothing to do with login.
                 assert_eq!(
-                    store.resolve().expect("stored key").source,
+                    store
+                        .resolve_with_environment(None)
+                        .expect("stored key")
+                        .source,
                     CredentialSource::Stored
                 );
             }

@@ -3376,3 +3376,70 @@ trust_level = "untrusted"
         Ok(())
     }
 }
+
+/// 🔴 **AN ABORT IS NOT A RED TEST — IT PRINTS NO `test result` LINE AT ALL.**
+///
+/// libtest gives each test worker a 2 MiB stack by default. The largest full-`App` fixtures in this
+/// crate measured between 5 and 6 MiB, so on the default a worker overflows and SIGABRTs the whole
+/// binary: no `failures:` block, no counts, and every OTHER target in the same `cargo test` still
+/// prints `test result: ok`. Measured 2026-09-03: 3,219 declared, ~137 reported, ~96% never ran.
+///
+/// The budget lives in `.cargo/config.toml` so every `cargo test` gets it — it used to live only in
+/// `.github/workflows/release.yml`, which is a guard on CI rather than a guard on the system.
+///
+/// These two assertions cover the two clauses separately, because they can fail independently:
+/// the RUNTIME clause (this process actually got the budget) and the REPO clause (the budget is
+/// declared where every invocation picks it up, so running the binary straight from `target/`
+/// still yields a named diagnosis instead of `fatal runtime error`).
+#[cfg(test)]
+mod test_stack_budget {
+    /// The largest full-`App` fixture measured between 5 and 6 MiB (2026-09-03).
+    const MEASURED_LARGEST_FIXTURE_BYTES: usize = 6 * 1024 * 1024;
+    /// What `.cargo/config.toml` and `release.yml` both declare. A named constant, not a literal.
+    const REQUIRED_TEST_STACK_BYTES: usize = 8 * 1024 * 1024;
+
+    #[test]
+    fn the_worker_stack_is_budgeted_because_the_default_aborts_this_binary() {
+        // Clause 1 — RUNTIME. If this fires, the run is about to abort somewhere unrelated, and
+        // this named failure is the only thing that will tell the reader why.
+        let configured = std::env::var("RUST_MIN_STACK")
+            .ok()
+            .and_then(|value| value.trim().parse::<usize>().ok())
+            .unwrap_or_else(|| {
+                panic!(
+                    "RUST_MIN_STACK is unset or unparseable for this test process. libtest workers \
+                     then get 2 MiB, a full-App fixture needs ~{MEASURED_LARGEST_FIXTURE_BYTES} \
+                     bytes, and the binary will abort mid-run with no test result line. Run through \
+                     `cargo test` (which reads .cargo/config.toml [env]) or set RUST_MIN_STACK={REQUIRED_TEST_STACK_BYTES}."
+                )
+            });
+        assert!(
+            configured >= REQUIRED_TEST_STACK_BYTES,
+            "RUST_MIN_STACK={configured} is below the {REQUIRED_TEST_STACK_BYTES}-byte budget; the \
+             largest measured fixture needs ~{MEASURED_LARGEST_FIXTURE_BYTES} bytes and the excess \
+             is deliberate headroom, not slack to spend."
+        );
+
+        // Clause 2 — REPO. The runtime clause above passes for anyone who exported the variable by
+        // hand; it says nothing about whether the NEXT person gets it. This one does.
+        //
+        // ⚠️ This asserted a bare `contains("RUST_MIN_STACK")` first, and a deliberate mutant
+        // proved it green with the declaration DELETED — the prose above it in that same file says
+        // "RUST_MIN_STACK" three times, so a passing MENTION satisfied it. A substring is not a
+        // declaration. Parse for an actual assignment on a non-comment line instead.
+        let cargo_config = include_str!("../../.cargo/config.toml");
+        let declared = cargo_config.lines().any(|line| {
+            let line = line.trim();
+            !line.starts_with('#')
+                && line.starts_with("RUST_MIN_STACK")
+                && line.contains('=')
+                && line.contains(&REQUIRED_TEST_STACK_BYTES.to_string())
+        });
+        assert!(
+            declared,
+            ".cargo/config.toml has no `RUST_MIN_STACK = \"{REQUIRED_TEST_STACK_BYTES}\"` \
+             assignment on a non-comment line, so a plain `cargo test` is back on the 2 MiB default \
+             and will abort mid-run. A mention in a comment is not a declaration."
+        );
+    }
+}

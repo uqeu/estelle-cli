@@ -155,7 +155,16 @@ impl CredentialStore {
         )
     }
 
-    pub(crate) fn resolve_with_environment(
+    /// Resolve against an EXPLICITLY SUPPLIED environment value rather than the process's own.
+    ///
+    /// `resolve()` is the ambient wrapper and keeps production precedence (ESTELLE_API_KEY wins).
+    /// This is the deterministic form: every caller that must not depend on whatever happens to be
+    /// exported — every test, and any host embedding this client with its own notion of
+    /// environment — passes the value in. It is `pub` because the TUI crate's login tests were
+    /// asserting on `CredentialSource::Stored` through the ambient path and went red for anyone
+    /// who had ESTELLE_API_KEY set, which is the normal state for a user of the product. Widening
+    /// this is cheaper and safer than teaching tests to mutate global environment state.
+    pub fn resolve_with_environment(
         &self,
         environment_value: Option<std::ffi::OsString>,
     ) -> Result<ResolvedCredential, Error> {

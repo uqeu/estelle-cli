@@ -3212,18 +3212,19 @@ fn render_conversation_preview_lines(
     for line in lines {
         rendered.extend(render_transcript_content_lines(line, width));
     }
-    let rendered_len = rendered.len();
+    // ⚠️ THIS BRANCHED ON THE LAST LINE AND THEN RETURNED THE SAME PREFIX FOR BOTH ARMS.
+    //
+    // `if idx + 1 == rendered_len { "  │ " } else { "  │ " }` — the two arms were byte-identical, so
+    // the condition decided nothing and `clippy::if_same_then_else` failed the `-D warnings` release
+    // gate on the 0.3.0 tree. The shape says a closing glyph for the final row was intended and was
+    // flattened by a later sweep; WHICH glyph closes a transcript block is a founder visual-taste
+    // call, the same kind of call D5 is parked on, so this collapses the dead conditional and does
+    // not invent one. Behaviour is byte-identical to what shipped. If the closing glyph is wanted,
+    // restore the branch WITH a different last-line prefix — the condition is correct, its arms were
+    // not.
     rendered
         .into_iter()
-        .enumerate()
-        .map(|(idx, line)| {
-            let prefix = if idx + 1 == rendered_len {
-                "  │ "
-            } else {
-                "  │ "
-            };
-            prefix_transcript_line(prefix, line)
-        })
+        .map(|line| prefix_transcript_line("  │ ", line))
         .collect()
 }
 
