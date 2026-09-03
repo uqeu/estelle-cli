@@ -47,6 +47,10 @@ PLUGIN_CONTRACT_SHA256_BY_VERSION = {
     # the bundle was regenerated from the Rust owner, which is exactly what an unreleased version's
     # digest is for. The two above it are published and are byte-untouched.
     "0.2.33": "4ff63c24250febb7c079a15570e177ec86b5341659f6725568f82133583fff0a",
+    # 0.3.0 adds the `axiom` PostToolUse row to the bundle — the tenth plugin-door handler — so the
+    # bytes moved and, per the rule above, they moved under a NEW key. 0.2.32 is the published one
+    # and its digest is untouched; 0.2.33 was never published either.
+    "0.3.0": "a26cda5c637f5587a521e17454fac2867f28120acb0da5072437d81d2d88409d",
 }
 
 #: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.
@@ -191,9 +195,11 @@ if hooks_path.is_file():
         if hook.get("command")
     ]
     commands = {hook["command"]: hook for hook in handlers}
-    # NINE handlers, which is what v0.2.32 ships.  The count is asserted rather than the
-    # membership because a replacement would keep the count and change the row.
-    check("shipping hook bundle has the nine plugin-door rows", len(handlers) == 9,
+    # TEN handlers as of v0.3.0. It was NINE through v0.2.32; the tenth is `axiom`, the advisory
+    # PostToolUse row that reports what a change did not need to contain. The count is asserted
+    # rather than the membership because a replacement would keep the count and change the row —
+    # which is also why this number is edited deliberately, in the same commit as the table.
+    check("shipping hook bundle has the ten plugin-door rows", len(handlers) == 10,
           str(len(handlers)))
     # ⚠️ A DECLARED EXEMPTION, ASSERTED AS AN ABSENCE. `shift` fires on every Read. The Rust owner
     # marks it `plugin: false` because adding it is a product decision with a release attached,
@@ -202,7 +208,7 @@ if hooks_path.is_file():
     check("shipping hook bundle does NOT carry the shift row",
           not any(" hook shift" in command for command in commands),
           str(sorted(commands)))
-    for mode, expected in (("ground", 30), ("sync", 30), ("context", 30),
+    for mode, expected in (("ground", 30), ("sync", 30), ("context", 30), ("axiom", 30),
                            ("guard", 10), ("distil", 10), ("welcome", 5)):
         command = f"npx -y @fatelabs/estelle@0 hook {mode}"
         matching = [h for c, h in commands.items() if c == command]

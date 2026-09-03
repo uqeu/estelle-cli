@@ -439,6 +439,7 @@ async fn run_hook_with(
         "guard" => Ok(guard_hook(&payload)),
         "shift" => Ok(file_shift_hook(&payload, repo, root).await),
         "sync" => sync_hook(&payload, repo, root).await,
+        "axiom" => axiom_hook(&payload, repo, root).await,
         "distil" => Ok(distil_hook(&payload)),
         "checkpoint" => checkpoint_hook(&payload).await,
         "welcome" => Ok(welcome_hook(&payload).await),
@@ -457,7 +458,7 @@ fn hook_event_label(mode: &str, expected: Option<&str>, payload: Option<&str>) -
         .or_else(|| payload.filter(|event| !event.trim().is_empty()))
         .unwrap_or(match mode {
             "ground" | "guard" => "PreToolUse",
-            "shift" | "sync" | "distil" => "PostToolUse",
+            "shift" | "sync" | "distil" | "axiom" => "PostToolUse",
             "welcome" => "SessionStart",
             "context" => "UserPromptSubmit",
             "checkpoint" => "Stop|PreCompact|SessionEnd",
@@ -468,7 +469,9 @@ fn hook_event_label(mode: &str, expected: Option<&str>, payload: Option<&str>) -
 
 fn hook_execution_need(mode: &str) -> &'static str {
     match mode {
-        "ground" | "sync" | "context" => "a valid Estelle credential and a reachable Estelle API",
+        "ground" | "sync" | "context" | "axiom" => {
+            "a valid Estelle credential and a reachable Estelle API"
+        }
         "checkpoint" => "a readable transcript and writable local session state",
         "welcome" => "readable local session state and repository history",
         "shift" => "a reachable local Estelle session server",
@@ -687,6 +690,267 @@ async fn context_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>,
         return Ok(Vec::new());
     };
     Ok(context_recall_lines(&api.client, &api.cancel, repo, &query, CONTEXT_HOOK_BUDGET).await)
+}
+
+// --- AXIOM ------------------------------------------------------------------------------------
+// THE GATE REFUSES WHAT IS NOT TRUE. AXIOM REFUSES WHAT DID NOT NEED TO EXIST.
+//
+// 🔴 THE SERVER OWNS THE VERDICT AND THIS FILE OWNS NOTHING BUT THE CONTRACT. The logic lives in
+// `src/estelle/serve/axiom.py` (`assess` / `as_envelope`); it is deterministic, it takes no model
+// call, and it answers exactly two of the ladder's seven rungs — rung 2 "already in this repo"
+// and rung 5 "an installed dependency already does this". The other five are advisory prose and
+// are reported `skipped`, never `clean`. Nothing here re-derives any of that: re-implementing a
+// verdict the server already computes is the rung-2 defect committed inside the client for the
+// feature that exists to catch it.
+//
+// 🔑 IT RIDES `/gate`, BECAUSE THAT IS THE ONLY DOOR THAT SERVES IT. `POST /gate` returns the
+// envelope under the key `axiom` (`serve/gate_verdict.py:250`), folded in from
+// `assess_with_surface` at `serve/gate_verdict.py:206-207`. There is no `/axiom` route, and
+// writing a client for one would be this repo's own outer-layer-green defect wearing the other
+// hat: a verb that satisfies its test here and 404s on every customer machine.
+
+/// How long the `PostToolUse` axiom hook may spend before giving up and saying nothing.
+///
+/// 🔴 DERIVED, NOT TYPED — the same construction as [`CONTEXT_HOOK_BUDGET`] and for the same
+/// reason. [`AXIOM_HOOK_HOST_TIMEOUT_SECS`] is what [`HOOK_TABLE`] writes into all three doors,
+/// and this is that number minus a named margin, so a client budget can never sit ABOVE the
+/// host's kill. That configuration — the work completing and being discarded by the host — is
+/// the defect this whole family of constants exists to make unrepresentable, and it is asserted
+/// by `the_axiom_client_budget_sits_under_the_host_kill` rather than left to a reader.
+///
+/// ⚠️ THE LIMIT, SAID OUT LOUD, AND IT IS THE SAME ONE THE CONTEXT HOOK CARRIES. `POST /gate` is
+/// a far heavier call than the 5 s `AXIOM_BUDGET_S` the Python module gives its own two lookups:
+/// the axiom envelope rides a FULL gate verdict, whose server-side ceiling is 60 s. So on a slow
+/// or cold gate this hook will frequently return NOTHING, and that is the deadline working, not
+/// failing. **No client bound can make the server fast — it can only choose between waiting and
+/// giving up**, and on an advisory that fires after every write, giving up is the right choice.
+/// The durable fix is a cheaper door, not a bigger number here.
+const AXIOM_HOOK_BUDGET: Duration =
+    Duration::from_secs(AXIOM_HOOK_HOST_TIMEOUT_SECS - AXIOM_HOOK_MARGIN_SECS);
+
+/// How many findings reach the human and the model in one advisory.
+///
+/// Bounded before the read, not after (Power of Ten #3), and the total is ALWAYS reported when
+/// the cap bites — a truncated list that does not say it was truncated is the "that's all there
+/// is" failure this repo has paid for elsewhere.
+const AXIOM_MAX_FINDINGS: usize = 5;
+
+/// The exact body the axiom hook puts on the wire, as one named function, so the shape is
+/// assertable without a network.
+///
+/// `/gate` reads `diff` and nothing else on this path. It is deliberately NOT given the extra
+/// fields the `estelle gate` command can send: this hook wants the advisory, and every optional
+/// knob is another way for the two sides to drift.
+fn axiom_request_body(diff: &str) -> Value {
+    json!({ "diff": diff })
+}
+
+/// `git` stdout for one read-only diff invocation, or `None` if git could not be run.
+///
+/// 🔑 THE STATUS IS DELIBERATELY NOT CHECKED, AND THAT IS NOT SLOPPINESS. `git diff --no-index`
+/// **exits 1 when it finds differences** — the success case for a brand-new file. Requiring
+/// `status.success()` here would discard exactly the diff we came for. Every caller instead
+/// treats empty stdout as "nothing to assess", so a genuine git failure and an empty diff both
+/// degrade to silence, which is the correct outcome for an advisory either way.
+///
+/// ⛔ READ-ONLY BY CONSTRUCTION. Nothing on this path may touch the index — the obvious way to
+/// make an untracked file diffable is `git add -N`, and running that inside a hook would mutate
+/// a customer's staging area as a side effect of them saving a file.
+fn axiom_git_stdout(root: &Path, args: &[&str]) -> Option<String> {
+    let output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .ok()?;
+    String::from_utf8(output.stdout).ok()
+}
+
+/// The unified diff for the file that was just written, or `None` when there is nothing to assess.
+///
+/// The tracked form comes first. The `--no-index` fallback exists because a BRAND-NEW file is
+/// untracked, so plain `git diff` is silent about precisely the case where "did this need to
+/// exist" matters most — a whole new module is the change most likely to duplicate something.
+///
+/// ⚠️ A NAMED COVERAGE LIMIT, NOT A HIDDEN ONE: the fallback compares against `/dev/null`, so on
+/// a host where git does not accept that path a new file yields no diff and this hook says
+/// nothing. It degrades to SILENCE, never to a wrong answer — and silence from this hook is never
+/// a claim of cleanliness, because [`axiom_render`] emits nothing at all unless it has a citation.
+fn axiom_diff(root: &Path, path: &str) -> Option<String> {
+    let tracked = axiom_git_stdout(root, &["diff", "--no-color", "--unified=3", "--", path]);
+    if tracked
+        .as_deref()
+        .is_some_and(|diff| !diff.trim().is_empty())
+    {
+        return tracked;
+    }
+    axiom_git_stdout(
+        root,
+        &[
+            "diff",
+            "--no-color",
+            "--unified=3",
+            "--no-index",
+            "--",
+            "/dev/null",
+            path,
+        ],
+    )
+    .filter(|diff| !diff.trim().is_empty())
+}
+
+/// The gate reply → what the human and the model are told. PURE: no network, no clock, no client.
+///
+/// 🔴 **IT SPEAKS ONLY WHEN IT HOLDS A CITATION, AND THAT IS WHAT MAKES ITS SILENCE HONEST.**
+/// Three inputs produce no output, and they are not the same thing:
+///
+/// * `lean` — every checked rung ran and found nothing.
+/// * `could-not-check` — NO rung ran (nothing wired, or the server's own 5 s budget expired).
+/// * no `axiom` key at all — an older server that predates the field.
+///
+/// A consumer that rendered "Axiom: clean" would have conflated all three, which is the
+/// `verified-clean over api_checks: 0` failure this codebase has already paid for. This function
+/// cannot commit it, because it has no clean branch to take: the ONLY thing it ever emits is a
+/// `simplify` verdict with findings attached. **Silence here asserts nothing.** The day this hook
+/// grows a positive "clean" line is the day the three cases above must be told apart, and that is
+/// a change to this docstring as much as to the code.
+///
+/// ⚠️ `rungs_checked` IS READ, NOT DECORATION. `serve/axiom.py:361-371` carries it BESIDE the
+/// verdict for exactly one reason — so a consumer can never read a verdict without seeing how
+/// many rungs actually ran — and the pair that cannot both be true is re-asserted on this side of
+/// the wire rather than trusted across it.
+fn axiom_render(reply: &Value) -> Vec<String> {
+    let Some(envelope) = reply.get("axiom") else {
+        return Vec::new();
+    };
+    let verdict = envelope
+        .get("verdict")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let rungs_checked = envelope
+        .get("rungs_checked")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    // The mirror of the server's own invariant. A finding cannot exist without a rung having run,
+    // so this pair is unreachable — which is why it is asserted rather than expected.
+    if verdict != "simplify" || rungs_checked == 0 {
+        return Vec::new();
+    }
+    let findings: Vec<&Value> = envelope
+        .get("findings")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().collect())
+        .unwrap_or_default();
+    if findings.is_empty() {
+        return Vec::new();
+    }
+    let total = findings.len();
+    let mut human = Vec::new();
+    let mut model = Vec::new();
+    for finding in findings.iter().take(AXIOM_MAX_FINDINGS) {
+        let symbol = finding
+            .get("symbol")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let citation = finding
+            .get("citation")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        // A finding with no citation is a suggestion, and the server does not emit suggestions
+        // (`AxiomFinding.__post_init__` refuses one). Dropping it here keeps that true end to end.
+        if citation.trim().is_empty() {
+            continue;
+        }
+        human.push(format!("{symbol} → {citation}"));
+        // The SENTENCE has one owner and it is the server. Re-deriving the prose here would be a
+        // second owner for a derived fact, and the two would disagree the first time either moved.
+        model.push(
+            finding
+                .get("message")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("{symbol} already exists at {citation}")),
+        );
+    }
+    if human.is_empty() {
+        return Vec::new();
+    }
+    // A capped read says so, with the total — never "that's all there is".
+    let more = total.saturating_sub(human.len());
+    let tail = if more > 0 {
+        format!(" (+{more} more)")
+    } else {
+        String::new()
+    };
+    let message = format!(
+        "◆ Estelle Axiom — advisory, nothing is blocked: this change adds {total} thing(s) the repo already has. {}{tail}",
+        human.join(" · ")
+    );
+    let context = format!(
+        "Estelle Axiom (advisory, deterministic, no model call) checked what this change did not \
+         need to contain and found {total}:\n{}\n\nReuse the existing definition rather than the \
+         one just written, or say why the duplicate is deliberate.",
+        model
+            .iter()
+            .map(|line| format!("- {line}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    vec![hook_message(Some(message), Some(context), "PostToolUse")]
+}
+
+/// The NETWORK half of the axiom hook, bounded, taking its client and its budget as arguments.
+///
+/// 🔬 SPLIT OUT SO THE BOUND CAN BE DEMONSTRATED FIRING, for the same reason
+/// [`context_recall_lines`] is. A `tokio::time::timeout` bounds a future that YIELDS; wrapped
+/// round anything that blocks the thread it never fires at all and reads as a deadline in review
+/// while being decoration at runtime. `the_axiom_budget_fires_against_a_slow_server` stands up a
+/// real HTTP server that delays past the budget, drives this function through the real client,
+/// and asserts both that it returned NOTHING and that it returned EARLY.
+async fn axiom_lines(
+    client: &Client,
+    cancel: &CancellationToken,
+    repo: &Repo,
+    diff: &str,
+    budget: Duration,
+) -> Vec<String> {
+    let body = axiom_request_body(diff);
+    let request = client.post_scoped::<Value, Value>(Endpoint::Gate, repo, &body, cancel);
+    let Ok(Ok(reply)) = tokio::time::timeout(budget, request).await else {
+        // Expired or errored: NOTHING on stdout, exit 0. The write already happened; an advisory
+        // that could not be fetched must never surface as a failure of the human's edit.
+        return Vec::new();
+    };
+    axiom_render(&reply)
+}
+
+/// PostToolUse on Write|Edit: what did this change not need to contain?
+///
+/// Silent in every failure mode — no path, no diff, no credential, no server, slow server. The
+/// gate is the thing that refuses; this is the thing that argues, and an argument nobody can hear
+/// costs the human nothing.
+async fn axiom_hook(
+    payload: &HookPayload,
+    repo: &Repo,
+    root: &Path,
+) -> Result<Vec<String>, String> {
+    let (path, _) = edited_file(payload);
+    if path.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let Some(diff) = axiom_diff(root, &path) else {
+        return Ok(Vec::new());
+    };
+    // ⚠️ THE HALF THIS DEADLINE DOES NOT COVER, NAMED RATHER THAN HIDDEN — identical to the
+    // context hook's. `Api::resolve` is SYNCHRONOUS (credential store + client construction) and
+    // the `git diff` above is a blocking subprocess, so neither is inside the timeout below:
+    // wrapping a blocking call in `tokio::time::timeout` produces a deadline that CANNOT FIRE,
+    // which is worse than no deadline because it reads as a bound. If either stops being
+    // negligible the answer is `spawn_blocking`, not a decorative wrapper.
+    let Ok(api) = Api::resolve() else {
+        return Ok(Vec::new());
+    };
+    Ok(axiom_lines(&api.client, &api.cancel, repo, &diff, AXIOM_HOOK_BUDGET).await)
 }
 
 /// SessionStart: the returning-customer brief, from local evidence only (session_gap makes no
@@ -1782,6 +2046,23 @@ const CONTEXT_HOOK_HOST_TIMEOUT_SECS: u64 = 30;
 /// empty enrichment, which costs the model some context and costs the human nothing.
 const CONTEXT_HOOK_MARGIN_SECS: u64 = 10;
 
+/// The host's kill for the `PostToolUse` axiom hook, in seconds — the ONE place it is written.
+///
+/// Same construction as [`CONTEXT_HOOK_HOST_TIMEOUT_SECS`] and for the same reason: this number
+/// becomes [`HOOK_TABLE`]'s `axiom` row on all three doors AND the base [`AXIOM_HOOK_BUDGET`] is
+/// derived from, so the client's give-up can never drift above the host's kill. It matches the
+/// sibling `sync` row on the same event, because the two are bounded by the same host.
+const AXIOM_HOOK_HOST_TIMEOUT_SECS: u64 = 30;
+
+/// How far under the host's kill the axiom hook gives up on its own.
+///
+/// Wider in relative terms than the context hook's margin buys nothing here — the margin is
+/// identical on purpose, because the failure it prevents is identical: being killed by the host
+/// discards the hook's output, and on `PostToolUse` that means the model never learns the change
+/// duplicated something. Giving up ourselves returns exit 0 and an empty stdout, which costs the
+/// model one advisory and costs the human nothing.
+const AXIOM_HOOK_MARGIN_SECS: u64 = 10;
+
 /// THE hook contract — every row `install-hooks` writes, for both hosts, plus the plugin
 /// manifest, from one table.
 ///
@@ -1828,6 +2109,22 @@ const HOOK_TABLE: &[HookRow] = &[
         matcher: Some("Write|Edit"),
         mode: "sync",
         timeout: 30,
+        claude_async: false,
+        plugin: true,
+        plugin_async: true,
+    },
+    // AXIOM rides the write path AFTER the write, never before it. `ground` owns `PreToolUse` on
+    // this matcher and is the thing that REFUSES; this is the thing that ARGUES, and an advisory
+    // that delays every edit to say "you could have reused that" has bought noise with latency.
+    // `plugin_async` mirrors `sync` for the same reason it does: on the plugin door the turn must
+    // not wait on an advisory. `claude_async` stays false — the founder's order leaves `async` on
+    // the `Stop` row alone, and Codex SKIPS an async handler with a warning, which would install a
+    // hook that cannot fire.
+    HookRow {
+        event: "PostToolUse",
+        matcher: Some("Write|Edit"),
+        mode: "axiom",
+        timeout: AXIOM_HOOK_HOST_TIMEOUT_SECS,
         claude_async: false,
         plugin: true,
         plugin_async: true,
@@ -5927,13 +6224,15 @@ tests/test_serve.py:88: AssertionError\n\
         assert_eq!(installed["permissions"], original["permissions"]);
         assert_eq!(installed["env"], original["env"]);
         // One customer group plus the Estelle rows the table declares for that event.
+        // PostToolUse is 1 customer + shift + sync + axiom + distil = 5 as of v0.3.0; it was 4
+        // through v0.2.33, and the row that moved it is `axiom`.
         assert_eq!(
             installed["hooks"]["PreToolUse"].as_array().map(Vec::len),
             Some(3)
         );
         assert_eq!(
             installed["hooks"]["PostToolUse"].as_array().map(Vec::len),
-            Some(4)
+            Some(5)
         );
         assert_eq!(installed["hooks"]["Stop"].as_array().map(Vec::len), Some(2));
         assert_eq!(installed["hooks"]["Stop"][0], original["hooks"]["Stop"][0]);
@@ -6027,13 +6326,16 @@ tests/test_serve.py:88: AssertionError\n\
             serde_json::from_value(value).expect("Codex hooks schema");
 
         assert_eq!(parsed.hooks.pre_tool_use.len(), 2);
-        assert_eq!(parsed.hooks.post_tool_use.len(), 3);
+        // shift + sync + axiom + distil. The fourth is `axiom`, added in v0.3.0.
+        assert_eq!(parsed.hooks.post_tool_use.len(), 4);
         assert_eq!(parsed.hooks.stop.len(), 1);
         assert_eq!(parsed.hooks.pre_compact.len(), 1);
         assert_eq!(parsed.hooks.session_end.len(), 1);
         assert_eq!(parsed.hooks.session_start.len(), 1);
         assert_eq!(parsed.hooks.user_prompt_submit.len(), 1);
-        assert_eq!(parsed.hooks.handler_count(), 10);
+        // Every HOOK_TABLE row, `shift` included (it is install-hooks-only, not plugin-only).
+        // 10 through v0.2.33; the eleventh is `axiom`.
+        assert_eq!(parsed.hooks.handler_count(), 11);
         for (_event, groups) in parsed.hooks.into_matcher_groups() {
             for group in &groups {
                 for handler in &group.hooks {
@@ -6062,11 +6364,12 @@ tests/test_serve.py:88: AssertionError\n\
         // compared the two doors. `the_plugin_manifest_is_generated_from_the_one_hook_table` is
         // the comparison that was missing; these literals are the second, independent statement
         // of the same contract, and they are meant to be edited deliberately, together.
-        let expected: [(&str, Option<&str>, &str, u64); 10] = [
+        let expected: [(&str, Option<&str>, &str, u64); 11] = [
             ("PreToolUse", Some("Write|Edit"), "ground", 30),
             ("PreToolUse", Some("Bash"), "guard", 10),
             ("PostToolUse", Some("Read|Write|Edit"), "shift", 5),
             ("PostToolUse", Some("Write|Edit"), "sync", 30),
+            ("PostToolUse", Some("Write|Edit"), "axiom", 30),
             ("PostToolUse", Some("Bash"), "distil", 10),
             ("Stop", None, "checkpoint", 30),
             ("PreCompact", None, "checkpoint", 30),
@@ -6125,11 +6428,12 @@ tests/test_serve.py:88: AssertionError\n\
         merge_estelle_hooks(&mut value, HookHost::Codex, "estelle").expect("hook declaration");
         let hooks = &value["hooks"];
 
-        let expected: [(&str, Option<&str>, &str, u64); 10] = [
+        let expected: [(&str, Option<&str>, &str, u64); 11] = [
             ("PreToolUse", Some("Write|Edit"), "ground", 30),
             ("PreToolUse", Some("Bash"), "guard", 10),
             ("PostToolUse", Some("Read|Write|Edit"), "shift", 5),
             ("PostToolUse", Some("Write|Edit"), "sync", 30),
+            ("PostToolUse", Some("Write|Edit"), "axiom", 30),
             ("PostToolUse", Some("Bash"), "distil", 10),
             ("Stop", None, "checkpoint", 30),
             ("PreCompact", None, "checkpoint", 30),
@@ -6395,6 +6699,366 @@ tests/test_serve.py:88: AssertionError\n\
             assert!(!remove_estelle_hooks(&mut again).expect("second uninstall"));
             assert_eq!(again, uninstalled);
         }
+    }
+
+    /// The envelope `serve/axiom.py:361-371` (`as_envelope`) actually produces, written out
+    /// rather than derived, so a change on either side of the wire has to be made twice, on
+    /// purpose. This is the CONTRACT — the Python side owns the verdict vocabulary
+    /// (`lean` / `simplify` / `could-not-check`) and the finding fields; this fixture is the
+    /// client's statement of what it believes those are.
+    fn axiom_envelope(verdict: &str, rungs_checked: u64, findings: Value) -> Value {
+        json!({"axiom": {
+            "verdict": verdict,
+            "rungs_checked": rungs_checked,
+            "advisory": true,
+            "findings": findings,
+            "skipped": {"needed-at-all": "advisory", "installed-dependency": "unavailable"},
+        }})
+    }
+
+    fn axiom_finding(symbol: &str, citation: &str) -> Value {
+        json!({
+            "rung": 2,
+            "rung_name": "already-in-repo",
+            "symbol": symbol,
+            "citation": citation,
+            "message": format!(
+                "'{symbol}' already exists at {citation} — reuse it instead of re-implementing it"
+            ),
+        })
+    }
+
+    /// ✅ THE POSITIVE CONTROL FOR EVERY SILENCE ASSERTED BELOW.
+    ///
+    /// Each test after this one asserts that `axiom_render` says NOTHING. A renderer that returned
+    /// `Vec::new()` unconditionally would satisfy all of them forever — so this proves the
+    /// instrument can speak before any of them proves it stays quiet.
+    #[test]
+    fn axiom_renders_a_simplify_verdict_for_the_human_and_the_model() {
+        let reply = axiom_envelope(
+            "simplify",
+            1,
+            json!([axiom_finding("retry_with_backoff", "serve/backend.py:118")]),
+        );
+
+        let lines = axiom_render(&reply);
+
+        assert_eq!(lines.len(), 1, "a finding must be spoken: {lines:?}");
+        let envelope: Value = serde_json::from_str(&lines[0]).expect("envelope JSON");
+        let message = envelope["systemMessage"].as_str().expect("a human line");
+        assert!(message.contains("retry_with_backoff"), "{message}");
+        assert!(message.contains("serve/backend.py:118"), "{message}");
+        assert!(
+            message.contains("nothing is blocked"),
+            "the ladder is ADVISORY and must say so where the human reads it: {message}"
+        );
+        // The event name MUST match the event that fired, or Claude Code drops the context.
+        assert_eq!(
+            envelope["hookSpecificOutput"]["hookEventName"],
+            json!("PostToolUse")
+        );
+        let context = envelope["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .expect("the model is told");
+        assert!(
+            context.contains("reuse it instead of re-implementing it"),
+            "the SERVER owns the sentence and the client must ship it verbatim: {context}"
+        );
+        // A refusal is expressible only on PreToolUse, and this hook must never attempt one.
+        assert!(
+            envelope["hookSpecificOutput"]
+                .get("permissionDecision")
+                .is_none(),
+            "the ladder never blocks: {}",
+            lines[0]
+        );
+    }
+
+    /// 🔴 THREE DIFFERENT INPUTS, ONE SILENCE — AND THE THIRD IS THE DRIFT CONTROL.
+    ///
+    /// `lean` and `could-not-check` are NOT the same fact, and neither is a reply from a server
+    /// that predates the field entirely. What they share is that none of them carries a citation,
+    /// and this hook speaks only when it holds one. The absent-key case is the one that matters
+    /// for shipping: the `axiom` key rides `POST /gate`, so a customer on an older server must get
+    /// silence rather than a crash or a fabricated "clean".
+    #[test]
+    fn axiom_is_silent_without_a_citation_to_show() {
+        for (label, reply) in [
+            ("lean", axiom_envelope("lean", 1, json!([]))),
+            (
+                "could-not-check",
+                axiom_envelope("could-not-check", 0, json!([])),
+            ),
+            (
+                "older server, no axiom key",
+                json!({"merge": true, "verdict": "clean"}),
+            ),
+            ("axiom key present but null", json!({"axiom": Value::Null})),
+        ] {
+            assert!(
+                axiom_render(&reply).is_empty(),
+                "{label} must produce NOTHING — this hook has no clean branch to take"
+            );
+        }
+    }
+
+    /// 🔴 THE PAIR THAT CANNOT BOTH BE TRUE, RE-ASSERTED ON THIS SIDE OF THE WIRE.
+    ///
+    /// `serve/axiom.py:138` makes `lean` over zero rungs unconstructible in Python. That is an
+    /// invariant of the SERVER, and a client that trusts an invariant across a network has simply
+    /// moved the assumption. `simplify` with `rungs_checked: 0` is the same impossibility wearing
+    /// the other verdict, and it is the shape a half-wired future door would emit — so it is
+    /// checked here rather than expected.
+    #[test]
+    fn axiom_refuses_to_speak_over_zero_checked_rungs() {
+        let reply = axiom_envelope(
+            "simplify",
+            0,
+            json!([axiom_finding("retry_with_backoff", "serve/backend.py:118")]),
+        );
+        assert!(
+            axiom_render(&reply).is_empty(),
+            "a finding over zero checked rungs is 'could-not-check' wearing a costume"
+        );
+    }
+
+    /// A finding without a citation is a SUGGESTION, and neither side of this contract emits
+    /// suggestions (`AxiomFinding.__post_init__`, `serve/axiom.py:94-95`, refuses to construct
+    /// one). The uncited finding is dropped and the cited one survives — so this is its own
+    /// positive control: a renderer that dropped everything would fail the second assertion.
+    #[test]
+    fn axiom_drops_a_finding_that_carries_no_citation() {
+        let reply = axiom_envelope(
+            "simplify",
+            1,
+            json!([
+                axiom_finding("ghost", "   "),
+                axiom_finding("retry_with_backoff", "serve/backend.py:118"),
+            ]),
+        );
+
+        let lines = axiom_render(&reply);
+
+        assert_eq!(lines.len(), 1);
+        let message = serde_json::from_str::<Value>(&lines[0]).expect("JSON")["systemMessage"]
+            .as_str()
+            .expect("a human line")
+            .to_string();
+        assert!(
+            !message.contains("ghost"),
+            "uncited finding shown: {message}"
+        );
+        assert!(
+            message.contains("retry_with_backoff"),
+            "the cited finding must survive — otherwise this test passes on a broken renderer: \
+             {message}"
+        );
+    }
+
+    /// ⚠️ A CAPPED READ MEANS "THERE IS MORE", NEVER "THAT IS ALL THERE IS".
+    ///
+    /// The advisory shows [`AXIOM_MAX_FINDINGS`] and must report the TOTAL, because a truncated
+    /// list that does not say it was truncated is a claim about completeness the client cannot
+    /// support.
+    #[test]
+    fn axiom_says_how_many_findings_it_did_not_show() {
+        let findings: Vec<Value> = (0..AXIOM_MAX_FINDINGS + 3)
+            .map(|n| axiom_finding(&format!("dup_{n}"), &format!("serve/backend.py:{n}")))
+            .collect();
+        let reply = axiom_envelope("simplify", 1, json!(findings));
+
+        let lines = axiom_render(&reply);
+
+        let message = serde_json::from_str::<Value>(&lines[0]).expect("JSON")["systemMessage"]
+            .as_str()
+            .expect("a human line")
+            .to_string();
+        assert!(
+            message.contains("(+3 more)"),
+            "the cap must say so: {message}"
+        );
+        assert!(
+            message.contains(&format!("{} thing(s)", AXIOM_MAX_FINDINGS + 3)),
+            "the TOTAL is the number that matters, not the shown count: {message}"
+        );
+        assert!(
+            !message.contains(&format!("dup_{AXIOM_MAX_FINDINGS}")),
+            "nothing past the cap may be rendered: {message}"
+        );
+    }
+
+    async fn slow_gate_server(delay: Duration, body: Value) -> wiremock::MockServer {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/gate"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_delay(delay)
+                    .set_body_json(body),
+            )
+            .mount(&server)
+            .await;
+        server
+    }
+
+    fn one_finding_reply() -> Value {
+        axiom_envelope(
+            "simplify",
+            1,
+            json!([axiom_finding("retry_with_backoff", "serve/backend.py:118")]),
+        )
+    }
+
+    /// 🔬 THE DEADLINE, DEMONSTRATED FIRING. Same discipline as the context hook's: a
+    /// `tokio::time::timeout` around a thread-blocking call never fires and still reads as a bound
+    /// in review, so reasoning cannot tell a real deadline from a decorative one. This drives the
+    /// REAL client against a REAL server that answers three seconds late with a 300 ms budget.
+    ///
+    /// ⚠️ ITS OWN NEGATIVE CONTROL: the client's transport timeout is the 120 s `MINIMUM_TIMEOUT`
+    /// floor, so a give-up at ~300 ms can be neither reqwest's nor the server's.
+    #[tokio::test]
+    async fn the_axiom_budget_fires_against_a_slow_server() {
+        const BUDGET: Duration = Duration::from_millis(300);
+        const SERVER_DELAY: Duration = Duration::from_secs(3);
+
+        let server = slow_gate_server(SERVER_DELAY, one_finding_reply()).await;
+        let (client, cancel) = hook_client(&server.uri());
+        let repo = Repo::new("fatelabs/estelle").expect("repo");
+
+        let started = Instant::now();
+        let lines = axiom_lines(
+            &client,
+            &cancel,
+            &repo,
+            "+def retry_with_backoff():\n",
+            BUDGET,
+        )
+        .await;
+        let elapsed = started.elapsed();
+
+        assert!(
+            lines.is_empty(),
+            "an expired budget emits NOTHING and exits 0 — never a partial advisory: {lines:?}"
+        );
+        assert!(
+            elapsed < SERVER_DELAY,
+            "the budget must give up before the server answers — {elapsed:?} >= {SERVER_DELAY:?} \
+             means the deadline did not fire"
+        );
+    }
+
+    /// 🔬 AND THE DEADLINE DEMONSTRATED **NOT** FIRING — the half that is usually missing. A
+    /// client that returned `Vec::new()` unconditionally satisfies the test above forever. Same
+    /// server, same client, one variable changed.
+    #[tokio::test]
+    async fn the_axiom_budget_does_not_fire_against_a_fast_server() {
+        const BUDGET: Duration = Duration::from_secs(8);
+        const SERVER_DELAY: Duration = Duration::from_secs(3);
+
+        let server = slow_gate_server(SERVER_DELAY, one_finding_reply()).await;
+        let (client, cancel) = hook_client(&server.uri());
+        let repo = Repo::new("fatelabs/estelle").expect("repo");
+
+        let lines = axiom_lines(
+            &client,
+            &cancel,
+            &repo,
+            "+def retry_with_backoff():\n",
+            BUDGET,
+        )
+        .await;
+
+        assert_eq!(
+            lines.len(),
+            1,
+            "a budget wider than the delay must deliver the advisory, not silence"
+        );
+        assert!(
+            lines[0].contains("serve/backend.py:118"),
+            "the citation is the whole point: {}",
+            lines[0]
+        );
+    }
+
+    /// 🔑 THE WIRE SHAPE, ASSERTED ON THE BYTES THAT LEAVE THE PROCESS — AND ON THE DOOR.
+    ///
+    /// Reading the source cannot tell you which route was called. The axiom envelope is served by
+    /// `POST /gate` and by NOTHING else (`serve/gate_verdict.py:250`); a client written against an
+    /// imagined `/axiom` route would pass every test in this file and 404 on every customer
+    /// machine — this repo's own outer-layer-green defect, mirrored. So this captures the real
+    /// request and asserts the PATH as well as the body.
+    #[tokio::test]
+    async fn the_axiom_hook_asks_the_one_door_that_serves_the_envelope() {
+        let server = slow_gate_server(Duration::ZERO, one_finding_reply()).await;
+        let (client, cancel) = hook_client(&server.uri());
+        let repo = Repo::new("fatelabs/estelle").expect("repo");
+        let diff = "--- a/serve/x.py\n+++ b/serve/x.py\n+def retry_with_backoff():\n";
+
+        let lines = axiom_lines(&client, &cancel, &repo, diff, Duration::from_secs(8)).await;
+        assert_eq!(
+            lines.len(),
+            1,
+            "the fixture must answer, or this proves nothing"
+        );
+
+        let requests = server
+            .received_requests()
+            .await
+            .expect("the mock server recorded the request");
+        assert_eq!(requests.len(), 1, "exactly one door is knocked on");
+        assert_eq!(requests[0].url.path(), "/gate", "the axiom rides /gate");
+        let body: Value = serde_json::from_slice(&requests[0].body).expect("request JSON");
+        assert_eq!(
+            body["diff"].as_str(),
+            Some(diff),
+            "the server parses a UNIFIED DIFF (`added_symbols`), so the diff goes on the wire whole"
+        );
+    }
+
+    /// 🔴 THE CLIENT'S OWN DEADLINE MUST SIT UNDER THE HOST'S KILL — ON **EVERY** DOOR.
+    ///
+    /// The sibling of `the_context_budget_sits_under_the_host_kill_on_every_door`, and it exists
+    /// for the same reason: a client budget ABOVE the host's kill is the configuration where the
+    /// work completes and the host throws the answer away. Prose cannot hold that invariant;
+    /// arithmetic can.
+    #[test]
+    fn the_axiom_budget_sits_under_the_host_kill_on_every_door() {
+        let row = HOOK_TABLE
+            .iter()
+            .find(|row| row.event == "PostToolUse" && row.mode == "axiom")
+            .expect("the table declares the axiom hook");
+        assert_eq!(
+            row.timeout, AXIOM_HOOK_HOST_TIMEOUT_SECS,
+            "the table row and the constant the budget is derived from are one owner"
+        );
+
+        let manifest: Value =
+            serde_json::from_str(SHIPPED_PLUGIN_MANIFEST).expect("the shipped manifest is JSON");
+        let plugin_kill = manifest["hooks"]["PostToolUse"]
+            .as_array()
+            .expect("the plugin door declares PostToolUse groups")
+            .iter()
+            .find_map(|group| {
+                let handler = &group["hooks"][0];
+                handler["command"]
+                    .as_str()
+                    .is_some_and(|command| command.ends_with(" hook axiom"))
+                    .then(|| handler["timeout"].as_u64())?
+            })
+            .expect("the plugin door ships the axiom hook with a timeout");
+
+        for (door, kill) in [("install-hooks", row.timeout), ("plugin", plugin_kill)] {
+            assert!(
+                AXIOM_HOOK_BUDGET < Duration::from_secs(kill),
+                "{door} door kills the axiom hook at {kill}s but the client waits \
+                 {AXIOM_HOOK_BUDGET:?} — the work finishes and the host discards it"
+            );
+        }
+        assert_eq!(
+            AXIOM_HOOK_BUDGET,
+            Duration::from_secs(AXIOM_HOOK_HOST_TIMEOUT_SECS - AXIOM_HOOK_MARGIN_SECS),
+            "the budget is derived from the host kill, never typed independently"
+        );
     }
 
     #[tokio::test]

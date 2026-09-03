@@ -39,6 +39,18 @@
         ]
       },
       {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y @fatelabs/estelle@0 hook axiom",
+            "timeout": 30,
+            "async": true,
+            "statusMessage": "Estelle hook axiom"
+          }
+        ]
+      },
+      {
         "matcher": "Bash",
         "hooks": [
           {
