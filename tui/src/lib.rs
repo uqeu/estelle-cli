@@ -216,6 +216,8 @@ mod workspace_messages;
 
 mod wrapping;
 
+#[cfg(test)]
+mod release_version;
 mod table_detect;
 #[cfg(test)]
 pub(crate) mod test_backend;
