@@ -1,0 +1,66 @@
+# 🔴 **NOTHING IN THIS REPOSITORY RAN ON A PUSH UNTIL THIS FILE EXISTED.**
+#
+# Every other workflow here is `workflow_dispatch:` only — `release.yml`, and the four receipt
+# probes. So `cargo fmt`, `cargo clippy` and `cargo test` fired exactly once per release, by hand,
+# at the moment they are most expensive to fix. Measured on `integration/cli-0.3.0-20260903`, that
+# is what had accumulated behind the gap:
+#
+#   * `cargo fmt --check` red at 6 sites in 3 files — the release gate's FIRST command.
+#   * `cargo clippy -D warnings` reporting 1 finding and actually holding 23: one deny-level error
+#     halted compilation before the lint pass reached the rest, so the count itself was wrong.
+#   * `cargo test -p estelle-tui --lib` unable to FINISH — a worker overflowed its 2 MiB stack and
+#     SIGABRTed after ~136 of 3,260 tests, printing no `test result:` line at all. An absence reads
+#     as a pass, which is why every recorded baseline for that crate said "154 tests".
+#   * 8 real test failures behind that abort, 5 of them red since the fork import a month earlier.
+#
+# None of those needed a clever instrument. They needed one that RAN. A guard reachable only from
+# the path someone remembered to trigger is a guard on that path.
+#
+# This deliberately mirrors `release.yml`'s `validate` job rather than inventing a second contract,
+# so the cheap gate and the release gate cannot drift into disagreeing about what "green" means.
+# RUST_MIN_STACK is NOT set here: it lives in `.cargo/config.toml`'s `[env]` block so that a
+# developer's bare `cargo test` gets the same 8 MiB floor this job does. If it were set here, CI
+# would pass while the suite kept aborting on every laptop — which is the exact shape being fixed.
+name: CI
+
+on:
+  push:
+    branches-ignore:
+      - "gh-readonly-queue/**"
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: fmt, clippy and unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      - name: Lints
+        run: cargo clippy --locked -p estelle-acp -p estelle-client -p estelle-tui --all-targets -- -D warnings
+      - name: Unit tests
+        run: cargo test --locked -p estelle-acp -p estelle-client -p estelle-tui
+      - name: The suite must have FINISHED, not merely not-failed
+        shell: bash
+        run: |
+          set -euo pipefail
+          # ⚠️ `cargo test` exits 0 when a target aborts before printing its counts, because there
+          # is no failure to report — that is the whole defect this repository just paid for. So
+          # assert on the innermost observable: the declared test count of the crate that overflows.
+          # A floor, not an equality, so adding tests never turns this red for the wrong reason.
+          declared=$(cargo test --locked -p estelle-tui --lib -- --list 2>/dev/null | grep -c ': test$')
+          echo "estelle-tui --lib declares ${declared} tests"
+          test "${declared}" -gt 3000
+          ran=$(cargo test --locked -p estelle-tui --lib 2>&1 | tee /dev/stderr | grep -c '^test result: ')
+          test "${ran}" -eq 1
