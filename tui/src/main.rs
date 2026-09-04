@@ -25,6 +25,7 @@ mod screens;
 mod session_server;
 mod session_view;
 mod setup_flow;
+mod skill_suggest;
 #[cfg(test)]
 mod test_gallery;
 mod theme;
@@ -1870,9 +1871,15 @@ struct App {
     skill_catalog: Vec<PickerRow>,
     /// What the user has typed to narrow [`Self::skill_catalog`].
     skill_filter: String,
-    /// Every skill name this session has learned, kept so composer completion survives the
-    /// composer being rebuilt between turns.
-    skill_names: Vec<String>,
+    /// Every playbook this session has learned, name AND one-line summary, kept so composer
+    /// completion and the suggestion band both survive the composer being rebuilt between turns.
+    ///
+    /// 🔴 **ONE OWNER FOR "WHICH PLAYBOOKS EXIST".** This used to be `skill_names: Vec<String>` and
+    /// the suggestion band needs the summaries too. Adding a second parallel vector would have put
+    /// two owners on one derived fact, and they would eventually disagree about which playbooks the
+    /// session knows — so the ONE list carries both halves and `completion_catalog` reads names off
+    /// it. Distinct from [`Self::skill_catalog`], which is emptied the moment the picker closes.
+    skill_index: Vec<skill_suggest::SkillEntry>,
     resume_picker: Option<ExternalResumePicker>,
     settings: Option<CommandReply>,
     pending_setting_input: Option<PendingSettingInput>,
@@ -2189,7 +2196,7 @@ impl App {
             picker: None,
             skill_catalog: Vec::new(),
             skill_filter: String::new(),
-            skill_names: Vec::new(),
+            skill_index: Vec::new(),
             resume_picker: None,
             settings: None,
             pending_setting_input: None,
@@ -2924,7 +2931,7 @@ impl App {
     /// that rebuilds it.
     fn fresh_composer(&self) -> ComposerInput {
         let mut composer = estelle_composer();
-        if !self.skill_names.is_empty() {
+        if !self.skill_index.is_empty() {
             composer.set_commands(self.completion_catalog());
         }
         composer
@@ -2938,11 +2945,9 @@ impl App {
         commands::composer_commands()
             .into_iter()
             .map(|(name, description)| ComposerCommand::new(name, description))
-            .chain(
-                self.skill_names
-                    .iter()
-                    .map(|name| ComposerCommand::new(format!("skill:{name}"), "skill playbook")),
-            )
+            .chain(self.skill_index.iter().map(|entry| {
+                ComposerCommand::new(format!("skill:{}", entry.name), "skill playbook")
+            }))
             .collect()
     }
 
@@ -2961,6 +2966,47 @@ impl App {
             &self.skill_catalog,
             &self.skill_filter,
         ));
+    }
+
+    /// The playbook this draft looks like, or `None` — the ONE owner of that question.
+    ///
+    /// 🔴 **DERIVED ON DEMAND, NEVER STORED.** A cached suggestion is a second copy of the composer's
+    /// text that goes stale the first time a keystroke reaches the draft down a path nobody
+    /// remembered to instrument — which in this file is `submit`, `recall_queue_into_composer`,
+    /// `fresh_composer` and the draft-history walk, four writers for one string. The renderer and
+    /// the Tab handler both call THIS, so the band the user sees and the playbook Tab inserts cannot
+    /// be two different playbooks.
+    ///
+    /// The cost is one bounded tokenisation of a bounded draft per frame and per Tab, with no
+    /// network call and no model call on either path.
+    fn skill_suggestion(&self) -> Option<skill_suggest::Suggestion> {
+        // A modal owns the input while it is open, and the composer is not even drawn. Suggesting
+        // against a draft the user cannot see or edit would be a band pointing at nothing.
+        if self.picker.is_some() || self.resume_picker.is_some() || self.gate_modal.is_some() {
+            return None;
+        }
+        // ⚠️ CHECKED BEFORE `composer.text()`, WHICH ALLOCATES THE WHOLE DRAFT. Until `/skills` has
+        // been run the index is empty and nothing can ever match, which is the state every session
+        // starts in and the state the frame-budget test renders in — so the common case costs one
+        // `is_empty()` per frame rather than a string copy per frame.
+        if self.skill_index.is_empty() {
+            return None;
+        }
+        skill_suggest::suggest(&self.composer.text(), &self.skill_index)
+    }
+
+    /// The playbook the draft has ALREADY bound, if it is a `/skill:<name>` invocation.
+    ///
+    /// 🔴 **THE MOCK'S SECOND PANEL: `TYPED`.** `docs/design/cli-reference-2026-08-24/skill 4.png`
+    /// §7 draws the composer, after a playbook has been chosen, carrying
+    /// `~/estelle · deepen-architecture` beneath the prompt with the name in pink. It is the
+    /// counterpart of the offer: the offer says *what this could be*, this says *what it now is*.
+    ///
+    /// ⚠️ The spellings come from `commands::bound_skill`, which reads the same `SKILL_PREFIXES`
+    /// the parser reads. A second copy of `"skill:"` here is how `/skills:agent-injection-eval`
+    /// became an unknown command the first time — one owner for the namespace, not two.
+    fn bound_skill(&self) -> Option<String> {
+        commands::bound_skill(&self.composer.text()).map(str::to_string)
     }
 
     fn activate_picker(&mut self, tx: &mpsc::UnboundedSender<UiEvent>) {
@@ -3906,10 +3952,15 @@ impl App {
             self.picker = Some(PickerSurface::model(&reply));
         } else if name == "skills" {
             self.skill_catalog = PickerSurface::skill_catalog(&reply);
-            self.skill_names = self
+            // The picker's rows ARE the index: same names, same masked summaries, built once by
+            // `skill_catalog` so a playbook can never be suggestible without being listable.
+            self.skill_index = self
                 .skill_catalog
                 .iter()
-                .map(|row| row.label.clone())
+                .map(|row| skill_suggest::SkillEntry {
+                    name: row.label.clone(),
+                    summary: row.detail.clone(),
+                })
                 .collect();
             // In place, NOT a rebuild: replacing the composer here would discard whatever the user
             // was mid-way through typing when the registry happened to arrive.
@@ -6256,6 +6307,25 @@ fn handle_key(app: &mut App, key: KeyEvent, tx: &mpsc::UnboundedSender<UiEvent>)
         app.picker = Some(PickerSurface::autonomy(app));
         return false;
     }
+    // 🔴 TAB TAKES THE SUGGESTION, BUT ONLY WHEN THERE IS A SUGGESTION ON SCREEN TO TAKE.
+    //
+    // The claim on the key is as narrow as the `up`-recalls-the-queue claim below it, and for the
+    // same reason: `tab` already means "move focus" here and "complete the command" once the line
+    // starts with a slash, and a suggester that eats a keystroke the user meant for one of those is
+    // a worse product than no suggester. The conjunction is exactly the state in which the band is
+    // DRAWN — `App::skill_suggestion` is the single owner of that fact, so the key and the pixels
+    // cannot disagree — and in every other state this branch is not reached at all.
+    //
+    // ⚠️ `key.modifiers.is_empty()` is load-bearing: `ctrl+tab` is claimed above for thread
+    // switching and `shift+tab` arrives as `BackTab`, so neither can land here by accident.
+    if key.code == KeyCode::Tab
+        && key.modifiers.is_empty()
+        && let Some(suggestion) = app.skill_suggestion()
+    {
+        let taken = skill_suggest::apply(&app.composer.text(), &suggestion.name);
+        app.composer.set_text(taken);
+        return false;
+    }
     if key.code == KeyCode::Tab && !app.composer.text().trim_start().starts_with('/') {
         app.move_focus(true);
         return false;
@@ -7603,7 +7673,9 @@ mod tests {
                 "{name} did not render expected text {needle:?}\n{text}"
             );
             // 🔴 NO BOX REACHES A LIVE FRAME. The catalog draws zero corners and the live renderer
-            // drew them on eight of these eighteen surfaces — one row carried both languages at
+            // drew them on eight of the surfaces this gallery held at the time (eighteen then;
+            // the count is asserted below rather than written here, because a number in a comment
+            // is a claim nobody re-measures) — one row carried both languages at
             // once: `── session · uqeu/estelle ───  │  ┌ CONTEXT  Alt+M · /context ────┐`. The
             // guard runs over every state this gallery already builds, so it costs nothing and it
             // is the only thing that stops the boxes coming back a third time.
@@ -7952,6 +8024,59 @@ mod tests {
         skills.refilter_skills();
         capture("12-skills", &skills, 130, 34, "── skills · 3 of 3");
 
+        // 🔴 `12-skills` IS A MENU AND `12b` IS AN INFERENCE — THEY ARE FILED SIDE BY SIDE SO THE
+        // DIFFERENCE IS VISIBLE IN ONE SCROLL. The picker above lists three playbooks and waits to
+        // be read; this one appeared because the draft below it was read. The founder asked for the
+        // second and the product only had the first.
+        let mut suggested = test_app();
+        suggested.prod_panel_visible = false;
+        suggested.header.indexed = Some(true);
+        suggested.skill_index = PickerSurface::skill_catalog(
+            &serde_json::from_value(json!({
+                "skills": [
+                    {"name": "improve-codebase-architecture", "summary": "Find deepening opportunities and make a codebase more navigable"},
+                    {"name": "review", "summary": "Review the current change against production evidence"},
+                    {"name": "trace", "summary": "Trace an issue to a bound repository symbol"}
+                ]
+            }))
+            .expect("gallery suggestion catalog"),
+        )
+        .into_iter()
+        .map(|row| skill_suggest::SkillEntry {
+            name: row.label,
+            summary: row.detail,
+        })
+        .collect();
+        suggested
+            .composer
+            .set_text("improve the architecture of the retrieval layer".to_string());
+        capture(
+            "12b-skill-suggestion",
+            &suggested,
+            130,
+            34,
+            "This looks like improve-codebase-architecture",
+        );
+
+        // The mock's `TYPED` panel — the same composer one keystroke later, after tab. Filed next
+        // to the offer because they are one affordance at two moments and the founder reviews them
+        // together: 12 is the menu, 12b is the offer, 12c is what the offer becomes.
+        let mut bound = test_app();
+        bound.prod_panel_visible = false;
+        bound.header.indexed = Some(true);
+        bound.skill_index = suggested.skill_index.clone();
+        bound.composer.set_text(
+            "/skill:improve-codebase-architecture improve the architecture of the retrieval layer"
+                .to_string(),
+        );
+        capture(
+            "12c-skill-bound",
+            &bound,
+            130,
+            34,
+            "uqeu/estelle \u{b7} improve-codebase-architecture",
+        );
+
         let todo: estelle_client::TodoSnapshot = serde_json::from_value(json!({
             "observed_at": 4102444800.0,
             "items": [
@@ -8044,6 +8169,23 @@ mod tests {
         assert!(
             boxed_frames.is_empty(),
             "these live frames still draw a boxed panel: {boxed_frames:?}"
+        );
+        // 🔴 THE GALLERY'S SIZE IS ASSERTED, NOT DESCRIBED. Prose above this function has twice
+        // carried a screen count that went stale the moment a screen was added, and a stale count
+        // in a comment is a claim with no owner. Adding a surface is a deliberate act: it changes
+        // what the founder reviews, so it changes this line too.
+        assert_eq!(
+            names.len(),
+            20,
+            "the gallery gained or lost a surface: {names:?}"
+        );
+        // Names must be unique or `write_frame` silently overwrites one screen with another and the
+        // index lists a file that is not what it claims to be.
+        let unique = names.iter().collect::<BTreeSet<_>>();
+        assert_eq!(
+            unique.len(),
+            names.len(),
+            "two surfaces share a name: {names:?}"
         );
 
         if let Some(output) = output.as_deref() {
@@ -9081,6 +9223,301 @@ mod tests {
         assert!(rendered.contains("RuntimeError"), "{rendered}");
         assert!(!rendered.contains("Not connected"), "{rendered}");
         assert!(!rendered.contains("0 proposed"), "{rendered}");
+    }
+
+    /// A composer holding `draft`, with a three-playbook index the suggester can match against.
+    ///
+    /// ⚠️ Built through `PickerSurface::skill_catalog` on a real reply shape rather than by hand.
+    /// A hand-built fixture would model a catalog more forgiving than the server's — the same
+    /// defect family that let a `Rows`-vs-`list` bug through the parity suite — and in particular it
+    /// would skip the name validation that decides which playbooks are suggestible at all.
+    fn app_with_draft(draft: &str) -> App {
+        let mut app = test_app();
+        app.prod_panel_visible = false;
+        app.skill_index = PickerSurface::skill_catalog(
+            &serde_json::from_value(json!({
+                "skills": [
+                    {"name": "improve-codebase-architecture", "summary": "Find deepening opportunities and make a codebase more navigable"},
+                    {"name": "review", "summary": "Review the current change against production evidence"},
+                    {"name": "trace", "summary": "Trace an issue to a bound repository symbol"}
+                ]
+            }))
+            .expect("a skills reply"),
+        )
+        .into_iter()
+        .map(|row| skill_suggest::SkillEntry {
+            name: row.label,
+            summary: row.detail,
+        })
+        .collect();
+        app.composer.set_text(draft.to_string());
+        app
+    }
+
+    /// 🔴 THE OFFER IS THE MOCK'S TWO ROWS, IN THE MOCK'S WORDS, ABOVE THE INPUT BLOCK.
+    ///
+    /// Pinned against `docs/design/cli-reference-2026-08-24/skill 4.png` §7 panel three. Asserting
+    /// only "a suggestion appeared" would pass on a band that says something else entirely, which is
+    /// exactly how a screen drifts from a spec nobody re-reads.
+    #[test]
+    fn the_offered_skill_band_renders_the_mocks_wording_above_the_ask_rule() {
+        let app = app_with_draft("improve the architecture of the retrieval layer");
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 130, 34);
+        let rows = rendered
+            .lines()
+            .map(|row| row.trim_matches('"').trim_end().to_string())
+            .collect::<Vec<_>>();
+
+        let offer_at = rows
+            .iter()
+            .position(|row| row.starts_with("\u{bb} This looks like "))
+            .expect("the offer sentence");
+        assert_eq!(
+            rows[offer_at], "\u{bb} This looks like improve-codebase-architecture.",
+            "the offer is not the mock's sentence"
+        );
+        assert_eq!(
+            rows[offer_at + 1],
+            "  tab to use \u{b7} enter to answer normally",
+            "the hint row is not the mock's wording"
+        );
+        // `enter to answer normally` is the clause that makes the band ignorable rather than modal.
+        // It is asserted by name because dropping it would look like a harmless trim.
+        assert!(rows[offer_at + 1].contains("enter to answer normally"));
+
+        // ABOVE the input block, which is what the founder asked for: "you would be typing your
+        // prompt on the bottom and then on the top it would appear".
+        let rule_at = rows
+            .iter()
+            .position(|row| row.starts_with("\u{2500}\u{2500} ask \u{b7} "))
+            .expect("the ask rule");
+        assert!(
+            offer_at < rule_at,
+            "the offer rendered at {offer_at}, below the ask rule at {rule_at}"
+        );
+        // And it did not steal a row from the typing area: the draft is still on screen under the
+        // rule. A band that shrank the box you are typing in as you typed would be the worst
+        // possible moment to shrink it.
+        assert!(
+            rows[rule_at + 1].contains("improve the architecture of the retrieval layer"),
+            "the draft is not under the ask rule: {:?}",
+            rows[rule_at + 1]
+        );
+
+        // The mock draws no box on this panel and this frame draws none anywhere.
+        for corner in BOX_CORNERS {
+            assert!(!rendered.contains(corner), "a box corner reached the offer");
+        }
+    }
+
+    /// 🔴 THE NEGATIVE CONTROL, AT THE FRAME LEVEL RATHER THAN THE MATCHER LEVEL.
+    ///
+    /// `skill_suggest`'s own tests prove the matcher is silent on these prompts. This proves the
+    /// RENDERER is — a band wired to fire on `is_some()` of the wrong thing would pass every matcher
+    /// test and still paint on every keystroke. Four states, each of which has to draw nothing.
+    #[test]
+    fn the_offer_stays_off_screen_when_nothing_matches() {
+        for draft in [
+            "",
+            "fix the typo in the readme",
+            "/review",
+            "what does this repo do",
+        ] {
+            let app = app_with_draft(draft);
+            let rendered = rendered_frame_at_size(&app, Instant::now(), 130, 34);
+            assert!(
+                !rendered.contains("This looks like"),
+                "{draft:?} raised an offer"
+            );
+        }
+
+        // A session that has never run `/skills` has no index, so nothing is suggestible at all —
+        // the state every user is in for their first turn.
+        let mut cold = test_app();
+        cold.prod_panel_visible = false;
+        cold.composer
+            .set_text("improve the architecture of the retrieval layer".to_string());
+        let rendered = rendered_frame_at_size(&cold, Instant::now(), 130, 34);
+        assert!(!rendered.contains("This looks like"), "{rendered}");
+    }
+
+    /// A modal owns the input; an offer pointing at a draft the user cannot see or edit is noise.
+    #[test]
+    fn a_modal_that_owns_the_input_also_owns_the_offer() {
+        let mut app = app_with_draft("improve the architecture of the retrieval layer");
+        app.picker = Some(PickerSurface::autonomy(&app));
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 130, 34);
+        assert!(!rendered.contains("This looks like"), "{rendered}");
+    }
+
+    /// 🔴 TAB TAKES THE OFFER AND THE DRAFT SURVIVES BYTE FOR BYTE.
+    #[test]
+    fn tab_inserts_the_playbook_in_front_of_the_draft_and_changes_nothing_else() {
+        let draft = "improve the architecture of the RETRIEVAL layer  ";
+        let mut app = app_with_draft(draft);
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            &tx,
+        );
+
+        assert_eq!(
+            app.composer.text(),
+            format!("/skill:improve-codebase-architecture {draft}"),
+            "tab did not insert the playbook in front of the draft unchanged"
+        );
+        // Nothing ran. The mock's own caption is the constraint: "It offers, never auto-runs."
+        assert!(app.active.is_none(), "tab started a request");
+        assert!(app.queue.is_empty(), "tab queued a message");
+    }
+
+    /// 🔴 THE MUTANT THIS KILLS: TAB CLAIMED UNCONDITIONALLY.
+    ///
+    /// `tab` already means "move focus" with an ordinary draft and "complete the command" once the
+    /// line starts with a slash. A suggester that eats the key when there is no offer on screen is a
+    /// worse product than no suggester, and it is the single easiest way to break this file.
+    #[test]
+    fn tab_still_moves_focus_when_there_is_no_offer_to_take() {
+        let mut app = app_with_draft("fix the typo in the readme");
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let before = app.composer.text();
+        let focus_before = app.focus;
+
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            &tx,
+        );
+
+        assert_eq!(app.composer.text(), before, "tab edited an unoffered draft");
+        assert_ne!(app.focus, focus_before, "tab no longer moves focus");
+    }
+
+    /// 🔴 THE OFFER BECOMES THE BOUND LINE, AND THE TWO NEVER SHARE A FRAME.
+    ///
+    /// Pressing tab is the whole interaction, so this walks it: an offer is on screen, tab is
+    /// pressed, and the frame must now show the mock's `TYPED` line and NOT the offer. Asserting
+    /// only that the bound line appeared would pass on a frame carrying both, which would be Estelle
+    /// arguing with a choice the user had just made.
+    #[test]
+    fn tab_turns_the_offer_into_the_mocks_bound_composer_line() {
+        let mut app = app_with_draft("improve the architecture of the retrieval layer");
+        let before = rendered_frame_at_size(&app, Instant::now(), 130, 34);
+        assert!(before.contains("This looks like"), "no offer to take");
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            &tx,
+        );
+
+        let after = rendered_frame_at_size(&app, Instant::now(), 130, 34);
+        assert!(
+            after.contains("uqeu/estelle \u{b7} improve-codebase-architecture"),
+            "the bound playbook is not named above the composer:\n{after}"
+        );
+        assert!(
+            !after.contains("This looks like"),
+            "the offer survived its own acceptance:\n{after}"
+        );
+    }
+
+    /// 🔴 **`bound.is_some()` IN THE RENDERER'S SUGGESTION GUARD IS BELT-AND-BRACES — PROVEN.**
+    ///
+    /// A mutation run removed it and every test stayed green. The reason is real and worth writing
+    /// down: every draft `commands::bound_skill` accepts starts with `/`, and `skill_suggest`
+    /// refuses every draft that starts with `/`, so the two can never both be `Some`. That makes the
+    /// guard redundant TODAY, not wrong — and it is kept because it states the intent at the one
+    /// place the two panels compete for a slot. ⚠️ This test is what stops the redundancy being an
+    /// assumption: it turns red the moment `is_suggestible` stops refusing slash commands, at which
+    /// point the guard becomes load-bearing and the mutant would start being killed.
+    #[test]
+    fn a_bound_draft_can_never_also_be_a_suggestible_one() {
+        let app = app_with_draft("");
+        for draft in [
+            "/skill:improve-codebase-architecture improve the architecture of the retrieval layer",
+            "/skills:trace improve the architecture of the retrieval layer",
+            "   /skill:review improve the architecture of the retrieval layer",
+        ] {
+            assert!(
+                commands::bound_skill(draft).is_some(),
+                "{draft:?} is not a bound draft, so this proves nothing"
+            );
+            assert_eq!(
+                skill_suggest::suggest(draft, &app.skill_index),
+                None,
+                "{draft:?} is both bound and suggestible — the renderer's guard is now load-bearing"
+            );
+        }
+    }
+
+    /// The namespace has two spellings and the frame must recognise both, because the parser does.
+    ///
+    /// ⚠️ `/skills:` cost a real bug once — it fell through to `resolve_session_name` and became an
+    /// unknown command. A frame that only knew `/skill:` would draw nothing for an invocation the
+    /// server runs happily, which is the same defect wearing a different coat.
+    #[test]
+    fn both_spellings_of_the_skill_namespace_name_the_bound_playbook() {
+        for draft in [
+            "/skill:trace bind the checkout timeout",
+            "/skills:trace bind the checkout timeout",
+        ] {
+            let app = app_with_draft(draft);
+            let rendered = rendered_frame_at_size(&app, Instant::now(), 130, 34);
+            assert!(
+                rendered.contains("uqeu/estelle \u{b7} trace"),
+                "{draft:?} did not name its playbook:\n{rendered}"
+            );
+        }
+
+        // `/skill:` with no name binds nothing, and must not render as if it had.
+        //
+        // 🔴 **THE FIRST VERSION OF THIS ASSERTION COULD NOT NOT-FIRE.** It searched the whole
+        // frame for `"uqeu/estelle · "`, and the identity line under the session rule reads
+        // `   uqeu/estelle · <branch>` — so it matched a row that has nothing to do with playbooks
+        // and reported a failure on correct output. The probe is a ROW-SHAPE match now: the bound
+        // line is indented by exactly two spaces, the identity line by three.
+        let app = app_with_draft("/skill: ");
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 130, 34);
+        let bound_rows = rendered
+            .lines()
+            .map(|row| row.trim_matches('"').trim_end())
+            .filter(|row| row.starts_with("  uqeu/estelle \u{b7}") && !row.starts_with("   "))
+            .collect::<Vec<_>>();
+        assert!(
+            bound_rows.is_empty(),
+            "an empty playbook name rendered as bound: {bound_rows:?}"
+        );
+    }
+
+    /// The band on screen and the playbook `tab` inserts are one answer to one question.
+    ///
+    /// ⚠️ Two owners for a derived fact will eventually disagree, and this is the pair that would
+    /// disagree most invisibly: the user reads one name and gets another.
+    #[test]
+    fn the_rendered_offer_names_the_playbook_that_tab_inserts() {
+        let mut app = app_with_draft("improve the architecture of the retrieval layer");
+        let rendered = rendered_frame_at_size(&app, Instant::now(), 130, 34);
+        let offered = app.skill_suggestion().expect("an offer").name;
+        assert!(
+            rendered.contains(&format!("This looks like {offered}.")),
+            "{rendered}"
+        );
+
+        let (tx, _rx) = mpsc::unbounded_channel();
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            &tx,
+        );
+        assert!(
+            app.composer
+                .text()
+                .starts_with(&format!("/skill:{offered} "))
+        );
     }
 
     #[test]

@@ -376,6 +376,26 @@ impl ParsedInput {
 /// so the first hit is the only hit and order here carries no meaning.
 const SKILL_PREFIXES: [&str; 2] = ["skill:", "skills:"];
 
+/// The playbook a composer draft has already bound, from `/skill:<name> …`, or `None`.
+///
+/// 🔴 **ONE OWNER FOR THE NAMESPACE'S SPELLINGS.** The live frame needs this to draw the mock's
+/// `TYPED` panel, and writing `strip_prefix("skill:")` there would have been a THIRD copy of a
+/// prefix rule that has already cost one bug: `/skills:agent-injection-eval` fell through to
+/// `resolve_session_name` and became an unknown command because a single-spelling `strip_prefix`
+/// missed it by one character. This reads [`SKILL_PREFIXES`], so a spelling the parser accepts is a
+/// spelling the frame recognises, always.
+///
+/// ⚠️ Returns the name only, never the task, and never an empty name — `/skill:` alone binds
+/// nothing and must not render as a bound playbook.
+pub(crate) fn bound_skill(draft: &str) -> Option<&str> {
+    let rest = draft.trim_start().strip_prefix('/')?;
+    let tail = SKILL_PREFIXES
+        .iter()
+        .find_map(|prefix| rest.strip_prefix(prefix))?;
+    let name = tail.split_whitespace().next()?;
+    (!name.is_empty()).then_some(name)
+}
+
 /// The nearest command to something that resolved to nothing, or `None` when nothing is close.
 ///
 /// 🔴 **A SUGGESTION MUST REACH FURTHER THAN THE EXACT ARM OR IT CAN NEVER FIRE.**
@@ -3571,6 +3591,32 @@ mod tests {
     /// 🔴 THE PLURAL WAS A DEAD END, AND IT DIED SILENTLY.
     ///
     /// The founder typed `/skills:agent-injection-eval`, pressed enter, and got nothing at all.
+    /// 🔴 THE BOUND-PLAYBOOK PARSER, INCLUDING THE FOUR SHAPES THAT MUST BIND NOTHING.
+    ///
+    /// The frame draws a pink line naming this result, so a parser that says "yes" too readily puts
+    /// a claim on screen that the server will not honour. The negative rows are the point: a bare
+    /// namespace, a namespace with no name, an ordinary command and ordinary prose.
+    #[test]
+    fn bound_skill_reads_both_spellings_and_refuses_everything_else() {
+        assert_eq!(
+            bound_skill("/skill:improve-codebase-architecture do the thing"),
+            Some("improve-codebase-architecture")
+        );
+        assert_eq!(bound_skill("/skills:trace"), Some("trace"));
+        // Leading whitespace is what a paste looks like, and the parser already trims for `/`.
+        assert_eq!(bound_skill("   /skill:review now"), Some("review"));
+
+        for draft in [
+            "/skill:",
+            "/skill: ",
+            "/review the change",
+            "skill:trace",
+            "",
+        ] {
+            assert_eq!(bound_skill(draft), None, "{draft:?} bound a playbook");
+        }
+    }
+
     /// `strip_prefix("skill:")` cannot match `skills:` — the `s` sits where the colon belongs — so
     /// a correctly-spelled skill invocation resolved to no command.
     ///
