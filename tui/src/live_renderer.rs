@@ -256,7 +256,9 @@ pub(super) fn status_bar_line(app: &App, now: Instant, width: usize) -> Line<'st
         + usize::from(!right.is_empty());
     let used = 2
         + left.chars().count()
-        + loop_band.as_ref().map_or(0, |band| band.chars().count() + 4);
+        + loop_band
+            .as_ref()
+            .map_or(0, |band| band.chars().count() + 4);
     let gap = width.saturating_sub(used).saturating_sub(tail_width).max(1);
     if !right.is_empty() || gate.is_some() {
         spans.push(Span::raw(" ".repeat(gap)));
