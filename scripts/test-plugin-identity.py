@@ -47,6 +47,11 @@ PLUGIN_CONTRACT_SHA256_BY_VERSION = {
     # the bundle was regenerated from the Rust owner, which is exactly what an unreleased version's
     # digest is for. The two above it are published and are byte-untouched.
     "0.2.33": "4ff63c24250febb7c079a15570e177ec86b5341659f6725568f82133583fff0a",
+    # 0.3.0 consolidates every CLI improvement onto one release (founder, 2026-09-04). The digest
+    # moved because the four version writers moved: `estelle-plugin/.claude-plugin/plugin.json`
+    # and the marketplace entry both carry the version, and both are inside this contract.
+    # `estelle-plugin/hooks/hooks.json` is byte-unchanged — HOOK_TABLE was not touched.
+    "0.3.0": "75f530879a621faaa93960b0219fc194a78ace7442c8897db841518255822e95",
 }
 
 #: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.
