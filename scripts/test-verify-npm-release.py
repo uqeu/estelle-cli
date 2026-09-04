@@ -22,12 +22,20 @@ def write_fixture(root: Path, changed_readme: bool) -> tuple[Path, Path]:
     assert VERIFY.EXPECTED_MEMBERS
     source = root / "source"
     source.mkdir()
-    files = {
+    # DERIVED FROM EXPECTED_MEMBERS, NEVER RESTATED. A hand-written list here is a second owner of
+    # the packed surface, and the two silently disagreed once already: npm-shim/LICENSE shipped in
+    # every artifact while both this fixture and EXPECTED_MEMBERS named only four files.
+    bodies = {
         "README.md": b"customer readme\n",
         "bin/estelle.js": b"#!/usr/bin/env node\n",
         "install.js": b"export const install = true;\n",
         "package.json": json.dumps({"name": VERIFY.PACKAGE, "version": "1.2.3"}).encode(),
     }
+    files = {}
+    for member in sorted(VERIFY.EXPECTED_MEMBERS):
+        name = member.removeprefix("package/")
+        files[name] = bodies.get(name, f"fixture body for {name}\n".encode())
+    assert "README.md" in files, "the mutant below flips README.md, so it must be packed"
     for name, content in files.items():
         path = source / name
         path.parent.mkdir(parents=True, exist_ok=True)

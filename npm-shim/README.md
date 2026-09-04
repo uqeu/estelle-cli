@@ -25,6 +25,25 @@ npm install -g @fatelabs/estelle
 Either way you get one binary. See [How the install is verified](#how-the-install-is-verified) for what
 the launcher checks before it puts anything on your disk.
 
+**On npm 12 the install script is blocked, and that is fine.** npm 12 refuses package lifecycle scripts
+by default, and this package's `postinstall` is what fetches the native binary — so `npm install` prints
+`install scripts blocked` and leaves nothing to run. The launcher handles it: the first time you run
+`estelle`, it performs the same checksum-verified download itself and then runs the binary. You will see
+one progress line, once. If that download cannot run — offline, a proxy, a 403 — the launcher tells you
+why and prints the repair, and any one of these does it:
+
+```sh
+npm install -g @fatelabs/estelle --allow-scripts=@fatelabs/estelle
+node "$(npm root -g)/@fatelabs/estelle/install.js"
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/uqeu/estelle-cli/releases/latest/download/install.sh | sh
+```
+
+Set `ESTELLE_SKIP_DOWNLOAD=1` if you would rather the launcher never reach the network; it then goes
+straight to that message. When the package directory is not writable by you — the usual result of a
+`sudo npm install -g` — the binary lands in `${XDG_CACHE_HOME:-~/.cache}/estelle/v<version>/` instead,
+which `ESTELLE_CACHE_DIR` overrides.
+
 ## Two doors, and the difference between them
 
 Both doors reach the same hosted server at `https://api.fatelabs.ca/mcp`. They do not see the same code.
@@ -159,12 +178,14 @@ There is no Windows build.
 
 ## How the install is verified
 
-`npm install` runs `install.js`, which:
+`install.js` does the work — run by `postinstall` on npm 10 and 11, and by the launcher on first use
+when npm 12 blocked that script. It is the same code and the same checks on both paths:
 
 - downloads over HTTPS only, from `github.com` or `release-assets.githubusercontent.com` and nowhere else.
   A redirect that leaves those hosts aborts the install.
 - bounds every download before taking it: 64 KiB for the manifest, 512 MiB for the archive, 5 redirects,
-  and a 30 second timeout.
+  a 30 second idle timeout, and a 5 minute wall-clock bound per request — because an idle timeout alone
+  does not bound a server that dribbles one byte at a time.
 - requires the release's `SHA256SUMS` manifest to name your archive exactly once, with a well-formed
   64-hex digest.
 - compares the archive's SHA-256 against that digest, and installs nothing on a mismatch.
