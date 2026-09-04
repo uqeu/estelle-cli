@@ -27,6 +27,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::Command;
 use crate::commands;
+use crate::plugin_currency;
 use estelle_tui::ground_block;
 use estelle_tui::ground_block::FlaggedOutcome;
 use estelle_tui::session_gap;
@@ -692,6 +693,18 @@ async fn context_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>,
 /// SessionStart: the returning-customer brief, from local evidence only (session_gap makes no
 /// network call). Silent in every failure mode — the one thing it must never do is speak when
 /// it cannot tell whether it should.
+///
+/// 🔴 **IT ALSO CARRIES THE STALE-PLUGIN NOTICE, AND THAT ADDS NO LATENCY.** The founder's own
+/// Claude Code ran the plugin two releases behind for days and nothing told him
+/// (`plugin_currency`, which documents the measurement). This row's host budget is **5 seconds**
+/// (`HOOK_TABLE` below) and a cold `npx` path has been measured at 162s, so
+/// [`plugin_currency::welcome_line`] reads a cached answer off disk and NEVER blocks on the
+/// network — cold cache means silence this session and a detached refresh for the next one.
+///
+/// ⚠️ The two notices are INDEPENDENT. The session brief being empty must not suppress the
+/// staleness line: they answer different questions, and the early `return` that used to sit
+/// between them would have made a stale plugin invisible to every first-time-in-this-repo
+/// session.
 async fn welcome_hook(payload: &HookPayload) -> Vec<String> {
     let cwd = if payload.cwd.trim().is_empty() {
         std::env::current_dir().unwrap_or_default()
@@ -701,16 +714,21 @@ async fn welcome_hook(payload: &HookPayload) -> Vec<String> {
     if cwd.as_os_str().is_empty() {
         return Vec::new();
     }
+
+    let mut messages = Vec::new();
     let context = session_gap::welcome_context(&cwd, chrono::Utc::now()).await;
-    if context.is_empty() {
-        return Vec::new();
+    if !context.is_empty() {
+        let text = context.human_lines.join("\n");
+        messages.push(hook_message(
+            Some(text),
+            Some(context.model_context()),
+            "SessionStart",
+        ));
     }
-    let text = context.human_lines.join("\n");
-    vec![hook_message(
-        Some(text),
-        Some(context.model_context()),
-        "SessionStart",
-    )]
+    if let Some(line) = plugin_currency::welcome_line().await {
+        messages.push(hook_message(Some(line), None, "SessionStart"));
+    }
+    messages
 }
 
 // A checkpoint is a NETWORK WRITE of the customer's conversation, so what it carries is a

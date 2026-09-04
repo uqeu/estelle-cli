@@ -49,6 +49,7 @@ mod login;
 mod marks;
 mod mcp_tool;
 mod orchestra_view;
+mod plugin_currency;
 mod production_hud;
 mod provider_catalog;
 mod provider_keys;

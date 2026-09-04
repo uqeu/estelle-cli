@@ -217,6 +217,45 @@ pub async fn check_ignoring_cache(home: &Path) -> Status {
     run(home, false).await
 }
 
+/// 🔴 **THE CACHE-ONLY DOOR. NO NETWORK, EVER, ON THIS PATH.**
+///
+/// [`check`] falls through to [`fetch_latest`] when the cache is cold, which is right for a
+/// command a human just typed and WRONG for a hook. The `welcome` hook has a 5-second host
+/// budget (`HOOK_TABLE`, `top_level.rs`) and a cold `npx` path has been measured at 162s; a
+/// version check that hangs is worse than a stale plugin. So this reads the cache written by
+/// [`check`] / [`refresh_cache`] and returns immediately, `None` when it cannot answer.
+///
+/// It honours the same [`OPT_OUT_ENV`] as [`check`] — one opt-out for one fact, so a user who
+/// silenced the binary notice is not still nagged about the plugin.
+pub fn cached_latest_only(home: &Path) -> Option<Version> {
+    if std::env::var_os(OPT_OUT_ENV).is_some_and(|value| !value.is_empty()) {
+        return None;
+    }
+    cached_latest(home, now_unix())
+}
+
+/// Warm the cache for the NEXT invocation, without telling this one anything.
+///
+/// Detached and best-effort: bounded by [`NETWORK_TIMEOUT`] and [`MAX_BODY_BYTES`] like every
+/// other read here, and silent in every failure mode. Nothing awaits its answer.
+pub async fn refresh_cache(home: &Path) {
+    if std::env::var_os(OPT_OUT_ENV).is_some_and(|value| !value.is_empty()) {
+        return;
+    }
+    let now = now_unix();
+    if cached_latest(home, now).is_some() {
+        return;
+    }
+    let Some(tag) = fetch_latest().await else {
+        return;
+    };
+    // Shape-assert before storing. A vacuity guard proves something was read, never that the
+    // right thing was — caching an unparseable tag would poison every later cache-only read.
+    if parse_version(&tag).is_some() {
+        store_latest(home, &tag, now);
+    }
+}
+
 async fn run(home: &Path, use_cache: bool) -> Status {
     let now = now_unix();
     if use_cache && let Some(latest) = cached_latest(home, now) {
