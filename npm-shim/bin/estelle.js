@@ -80,6 +80,14 @@ function cacheDirOrNull() {
 
 // The package directory when the running user may write it, else a per-user, per-version cache.
 // A `sudo npm i -g` leaves root-owned files, and the customer who then runs `estelle` is not root.
+//
+// ⚠️ SAY THE TRADE-OFF OUT LOUD. Both paths are checksum-verified against the release's SHA256SUMS
+// at INSTALL time and neither is re-verified on every run — that was already true of `vendor/`.
+// What is new is that on a root-owned prefix the executed binary now sits somewhere the running
+// user can write. That crosses no privilege boundary: anything able to write `~/.cache` as this
+// user can already edit their shell rc or `~/.local/bin`. It is still strictly more surface than
+// a root-owned `vendor/`, and the honest alternative — refusing, and telling a `sudo`-installed
+// customer to re-run with `sudo … --allow-scripts` — leaves that whole population broken today.
 function writableInstallRoot() {
   try {
     fs.accessSync(PACKAGE_DIR, fs.constants.W_OK);

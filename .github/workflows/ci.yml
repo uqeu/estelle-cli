@@ -120,3 +120,34 @@ jobs:
             echo "the launcher fell back to the raw spawn error this job exists to prevent" >&2
             exit 1
           fi
+      # The step above proves the CLI EXPLAINS itself. This one proves it WORKS — the whole point of
+      # the lazy fallback — by letting it download for real. It can only run once this version's
+      # release assets are published, which is false on a pre-release commit, so it says out loud
+      # when it measured nothing rather than passing quietly over an unexercised contract.
+      - name: When the release assets exist, the lazy download must yield a working CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./npm-shim/package.json').version")
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${version}/estelle-x86_64-unknown-linux-gnu.tar.gz"
+          code=$(curl -sIL -o /dev/null -w '%{http_code}' "$url")
+          if test "$code" != "200"; then
+            echo "NOT MEASURED: v${version} release assets are absent (HTTP ${code} for ${url})."
+            echo "NOT MEASURED: the live lazy-download arm is unexercisable until this version ships."
+            exit 0
+          fi
+          binary="$RUNNER_TEMP/prefix/bin/estelle"
+          first=$("$binary" --version 2>"$RUNNER_TEMP/lazy.err")
+          cat "$RUNNER_TEMP/lazy.err"
+          test "$first" = "estelle ${version}"
+          grep -q "npm blocked this package's install script" "$RUNNER_TEMP/lazy.err"
+          grep -q 'verified and installed' "$RUNNER_TEMP/lazy.err"
+          # A second run must reuse what the first installed: same answer, and nothing on stderr.
+          second=$("$binary" --version 2>"$RUNNER_TEMP/second.err")
+          test "$second" = "estelle ${version}"
+          if test -s "$RUNNER_TEMP/second.err"; then
+            echo "the launcher re-announced itself on a run that should have been silent" >&2
+            cat "$RUNNER_TEMP/second.err" >&2
+            exit 1
+          fi
+          echo "MEASURED: blocked postinstall -> lazy verified download -> estelle ${version}, second run silent"
