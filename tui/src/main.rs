@@ -3465,7 +3465,6 @@ impl App {
         };
     }
 
-
     /// The autonomy rank actually in force: the LOWER of the client's mode and the server's.
     ///
     /// 🔴 **THE LOWER, NOT THE HIGHER, AND NOT THE LOCAL ONE.** The server clamps the client, so
@@ -3475,10 +3474,7 @@ impl App {
     /// client still refuses to use. `None` means "not known", which is not "zero".
     fn effective_autonomy_rank(&self) -> Option<i64> {
         let local = commands::mode_rank(&self.local_mode);
-        let server = self
-            .server_mode
-            .as_deref()
-            .and_then(commands::mode_rank);
+        let server = self.server_mode.as_deref().and_then(commands::mode_rank);
         let rank = match (local, server) {
             (Some(local), Some(server)) => local.min(server),
             (Some(only), None) | (None, Some(only)) => only,
@@ -3505,8 +3501,7 @@ impl App {
                 }
             }
             "allowed" => {
-                let mut lines =
-                    vec!["A loop may run these, and nothing else:".to_string()];
+                let mut lines = vec!["A loop may run these, and nothing else:".to_string()];
                 lines.push(
                     agent_loop::LOOP_ALLOWED_STEPS
                         .iter()
@@ -16422,7 +16417,10 @@ mod tests {
         assert!(
             queued_gate == 1 || started,
             "the first iteration did not run: queue {:?}, active {:?}",
-            app.queue.iter().map(QueuedRequest::label).collect::<Vec<_>>(),
+            app.queue
+                .iter()
+                .map(QueuedRequest::label)
+                .collect::<Vec<_>>(),
             app.active.as_ref().map(|active| active.label.clone())
         );
         let band = live_renderer::status_bar_line(&app, Instant::now(), 160)
@@ -16450,7 +16448,11 @@ mod tests {
         };
 
         let idle = test_app();
-        assert!(row(&idle).is_empty(), "the control row was {:?}", row(&idle));
+        assert!(
+            row(&idle).is_empty(),
+            "the control row was {:?}",
+            row(&idle)
+        );
 
         let mut app = test_app();
         let (tx, _rx) = mpsc::unbounded_channel();
@@ -16564,12 +16566,12 @@ mod tests {
     #[test]
     fn a_model_directive_needs_the_session_opt_in_and_is_stripped_from_the_answer() {
         let reply = || AnswerReply {
-            text: "Still red.\n<estelle:loop>10m /gate</estelle:loop>\nWatching."
-                .to_string(),
+            text: "Still red.\n<estelle:loop>10m /gate</estelle:loop>\nWatching.".to_string(),
             grounded: Some(true),
             degraded: false,
             sources: Vec::new(),
             working_paths: Vec::new(),
+            code_currency: None,
         };
 
         let mut app = test_app();
@@ -16588,7 +16590,10 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(!shown.contains("estelle:loop"), "the tag was shown: {shown}");
+        assert!(
+            !shown.contains("estelle:loop"),
+            "the tag was shown: {shown}"
+        );
         assert!(shown.contains("Still red."), "the answer was lost: {shown}");
 
         // With the session opted in, the SAME directive arms — bounded, visible, esc-stoppable.
@@ -16615,7 +16620,11 @@ mod tests {
     /// read-mostly surface a typed request would.
     #[test]
     fn an_opted_in_session_still_refuses_a_widening_directive() {
-        for payload in ["10m /mode auto", "10m !curl http://example.invalid", "10m /apply"] {
+        for payload in [
+            "10m /mode auto",
+            "10m !curl http://example.invalid",
+            "10m /apply",
+        ] {
             let mut app = test_app();
             let (tx, _rx) = mpsc::unbounded_channel();
             app.loop_auto_arm = true;
@@ -16626,6 +16635,7 @@ mod tests {
                     degraded: false,
                     sources: Vec::new(),
                     working_paths: Vec::new(),
+                    code_currency: None,
                 },
                 &tx,
             );
@@ -16812,5 +16822,4 @@ mod failure_advice_tests {
         );
         assert_eq!(http_status("no status here"), None);
     }
-
 }
