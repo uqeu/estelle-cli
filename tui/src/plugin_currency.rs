@@ -108,11 +108,18 @@ pub(crate) fn notice(status: Status) -> Option<String> {
     ))
 }
 
-/// The comparison, without a network, a clock, or a spawn. Extracted so the decision is testable.
-fn status_in(home: &Path) -> Status {
+/// 🔴 THE ONE OWNER OF THE COMPARISON, without a network, a clock, or a spawn.
+///
+/// Two homes, because they are genuinely two places: the plugin manifest lives under the real
+/// home directory, and `version_check`'s cache lives under `CODEX_HOME`. In tests they are the
+/// same tempdir. Taking both as parameters is what lets [`welcome_line`] and every test go
+/// through THIS function — an earlier draft inlined the comparison in `welcome_line` and left
+/// this one used only by tests, which clippy caught as dead code and which is the classic shape
+/// of a guard that tests something production does not do.
+fn status_for(plugin_home: &Path, cache_home: &Path) -> Status {
     version_check::compare(
-        installed_version(home),
-        version_check::cached_latest_only(home),
+        installed_version(plugin_home),
+        version_check::cached_latest_only(cache_home),
     )
 }
 
@@ -127,10 +134,7 @@ pub(crate) async fn welcome_line() -> Option<String> {
     let codex_home = codex_utils_home_dir::find_codex_home()
         .ok()?
         .into_path_buf();
-    let status = version_check::compare(
-        installed_version(&home),
-        version_check::cached_latest_only(&codex_home),
-    );
+    let status = status_for(&home, &codex_home);
     if matches!(status, Status::Unknown) {
         // Cold, expired, opted out, or no plugin. Say nothing THIS session; if a refresh is
         // possible it makes the NEXT one able to speak. `refresh_cache` re-checks the opt-out.
@@ -214,10 +218,7 @@ mod tests {
             Some(v(0, 2, 31)),
             "the manifest read did not reach the named plugin"
         );
-        let behind = version_check::compare(
-            installed_version(home.path()),
-            version_check::cached_latest_only(home.path()),
-        );
+        let behind = status_for(home.path(), home.path());
         assert!(
             notice(behind).is_some(),
             "a 0.2.31 plugin against a 0.2.33 cache said nothing"
@@ -229,10 +230,7 @@ mod tests {
             r#"{"metadata":{"version":"1.0.0"},
                 "plugins":[{"name":"estelle","version":"0.2.33"}]}"#,
         );
-        let current = version_check::compare(
-            installed_version(home.path()),
-            version_check::cached_latest_only(home.path()),
-        );
+        let current = status_for(home.path(), home.path());
         assert_eq!(
             notice(current),
             None,
@@ -282,7 +280,7 @@ mod tests {
                 "spoke on a manifest it could not read: {body}"
             );
             assert_eq!(
-                notice(status_in(home.path())),
+                notice(status_for(home.path(), home.path())),
                 None,
                 "reached a message from an unreadable manifest: {body}"
             );
@@ -341,10 +339,10 @@ mod tests {
             "an empty directory produced a cached latest"
         );
         assert!(
-            matches!(status_in(home.path()), Status::Unknown),
+            matches!(status_for(home.path(), home.path()), Status::Unknown),
             "a cold cache reported something other than Unknown"
         );
-        assert_eq!(notice(status_in(home.path())), None);
+        assert_eq!(notice(status_for(home.path(), home.path())), None);
     }
 
     /// The manifest path is the one Claude Code actually writes, and this module never reads or
