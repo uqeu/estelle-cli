@@ -18,7 +18,14 @@ PACKAGE = "@fatelabs/estelle"
 REGISTRY_READBACK_ATTEMPTS = 61
 REGISTRY_READBACK_DELAY_SECONDS = 5
 COMMAND_TIMEOUT_SECONDS = 30
+# 🔴 package/LICENSE WAS MISSING HERE AND THE READ-BACK HAS BEEN RED SINCE IT WAS ADDED.
+# npm packs a LICENSE file whether or not `files:` names it, so `npm-shim/LICENSE` (added in
+# 4cfe4d309) made every published artifact a five-member tarball while this set still described
+# four. Measured 2026-09-04 against the live @fatelabs/estelle@0.2.33 on the registry:
+# "unexpected npm artifact members: ['package/LICENSE', ...]". The pin was correct about its
+# four and silent about the fifth — a partial guard reporting complete.
 EXPECTED_MEMBERS = {
+    "package/LICENSE",
     "package/README.md",
     "package/bin/estelle.js",
     "package/install.js",
