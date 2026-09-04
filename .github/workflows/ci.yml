@@ -100,6 +100,11 @@ jobs:
           # Prove the REPRODUCTION is still real before asserting on the repair. If npm ever stops
           # blocking this postinstall, `vendor/` appears, the diagnostic below becomes unreachable,
           # and a silent green here would be a verdict on a contract nobody is exercising.
+          # ⚠️ NAME THE GAP: this installs a local TARBALL, and measured on npm 12.0.2 a tarball spec
+          # is blocked even WITH `--allow-scripts=@fatelabs/estelle` — the flag matched only a
+          # registry spec. So this line asserts "npm blocks scripts for THIS install shape", which is
+          # weaker than "npm blocks scripts for the customer's `npm i -g @fatelabs/estelle`". Nothing
+          # here can test the registry shape, because the version under test is not published yet.
           if test -e "$package/vendor"; then
             echo "npm $(npm --version) no longer blocks this postinstall; re-read this guard" >&2
             exit 1
