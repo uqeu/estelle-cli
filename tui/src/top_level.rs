@@ -154,24 +154,75 @@ pub(crate) async fn run(command: Command, repo: Repo, root: &Path) -> Result<Vec
     }
 }
 
+/// `null` is how a host says "I have no value for this field". It is never a reason to reject
+/// the whole payload.
+///
+/// 🔴 **`#[serde(default)]` COVERS THE ABSENT KEY AND NOTHING ELSE.** A present `null` is a
+/// different wire shape and serde treats it as a type error, so `#[serde(default)] name: String`
+/// accepts `{}` and REFUSES `{"name": null}` — two encodings of the same fact, one of which
+/// killed every hook verb. Both halves are needed on every host-supplied field, because the
+/// hosts disagree about which one they send: Claude Code omits, Codex nulls.
+fn null_is_absent<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+/// The one JSON object the HOST hands a hook mode on stdin. Every field is host-supplied and
+/// therefore untrusted: nothing here may panic, and nothing here may refuse a payload for
+/// saying "nothing" in a spelling we did not expect.
+///
+/// 🔴 **A NULL ON ONE FIELD USED TO FAIL EVERY VERB.** `run_hook_with` parses this struct
+/// before it dispatches, so one rejected field is a rejected payload is a failed hook — and the
+/// field Codex nulls, `transcript_path`, is read by exactly ONE of the eight modes. `ground`,
+/// `guard`, `shift`, `sync`, `distil`, `welcome` and `context` never touch a transcript and all
+/// seven died with it. That is why the tolerance below is on EVERY field rather than the one
+/// field one host nulls today: the defect is the SHAPE, not the name.
+///
+/// The host contract says so in writing. Codex's own generated schemas mark `transcript_path`
+/// **required** with type `["string", "null"]` in all eleven hook events
+/// (`hooks/schema/generated/*.command.input.schema.json`, built from `NullableString` in
+/// `hooks/src/schema.rs`), because `Session::hook_transcript_path` returns `Option<PathBuf>` and
+/// yields `None` for any thread with no materialized local rollout (`core/src/session/mod.rs`).
+/// A captured payload carrying `"transcript_path": null` is asserted byte-for-byte at
+/// `core/src/mcp_tool_call_tests.rs`.
 #[derive(Debug, Deserialize)]
 struct HookPayload {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_is_absent")]
     tool_input: Value,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_is_absent")]
     tool_name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_is_absent")]
     tool_response: Value,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_is_absent")]
     prompt: String,
-    #[serde(default, alias = "sessionId")]
+    #[serde(default, alias = "sessionId", deserialize_with = "null_is_absent")]
     session_id: String,
+    /// `None` when the host has no transcript for this session — Codex's ordinary state, not an
+    /// error state. Typed `Option` rather than defaulted-to-empty so a consumer cannot read
+    /// "the host gave us nothing" as "the host gave us the path `\"\"`".
     #[serde(default, alias = "transcriptPath")]
-    transcript_path: String,
-    #[serde(default)]
+    transcript_path: Option<String>,
+    #[serde(default, deserialize_with = "null_is_absent")]
     cwd: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_is_absent")]
     hook_event_name: String,
+}
+
+impl HookPayload {
+    /// The transcript the host materialized for this session, or `None` when it has none.
+    ///
+    /// ONE OWNER FOR "IS THERE A TRANSCRIPT" (Power of Ten #9): absent, `null`, `""` and
+    /// whitespace are four spellings of the same fact, and they are collapsed here so two
+    /// consumers cannot disagree about which of them counts.
+    fn transcript(&self) -> Option<&str> {
+        self.transcript_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1005,10 +1056,33 @@ fn transcript_files(text: &str) -> Vec<PathBuf> {
 /// turn is how a user learns to ignore Estelle entirely).
 async fn checkpoint_local(payload: &HookPayload, state_path: Option<PathBuf>) -> Option<Value> {
     let session_id = payload.session_id.trim();
-    if session_id.is_empty() || payload.transcript_path.trim().is_empty() {
+    if session_id.is_empty() {
         return None;
     }
-    let raw = fs::read_to_string(payload.transcript_path.trim()).ok()?;
+    // 🔴 A CHECKPOINT WITHOUT A TRANSCRIPT IS NOT A FAILURE — IT IS A SESSION THIS HOST CANNOT
+    // SUMMARISE (`transcript_path: null`, which Codex sends for any thread with no materialized
+    // local rollout). This is the ONLY mode of eight that reads the transcript, so it degrades
+    // alone: the other seven run untouched.
+    //
+    // ⚠️ THE LIMIT, STATED: this line reaches almost nobody. stdout is the host's envelope and
+    // checkpoint is deliberately silent there (a warning on every Stop is how a user learns to
+    // ignore Estelle), so the reason goes to stderr — which Codex reads ONLY on exit code 2
+    // (`hooks/src/events/stop.rs`) and Claude Code shows only under `--debug`. It is a note for
+    // someone already asking "why did nothing checkpoint?", NOT a notification. A customer whose
+    // host supplies no transcript loses checkpointing and is not told.
+    let Some(transcript_path) = payload.transcript() else {
+        #[expect(
+            clippy::print_stderr,
+            reason = "the only channel a silent-by-design hook has for a human debugging it; stdout is the host's envelope"
+        )]
+        {
+            eprintln!(
+                "Estelle checkpoint skipped: this host supplied no transcript_path, so there is no conversation to summarise. Every other Estelle hook is unaffected."
+            );
+        }
+        return None;
+    };
+    let raw = fs::read_to_string(transcript_path).ok()?;
     let messages = transcript_messages(&raw);
     if messages.is_empty() {
         return None;
@@ -5823,7 +5897,7 @@ tests/test_serve.py:88: AssertionError\n\
             tool_response: Value::Null,
             prompt: String::new(),
             session_id: session_id.to_string(),
-            transcript_path: String::new(),
+            transcript_path: None,
             cwd: root.path().display().to_string(),
             hook_event_name: "PostToolUse".to_string(),
         };
@@ -6086,6 +6160,205 @@ tests/test_serve.py:88: AssertionError\n\
         assert!(
             matches!(&bogus, Err(error) if error.contains("unknown hook mode")),
             "an undeclared mode must still fail loud: {bogus:?}"
+        );
+    }
+
+    /// The path a real Codex payload takes into a hook, driven through the REAL deserializer
+    /// and the REAL dispatcher rather than a hand-built `HookPayload` — a struct literal cannot
+    /// fail the way a wire payload fails, so it would have certified code production rejects.
+    ///
+    /// **WHICH HALF THIS COVERS: the REQUEST half only** — what a host is allowed to SEND us.
+    /// It asserts nothing about the RESPONSE half (whether the envelope we write back is one
+    /// the host can read); that is `hook_envelope`'s contract and is pinned separately.
+    ///
+    /// The payload is Codex's, not this test's invention: the object below is the one asserted
+    /// byte-for-byte in `core/src/mcp_tool_call_tests.rs` as what Codex's own hook runtime
+    /// writes to a hook's stdin — `"transcript_path": null` included. Only `hook_event_name`
+    /// varies per row, because `run_hook_with` refuses a payload whose event disagrees with the
+    /// mode it was invoked for.
+    #[tokio::test]
+    async fn a_codex_payload_with_a_null_transcript_path_reaches_every_mode() {
+        // THE PREMISE, PINNED AGAINST THE HOST'S OWN GENERATED CONTRACT rather than against my
+        // memory of it. If Codex ever stops requiring this field, or stops permitting null in
+        // it, these two assertions change and everything below stops being about anything.
+        let schema_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../hooks/schema/generated/pre-tool-use.command.input.schema.json");
+        let schema: Value = serde_json::from_str(
+            &fs::read_to_string(&schema_path).expect("the host's generated hook input schema"),
+        )
+        .expect("host input schema JSON");
+        assert!(
+            schema["required"]
+                .as_array()
+                .expect("required list")
+                .iter()
+                .any(|field| field == "transcript_path"),
+            "the host contract must still REQUIRE transcript_path"
+        );
+        assert_eq!(
+            schema["properties"]["transcript_path"]["$ref"],
+            json!("#/definitions/NullableString"),
+            "transcript_path must still be typed by the host's nullable string"
+        );
+        assert_eq!(
+            schema["definitions"]["NullableString"]["type"],
+            json!(["string", "null"]),
+            "the host contract must still permit null on transcript_path"
+        );
+
+        let root = tempfile::tempdir().expect("hook root");
+        let repo = Repo::default();
+        for row in HOOK_TABLE {
+            let payload = json!({
+                "session_id": "0199e2b0-1c2d-7a3e-8f40-5b6c7d8e9f00",
+                "turn_id": "turn_id",
+                "cwd": root.path().to_string_lossy(),
+                "transcript_path": null,
+                "model": "gpt-5.1-codex",
+                "permission_mode": "default",
+                "tool_name": "mcp__memory__create_entities",
+                "hook_event_name": row.event,
+                "tool_input": {"entities": [{"name": "Ada", "entityType": "person"}]},
+            })
+            .to_string();
+            let result =
+                run_hook_with(row.mode, Some(row.event), &payload, &repo, root.path()).await;
+            assert!(
+                !matches!(&result, Err(error) if error.contains("branch=input-json")),
+                "mode {} refused a real Codex payload over its null transcript_path: {result:?}",
+                row.mode
+            );
+            assert!(
+                result.is_ok(),
+                "mode {} must run on a Codex payload, not fail: {result:?}",
+                row.mode
+            );
+        }
+    }
+
+    /// The SIBLINGS of the same defect. `transcript_path` is the field one host nulls TODAY;
+    /// the shape — `#[serde(default)]` covering the absent key and not the present null — was
+    /// on every field of the payload, and a host that says "no prompt" or "no tool" with a
+    /// `null` would have taken all eight modes down the same way. So the tolerance is asserted
+    /// field by field, and a payload that is null in EVERY position still parses and dispatches.
+    #[tokio::test]
+    async fn every_host_supplied_field_tolerates_an_explicit_null() {
+        // Each field on its own, so a failure names the field rather than "the payload".
+        for field in [
+            "tool_input",
+            "tool_name",
+            "tool_response",
+            "prompt",
+            "session_id",
+            "transcript_path",
+            "cwd",
+            "hook_event_name",
+        ] {
+            let mut payload = json!({"hook_event_name": "PreToolUse"});
+            payload[field] = Value::Null;
+            let parsed = serde_json::from_value::<HookPayload>(payload.clone());
+            assert!(
+                parsed.is_ok(),
+                "a null {field} must mean absent, not a rejected payload: {parsed:?}"
+            );
+        }
+
+        // And all of them at once, through the real entry point rather than the struct.
+        let root = tempfile::tempdir().expect("hook root");
+        let repo = Repo::default();
+        let all_null = json!({
+            "tool_input": null,
+            "tool_name": null,
+            "tool_response": null,
+            "prompt": null,
+            "session_id": null,
+            "transcript_path": null,
+            "cwd": null,
+            "hook_event_name": "UserPromptSubmit",
+        })
+        .to_string();
+        let result = run_hook_with(
+            "context",
+            Some("UserPromptSubmit"),
+            &all_null,
+            &repo,
+            root.path(),
+        )
+        .await;
+        assert_eq!(
+            result,
+            Ok(Vec::new()),
+            "an all-null payload must degrade to silence, never to a failed verb"
+        );
+
+        // THE NEGATIVE CONTROL. Null must mean "absent"; it must NOT mean "accept anything".
+        // A payload whose field is present with the WRONG type is still a defect and still
+        // fails, so this guard cannot pass by having stopped checking types at all.
+        let wrong_type = json!({"hook_event_name": "PreToolUse", "session_id": 7}).to_string();
+        let refused = run_hook_with("guard", Some("PreToolUse"), &wrong_type, &repo, root.path())
+            .await
+            .expect_err("a number where a string belongs is still a malformed payload");
+        assert!(refused.contains("branch=input-json"), "{refused}");
+    }
+
+    /// The consumer half: `checkpoint` is the ONE mode of eight that reads the transcript, and
+    /// without one it must degrade rather than fail — while still doing its job when the host
+    /// does supply one. Both halves are in one test on purpose: a silence-only assertion would
+    /// pass for a mutant that made the transcript unreadable in every case.
+    #[tokio::test]
+    async fn checkpoint_degrades_without_a_transcript_and_still_runs_with_one() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let state = root.path().join("state").join("last-session.json");
+
+        let no_transcript: HookPayload = serde_json::from_value(json!({
+            "session_id": "codex-session",
+            "transcript_path": null,
+            "cwd": root.path().to_string_lossy(),
+            "hook_event_name": "Stop",
+        }))
+        .expect("a Codex Stop payload parses");
+        assert_eq!(no_transcript.transcript(), None);
+        assert!(
+            checkpoint_local(&no_transcript, Some(state.clone()))
+                .await
+                .is_none(),
+            "no transcript means nothing to summarise, not a failed hook"
+        );
+        assert!(
+            !state.exists(),
+            "a skipped checkpoint must not write a session-gap record it cannot justify"
+        );
+
+        // The same host, the same code path, with a transcript: the work still happens.
+        let transcript = root.path().join("transcript.jsonl");
+        let records = [
+            json!({"type": "user", "message": {"role": "user", "content": "why is the build red"}}),
+            json!({"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "text", "text": "The lockfile drifted."}
+            ]}}),
+        ];
+        let raw = records
+            .iter()
+            .map(serde_json::to_string)
+            .collect::<Result<Vec<_>, _>>()
+            .expect("fixture JSONL")
+            .join("\n");
+        fs::write(&transcript, raw).expect("fixture transcript");
+        let with_transcript: HookPayload = serde_json::from_value(json!({
+            "session_id": "codex-session",
+            "transcript_path": transcript.to_string_lossy(),
+            "cwd": root.path().to_string_lossy(),
+            "hook_event_name": "Stop",
+        }))
+        .expect("a payload with a transcript parses");
+        let body = checkpoint_local(&with_transcript, Some(state.clone()))
+            .await
+            .expect("a transcript that exists must still produce a checkpoint body");
+        assert_eq!(body["session_id"], json!("codex-session"));
+        assert_eq!(
+            body["messages"].as_array().expect("messages").len(),
+            2,
+            "both turns survive"
         );
     }
 
