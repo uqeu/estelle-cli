@@ -89,7 +89,10 @@ jobs:
           set -euo pipefail
           npm install --global npm@12.0.2
           npm --version | grep -Eq '^12\.'
-          npm pack npm-shim --ignore-scripts --pack-destination "$RUNNER_TEMP"
+          # `./npm-shim`, NOT `npm-shim`. npm 12 resolves a bare name as a REGISTRY package and
+          # this job's first run died on `404 GET https://registry.npmjs.org/npm-shim`; npm 10
+          # had accepted the same word locally. The leading `./` is what makes it a folder spec.
+          npm pack ./npm-shim --ignore-scripts --pack-destination "$RUNNER_TEMP"
           mkdir -p "$RUNNER_TEMP/prefix"
           npm install -g "$RUNNER_TEMP"/fatelabs-estelle-*.tgz --prefix "$RUNNER_TEMP/prefix" \
             --no-audit --no-fund

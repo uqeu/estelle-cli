@@ -29,6 +29,27 @@ const {
 const PACKAGE_NAME = '@fatelabs/estelle';
 const PACKAGE_DIR = path.resolve(__dirname, '..');
 const PROGRESS_INTERVAL_MILLIS = 400;
+const STDERR_WRITE_ATTEMPTS = 100;
+
+// `console.error` on a pipe is ASYNCHRONOUS, and `process.exit` does not wait for it. The whole
+// point of this launcher is a message the customer actually reads, so the message that matters is
+// written with a synchronous write instead. The bounded retry covers EAGAIN on a non-blocking fd.
+function emitRaw(text) {
+  const payload = Buffer.from(text, 'utf8');
+  for (let attempt = 0; attempt < STDERR_WRITE_ATTEMPTS; attempt += 1) {
+    try {
+      fs.writeSync(2, payload);
+      return;
+    } catch (error) {
+      if (error && error.code === 'EAGAIN') continue;
+      return; // EPIPE and friends: the reader is gone, and there is nothing better to do.
+    }
+  }
+}
+
+function emit(text) {
+  emitRaw(`${text}\n`);
+}
 
 // Returns the runnable native binary under `packageDir`, or null. Never throws for a missing or
 // unreadable path: "absent" and "present but not executable" both mean the caller must install.
@@ -81,8 +102,9 @@ function reportProgress() {
     const megabytes = (size / (1024 * 1024)).toFixed(1);
     const total = declared > 0 ? ` of ${(declared / (1024 * 1024)).toFixed(1)} MB` : '';
     const line = `estelle: downloading native CLI ${megabytes} MB${total}`;
-    if (process.stderr.isTTY) process.stderr.write(`\r${line}   `);
-    else process.stderr.write(`${line}\n`);
+    // Same synchronous fd-2 writer as `emit`, so progress can never interleave behind it.
+    if (process.stderr.isTTY) emitRaw(`\r${line}   `);
+    else emit(line);
   };
 }
 
@@ -106,7 +128,7 @@ function diagnose(target, reason) {
     `  Searched: ${nativeBinaryPathOrUnknown(PACKAGE_DIR, target)}`,
   ];
   if (cache !== null) lines.push(`            ${nativeBinaryPathOrUnknown(cache, target)}`);
-  console.error(lines.join('\n'));
+  emit(lines.join('\n'));
 }
 
 function nativeBinaryPathOrUnknown(packageDir, target) {
@@ -120,11 +142,11 @@ function nativeBinaryPathOrUnknown(packageDir, target) {
 function run(binary) {
   const result = spawnSync(binary, process.argv.slice(2), { stdio: 'inherit' });
   if (result.error) {
-    console.error(`estelle: could not start the verified native CLI at ${binary}: ${result.error.message}`);
+    emit(`estelle: could not start the verified native CLI at ${binary}: ${result.error.message}`);
     return 1;
   }
   if (result.signal) {
-    console.error(`estelle: native CLI terminated by ${result.signal}`);
+    emit(`estelle: native CLI terminated by ${result.signal}`);
     return 1;
   }
   return result.status ?? 1;
@@ -135,7 +157,7 @@ async function main() {
   try {
     target = targetFor(process.platform, process.arch);
   } catch (error) {
-    console.error(`estelle: ${error.message}`);
+    emit(`estelle: ${error.message}`);
     return 1;
   }
 
@@ -150,16 +172,16 @@ async function main() {
 
   try {
     const destination = writableInstallRoot();
-    console.error(
+    emit(
       `estelle: the native binary is missing — npm blocked this package's install script.\n`
       + `estelle: fetching the checksum-verified v${PACKAGE_VERSION} release for ${target} into ${destination} …`,
     );
     const binary = await install({ packageDir: destination, onProgress: reportProgress() });
-    if (process.stderr.isTTY) process.stderr.write('\n');
-    console.error(`estelle: verified and installed ${binary}`);
+    if (process.stderr.isTTY) emitRaw('\n');
+    emit(`estelle: verified and installed ${binary}`);
     return run(binary);
   } catch (error) {
-    if (process.stderr.isTTY) process.stderr.write('\n');
+    if (process.stderr.isTTY) emitRaw('\n');
     diagnose(target, error && error.message ? error.message : String(error));
     return 1;
   }
@@ -168,7 +190,7 @@ async function main() {
 main().then(
   (code) => process.exit(code),
   (error) => {
-    console.error(`estelle: ${error && error.message ? error.message : String(error)}`);
+    emit(`estelle: ${error && error.message ? error.message : String(error)}`);
     process.exit(1);
   },
 );
