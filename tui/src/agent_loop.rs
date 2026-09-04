@@ -193,6 +193,10 @@ pub(crate) const LOOP_REFUSED_STEPS: &[(&str, &str)] = &[
         "opens an interactive surface a loop cannot answer",
     ),
     ("shell", "unattended arbitrary code execution"),
+    (
+        "theme",
+        "switches the palette — a repaint for a human who, by definition, is not watching",
+    ),
     ("todo", "a panel toggle, and a loop has no eyes"),
     ("undo", "writes the working tree"),
     (
