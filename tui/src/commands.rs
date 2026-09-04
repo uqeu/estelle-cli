@@ -2,7 +2,7 @@ use estelle_client::Endpoint;
 use serde_json::Value;
 use serde_json::json;
 
-pub(crate) const SESSION_COMMANDS: [&str; 49] = [
+pub(crate) const SESSION_COMMANDS: [&str; 50] = [
     "help",
     "login",
     "logout",
@@ -34,6 +34,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 49] = [
     "resume",
     "work",
     "orchestra",
+    "loop",
     "context",
     "gate",
     "scan",
@@ -54,7 +55,7 @@ pub(crate) const SESSION_COMMANDS: [&str; 49] = [
     "exit",
 ];
 
-const SESSION_HELP: [(&str, &str); 49] = [
+const SESSION_HELP: [(&str, &str); 50] = [
     ("help", "what you can do here"),
     (
         "login",
@@ -134,6 +135,10 @@ const SESSION_HELP: [(&str, &str); 49] = [
     ("resume", "pick a past session back up"),
     ("work", "plan, implement, gate and repair a change"),
     ("orchestra", "run one gated server task"),
+    (
+        "loop",
+        "arm a bounded recurring task; /loop alone shows what is armed, /loop stop ends it",
+    ),
     ("context", "toggle grounding context side panel (ctrl+g)"),
     ("gate", "run the merge gate on your staged diff"),
     ("scan", "scan the staged diff for security findings"),
@@ -211,7 +216,7 @@ pub(crate) const TOP_LEVEL_COMMANDS: [&str; 22] = [
 ];
 
 #[cfg(test)]
-pub(crate) fn session_command_names() -> [&'static str; 49] {
+pub(crate) fn session_command_names() -> [&'static str; 50] {
     SESSION_COMMANDS
 }
 
@@ -3359,7 +3364,7 @@ mod tests {
     }
 
     #[test]
-    fn session_inventory_is_exactly_the_49_accepted_commands() {
+    fn session_inventory_is_exactly_the_50_accepted_commands() {
         assert_eq!(
             session_command_names(),
             [
@@ -3394,6 +3399,7 @@ mod tests {
                 "resume",
                 "work",
                 "orchestra",
+                "loop",
                 "context",
                 "gate",
                 "scan",
