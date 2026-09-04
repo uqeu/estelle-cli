@@ -215,8 +215,26 @@ pub(super) fn repo_label(app: &App) -> &str {
 
 pub(super) fn status_bar_line(app: &App, now: Instant, width: usize) -> Line<'static> {
     let palette = app.theme.screen_palette();
+    // 🔴 **AN ARMED LOOP DRAWS EVEN WHEN NOTHING IS IN FLIGHT, AND THAT IS THE WHOLE POINT.**
+    //
+    // The complaint that produced the loop feature was *"I don't see you doing your loop"*, and
+    // `run_state` returns `None` whenever there is no active request — which is EXACTLY the state
+    // a waiting loop is in between firings. Returning `Line::default()` there would leave an
+    // unattended actor armed behind a blank status bar for the whole interval, which is the
+    // invisible case rather than a cosmetic one. So the band is computed first and is enough on
+    // its own to keep the row alive.
+    let loop_band = app
+        .agent_loop
+        .as_ref()
+        .map(|armed| armed.band(now, app.session_spend_usd));
     let Some((mark, left)) = run_state(app, now) else {
-        return Line::default();
+        return match loop_band {
+            Some(band) => Line::from(vec![
+                marks::Mark::Queued.span(&palette, pulse_tick(app, now), true),
+                Span::styled(band, Style::default().fg(palette.mid)),
+            ]),
+            None => Line::default(),
+        };
     };
     let mut right = String::new();
     if let Some(spend) = app.session_spend_usd {
@@ -227,10 +245,18 @@ pub(super) fn status_bar_line(app: &App, now: Instant, width: usize) -> Line<'st
         mark.span(&palette, pulse_tick(app, now), true),
         Span::styled(left.clone(), Style::default().fg(palette.mid)),
     ];
+    if let Some(band) = &loop_band {
+        spans.push(Span::styled(
+            format!("  \u{b7} {band}"),
+            Style::default().fg(palette.mid),
+        ));
+    }
     let tail_width = right.chars().count()
         + gate.as_ref().map_or(0, |gate| gate.chars().count() + 4)
         + usize::from(!right.is_empty());
-    let used = 2 + left.chars().count();
+    let used = 2
+        + left.chars().count()
+        + loop_band.as_ref().map_or(0, |band| band.chars().count() + 4);
     let gap = width.saturating_sub(used).saturating_sub(tail_width).max(1);
     if !right.is_empty() || gate.is_some() {
         spans.push(Span::raw(" ".repeat(gap)));
