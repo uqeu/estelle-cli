@@ -20,7 +20,8 @@ fn test_key() -> ApiKey {
 
 #[test]
 fn endpoint_inventory_is_unique_and_matches_the_server_audit() {
-    assert_eq!(API_ENDPOINTS.len(), 85);
+    // 85 -> 86 on 2026-09-05: `GET /spend`, the vendor-list spend estimate the SPEND screen reads.
+    assert_eq!(API_ENDPOINTS.len(), 86);
     let unique = API_ENDPOINTS
         .iter()
         .map(|spec| spec.path)
@@ -40,6 +41,22 @@ fn endpoint_inventory_is_unique_and_matches_the_server_audit() {
         .expect("the checkpoint hook mode posts here");
     assert_eq!(checkpoint.methods, &[HttpMethod::Post]);
     assert!(!checkpoint.requires_repo);
+}
+
+/// `GET /spend` — the vendor-list spend estimate over the account's OWN provider keys.
+///
+/// Probed unauthenticated on production 2026-09-05: `GET /spend?days=30` answers
+/// `401 {"error":{"message":"unknown api key"}}` — the handler's own refusal — while an invented
+/// sibling path answers the router's generic `404 {"error":{"message":"not found"}}`. Those are
+/// different bodies from one build, so the route is REGISTERED and declining, not absent. Recorded
+/// here because a route pinned by a test that only reads this table proves the table, not serving.
+#[test]
+fn spend_is_a_get_and_is_not_repo_scoped() {
+    assert_eq!(Endpoint::Spend.path(), "spend");
+    assert_eq!(Endpoint::Spend.methods(), &[HttpMethod::Get]);
+    // Team-shared and namespace-scoped by the caller's key, exactly like /requests and /activity —
+    // the calls are the team's, so the estimate over them is too.
+    assert!(!Endpoint::Spend.requires_repo());
 }
 
 #[test]

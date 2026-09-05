@@ -828,6 +828,7 @@ enum UiEvent {
     },
     AffinityModelsSaved(Result<CommandReply, Error>),
     AffinityCapacity(Result<Value, String>),
+    AffinitySpend(Result<Value, String>),
     Repos(Result<ReposResponse, Error>),
     Scope(Result<CommandReply, Error>),
     Settings(Result<CommandReply, Error>),
@@ -4389,14 +4390,37 @@ impl App {
         self.picker = None;
         self.resume_picker = None;
         self.affinity_costs.capacity_loading();
+        self.affinity_costs.spend_loading();
         let (Some(client), root) = (self.client.clone(), self.root.clone()) else {
             self.affinity_costs.apply_capacity(Err(
                 "an Estelle account is required for the capacity read".to_string(),
+            ));
+            self.affinity_costs.apply_spend(Err(
+                "an Estelle account is required for the provider spend read".to_string(),
             ));
             return;
         };
         let repo = self.repo.clone();
         let tx = tx.clone();
+        // 🔴 ITS OWN TASK, NOT A `join!` WITH THE CAPACITY READ. The capacity read blocks on a local
+        // filesystem inventory of the repository before it touches the network; joining them would
+        // make the spend table wait on a sweep estimate it does not need, on a screen whose whole
+        // defect was showing "not measured" while the answer sat one GET away.
+        {
+            let client = client.clone();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let result = client
+                    .get::<_, Value>(
+                        estelle_client::Endpoint::Spend,
+                        &affinity_cli::spend_query(),
+                        &CancellationToken::new(),
+                    )
+                    .await
+                    .map_err(|error| error.to_string());
+                let _ = tx.send(UiEvent::AffinitySpend(result));
+            });
+        }
         tokio::spawn(async move {
             let measured =
                 tokio::task::spawn_blocking(move || top_level::sweep_estimate_payload(&root))
@@ -4909,6 +4933,7 @@ impl App {
                 }
             }
             UiEvent::AffinityCapacity(result) => self.affinity_costs.apply_capacity(result),
+            UiEvent::AffinitySpend(result) => self.affinity_costs.apply_spend(result),
             UiEvent::Repos(result) => match result {
                 Ok(repos) => {
                     self.header.indexed = Some(repo_is_listed(&self.repo, &repos.repos));
@@ -8761,17 +8786,35 @@ mod tests {
         spend.affinity_costs.apply_capacity(Ok(json!({
             "held_tokens": 1_250_000, "cap": 10_000_000, "remaining_tokens": 8_750_000, "exact": false
         })));
+        spend.affinity_costs.apply_spend(Ok(spend_envelope()));
         spend.affinity_surface = Some(affinity_cli::Surface::Costs);
+        // 30 -> 44 rows on 2026-09-05. The screen carries a SECOND table now (the `GET /spend`
+        // provider estimate above this session's receipts), so 30 rows no longer shows the whole
+        // surface and every assertion below the fold would have been asserting on a clipped
+        // buffer — a test that passes because it cannot see the thing it checks.
         for width in [80, 120] {
-            let buffer = rendered_buffer_at_size(&spend, now, width, 30);
+            let buffer = rendered_buffer_at_size(&spend, now, width, 44);
             let text = test_gallery::buffer_text(&buffer);
             for fact in [
+                // The session receipt table, unchanged and still rendered.
                 "VENDOR LIST",
                 "claude-opus-4-8",
                 "$0.033345",
                 "$0.000000",
                 "45.75",
                 "1.2M",
+                // The `GET /spend` table. `gemini` is the CONTROL for `anthropic`: one provider
+                // priced, one not measured, in the same rendered frame — so a renderer that drew
+                // nothing, or one that drew `$0.00` for the unmeasured key, fails here.
+                "PROVIDER KEY SPEND",
+                "gemini",
+                "$0.032631 estimate",
+                "$0.001632 .. $0.081577",
+                "anthropic",
+                "not measured",
+                "TOTAL",
+                "$0.041220 estimate",
+                "Estelle charged this period",
             ] {
                 assert!(
                     text.contains(fact),
@@ -8782,10 +8825,57 @@ mod tests {
                 !text.contains("saved"),
                 "unsupported savings claim at {width} columns\n{text}"
             );
+            // The reconciliation line only appears when the column does NOT sum to the footer.
+            // This envelope adds up, so its absence here is an assertion about the arithmetic; the
+            // failing direction is driven by
+            // `affinity_cli::spend::tests::the_provider_column_plus_unattributed_equals_the_footer`
+            // and `..::a_mismatch_against_an_unmeasured_total_says_not_measured_not_zero`, so this
+            // is not a check that cannot fire.
+            assert!(
+                !text.contains("does not add up"),
+                "a balanced envelope reported a mismatch at {width} columns\n{text}"
+            );
             if let Some(output) = output.as_deref() {
                 test_gallery::write_frame(output, &format!("spend-{width}"), &buffer);
             }
         }
+    }
+
+    /// The `GET /spend` envelope, shaped after `provider_spend.spend_report` and carrying the
+    /// figures the server lane measured against real production rows on 2026-09-05.
+    fn spend_envelope() -> Value {
+        json!({
+            "basis": "vendor_list_estimate",
+            "is_estimate": true,
+            "assumption": "a vendor-list ESTIMATE, not an invoice.",
+            "period_days": 30,
+            "records_read": 7,
+            "records_capped": false,
+            "by_provider": [
+                {"provider": "anthropic", "reports_own_cost": false, "models": [],
+                 "state": "unavailable", "calls": 0, "tokens": 0, "estimate_usd": null,
+                 "floor_usd": null, "ceiling_usd": null, "estelle_billed_usd": null,
+                 "reason": "no call served by a anthropic model was recorded in this period"},
+                {"provider": "gemini", "reports_own_cost": false, "models": [],
+                 "state": "bounded-both-directions", "calls": 3, "tokens": 21754,
+                 "estimate_usd": 0.032631, "floor_usd": 0.001632, "ceiling_usd": 0.081577,
+                 "estelle_billed_usd": 0.0},
+                {"provider": "openai", "reports_own_cost": false, "models": [],
+                 "state": "bounded-both-directions", "calls": 1, "tokens": 5341,
+                 "estimate_usd": 0.002403, "floor_usd": 0.000107, "ceiling_usd": 0.006409,
+                 "estelle_billed_usd": 0.0},
+                {"provider": "openrouter", "reports_own_cost": true, "models": [],
+                 "state": "bounded-both-directions", "calls": 3, "tokens": 3666,
+                 "estimate_usd": 0.006186, "floor_usd": 0.000275, "ceiling_usd": 0.016497,
+                 "estelle_billed_usd": 0.0}
+            ],
+            "total": {"state": "bounded-both-directions", "calls": 7, "tokens": 30761,
+                      "estimate_usd": 0.04122, "floor_usd": 0.002014, "ceiling_usd": 0.104483,
+                      "estelle_billed_usd": 0.0},
+            "estelle_charged_usd": 0.0,
+            "provider_reported_costs": 0,
+            "no_provider_reports_cost": true
+        })
     }
 
     #[tokio::test]

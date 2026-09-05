@@ -1,5 +1,6 @@
 mod costs;
 mod models;
+mod spend;
 
 use crossterm::event::KeyCode;
 use estelle_client::AccountResponse;
@@ -9,6 +10,7 @@ use ratatui::layout::Rect;
 
 pub(crate) use costs::CostLedger;
 pub(crate) use models::ModelsScreen;
+pub(crate) use spend::spend_query;
 
 #[derive(Clone, Debug)]
 pub(crate) enum Surface {
