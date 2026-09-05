@@ -178,6 +178,7 @@ mod selection_list;
 mod service_tier_resolution;
 mod session_archive_commands;
 pub mod session_gap;
+pub mod session_handoff;
 mod session_log;
 mod session_resume;
 mod session_state;

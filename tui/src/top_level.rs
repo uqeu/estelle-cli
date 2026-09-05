@@ -31,6 +31,7 @@ use crate::plugin_currency;
 use estelle_tui::ground_block;
 use estelle_tui::ground_block::FlaggedOutcome;
 use estelle_tui::session_gap;
+use estelle_tui::session_handoff;
 
 const SOURCE_EXTENSIONS: &[&str] = &[
     "c", "cpp", "cs", "go", "h", "hpp", "java", "js", "jsx", "kt", "md", "php", "py", "rb", "rs",
@@ -991,7 +992,13 @@ async fn welcome_hook(payload: &HookPayload) -> Vec<String> {
     }
 
     let mut messages = Vec::new();
-    let context = session_gap::welcome_context(&cwd, chrono::Utc::now()).await;
+    let now = chrono::Utc::now();
+    // 🔴 ORDER IS LOAD-BEARING. The gap context is read FIRST, off the checkpoint the last
+    // `Stop` wrote. Draining first would be reading a store this call is about to change.
+    let context = session_gap::welcome_context(&cwd, now).await;
+    // Pay whatever an earlier SessionEnd could only promise. SessionStart is the event that HAS
+    // the budget SessionEnd does not: Codex clamps SessionEnd to 3s and allows this one 600.
+    drain_handoffs(now).await;
     if !context.is_empty() {
         let text = context.human_lines.join("\n");
         messages.push(hook_message(
@@ -1351,8 +1358,41 @@ async fn checkpoint_local(payload: &HookPayload, state_path: Option<PathBuf>) ->
     }))
 }
 
+/// 🔴 THE THREE-SECOND EVENT. `checkpoint` is wired to Stop, PreCompact and SessionEnd, and
+/// exactly one of them cannot afford what the other two do.
+///
+/// Codex clamps SessionEnd — and ONLY SessionEnd — to `SESSION_END_MAX_TIMEOUT_SEC = 3`
+/// (`hooks/src/events/session_end.rs`, applied by `normalize_command_hook` at
+/// `hooks/src/engine/discovery.rs:605`; every other event gets `timeout_sec.unwrap_or(600)`).
+/// That is upstream's design, identical in this fork, and no plugin can ask for more. The full
+/// checkpoint is a network POST whose measured round trip is 4.5–15s, so on SessionEnd it was
+/// being killed mid-flight — and killed silently, which is the worse half.
+///
+/// So SessionEnd defers: it writes a local note naming the transcript the host already wrote,
+/// and the NEXT session's SessionStart pays it. Stop and PreCompact are UNCHANGED — they have
+/// the full budget and keep doing the full durable write. Turning a network round trip into a
+/// local write is the only thing that honestly fits in three seconds.
 async fn checkpoint_hook(payload: &HookPayload) -> Result<Vec<String>, String> {
-    let Some(body) = checkpoint_local(payload, session_gap::state_path()).await else {
+    checkpoint_hook_at(
+        payload,
+        session_gap::state_path(),
+        session_handoff::state_path(),
+    )
+    .await
+}
+
+/// The injectable half of [`checkpoint_hook`] — the hook passes the real home-derived paths,
+/// tests pass temporary ones. Same seam `record_checkpoint_to` already uses, and for the same
+/// reason: a test that has to move `HOME` to observe a hook is a test that races every other test.
+async fn checkpoint_hook_at(
+    payload: &HookPayload,
+    gap_state: Option<PathBuf>,
+    handoff_state: Option<PathBuf>,
+) -> Result<Vec<String>, String> {
+    if payload.hook_event_name.trim() == session_handoff::DEFERRED_EVENT {
+        return checkpoint_handoff(payload, handoff_state).await;
+    }
+    let Some(body) = checkpoint_local(payload, gap_state).await else {
         return Ok(Vec::new());
     };
     let Ok(api) = Api::resolve() else {
@@ -1360,6 +1400,144 @@ async fn checkpoint_hook(payload: &HookPayload) -> Result<Vec<String>, String> {
     };
     let _ = api.post(Endpoint::Checkpoint, &body).await;
     Ok(Vec::new())
+}
+
+/// The SessionEnd half: a local, bounded, durable note that a checkpoint is OWED. No transcript
+/// read, no network, no git — the three things that do not fit.
+///
+/// ⚠️ AND IT DOES NOT FAIL SILENTLY. Every other checkpoint failure is silent by design (a
+/// warning on every turn is how a customer learns to ignore Estelle), but this one is different:
+/// its silence costs the customer the session memory they are paying for, at the moment they can
+/// no longer do anything about it. So the reason goes to **stderr** and the hook exits non-zero,
+/// which is exactly the pair Codex surfaces — `parse_completed` in
+/// `hooks/src/events/session_end.rs` renders `run_result.stderr` verbatim as a hook error on ANY
+/// non-zero exit. Silence here would be indistinguishable from success.
+async fn checkpoint_handoff(
+    payload: &HookPayload,
+    state_path: Option<PathBuf>,
+) -> Result<Vec<String>, String> {
+    // 🔴 NO TRANSCRIPT IS NOT A FAILURE — IT IS A SESSION WITH NOTHING TO HAND OFF.
+    // Codex sends `transcript_path: null` for any thread with no materialized local rollout, and it
+    // sends it on EVERY event, so refusing here would make the loud path fire on ordinary sessions —
+    // which is how a customer learns to ignore the one warning that matters. The loud refusal below
+    // is reserved for the case where there IS something to defer and the note could not be written.
+    // Same reasoning, and the same stderr-only channel, as `checkpoint_local`'s own skip.
+    if payload.transcript().is_none() {
+        #[expect(
+            clippy::print_stderr,
+            reason = "the only channel a silent-by-design hook has for a human debugging it; stdout is the host's envelope"
+        )]
+        {
+            eprintln!(
+                "Estelle checkpoint skipped at SessionEnd: this host supplied no transcript_path, so \
+                 there is no conversation to hand off. Every other Estelle hook is unaffected."
+            );
+        }
+        return Ok(Vec::new());
+    }
+    let state_path =
+        state_path.ok_or_else(|| session_handoff::HandoffError::NoHome.to_string());
+    let outcome = match state_path {
+        Ok(state_path) => session_handoff::record(
+            session_handoff::PendingCheckpoint {
+                session_id: payload.session_id.trim().to_string(),
+                transcript_path: payload.transcript().unwrap_or_default().to_string(),
+                cwd: payload.cwd.trim().to_string(),
+                event: payload.hook_event_name.trim().to_string(),
+                at: String::new(),
+            },
+            state_path,
+            chrono::Utc::now(),
+        )
+        .await
+        .map_err(|error| error.to_string()),
+        Err(error) => Err(error),
+    };
+    let Err(reason) = outcome else {
+        return Ok(Vec::new());
+    };
+    #[expect(
+        clippy::print_stderr,
+        reason = "the channel Codex reads on a non-zero SessionEnd exit; stdout is the host's envelope"
+    )]
+    {
+        eprintln!(
+            "Estelle could not hand this session off: {reason}. This session's final checkpoint \
+             was NOT saved and the next session will not resume it."
+        );
+    }
+    Err(format!("session handoff not written: {reason}"))
+}
+
+/// How many deferred checkpoints one returning session will pay for, and how long it may spend
+/// doing it. Both bound work the customer did not ask for: a `SessionStart` that spends a minute
+/// uploading old sessions has replaced one broken experience with another.
+const HANDOFF_DRAIN_BUDGET: Duration = Duration::from_secs(20);
+
+/// Pay the checkpoints earlier SessionEnds could not. Bounded by count in
+/// [`session_handoff::MAX_CLAIM_PER_START`] and by wall clock in [`HANDOFF_DRAIN_BUDGET`].
+///
+/// ⚠️ A CLAIMED NOTE IS ALREADY GONE FROM THE STORE — at most once, never twice, which is the
+/// direction this repo has already paid to learn (a double run bills the customer twice, and
+/// there is no per-execution idempotency anywhere to catch it). A note the budget does not reach
+/// is reported on stderr rather than dropped without a word.
+async fn drain_handoffs(now: chrono::DateTime<chrono::Utc>) {
+    let Some(state_path) = session_handoff::state_path() else {
+        return;
+    };
+    let owed = session_handoff::claim(state_path, now).await;
+    if owed.is_empty() {
+        return;
+    }
+    let deadline = Instant::now() + HANDOFF_DRAIN_BUDGET;
+    let mut unpaid = 0usize;
+    for pending in owed {
+        if Instant::now() >= deadline {
+            unpaid += 1;
+            continue;
+        }
+        if !upload_deferred_checkpoint(&pending).await {
+            unpaid += 1;
+        }
+    }
+    if unpaid == 0 {
+        return;
+    }
+    #[expect(
+        clippy::print_stderr,
+        reason = "a dropped checkpoint is a fact the customer is entitled to, and stdout is the host's envelope"
+    )]
+    {
+        eprintln!(
+            "Estelle could not upload {unpaid} deferred checkpoint(s) from an earlier session \
+             within {}s; they were not saved.",
+            HANDOFF_DRAIN_BUDGET.as_secs()
+        );
+    }
+}
+
+/// Replay one deferred note through the SAME body builder the live path uses, so a deferred
+/// checkpoint and a live one cannot drift into two shapes. Returns whether it reached the API.
+async fn upload_deferred_checkpoint(pending: &session_handoff::PendingCheckpoint) -> bool {
+    // Built through the host's own wire shape rather than the struct literal, so this stays
+    // correct while another lane is changing `HookPayload`'s fields.
+    let Ok(payload) = serde_json::from_value::<HookPayload>(json!({
+        "session_id": pending.session_id,
+        "transcript_path": pending.transcript_path,
+        "cwd": pending.cwd,
+        "hook_event_name": pending.event,
+    })) else {
+        return false;
+    };
+    // `None` for the gap state: the gap was already recorded by the Stop that preceded this
+    // session's end, and re-recording it now would stamp TODAY over the moment the work stopped.
+    let Some(body) = checkpoint_local(&payload, None).await else {
+        return false;
+    };
+    let Ok(api) = Api::resolve() else {
+        return false;
+    };
+    api.post(Endpoint::Checkpoint, &body).await.is_ok()
 }
 
 /// The /verify request body `ground_hook` sends, before the client injects `repo` — named so
@@ -2195,20 +2373,28 @@ const HOOK_TABLE: &[HookRow] = &[
         plugin: true,
         plugin_async: false,
     },
+    // 🔴 THREE SECONDS, AND THE NUMBER IS THE CONTRACT. Codex clamps SessionEnd — and only
+    // SessionEnd — to `SESSION_END_MAX_TIMEOUT_SEC = 3`, so the 30 that used to sit here was
+    // rewritten on every load with a warning in the customer's terminal. `checkpoint` on this
+    // event no longer does the network write at all; it records a local handoff that the next
+    // SessionStart pays. Declaring 3 is now the TRUE budget on both hosts, not a concession.
     HookRow {
         event: "SessionEnd",
         matcher: None,
         mode: "checkpoint",
-        timeout: 30,
+        timeout: 3,
         claude_async: false,
         plugin: true,
         plugin_async: false,
     },
+    // Raised from 5 because `welcome` now also drains the checkpoints SessionEnd deferred, and
+    // that IS a network write. Bounded below this by `HANDOFF_DRAIN_BUDGET`, so the ceiling has
+    // headroom over the work rather than defining it.
     HookRow {
         event: "SessionStart",
         matcher: None,
         mode: "welcome",
-        timeout: 5,
+        timeout: 30,
         claude_async: false,
         plugin: true,
         plugin_async: false,
@@ -6409,8 +6595,11 @@ tests/test_serve.py:88: AssertionError\n\
             ("PostToolUse", Some("Bash"), "distil", 10),
             ("Stop", None, "checkpoint", 30),
             ("PreCompact", None, "checkpoint", 30),
-            ("SessionEnd", None, "checkpoint", 30),
-            ("SessionStart", None, "welcome", 5),
+            // 3, not 30: Codex clamps SessionEnd and this verb no longer needs more — see
+            // `checkpoint_handoff`. Claude Code is given the same honest number.
+            ("SessionEnd", None, "checkpoint", 3),
+            // 30, because `welcome` now drains the checkpoints SessionEnd deferred.
+            ("SessionStart", None, "welcome", 30),
             // 30, matching BOTH shipped manifests. It was 10 — see `CONTEXT_HOOK_HOST_BUDGET_S`.
             ("UserPromptSubmit", None, "context", 30),
         ];
@@ -6475,7 +6664,8 @@ tests/test_serve.py:88: AssertionError\n\
             ("PreCompact", None, "checkpoint", 30),
             // Codex clamps SessionEnd to 3s — say 3 rather than be silently rewritten.
             ("SessionEnd", None, "checkpoint", 3),
-            ("SessionStart", None, "welcome", 5),
+            // 30, because `welcome` now drains the checkpoints SessionEnd deferred.
+            ("SessionStart", None, "welcome", 30),
             // 30, matching BOTH shipped manifests. It was 10 — see `CONTEXT_HOOK_HOST_BUDGET_S`.
             ("UserPromptSubmit", None, "context", 30),
         ];
@@ -7813,6 +8003,219 @@ tests/test_serve.py:88: AssertionError\n\
             !lines.is_empty(),
             "append_citations must consume reply[\"code\"] — if this is empty the trap is gone \
              and this test is decoration"
+        );
+    }
+
+    /// What the SessionEnd branch must fit inside, IN PROCESS.
+    ///
+    /// Codex's ceiling is 3.000s (`SESSION_END_MAX_TIMEOUT_SEC`). The shipped plugin invokes the
+    /// runner as `npx -y @fatelabs/estelle@0`, whose own startup was measured at **0.90 / 0.97 /
+    /// 1.10 s** over three warm runs on the founder's machine — so roughly a third of the ceiling
+    /// is spent before a single line of this code executes. 1.5s leaves the remainder with margin.
+    const SESSION_END_LOCAL_BUDGET: Duration = Duration::from_millis(1_500);
+
+    /// A transcript large enough that reading it is a real cost rather than a rounding error.
+    const OVERSIZED_TRANSCRIPT_BYTES: usize = 32 * 1024 * 1024;
+
+    fn checkpoint_fixture(root: &Path) -> (PathBuf, HookPayload) {
+        let transcript = root.join("transcript.jsonl");
+        let records = [
+            json!({"type": "user", "cwd": root.to_string_lossy(), "gitBranch": "main",
+                   "version": "2.0.0", "message": {"role": "user", "content": "fix the retry loop"}}),
+            json!({"type": "assistant", "message": {"role": "assistant", "model": "claude",
+                   "content": [{"type": "text", "text": "looking"}]}}),
+        ];
+        let raw = records
+            .iter()
+            .map(serde_json::to_string)
+            .collect::<Result<Vec<_>, _>>()
+            .expect("fixture JSONL")
+            .join("\n");
+        fs::write(&transcript, &raw).expect("fixture transcript");
+        let payload = serde_json::from_value::<HookPayload>(json!({
+            "session_id": "session-end-1",
+            "transcript_path": transcript.to_string_lossy(),
+            "cwd": root.to_string_lossy(),
+            "hook_event_name": "Stop",
+        }))
+        .expect("payload");
+        (transcript, payload)
+    }
+
+    fn with_event(payload: &HookPayload, event: &str) -> HookPayload {
+        serde_json::from_value(json!({
+            "session_id": payload.session_id,
+            "transcript_path": payload.transcript(),
+            "cwd": payload.cwd,
+            "hook_event_name": event,
+        }))
+        .expect("payload")
+    }
+
+    /// 🔴 THE PAIR THAT CANNOT BOTH BE TRUE: for one payload, the checkpoint is DEFERRED and it
+    /// is DONE. Exactly one of the two stores moves, decided only by `hook_event_name`.
+    ///
+    /// This is the assertion that holds the AIM. A timing bound would not: on a warm page cache a
+    /// 32 MB read costs about 10 ms, so a regression that put the transcript read back on the
+    /// SessionEnd path would sail through any wall-clock budget and still be killed at 3 s on a
+    /// cold cache in front of a customer. Here it cannot: the SessionEnd row asserts the gap store
+    /// was never written, which is only true while that path parses nothing.
+    ///
+    /// ⚠️ THE LIMIT, STATED: Stop's row stops at `checkpoint_local`, not at `checkpoint_hook_at`.
+    /// Driving Stop through the hook would attempt a real POST on any machine with
+    /// `ESTELLE_API_KEY` exported — which is the normal state for anyone using the product — so
+    /// this proves Stop still BUILDS the full body, not that it still posts it.
+    #[tokio::test]
+    async fn exactly_one_of_defer_and_do_happens_and_the_event_decides_which() {
+        let root = tempfile::tempdir().expect("checkpoint root");
+        let (_transcript, stop_payload) = checkpoint_fixture(root.path());
+        let gap_state = root.path().join("gap").join("last-session.json");
+        let handoff_state = root.path().join("handoff").join("pending-checkpoints.json");
+
+        // SessionEnd: the note is written and NOTHING is parsed.
+        let end_payload = with_event(&stop_payload, session_handoff::DEFERRED_EVENT);
+        checkpoint_hook_at(
+            &end_payload,
+            Some(gap_state.clone()),
+            Some(handoff_state.clone()),
+        )
+        .await
+        .expect("the handoff must succeed on a writable machine");
+
+        assert!(
+            handoff_state.is_file(),
+            "SessionEnd must leave a durable note that a checkpoint is owed"
+        );
+        assert!(
+            !gap_state.exists(),
+            "SessionEnd must NOT parse the transcript — the gap store moving here means the \
+             three-second path is reading the file again"
+        );
+
+        // Stop: the same transcript still produces the full body, untouched by this change.
+        let body = checkpoint_local(&stop_payload, Some(gap_state.clone()))
+            .await
+            .expect("Stop keeps doing the full durable write");
+        assert_eq!(body["client"]["event"], json!("Stop"));
+        assert_eq!(
+            body["messages"].as_array().expect("messages").len(),
+            2,
+            "Stop still parses the conversation"
+        );
+        assert!(
+            gap_state.is_file(),
+            "Stop still records the local gap — the two events are not both deferred"
+        );
+    }
+
+    /// The deferred note completes inside the budget, measured, on a transcript far larger than
+    /// the median. 32 MB is chosen against the real distribution: 161 rollouts on the founder's
+    /// machine measured median 19.3 MB, p75 100.4 MB, p95 530.8 MB, max 35.3 GB.
+    ///
+    /// ⚠️ THIS TEST IS ABOUT SENSITIVITY, NOT AIM. It bounds the local write; it cannot tell a
+    /// deferred path from a fast one. `exactly_one_of_defer_and_do_happens_and_the_event_decides_which`
+    /// holds the aim.
+    #[tokio::test]
+    async fn the_deferred_checkpoint_completes_inside_the_session_end_budget() {
+        let root = tempfile::tempdir().expect("checkpoint root");
+        let (transcript, payload) = checkpoint_fixture(root.path());
+        let filler = "x".repeat(OVERSIZED_TRANSCRIPT_BYTES);
+        fs::write(&transcript, filler.as_bytes()).expect("oversized transcript");
+        assert!(
+            fs::metadata(&transcript).expect("transcript").len()
+                >= OVERSIZED_TRANSCRIPT_BYTES as u64,
+            "a budget assertion over a small file measures nothing"
+        );
+
+        let handoff_state = root.path().join("pending-checkpoints.json");
+        let payload = with_event(&payload, session_handoff::DEFERRED_EVENT);
+        let started = Instant::now();
+        checkpoint_hook_at(&payload, None, Some(handoff_state.clone()))
+            .await
+            .expect("handoff");
+        let elapsed = started.elapsed();
+
+        assert!(
+            handoff_state.is_file(),
+            "a fast return that wrote nothing is not a pass"
+        );
+        assert!(
+            elapsed < SESSION_END_LOCAL_BUDGET,
+            "the SessionEnd handoff took {elapsed:?}, over the {SESSION_END_LOCAL_BUDGET:?} \
+             budget left by Codex's 3s clamp once the npx runner's ~1.0s startup is subtracted"
+        );
+    }
+
+    /// 🔴 THE PAIR THAT KEEPS THE LOUD PATH CREDIBLE: a SessionEnd is quiet-and-wrote-nothing, or it
+    /// is loud-and-refused. It is never quiet about a note it failed to write, and never loud about a
+    /// session that had nothing to hand off.
+    ///
+    /// Codex sends `transcript_path: null` for any thread with no materialized rollout — on every
+    /// event, on ordinary sessions. An earlier version of this branch refused there, which turned the
+    /// one warning that matters into noise on every shutdown. `a_codex_payload_with_a_null_transcript
+    /// _path_reaches_every_mode` caught it, which is exactly the job that test already had.
+    #[tokio::test]
+    async fn a_session_with_no_transcript_is_quiet_and_one_that_cannot_be_written_is_not() {
+        let root = tempfile::tempdir().expect("checkpoint root");
+        let (_transcript, payload) = checkpoint_fixture(root.path());
+        let end = with_event(&payload, session_handoff::DEFERRED_EVENT);
+
+        // QUIET: no transcript, so nothing is owed. Ok, and no note.
+        let no_transcript = serde_json::from_value::<HookPayload>(json!({
+            "session_id": "session-end-1",
+            "transcript_path": Value::Null,
+            "cwd": root.path().to_string_lossy(),
+            "hook_event_name": session_handoff::DEFERRED_EVENT,
+        }))
+        .expect("payload");
+        let state = root.path().join("quiet").join("pending-checkpoints.json");
+        checkpoint_handoff(&no_transcript, Some(state.clone()))
+            .await
+            .expect("a session Codex gave no transcript for is not a failure to report");
+        assert!(
+            !state.exists(),
+            "nothing was owed, so nothing may be written — a note pointing at no transcript would be \
+             replayed forever and never resolve"
+        );
+
+        // LOUD: there IS something to hand off and the store cannot take it.
+        let blocker = root.path().join("blocked");
+        fs::write(&blocker, b"not a directory").expect("fixture blocker");
+        checkpoint_handoff(&end, Some(blocker.join("pending.json")))
+            .await
+            .expect_err("a checkpoint that was owed and could not be recorded must be an Err");
+    }
+
+    /// A handoff that cannot be written says WHY, on the channel the host actually reads.
+    ///
+    /// Codex's `parse_completed` (`hooks/src/events/session_end.rs`) renders `run_result.stderr`
+    /// verbatim as a hook error on ANY non-zero exit, so the pair — non-zero exit AND a reason on
+    /// stderr — is what makes this legible. Silence here is indistinguishable from success, and
+    /// the cost of that confusion is the customer's session memory.
+    #[tokio::test]
+    async fn a_handoff_that_cannot_be_written_refuses_out_loud_with_its_reason() {
+        let root = tempfile::tempdir().expect("checkpoint root");
+        let (_transcript, payload) = checkpoint_fixture(root.path());
+        let payload = with_event(&payload, session_handoff::DEFERRED_EVENT);
+
+        // No home directory to derive a path from: the branch a machine without `$HOME` takes.
+        let error = checkpoint_handoff(&payload, None)
+            .await
+            .expect_err("an unwritable handoff must be an Err, which is what makes the exit non-zero");
+        assert!(
+            error.contains("home directory"),
+            "the refusal must name the missing thing; got {error}"
+        );
+
+        // And a store whose parent cannot be created reports the io reason rather than swallowing it.
+        let blocker = root.path().join("blocked");
+        fs::write(&blocker, b"not a directory").expect("fixture blocker");
+        let error = checkpoint_handoff(&payload, Some(blocker.join("pending.json")))
+            .await
+            .expect_err("an unwritable path must be an Err");
+        assert!(
+            error.contains("could not be written"),
+            "the refusal must name the failure; got {error}"
         );
     }
 
