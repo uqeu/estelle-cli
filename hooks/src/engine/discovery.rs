@@ -1153,6 +1153,113 @@ mod tests {
         assert_eq!(hook_entries[0].enabled, false);
     }
 
+    /// Discovers one unmanaged (`User`-source) `Bash` `PreToolUse` hook under a given stored trust
+    /// state, with `bypass_hook_trust` OFF — the setting a real installation runs under.
+    ///
+    /// `trusted_hash: None` models a machine that has never trusted this file, which is what every
+    /// fresh `install-hooks` produces.
+    fn discover_unmanaged_bash_hook_under_trust(
+        source_path: &AbsolutePathBuf,
+        trusted_hash: Option<&str>,
+    ) -> (Vec<ConfiguredHandler>, Vec<HookListEntry>, Vec<String>) {
+        let hook_states = match trusted_hash {
+            Some(trusted_hash) => std::collections::HashMap::from([(
+                format!("{}:pre_tool_use:0:0", source_path.display()),
+                HookStateToml {
+                    enabled: None,
+                    trusted_hash: Some(trusted_hash.to_string()),
+                },
+            )]),
+            None => std::collections::HashMap::new(),
+        };
+        let mut handlers = Vec::new();
+        let mut hook_entries = Vec::new();
+        let mut warnings = Vec::new();
+        let mut display_order = 0;
+
+        append_matcher_groups(
+            &mut handlers,
+            &mut hook_entries,
+            &mut warnings,
+            &mut display_order,
+            &unmanaged_hook_handler_source(
+                source_path,
+                &hook_states,
+                /*bypass_hook_trust*/ false,
+            ),
+            HookEventName::PreToolUse,
+            vec![command_group(Some("Bash"))],
+        );
+
+        (handlers, hook_entries, warnings)
+    }
+
+    /// 🔴 THE SILENT DROP — the failure an install cannot see.
+    ///
+    /// A hooks file Estelle writes to `~/.codex/hooks.json` is a `User` source, so `is_managed` is
+    /// false (`hook_metadata_for_config_layer_source`) and a fresh install carries no
+    /// `hooks.state` entry at all. This pins all three halves of what the host then does:
+    /// the hook is **LISTED** (so every "is it installed?" check passes), **NO handler is
+    /// registered** (so it never runs), and **NO warning is emitted** (so nothing says so).
+    ///
+    /// ⚠️ The two pre-existing trust tests above both set `bypass_hook_trust = true`, which is the
+    /// one setting that makes this arm unreachable — so the drop itself had no coverage. The
+    /// instrument existed and was pointed at the case that passes.
+    #[test]
+    fn untrusted_user_hook_is_listed_but_registers_no_handler_and_emits_no_warning() {
+        let source_path = source_path();
+
+        let (handlers, hook_entries, warnings) =
+            discover_unmanaged_bash_hook_under_trust(&source_path, /*trusted_hash*/ None);
+
+        assert_eq!(handlers, Vec::<ConfiguredHandler>::new());
+        assert_eq!(hook_entries.len(), 1);
+        assert_eq!(hook_entries[0].trust_status, HookTrustStatus::Untrusted);
+        assert_eq!(hook_entries[0].enabled, true);
+        // The silence is the defect, not an accident of this fixture. Asserting it means a future
+        // warning on this path has to arrive as a deliberate change to this line.
+        assert_eq!(warnings, Vec::<String>::new());
+    }
+
+    /// POSITIVE CONTROL for the test above.
+    ///
+    /// Same source, same handler, same code path; the only difference is a stored `trusted_hash`
+    /// that matches the computed one. Without this, "no handler was registered" would be
+    /// consistent with a fixture that can never register a handler at all.
+    #[test]
+    fn user_hook_whose_trusted_hash_matches_registers_its_handler() {
+        let source_path = source_path();
+        let (_, listed, _) =
+            discover_unmanaged_bash_hook_under_trust(&source_path, /*trusted_hash*/ None);
+        let current_hash = listed[0].current_hash.clone();
+
+        let (handlers, hook_entries, warnings) =
+            discover_unmanaged_bash_hook_under_trust(&source_path, Some(current_hash.as_str()));
+
+        assert_eq!(handlers.len(), 1);
+        assert_eq!(hook_entries.len(), 1);
+        assert_eq!(hook_entries[0].trust_status, HookTrustStatus::Trusted);
+        assert_eq!(warnings, Vec::<String>::new());
+    }
+
+    /// A stored hash that no longer matches is `Modified`, and `Modified` registers no handler
+    /// either. This is why RE-RUNNING the installer cannot repair an untrusted install: rewriting
+    /// the file moves the hash, so a previously trusted hook drops back out of the registered set.
+    #[test]
+    fn user_hook_whose_trusted_hash_is_stale_registers_no_handler() {
+        let source_path = source_path();
+
+        let (handlers, hook_entries, warnings) = discover_unmanaged_bash_hook_under_trust(
+            &source_path,
+            Some("stale-hash-from-a-previous-install"),
+        );
+
+        assert_eq!(handlers, Vec::<ConfiguredHandler>::new());
+        assert_eq!(hook_entries.len(), 1);
+        assert_eq!(hook_entries[0].trust_status, HookTrustStatus::Modified);
+        assert_eq!(warnings, Vec::<String>::new());
+    }
+
     #[test]
     fn pre_tool_use_treats_star_matcher_as_match_all() {
         let mut handlers = Vec::new();
