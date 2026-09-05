@@ -120,6 +120,7 @@ endpoints! {
     (VendorDriftRepair, "vendor-drift/repair", [Post], false),
     (Checkpoint, "checkpoint", [Post], false),
     (Govern, "govern", [Post], false),
+    (Spend, "spend", [Get], false),
 }
 
 impl Endpoint {

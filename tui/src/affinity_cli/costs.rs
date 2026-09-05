@@ -11,6 +11,7 @@ use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 use serde_json::Value;
 
+use super::spend;
 use crate::Theme;
 use crate::cols;
 
@@ -20,30 +21,73 @@ const MAX_WORKERS: usize = 64;
 const MAX_CALLS_PER_WORKER: usize = 64;
 const MAX_RECEIPT_STAGES: usize = 3;
 
+/// What KIND of dollar figure a cell holds — never just a number.
+///
+/// 🔴 **`Exact` IS THE ONLY VARIANT THAT RENDERS UNQUALIFIED, AND IT MEANS SOMEBODY MEASURED IT.**
+/// Two variants were added when the `/spend` door was wired, because the server's vocabulary
+/// (`orchestra_live.SPEND_STATES`) already drew distinctions this enum could not hold:
+///
+/// * [`Money::Estimate`] — a figure computed from published list prices against a token count whose
+///   input/output split is NOT recorded. It always travels with a floor..ceiling bracket, and it is
+///   NOT summable as measured: [`Money::exact`] refuses it. ⚠️ It REPLACED a `Partial` variant that
+///   this file already had, rather than joining it: `receipt_money` mapped the SAME two server
+///   states (`incomplete`, `bounded-both-directions`) to `Partial` and rendered them "$x partial",
+///   so shipping `Estimate` beside it would have put two names on one fact and let the Orchestra
+///   receipt and the /spend table disagree about what the same `state` string means.
+/// * [`Money::NoVendorBill`] — a REAL, exact `$0.00`, reached only when every served model is
+///   zero-rated in the vendor table. Kept apart from `Exact` so the reader can tell "the vendor
+///   charges nothing for this" from "a provider reported zero", which are different claims.
+///
+/// [`Money::NotMeasured`] remains the absence, and it is the reason this enum exists: a zero and an
+/// absence are different bytes on the wire and must be different pixels on the screen.
 #[derive(Clone, Debug, PartialEq)]
-enum Money {
+pub(super) enum Money {
     Exact(f64),
     Upper(f64),
     Lower(f64),
-    Partial(f64),
+    Estimate(f64),
+    NoVendorBill,
     NotMeasured,
 }
 
 impl Money {
-    fn display(&self) -> String {
+    pub(super) fn display(&self) -> String {
         match self {
             Self::Exact(value) => format!("${value:.6}"),
             Self::Upper(value) => format!("${value:.6} ceiling"),
             Self::Lower(value) => format!("${value:.6} floor"),
-            Self::Partial(value) => format!("${value:.6} partial"),
+            Self::Estimate(value) => format!("${value:.6} estimate"),
+            Self::NoVendorBill => "$0.000000 no vendor bill".to_string(),
             Self::NotMeasured => "not measured".to_string(),
         }
     }
 
+    /// The figure this cell may be SUMMED AS MEASURED, which an estimate and a bound are not.
+    ///
+    /// `NoVendorBill` is exact by the server's own definition — every served model zero-rated is a
+    /// positive assertion that the vendor bills nothing — so it answers `0.0` rather than refusing.
     fn exact(&self) -> Option<f64> {
         match self {
             Self::Exact(value) => Some(*value),
-            Self::Upper(_) | Self::Lower(_) | Self::Partial(_) | Self::NotMeasured => None,
+            Self::NoVendorBill => Some(0.0),
+            Self::Upper(_) | Self::Lower(_) | Self::Estimate(_) | Self::NotMeasured => None,
+        }
+    }
+
+    /// The figure this cell PRINTS, whatever kind it is — and `None` for the absence.
+    ///
+    /// 🔴 **THE ONE OWNER OF "IS THIS ROW A NUMBER".** The `/spend` table reconciles its column
+    /// against the server's footer using this, the SAME value the cell renders. So a row that
+    /// prints "not measured" cannot contribute to a total: not because the arithmetic remembers to
+    /// check, but because there is nothing to add.
+    pub(super) fn amount(&self) -> Option<f64> {
+        match self {
+            Self::Exact(value)
+            | Self::Upper(value)
+            | Self::Lower(value)
+            | Self::Estimate(value) => Some(*value),
+            Self::NoVendorBill => Some(0.0),
+            Self::NotMeasured => None,
         }
     }
 }
@@ -79,6 +123,21 @@ enum Capacity {
     Failed(String),
 }
 
+/// The `GET /spend` read, in the four states it can be in.
+///
+/// 🔴 **`NotRequested` AND `Failed` ARE DIFFERENT AND BOTH ARE PRINTED.** The defect this screen
+/// had was a true sentence ("not measured") standing in for a fact nobody had gone and got. A feed
+/// that has not been asked for, one in flight, one that answered and one that refused are four
+/// different things to tell the reader, and collapsing any two of them recreates the original bug
+/// one layer up.
+#[derive(Clone, Debug)]
+enum SpendFeed {
+    NotRequested,
+    Loading,
+    Loaded(Box<spend::SpendReport>),
+    Failed(String),
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct CostLedger {
     latest: Option<Receipt>,
@@ -86,6 +145,7 @@ pub(crate) struct CostLedger {
     session_receipts: usize,
     session_incomplete: bool,
     capacity: Capacity,
+    spend: SpendFeed,
 }
 
 impl Default for CostLedger {
@@ -96,6 +156,7 @@ impl Default for CostLedger {
             session_receipts: 0,
             session_incomplete: false,
             capacity: Capacity::NotRequested,
+            spend: SpendFeed::NotRequested,
         }
     }
 }
@@ -129,6 +190,25 @@ impl CostLedger {
         self.capacity = Capacity::Loading;
     }
 
+    pub(crate) fn spend_loading(&mut self) {
+        self.spend = SpendFeed::Loading;
+    }
+
+    /// Apply one `GET /spend` answer.
+    ///
+    /// A transport error and a malformed envelope both land in [`SpendFeed::Failed`] carrying the
+    /// sentence that says which — never silently in the empty table, which would read as "$0 spent"
+    /// to anyone who did not know the read had happened at all.
+    pub(crate) fn apply_spend(&mut self, result: Result<Value, String>) {
+        self.spend = match result {
+            Ok(value) => match spend::parse(&value) {
+                Ok(report) => SpendFeed::Loaded(Box::new(report)),
+                Err(error) => SpendFeed::Failed(error),
+            },
+            Err(error) => SpendFeed::Failed(error),
+        };
+    }
+
     pub(crate) fn apply_capacity(&mut self, result: Result<Value, String>) {
         self.capacity = match result {
             Ok(value) => capacity_from_value(&value).unwrap_or_else(Capacity::Failed),
@@ -154,8 +234,16 @@ impl CostLedger {
             cols::Col::r(17),
         ];
         let mut lines = self.summary_lines(theme, account);
+        lines.push(Line::from(""));
+        lines.extend(self.spend_lines(theme, width));
         lines.extend([
             Line::from(""),
+            Line::styled(
+                "THIS SESSION'S RECEIPTS  what the commands run in this terminal were priced at",
+                Style::default()
+                    .fg(theme.semantic())
+                    .add_modifier(Modifier::BOLD),
+            ),
             cols::head(
                 &columns,
                 &[
@@ -207,6 +295,33 @@ impl CostLedger {
             Paragraph::new(lines).style(Style::default().fg(theme.primary())),
             area,
         );
+    }
+
+    /// The `GET /spend` table, or the reason there isn't one.
+    ///
+    /// ⚠️ **THE REFUSALS ARE THE POINT OF THIS FUNCTION.** Before it existed this screen rendered
+    /// only what the current terminal session had observed, so "not measured" on every row was a
+    /// true statement about the session that read as a claim about the ACCOUNT. Each arm below says
+    /// which of those it is.
+    fn spend_lines(&self, theme: Theme, width: usize) -> Vec<Line<'static>> {
+        match &self.spend {
+            SpendFeed::Loaded(report) => report.lines(theme, width),
+            SpendFeed::Loading => vec![Line::styled(
+                format!(
+                    "PROVIDER KEY SPEND  reading the last {} days from the server",
+                    spend::PERIOD_DAYS
+                ),
+                Style::default().fg(theme.ghost()),
+            )],
+            SpendFeed::NotRequested => vec![Line::styled(
+                "PROVIDER KEY SPEND  not requested in this session",
+                Style::default().fg(theme.alert()),
+            )],
+            SpendFeed::Failed(error) => vec![Line::styled(
+                format!("PROVIDER KEY SPEND  not measured  ({error})"),
+                Style::default().fg(theme.alert()),
+            )],
+        }
     }
 
     fn summary_lines(&self, theme: Theme, account: Option<&AccountResponse>) -> Vec<Line<'static>> {
@@ -384,7 +499,7 @@ fn receipt_money(receipt: Option<&Value>, field: &str) -> Money {
         Some("measured") => Money::Exact(value),
         Some("upper-bound") => Money::Upper(value),
         Some("lower-bound") => Money::Lower(value),
-        Some("incomplete" | "bounded-both-directions") => Money::Partial(value),
+        Some("incomplete" | "bounded-both-directions") => Money::Estimate(value),
         _ => Money::NotMeasured,
     }
 }
@@ -558,7 +673,7 @@ fn precision(exact: Option<bool>) -> &'static str {
     }
 }
 
-fn tokens(value: u64) -> String {
+pub(super) fn tokens(value: u64) -> String {
     if value >= 1_000_000 {
         format!("{:.1}M", value as f64 / 1_000_000.0)
     } else if value >= 1_000 {
@@ -641,6 +756,71 @@ mod tests {
         assert_eq!(receipt.rows[0].vendor, Money::Exact(0.02));
         assert_eq!(receipt.rows[1].vendor, Money::NotMeasured);
         assert_eq!(receipt.estelle_total, Money::Exact(0.0));
+    }
+
+    /// 🔴 THE FOUR SPEND STATES ARE FOUR DIFFERENT SENTENCES, AND NONE OF THEM IS A DOLLAR SIGN.
+    ///
+    /// The defect this screen shipped with was one true sentence — "not measured" — standing in for
+    /// a fact nobody had gone and fetched. So a feed that was never asked for, one still in flight,
+    /// one that failed and one that answered have to be four distinguishable lines, and the failure
+    /// has to carry WHY. The CONTROL is the loaded arm: a renderer that printed the same refusal on
+    /// every path would pass the first three assertions and fail the fourth.
+    #[test]
+    fn the_spend_feed_says_which_absence_it_is_and_renders_when_it_has_one() {
+        let mut ledger = CostLedger::default();
+        assert!(spend_text(&ledger).contains("not requested in this session"));
+        ledger.spend_loading();
+        assert!(
+            spend_text(&ledger).contains(&format!("reading the last {} days", spend::PERIOD_DAYS))
+        );
+        ledger.apply_spend(Err("the server refused: 401 unknown api key".to_string()));
+        let failed = spend_text(&ledger);
+        assert!(failed.contains("not measured"), "{failed}");
+        assert!(failed.contains("401 unknown api key"), "{failed}");
+        // A well-formed transport answer carrying a malformed envelope is ALSO a refusal, not an
+        // empty table: an empty money table reads as "$0 spent" to anyone who did not watch it load.
+        ledger.apply_spend(Ok(json!({"basis": "something-else"})));
+        assert!(spend_text(&ledger).contains("this screen renders the vendor-list estimate only"));
+        // CONTROL: the same code path draws a real table when it is given one.
+        ledger.apply_spend(Ok(json!({
+            "basis": "vendor_list_estimate", "is_estimate": true, "period_days": 30,
+            "records_read": 3, "records_capped": false,
+            "by_provider": [{"provider": "gemini", "state": "bounded-both-directions", "calls": 3,
+                             "tokens": 21754, "estimate_usd": 0.032631, "floor_usd": 0.001632,
+                             "ceiling_usd": 0.081577}],
+            "total": {"state": "bounded-both-directions", "calls": 3, "tokens": 21754,
+                      "estimate_usd": 0.032631, "floor_usd": 0.001632, "ceiling_usd": 0.081577},
+            "estelle_charged_usd": 0.0
+        })));
+        let loaded = spend_text(&ledger);
+        assert!(loaded.contains("gemini"), "{loaded}");
+        assert!(loaded.contains("$0.032631 estimate"), "{loaded}");
+        assert!(loaded.contains("$0.001632 .. $0.081577"), "{loaded}");
+    }
+
+    /// An estimate and a bound are not summable as measured; an absence is not summable at all.
+    /// The CONTROL is `Exact`, which is — otherwise a session total that never moved would pass.
+    #[test]
+    fn only_an_exact_figure_may_be_summed_as_measured() {
+        assert_eq!(Money::Estimate(1.5).exact(), None);
+        assert_eq!(Money::Upper(1.5).exact(), None);
+        assert_eq!(Money::Lower(1.5).exact(), None);
+        assert_eq!(Money::NotMeasured.exact(), None);
+        assert_eq!(Money::Exact(1.5).exact(), Some(1.5));
+        assert_eq!(Money::NoVendorBill.exact(), Some(0.0));
+        // `amount` is the WIDER question — "does this cell print a number at all" — and it is the
+        // one the /spend table reconciles on. An absence answers None to both.
+        assert_eq!(Money::Estimate(1.5).amount(), Some(1.5));
+        assert_eq!(Money::NotMeasured.amount(), None);
+    }
+
+    fn spend_text(ledger: &CostLedger) -> String {
+        ledger
+            .spend_lines(Theme::default(), 120)
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
     }
 
     #[test]
