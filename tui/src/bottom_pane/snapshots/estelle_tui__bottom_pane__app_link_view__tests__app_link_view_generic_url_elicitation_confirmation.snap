@@ -7,11 +7,11 @@ expression: "render_snapshot(&view, Rect::new(0, 0, 72, view.desired_height(72))
 
   Complete the requested action in the browser window that just
   opened.
-  Then return here and select "I finished".
+  Then return here and select "Finished".
 
   Link:
   https://payments.example/checkout/123
 
-  › 1. I finished
+  › 1. Finished
     2. Back
   Use tab / ↑ ↓ to move, enter to select, esc to close

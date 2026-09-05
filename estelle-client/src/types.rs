@@ -228,8 +228,60 @@ pub struct DeepSearchResponse {
     pub candidates: Vec<String>,
     #[serde(default)]
     pub reason: Option<String>,
+    /// The server's refusal to certify an answer that quotes code the index may be behind on.
+    ///
+    /// 🔴 **PRESENT ONLY WHEN IT MEANS SOMETHING.** `serve/answer_currency.py` returns the block
+    /// exclusively when the index is not current AND the answer depends on the code; on the
+    /// healthy path the payload is byte-identical to one that never had the field. So `None` is
+    /// the normal case and reads as *nothing to disclose*, never as *no data*.
+    #[serde(default)]
+    pub code_currency: Option<CodeCurrency>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+/// Why the server withdrew certification from an answer, and against which two commits.
+///
+/// ⚠️ **THE SHAPE IS THE SERVER'S, NOT A GUESS.** Fields and vocabulary are taken from
+/// `serve/answer_currency.py` (`_fields`) and `serve/graph_currency.py`: `status` re-uses the
+/// pinned four-valued currency vocabulary (`current` · `stale` · `unknown` · `unreachable`) and
+/// `depends_on_code` names WHICH signal decided it (`certified_code_claim` · `names_indexed_path`
+/// · `no_code_dependence` · `unknown`). Every field is `#[serde(default)]` so a block that gains a
+/// field, or arrives from an older build without one, still parses.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct CodeCurrency {
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub indexed_head: String,
+    #[serde(default)]
+    pub current_head: String,
+    #[serde(default)]
+    pub depends_on_code: String,
+    #[serde(default)]
+    pub cited_paths: u64,
+    /// The server's own sentence for this state. **One owner for the wording** — it comes from
+    /// `GraphHealth.describe()`, the same function the navigation door uses, so the CLI cannot
+    /// date one repo differently from the tool that refused the lookup a second earlier.
+    #[serde(default)]
+    pub detail: String,
+}
+
+impl CodeCurrency {
+    /// A short head, the way the server writes one: twelve characters, never a clipped SHA
+    /// pretending to be a full one.
+    ///
+    /// ⚠️ Returns the WHOLE string when it is shorter than the cut. A head this client shortened
+    /// past recognition is worse than a long one, and an empty head stays empty rather than
+    /// becoming a plausible-looking stub.
+    pub fn short(head: &str) -> &str {
+        head.get(..12).unwrap_or(head)
+    }
+
+    /// `true` when the block says the index is behind the tree, rather than merely undated.
+    pub fn is_stale(&self) -> bool {
+        self.status == "stale"
+    }
 }
 
 impl DeepSearchResponse {
@@ -644,6 +696,30 @@ pub struct TeamView {
     pub seat_ledger: Option<SeatLedger>,
     #[serde(default)]
     pub invites: Vec<serde_json::Value>,
+    /// 🔴 **`team` IS TWO DIFFERENT PAYLOADS ON TWO DIFFERENT ENDPOINTS, AND THIS FIELD IS WHERE
+    /// THE SECOND ONE SURVIVES.**
+    ///
+    /// `GET /me/team` sends `{"team": {id, name, role, members, …}}` — a roster, which is what
+    /// every field above reads. `GET /settings` sends `{"schema": …, "team": {<suite>: {<key>:
+    /// <value>}}, "personal": …}` — the team-SCOPED SETTING VALUES, an entirely different shape
+    /// under an identical key.
+    ///
+    /// ⚠️ **AND THE TYPED FIELD ATE IT SILENTLY.** [`CommandReply::extra`] is `#[serde(flatten)]`,
+    /// which does not receive keys a named field already claimed — so `team` went to `me_team`,
+    /// every field of `TeamView` is `#[serde(default)]`, the settings map deserialised into an
+    /// EMPTY roster without an error, and `resolved_setting_value` found nothing in `extra` and
+    /// fell back to the schema's `default`. The result: **every team-scoped setting in the CLI
+    /// displayed the schema default instead of the value the server had saved.** The founder
+    /// caught it on one row — `Data retention (days)` showing `30` while the wire said `45` — and
+    /// it was never one row.
+    ///
+    /// This is Power-of-Ten rule 8 (one meaning per name) failing at a wire boundary, where the
+    /// name is not ours to change. So the map is captured rather than dropped, and
+    /// `resolved_setting_value` reads it for `team` scope the same way it reads `extra` for
+    /// `personal`. **Do not "tidy" this flatten away** — it is load-bearing and its absence is
+    /// invisible, which is why this paragraph is longer than the field.
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

@@ -12,6 +12,10 @@ import termios
 import time
 
 sys.dont_write_bytecode = True
+
+#: The header the first-run picker renders. Kept byte-identical to the assertion in
+#: ``tui/src/main.rs`` -- see the comment at the check below.
+HEADER = "── connect estelle ─"
 from terminal_screen import rendered_screen
 
 
@@ -38,8 +42,16 @@ def main() -> int:
                     break
                 observed.extend(chunk)
         visible = rendered_screen(observed)
-        if "CONNECT ESTELLE" not in visible:
-            print("first-run picker was not reachable", file=sys.stderr)
+        # 🔴 ONE OWNER FOR THIS STRING, AND IT IS THE UI. The other owner is
+        # `tui/src/main.rs`'s `assert!(rendered.contains("── connect estelle ─"))`. They disagreed:
+        # the header was lowercased on 2026-08-31 (0263ffa2c), the Rust test moved with it, and THIS
+        # probe kept asserting the old uppercase form. Nothing released in between, so the mismatch
+        # first surfaced in v0.2.33 -- both Linux jobs failed here AFTER building cleanly and AFTER
+        # passing the glibc floor check. If you change the header, change it in BOTH places.
+        if HEADER not in visible:
+            print(f"first-run picker did not render the expected header {HEADER!r}", file=sys.stderr)
+            print("(the picker may still be reachable -- this asserts the HEADER TEXT, not reachability)",
+                  file=sys.stderr)
             print(visible, file=sys.stderr)
             return 1
         os.write(fd, b"\x03")

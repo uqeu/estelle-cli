@@ -1,12 +1,11 @@
 ---
 source: tui/src/main.rs
-assertion_line: 11800
 expression: "rendered_frame(&app, Instant::now())"
 ---
 "ESTELLE  ·  uqeu/estelle                                                        "
 "                                                                                "
 "── session · uqeu/estelle ──────────────────────────────────────────────────────"
-"   uqeu/estelle · coach/r11-cli-integration                                     "
+"   uqeu/estelle · main                                                          "
 "sweep  sending complete source set · 35% · 184 files · 891 KB                   "
 "████████████████████████████          35%                                       "
 "                                                                                "
@@ -26,4 +25,4 @@ expression: "rendered_frame(&app, Instant::now())"
 "                                                                                "
 "                                                                                "
 "                                                                                "
-"  enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selec"
+"  enter send · tab repo · ctrl+s spend · ctrl+g context · esc stop · ctrl+o sele"

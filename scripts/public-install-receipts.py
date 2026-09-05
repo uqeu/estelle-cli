@@ -24,7 +24,10 @@ HEALTH_URL = "https://api.fatelabs.ca/health"
 #: discarded three receipts whose remote calls had all returned 200. **When the system's
 #: own number changes, the pin asserting it is part of that change** — read /health before
 #: assuming a red here means the build is bad.
-EXPECTED_SURFACE = {"tools_base": 16, "prompts": 247}
+#: Kept as a NAME for the tests that reference it; the JUDGEMENT lives in production_surface.
+from production_surface import EXPECTED_TOOLS_BASE, surface_ok  # noqa: E402
+
+EXPECTED_SURFACE = {"tools_base": EXPECTED_TOOLS_BASE, "prompts": 249}
 BEGIN = "<!-- BEGIN ESTELLE — managed block, safe to move, do not edit inside -->"
 END = "<!-- END ESTELLE -->"
 QUESTION = re.compile(r"Proving question: What does `([A-Za-z_][A-Za-z0-9_]*)` do")
@@ -80,7 +83,7 @@ def verified_health(value: dict) -> bool:
         isinstance(value.get("build"), str)
         and bool(value["build"])
         and value.get("build_verified") is True
-        and value.get("surface") == EXPECTED_SURFACE
+        and surface_ok(value.get("surface"))
     )
 
 

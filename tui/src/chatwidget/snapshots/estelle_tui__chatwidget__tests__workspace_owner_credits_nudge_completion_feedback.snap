@@ -8,4 +8,4 @@ expression: "rendered_cases.join(\"\\n---\\n\")"
 • Workspace owner was already notified recently.
 
 ---
-• Could not notify your workspace owner. Please try again.
+• Could not notify the workspace owner. Run it again.

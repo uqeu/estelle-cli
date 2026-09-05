@@ -1,16 +1,15 @@
 ---
 source: tui/src/main.rs
-assertion_line: 9695
 expression: "rendered_frame(&app, started + Duration::from_secs(93))"
 ---
 "ESTELLE  ·  uqeu/estelle                                                        "
 "                                                                                "
 "── session · uqeu/estelle ──────────────────────────────────────────────────────"
-"   uqeu/estelle · coach/r11-cli-integration                                     "
-"you                                                                             "
-"                                                                                "
+"   uqeu/estelle · main                                                          "
 "                                                                                "
 "› Which repair changed charge.ts?                                               "
+"                                                                                "
+"                                                                                "
 "                                                                                "
 "                                                                                "
 "                                                                                "
@@ -26,4 +25,4 @@ expression: "rendered_frame(&app, started + Duration::from_secs(93))"
 "                                                                                "
 "                                                                                "
 "                                                                                "
-"  enter send · tab repo · ctrl+s spend · ctrl+m models · esc stop · ctrl+o selec"
+"  enter send · tab repo · ctrl+s spend · ctrl+g context · esc stop · ctrl+o sele"

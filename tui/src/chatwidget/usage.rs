@@ -9,6 +9,15 @@ use uuid::Uuid;
 use super::reset_credits::reset_credit_options;
 use super::*;
 
+/// Shown when the user redeems a reset credit that the server has since retired.
+///
+/// Named, and asserted by name in `tests::usage`, because the test used to pin a *different*
+/// sentence — "That reset is gone." — that existed nowhere in the product. Two owners of one
+/// string is one owner too many, and the disagreement was invisible while the lib suite aborted.
+/// A copy edit should not turn a test red; the message NOT RENDERING should.
+pub(super) const STALE_RESET_CREDIT_MESSAGE: &str =
+    "That reset is no longer available. Refresh to see the current resets.";
+
 const USAGE_MENU_VIEW_ID: &str = "usage-menu";
 const RATE_LIMIT_RESET_VIEW_ID: &str = "rate-limit-reset";
 const RATE_LIMIT_RESET_CONFIRMATION_VIEW_ID: &str = "rate-limit-reset-confirmation";
@@ -36,7 +45,7 @@ impl ChatWidget {
                 (true, Some(available_count)) if available_count > 0 => (
                     true,
                     format!(
-                        "You have {available_count} {} available.",
+                        "{available_count} {} available.",
                         reset_label(available_count)
                     ),
                 ),
@@ -109,7 +118,7 @@ impl ChatWidget {
         self.bottom_pane.show_selection_view(SelectionViewParams {
             view_id: Some(RATE_LIMIT_RESET_VIEW_ID),
             title: Some("Usage limit resets".to_string()),
-            subtitle: Some("Checking your available resets...".to_string()),
+            subtitle: Some("Checking available resets...".to_string()),
             items: vec![SelectionItem {
                 name: "Loading...".to_string(),
                 is_disabled: true,
@@ -143,15 +152,13 @@ impl ChatWidget {
                     shows_picker = true;
                     self.rate_limit_reset_picker_params(request_id, &response)
                 } else {
-                    Self::rate_limit_reset_message_params(
-                        "You don't have any usage limit resets available.",
-                    )
+                    Self::rate_limit_reset_message_params("No usage limit resets available.")
                 };
                 self.available_rate_limit_reset_credits = Some(available_count);
                 params
             }
             Err(_) => {
-                Self::reset_refresh_params("Couldn't load usage limit resets. Please try again.")
+                Self::reset_refresh_params("Could not load usage limit resets. Run /usage again.")
             }
         };
         let replaced = self
@@ -343,7 +350,7 @@ impl ChatWidget {
         self.bottom_pane.show_selection_view(SelectionViewParams {
             view_id: Some(RATE_LIMIT_RESET_VIEW_ID),
             title: Some("Usage limit resets".to_string()),
-            subtitle: Some("Resetting your usage...".to_string()),
+            subtitle: Some("Resetting usage...".to_string()),
             items: vec![SelectionItem {
                 name: "Using a reset...".to_string(),
                 is_disabled: true,
@@ -383,12 +390,12 @@ impl ChatWidget {
                 self.pending_rate_limit_reset_request_id = None;
                 let message = match response.outcome {
                     ConsumeAccountRateLimitResetCreditOutcome::NothingToReset => {
-                        "Your usage does not need a reset right now."
+                        "Usage does not need a reset."
                     }
                     ConsumeAccountRateLimitResetCreditOutcome::NoCredit if credit_id.is_some() => {
                         self.available_rate_limit_reset_credits = None;
                         self.replace_rate_limit_reset_popup(Self::reset_refresh_params(
-                            "That reset is no longer available. Refresh to see your current resets.",
+                            STALE_RESET_CREDIT_MESSAGE,
                         ));
                         return false;
                     }
@@ -408,7 +415,7 @@ impl ChatWidget {
                 self.replace_rate_limit_reset_popup(SelectionViewParams {
                     view_id: Some(RATE_LIMIT_RESET_VIEW_ID),
                     title: Some("Usage limit resets".to_string()),
-                    subtitle: Some("Couldn't reset usage. Please try again.".to_string()),
+                    subtitle: Some("Could not reset usage. Run /usage again.".to_string()),
                     items: vec![
                         SelectionItem {
                             name: "Try again".to_string(),
@@ -453,7 +460,7 @@ impl ChatWidget {
                 let available_count = response.available_count;
                 self.available_rate_limit_reset_credits = Some(available_count);
                 format!(
-                    "Usage reset. You have {available_count} {} left.",
+                    "Usage reset. {available_count} {} left.",
                     reset_label(available_count)
                 )
             }
@@ -467,7 +474,7 @@ impl ChatWidget {
         SelectionViewParams {
             view_id: Some(RATE_LIMIT_RESET_VIEW_ID),
             title: Some("Usage limit resets".to_string()),
-            subtitle: Some("Usage reset. Checking your remaining resets...".to_string()),
+            subtitle: Some("Usage reset. Checking the remaining resets...".to_string()),
             items: vec![SelectionItem {
                 name: "Refreshing...".to_string(),
                 is_disabled: true,
@@ -558,7 +565,7 @@ impl ChatWidget {
         }
         self.pending_rate_limit_reset_hint = Some(history_cell::new_info_event(
             format!(
-                "You have {available_count} {} available. Run /usage to use one.",
+                "{available_count} {} available. Run /usage to use one.",
                 reset_label(available_count)
             ),
             /*hint*/ None,

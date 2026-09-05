@@ -1,3 +1,25 @@
+# 🔴 EVERY TEST WORKER GETS THE SAME 8 MiB THE WINDOWS MAIN THREAD ALREADY GETS.
+#
+# libtest runs each test on a spawned worker, and a spawned thread's default stack is 2 MiB — not
+# the process main stack. The largest full-`App` fixture in `estelle-tui` needs between 5 and 6 MiB,
+# so `cargo test -p estelle-tui --lib` overflowed and `SIGABRT`ed the binary after ~136 of 3,260
+# tests: no failure block, no counts, and NO `test result:` line, while every sibling target printed
+# `ok`. A suite that cannot finish reads exactly like a suite that passed, which is why every
+# recorded baseline for this crate said "154 tests".
+#
+# The 8 MiB figure was already known and already in this file — the three `link-arg` stanzas below
+# hand the Windows MAIN thread exactly 8388608 bytes. `release.yml:88` set `RUST_MIN_STACK` to the
+# same number for the release gate. So the bound was right and written down twice, and still did not
+# hold locally: it lived on the paths someone remembered to instrument, and a guard reachable only
+# from the path you remembered is a guard on that path.
+#
+# `[env]` here applies to every cargo-invoked process on every path — a developer's bare
+# `cargo test`, an editor's test runner, CI — so there is one owner of the bound. It is NOT
+# `force = true`: an explicit `RUST_MIN_STACK` in the environment still wins, making this a floor
+# rather than an override.
+[env]
+RUST_MIN_STACK = "8388608"
+
 [target.'cfg(all(windows, target_env = "msvc"))']
 rustflags = ["-C", "link-arg=/STACK:8388608", "-C", "target-feature=+crt-static"]
 

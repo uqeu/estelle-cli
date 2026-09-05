@@ -2,7 +2,19 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::widgets::WidgetRef;
 
-use super::popup_consts::MAX_POPUP_ROWS;
+/// 🔴 **THE SLASH PALETTE SHOWS TEN, NOT EIGHT.**
+///
+/// The founder, reviewing the palette: *"Show ~10 commands and scroll, not the whole list at
+/// once."* Sixty-three commands are advertised and the popup was drawing eight of them.
+///
+/// ⚠️ **THIS IS A LOCAL CONSTANT AND NOT AN EDIT TO `popup_consts::MAX_POPUP_ROWS`.**
+/// That constant is shared by the list picker, the memories settings view, the skill popup and
+/// every other bottom-pane popup, and its own docstring says to keep it consistent across them for
+/// a uniform feel. The founder asked for a taller COMMAND palette, which is a statement about the
+/// command list's length, not about every popup in the product — so widening the shared value would
+/// have quietly resized four surfaces he did not review. Scrolling already existed
+/// (`ScrollState::ensure_visible` below); only the window was short.
+const MAX_COMMAND_ROWS: usize = 10;
 use super::scroll_state::ScrollState;
 use super::selection_popup_common::ColumnWidthConfig;
 use super::selection_popup_common::ColumnWidthMode;
@@ -28,7 +40,7 @@ const ALIAS_COMMANDS: &[SlashCommand] = &[SlashCommand::Quit, SlashCommand::Btw]
 ///
 /// A NAMED bound, not a literal: subsequence matching over a catalog of ~250 skills is a very wide
 /// net — a single common letter matches most of it — and an unbounded fuzzy tier would push every
-/// exact match off a popup that renders [`MAX_POPUP_ROWS`] at a time. Sized to fill the visible
+/// exact match off a popup that renders [`MAX_COMMAND_ROWS`] at a time. Sized to fill the visible
 /// rows and leave room to scroll, without turning the popup into the wall of text this whole
 /// change exists to remove.
 const MAX_FUZZY_MATCHES: usize = 24;
@@ -168,7 +180,7 @@ impl CommandPopup {
         let matches_len = self.filtered_items().len();
         self.state.clamp_selection(matches_len);
         self.state
-            .ensure_visible(matches_len, MAX_POPUP_ROWS.min(matches_len));
+            .ensure_visible(matches_len, MAX_COMMAND_ROWS.min(matches_len));
     }
 
     /// Determine the preferred height of the popup for a given width.
@@ -179,7 +191,7 @@ impl CommandPopup {
         measure_rows_height_with_col_width_mode(
             &rows,
             &self.state,
-            MAX_POPUP_ROWS,
+            MAX_COMMAND_ROWS,
             width,
             COMMAND_COLUMN_WIDTH,
         )
@@ -314,7 +326,7 @@ impl CommandPopup {
     pub(crate) fn move_up(&mut self) {
         let len = self.filtered_items().len();
         self.state.move_up_wrap(len);
-        self.state.ensure_visible(len, MAX_POPUP_ROWS.min(len));
+        self.state.ensure_visible(len, MAX_COMMAND_ROWS.min(len));
     }
 
     /// Move the selection cursor one step down.
@@ -322,7 +334,7 @@ impl CommandPopup {
         let matches_len = self.filtered_items().len();
         self.state.move_down_wrap(matches_len);
         self.state
-            .ensure_visible(matches_len, MAX_POPUP_ROWS.min(matches_len));
+            .ensure_visible(matches_len, MAX_COMMAND_ROWS.min(matches_len));
     }
 
     /// Return currently selected command, if any.
@@ -362,7 +374,7 @@ impl WidgetRef for CommandPopup {
             buf,
             &rows,
             &self.state,
-            MAX_POPUP_ROWS,
+            MAX_COMMAND_ROWS,
             "no matches",
             COMMAND_COLUMN_WIDTH,
         );
@@ -531,7 +543,11 @@ mod tests {
         );
 
         // ⚠️ BOUND. The fuzzy tier is capped by a named constant, not left to match everything.
-        assert!(MAX_FUZZY_MATCHES > 0 && MAX_FUZZY_MATCHES <= 64);
+        // A CONST BLOCK, SO IT IS A COMPILE ERROR RATHER THAN A RUNTIME ONE. Both operands are
+        // constants, so this could never fire at runtime on a build that had already started -
+        // clippy calls that out as an assertion with a constant value. In a const block the same
+        // sentence refuses to BUILD, which is the only way a bound on a constant can bite.
+        const { assert!(MAX_FUZZY_MATCHES > 0 && MAX_FUZZY_MATCHES <= 64) };
     }
 
     #[test]
@@ -623,7 +639,7 @@ mod tests {
         let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
         popup.on_composer_text_change("/".to_string());
 
-        for _ in 0..MAX_POPUP_ROWS {
+        for _ in 0..MAX_COMMAND_ROWS {
             popup.move_down();
         }
         assert!(popup.state.scroll_top > 0);

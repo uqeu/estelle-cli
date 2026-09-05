@@ -1,23 +1,21 @@
 ESTELLE  ·  uqeu/estelle  ·  Fate Labs · owner
 
-╌╌ session · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌  │  ╌╌ production · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-Since your last session                                                                           │  APP HEALTH · repo uqeu/estelle
-Welcome back - you were last here about 3 hours ago.                                              │  Loading a real Monitor window...
-Code you touched has changed since:                                                               │
-- billing/charge.rs - by Dana, about 2 hours ago - bound retry telemetry                          │  AGENT HEALTH
-Signed in · khai@fatelabs.ca · team                                                               │  State unavailable · no read contract · send POST
-Team · Fate Labs · owner                                                                          │  /agent/events.
+── session · uqeu/estelle ──────────────────────────────────────────────────────────────────────  │  ── production · uqeu/estelle ──────────────────────────────
+   uqeu/estelle · main                                                                            │  ── app · repo uqeu/estelle ────────────────────────────────
+Since the last session                                                                            │  GET /monitor/overview has not returned yet.
+Welcome back - you were last here about 3 hours ago.                                              │
+Code you touched has changed since:                                                               │  ── agents · unread ────────────────────────────────────────
+- billing/charge.rs - by Dana, about 2 hours ago - bound retry telemetry                          │  ○   agents            no read yet · GET /agent/health
+Signed in · khai@fatelabs.ca · team                                                               │
+Team · Fate Labs · owner                                                                          │  ── estelle · unread ───────────────────────────────────────
+                                                                                                  │  ○   issues            no read yet · GET /issues
                                                                                                   │
-you                                                                                               │  ESTELLE STATUS
-                                                                                                  │  Waiting for the live issue feed...
+› What changed while I was away?                                                                  │  ── queue · 0 repair(s) ────────────────────────────────────
+                                                                                                  │  ○   repairs           none reported
+                                                                                                  │  ○   select            /monitor issues
                                                                                                   │
-› What changed while I was away?                                                                  │  ESTELLE QUEUE
-                                                                                                  │  Queue empty · no repair work is reported.
-                                                                                                  │  Issue selection: /monitor issues
-                                                                                                  │
-                                                                                                  │  GITHUB
-                                                                                                  │  Waiting for measured GitHub connection state...
-                                                                                                  │
+                                                                                                  │  ── github · unknown ───────────────────────────────────────
+                                                                                                  │  ○   connection        no read yet · GET /github/status
                                                                                                   │
                                                                                                   │
                                                                                                   │
@@ -28,11 +26,13 @@ you                                                                             
                                                                                                   │
                                                                                                   │
                                                                                                   │
-                                                                                                  │
-╌╌ ask · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+◐ Working · thinking · 1m 23s · still waiting for Estelle · no response received yet
 
-› Ask Estelle
+── ask · uqeu/estelle ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
 
 
-  ? for shortcuts
-tab focus · shift+tab autonomy · ctrl+t tasks · alt+m context · / commands  |  still waiting for Estelle  1m 23s  |  Esc cancels  |  no response received yet
+
+
+
+  enter send · tab repo · ctrl+s spend · ctrl+g context · esc stop · ctrl+o selection

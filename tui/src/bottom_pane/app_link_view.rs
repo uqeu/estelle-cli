@@ -161,7 +161,7 @@ impl AppLinkViewParams {
             app_id,
             title,
             description: None,
-            instructions: "Sign in to this app in your browser, then return here.".to_string(),
+            instructions: "Sign in to this app in the browser, then return here.".to_string(),
             url: url.to_string(),
             is_installed: true,
             is_enabled: true,
@@ -187,7 +187,7 @@ impl AppLinkViewParams {
             app_id: elicitation_id.to_string(),
             title: "Action required".to_string(),
             description: Some(format!("Server: {server_name}")),
-            instructions: "Complete the requested action in your browser, then return here."
+            instructions: "Complete the requested action in the browser, then return here."
                 .to_string(),
             url: url.to_string(),
             is_installed: true,
@@ -293,13 +293,13 @@ impl AppLinkView {
         if self.is_auth_suggestion() {
             return match self.screen {
                 AppLinkScreen::Link => vec!["Open sign-in URL", "Back"],
-                AppLinkScreen::InstallConfirmation => vec!["I already signed in", "Back"],
+                AppLinkScreen::InstallConfirmation => vec!["Signed in", "Back"],
             };
         }
         if self.is_external_action_suggestion() {
             return match self.screen {
                 AppLinkScreen::Link => vec!["Open link", "Back"],
-                AppLinkScreen::InstallConfirmation => vec!["I finished", "Back"],
+                AppLinkScreen::InstallConfirmation => vec!["Finished", "Back"],
             };
         }
 
@@ -319,7 +319,7 @@ impl AppLinkView {
                     vec!["Install on ChatGPT", "Back"]
                 }
             }
-            AppLinkScreen::InstallConfirmation => vec!["I already Installed it", "Back"],
+            AppLinkScreen::InstallConfirmation => vec!["Installed", "Back"],
         }
     }
 
@@ -587,10 +587,7 @@ impl AppLinkView {
             ) {
                 lines.push(Line::from(line.into_owned()));
             }
-            for line in wrap(
-                "Then return here and select \"I already signed in\".",
-                usable_width,
-            ) {
+            for line in wrap("Then return here and select \"Signed in\".", usable_width) {
                 lines.push(Line::from(line.into_owned()));
             }
         } else if is_external_action_suggestion {
@@ -600,7 +597,7 @@ impl AppLinkView {
             ) {
                 lines.push(Line::from(line.into_owned()));
             }
-            for line in wrap("Then return here and select \"I finished\".", usable_width) {
+            for line in wrap("Then return here and select \"Finished\".", usable_width) {
                 lines.push(Line::from(line.into_owned()));
             }
         } else {
@@ -611,7 +608,7 @@ impl AppLinkView {
                 lines.push(Line::from(line.into_owned()));
             }
             for line in wrap(
-                "Sign in there if needed, then return here and select \"I already Installed it\".",
+                "Sign in there if needed, then return here and select \"Installed\".",
                 usable_width,
             ) {
                 lines.push(Line::from(line.into_owned()));
@@ -964,7 +961,7 @@ mod tests {
                 app_id: "payment-123".to_string(),
                 title: "Action required".to_string(),
                 description: Some("Server: payments".to_string()),
-                instructions: "Complete the requested action in your browser, then return here."
+                instructions: "Complete the requested action in the browser, then return here."
                     .to_string(),
                 url: "https://payments.example/checkout/123".to_string(),
                 is_installed: true,
@@ -1379,7 +1376,7 @@ mod tests {
                 app_id: "connector_google_calendar".to_string(),
                 title: "Google Calendar".to_string(),
                 description: Some("Plan events and schedules.".to_string()),
-                instructions: "Install this app in your browser, then return here.".to_string(),
+                instructions: "Install this app in the browser, then return here.".to_string(),
                 url: "https://example.test/google-calendar".to_string(),
                 is_installed: false,
                 is_enabled: false,
@@ -1437,7 +1434,7 @@ mod tests {
                 app_id: "connector_google_calendar".to_string(),
                 title: "Google Calendar".to_string(),
                 description: None,
-                instructions: "Install this app in your browser, then return here.".to_string(),
+                instructions: "Install this app in the browser, then return here.".to_string(),
                 url: "https://example.test/google-calendar".to_string(),
                 is_installed: false,
                 is_enabled: false,
@@ -1587,7 +1584,7 @@ mod tests {
                 app_id: "connector_google_calendar".to_string(),
                 title: "Google Calendar".to_string(),
                 description: Some("Plan events and schedules.".to_string()),
-                instructions: "Install this app in your browser, then return here.".to_string(),
+                instructions: "Install this app in the browser, then return here.".to_string(),
                 url: "https://example.test/google-calendar".to_string(),
                 is_installed: false,
                 is_enabled: false,
@@ -1645,7 +1642,7 @@ mod tests {
                 app_id: "connector_google_calendar".to_string(),
                 title: "Google Calendar".to_string(),
                 description: None,
-                instructions: "Sign in to this app in your browser, then return here.".to_string(),
+                instructions: "Sign in to this app in the browser, then return here.".to_string(),
                 url: "https://chatgpt.com/apps/google-calendar/connector_google_calendar"
                     .to_string(),
                 is_installed: true,

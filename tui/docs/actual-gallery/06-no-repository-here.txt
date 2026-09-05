@@ -1,0 +1,30 @@
+── estelle · ~/Downloads ───────────────────────────────────────────────────────────────────────────────────────────
+
+▲ not a git repository  ·  no .git in this directory or any parent
+
+  memory and the code graph are PER REPOSITORY. there is no tree here to ground against,
+  so every answer would be a guess — which is the one thing this CLI will not do.
+
+── what you do next ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  ▶   cd into a repo          cd ~/Desktop/estelle, then estelle — the graph follows the tree
+  □   or sweep a path         /sweep ~/Desktop/estelle indexes it and returns here
+  □   or ask account-wide     /memory and /sessions answer from your team's memory, uncited
+
+── what still works here ───────────────────────────────────────────────────────────────────────────────────────────
+
+  ●   /login /me /keys /usage     account surfaces — no repository needed
+  ●   /sessions /resume           your history is account-scoped, so it travels with you
+  ○   /graph /entities /verify    dark until a repository is swept — nothing to read
+  ■   /gate /work /review         refused — no tree here to ground a diff against
+
+  cwd      ~/Downloads
+  git      no .git in this directory or any parent
+  swept    0 repositories reachable from here · 3 on this account
+
+  ~/Downloads · $0.000 · ○ no repo here
+
+
+
+
+

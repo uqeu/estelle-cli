@@ -1,29 +1,78 @@
 # Estelle
 
-**The trust layer under your AI coding agents.**
+**The trust layer under your AI coding agents.** Estelle grounds every model in your real codebase and
+refuses to ship what isn't true.
 
-Estelle grounds every model in your real codebase and refuses to ship what isn't true. It runs
-underneath the coding agents you already use and gives them four things: memory of your repository,
-a deterministic grounding gate, grounded review, and a propose, verify, repair loop. Model-agnostic,
-bring your own key.
+It is not another agent. It runs underneath the agents you already use and gives them three things they
+do not have on their own: memory of your repository, a deterministic gate that resolves every symbol a
+change names against your real code, and grounded review. Model-agnostic, bring your own key.
 
 ## Install
-
-```sh
-npm install -g @fatelabs/estelle
-```
-
-This package is a small launcher. On install it downloads and verifies the native binary for your
-platform, described under [How the install is verified](#how-the-install-is-verified) below.
-
-To install the native binary directly, with no Node involved:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/uqeu/estelle-cli/releases/latest/download/install.sh | sh
 ```
 
-## What you get
+That is the whole install. It puts the native `estelle` binary in `~/.local/bin`.
+
+This npm package is a launcher for the same binary, for machines that are already npm-based:
+
+```sh
+npm install -g @fatelabs/estelle
+```
+
+Either way you get one binary. See [How the install is verified](#how-the-install-is-verified) for what
+the launcher checks before it puts anything on your disk.
+
+**On npm 12 the install script is blocked, and that is fine.** npm 12 refuses package lifecycle scripts
+by default, and this package's `postinstall` is what fetches the native binary — so `npm install` prints
+`install scripts blocked` and leaves nothing to run. The launcher handles it: the first time you run
+`estelle`, it performs the same checksum-verified download itself and then runs the binary. You will see
+one progress line, once. If that download cannot run — offline, a proxy, a 403 — the launcher tells you
+why and prints the repair, and any one of these does it:
+
+```sh
+npm install -g @fatelabs/estelle --allow-scripts=@fatelabs/estelle
+node "$(npm root -g)/@fatelabs/estelle/install.js"
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/uqeu/estelle-cli/releases/latest/download/install.sh | sh
+```
+
+Set `ESTELLE_SKIP_DOWNLOAD=1` if you would rather the launcher never reach the network; it then goes
+straight to that message. When the package directory is not writable by you — the usual result of a
+`sudo npm install -g` — the binary lands in `${XDG_CACHE_HOME:-~/.cache}/estelle/v<version>/` instead,
+which `ESTELLE_CACHE_DIR` overrides.
+
+## Two doors, and the difference between them
+
+Both doors reach the same hosted server at `https://api.fatelabs.ca/mcp`. They do not see the same code.
+
+**Door 1: the plugin. Use this one.** In Claude Code:
+
+```
+/plugin marketplace add uqeu/estelle-cli
+/plugin install estelle@fatelabs
+```
+
+The plugin ships the hooks and the server entry together. The hooks fire on every edit rather than when
+the model decides to call a tool, and they send your working tree as you edit it, so **uncommitted work
+is indexed**. The plugin carries no credential: the client negotiates OAuth in the browser. The hooks
+shell out through `npx`, so Node 18 or newer has to be on the machine.
+
+**Door 2: the remote MCP URL.** For hosts that cannot run a Claude Code plugin:
+
+```sh
+claude mcp add --transport http estelle https://api.fatelabs.ca/mcp
+```
+
+`estelle init` writes the same entry for every editor it finds, so you do not have to paste it once per
+tool.
+
+This door has no hooks. **It sees only what you have pushed, so its graph is never fresher than your last
+push to GitHub.** If you are asking about code you wrote in the last ten minutes, use door 1.
+
+## What the CLI does
 
 **Ground a question in your actual repository.**
 
@@ -32,8 +81,8 @@ estelle sweep                 # index this repo into your memory
 estelle ask "how does billing retry a failed charge?"
 ```
 
-Answers cite the files and lines they came from. When Estelle cannot ground an answer, it says so
-rather than inventing one.
+Answers cite the files and lines they came from. When Estelle cannot ground an answer, it says so instead
+of inventing one.
 
 **Check a change before it merges.**
 
@@ -48,9 +97,29 @@ estelle gate                          # run that check over a local diff
 estelle install-hooks
 ```
 
-Installs ten handlers across seven events: `PreToolUse`, `PostToolUse`, `UserPromptSubmit`,
-`SessionStart`, `Stop`, `PreCompact`, and `SessionEnd`. Hooks are written for both Claude Code and
-the Codex CLI.
+Writes ten handlers across seven events (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`,
+`Stop`, `PreCompact`, `SessionEnd`), for both Claude Code and the Codex CLI. This is door 1's mechanism,
+available to editors that are not Claude Code.
+
+Every hook fails silently by design: no credentials, no network, a slow server or an empty memory all
+produce nothing rather than an error on the hot path. **The `UserPromptSubmit` handler is still the
+slowest one, and it is now bounded.** It used to ask the server for a full search and read only the recall
+text, paying for a code branch it discarded unread — measured at 133.4 s against 8.4 s for the same recall,
+byte for byte. It now asks for the one field it reads, and gives up at 20 seconds, ten seconds under the
+host's 30-second kill, because being killed by the host discards your prompt along with the hook's answer.
+**The floor is the server's, not ours**: `POST /search` has an observed floor near 6 seconds, so a prompt
+still costs that much before the model sees it, and if the budget expires the turn proceeds with no added
+context. Nothing tells you that happened.
+
+**What the edit hook does, exactly.** It grounds the edit and reports one of four verdicts to you and to
+the model: PASSED, FLAGGED, ABSTAINED, or UNREACHABLE. ABSTAINED says in its own words that it is not a
+pass. **It does not block the edit.** The finding is advisory while the server does not attest index
+freshness, and the runner says so in the text it emits. The blocking check is `estelle gate`, which
+returns a merge verdict you can fail a build on.
+
+**And the edit hook inspects Python only today.** A write to any other file type produces no output at
+all, so on that path "not checked" and "clean" look the same. Use `estelle gate` on the diff if you need
+a verdict for another language, and read the language scope under "What is measured" below.
 
 **Serve any other harness.**
 
@@ -59,84 +128,84 @@ estelle mcp-server            # Estelle's tools over MCP, for any agent
 estelle acp                   # Agent Client Protocol, over stdio
 ```
 
-`estelle --help` lists every command. A few worth knowing early:
+`estelle --help` lists all twenty-six commands. A few worth knowing early:
 
 | | |
 |---|---|
-| `estelle setup` | configure, brief, sweep, and prove Estelle on a real symbol from your repo |
-| `estelle doctor` | credential and runtime readiness, reported without rendering a secret value |
+| `estelle setup` | configure, brief, sweep, then prove Estelle on a real symbol from your repo |
+| `estelle init` | write the MCP entry for every editor you have installed |
+| `estelle doctor` | credential and runtime readiness, reported without printing a secret value |
 | `estelle recall` | search your memory and your code together |
-| `estelle leaked` | scan for committed credentials |
+| `estelle research` | watch a dependency for API drift, and propose a repair when it moves |
 | `estelle monitor` | production health, in the terminal |
-| `estelle screens` | thirteen terminal surfaces, each stamped as bounded sample state |
+| `estelle github` | link GitHub, connect an installation, and sweep a repository |
 
 ## What is measured
 
-**In our Python-scoped eval, 0 invented APIs survived the gate.**
+Estelle's grounding gate caught **38,153 of 38,153 invented APIs**, with **0 false positives on 6,933 real
+symbols**, over 45,086 labelled cases. It makes no model call: it parses the change and resolves each
+symbol against your repository's indexed symbol graph, so the verdict is a property of the artifact rather
+than a score that moves between runs.
 
-Read that precisely, because the narrow version is the one you can check:
+Read the limit in the same breath, because it is the part that decides whether the number applies to you:
 
-- **What counts as one.** A code reference that names a repository symbol or import your codebase
-  does not define.
-- **What the gate does.** Parses the change with tree-sitter and resolves every such symbol against
-  your repository's real symbol graph. No model call and no network, so the verdict is a property of
-  the artifact rather than a score that moves between runs.
-- **Metric level.** Candidate-level: the rate is per code reference emitted, not per task completed
-  and not per answer.
-- **Dataset.** Our own repository, plus 1,323 real third-party symbols across `requests`, `httpx`,
-  `urllib3` and `click`: all 1,323 caught, 0 false positives. Reproduce with
-  `python scripts/eval_hallucination_libs.py`.
-- **Language scope.** 23 languages are supported and 12 block at some rung, but Python is the only
-  one with the full guarantee of existence, arity, type, and member calls on any receiver.
-  References in the 11 navigate-only languages are not gated at all. They are excluded from the
-  rate rather than counted as passes.
-- **What it cannot tell you.** Whether the code is correct, or whether an API does what you expect.
-
-It is not a claim that a model never hallucinates.
+- **That measures invented repository APIs, in Python.** A case is one code reference naming a repository
+  symbol or import your codebase does not define.
+- **Twelve of twenty-three supported languages block** at some rung. Python is the only one with the full
+  guarantee of existence, arity, type, and member calls on any receiver. The other eleven languages are
+  navigated, not gated: their references are excluded from the rate rather than counted as passes.
+- **It is not a correctness claim.** Code can be perfectly grounded and still wrong. The gate tells you a
+  symbol exists, not that the change does what you meant.
+- The eval harness is not in this public repository, so you cannot re-run it from here. What you can check
+  from here is the behaviour, on your own code, with `estelle verify` and `estelle gate`.
 
 ## Bring your own key
 
-Estelle routes to whichever model you configure: Anthropic, OpenAI, Google, DeepSeek, Moonshot, or a
-local model on your own hardware. Your key, your provider, your bill. Estelle owns the routing, the
-grounding, and the memory. It does not own your model.
+Estelle routes to whichever model you configure. `estelle login --provider <name>` knows fourteen:
+a Claude subscription, Anthropic, OpenAI, Google Gemini, GitHub Copilot, Azure OpenAI, AWS Bedrock,
+OpenRouter, DeepSeek, Fireworks, MiniMax, LM Studio, Ollama, and any OpenAI-compatible endpoint, which
+covers a model running on your own hardware. Your key, your provider, your bill. Estelle owns the routing,
+the grounding, and the memory. It does not own your model.
 
-Fixes are proposed, not merged. The default path writes to a sandbox and opens a reviewable pull
-request for a human to merge.
+Fixes are proposed, not merged. The default writes to a sandbox and opens a pull request a human reviews.
+Auto-merge is opt-in, off by default, and gated on the fix being proved green in a sandbox first. There is
+no auto-deploy step.
 
 ## Requirements
 
-macOS or Linux, on arm64 or x86_64. Node 18 or newer for this install path. There is no Windows
-build.
+macOS or Linux, on arm64 or x86_64. Node 18 or newer for this npm install path and for the plugin's hooks.
+There is no Windows build.
 
 ## How the install is verified
 
-`npm install` runs `install.js`, which:
+`install.js` does the work — run by `postinstall` on npm 10 and 11, and by the launcher on first use
+when npm 12 blocked that script. It is the same code and the same checks on both paths:
 
-- downloads over HTTPS only, from `github.com` or `release-assets.githubusercontent.com` and nowhere
-  else. A redirect that leaves those hosts aborts the install.
-- bounds every download before taking it: 64 KiB for the manifest, 512 MiB for the archive, 5
-  redirects, and a 30 second timeout.
+- downloads over HTTPS only, from `github.com` or `release-assets.githubusercontent.com` and nowhere else.
+  A redirect that leaves those hosts aborts the install.
+- bounds every download before taking it: 64 KiB for the manifest, 512 MiB for the archive, 5 redirects,
+  a 30 second idle timeout, and a 5 minute wall-clock bound per request — because an idle timeout alone
+  does not bound a server that dribbles one byte at a time.
 - requires the release's `SHA256SUMS` manifest to name your archive exactly once, with a well-formed
   64-hex digest.
 - compares the archive's SHA-256 against that digest, and installs nothing on a mismatch.
-- requires the archive to contain exactly one member named `estelle`, and rejects any archive with
+- requires the archive to contain exactly one member named `estelle`, and rejects any archive carrying
   unexpected members.
 - refuses a binary that is not a regular file, or that is a symlink.
 - stages into a temporary directory and moves the verified binary into place atomically.
 
-The shell installer performs the same checksum and single-member checks. Both are mutation-tested in
-CI: a corrupted archive and an archive carrying an extra member must both be refused.
+The shell installer performs the same checksum and single-member checks. Both are mutation-tested in CI: a
+corrupted archive and an archive carrying an extra member must both be refused.
 
-Every release is built by GitHub Actions, which publishes a signed SLSA build provenance attestation
-for each artifact. Neither installer checks that attestation for you, so verify it yourself if you
-want the stronger guarantee:
+Every release is built by GitHub Actions, which publishes a signed SLSA build provenance attestation for
+each artifact. Neither installer checks that attestation for you, so verify it yourself if you want the
+stronger guarantee:
 
 ```sh
 gh attestation verify estelle-<target>.tar.gz --repo uqeu/estelle-cli
 ```
 
-This package is published with npm provenance. The binaries themselves are not code-signed or
-notarized.
+This package is published with npm provenance. The binaries themselves are not code-signed or notarized.
 
 ---
 

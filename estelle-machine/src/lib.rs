@@ -143,6 +143,22 @@ pub struct Fit {
     pub estimated_tokens_per_second: f64,
     pub quantization: String,
     pub context_tokens: u32,
+    /// 🔴 **OUR SENTENCE, WRITTEN FROM THE VENDOR'S FACT — NOT THE VENDOR'S SENTENCE.**
+    ///
+    /// This field used to be `plan.estimate_notice` passed straight through, so
+    /// `llmfit-core/src/plan.rs:788` was writing prose onto an Estelle user's screen:
+    /// *"Estimate-based output using current llmfit fit/speed heuristics; not an exact benchmark."*
+    /// **A vendored crate that returns DATA is a dependency; one that returns SENTENCES is an
+    /// unreviewed author with commit access to our UI.** That copy carried their product name and
+    /// their caveats, and passed none of our review, our plain-English rules or the honesty mandate.
+    ///
+    /// ⚠️ **THE LIMIT IS KEPT — ONLY THE VOICE CHANGED.** The honest half of their notice is that
+    /// the number is derived from hardware rather than measured on this model, and that half is the
+    /// whole reason the field exists. Dropping it to shorten the line would be the defect this
+    /// change exists to fix, inverted.
+    ///
+    /// ⛔ The MIT attribution in this file's header **stays**: that is a licence obligation, and it
+    /// is a different thing from putting a vendor's marketing voice in a status line.
     pub estimate_notice: String,
 }
 
@@ -183,6 +199,12 @@ pub fn named_model(name: &str) -> Result<Model, FitError> {
         use_case: model.use_case.clone(),
     })
 }
+
+/// What we say about a fit number, in our own words.
+///
+/// Same fact as the upstream notice, none of the vendor's voice: the number comes from this
+/// machine's specification, and nothing ran the model to check it.
+pub const ESTIMATE_NOTICE: &str = "Estimated from your hardware, not measured on this model.";
 
 pub fn fit(model: &Model, machine: &Machine) -> Result<Fit, FitError> {
     validate_model(model)?;
@@ -227,7 +249,7 @@ pub fn fit(model: &Model, machine: &Machine) -> Result<Fit, FitError> {
         estimated_tokens_per_second: plan.current.estimated_tps,
         quantization: plan.quantization,
         context_tokens: plan.context,
-        estimate_notice: plan.estimate_notice,
+        estimate_notice: ESTIMATE_NOTICE.to_string(),
     })
 }
 
@@ -329,7 +351,62 @@ mod tests {
         assert_ne!(receipt.fit_level, FitLevel::TooTight);
         assert!(receipt.memory_required_gb > 0.0);
         assert!(receipt.estimated_tokens_per_second > 0.0);
-        assert!(receipt.estimate_notice.contains("Estimate-based"));
+        // 🔴 PINS OUR WORDING, NOT THE VENDOR'S. This assertion used to read `contains
+        // ("Estimate-based")`, which is upstream's phrase — so the test was holding a third
+        // party's copy in place on our screen and would have gone red if we rewrote it.
+        assert_eq!(receipt.estimate_notice, ESTIMATE_NOTICE);
+    }
+
+    /// 🔴 **NO VENDOR PROSE CROSSES THIS BOUNDARY, ON ANY MODEL.**
+    ///
+    /// The defect was not one bad string; it was a SHAPE — a vendored crate's user-facing sentence
+    /// rendered as ours. `estimate_notice` was the instance we found, and the reason nobody found
+    /// it sooner is that the words are not in our source at all: they arrive at runtime, so a grep
+    /// for `llmfit` over `tui/src` returned one doc comment and nothing else.
+    ///
+    /// So this sweeps the PROSE field of a `Fit` over several models for vendor tokens, rather than
+    /// asserting once against one string. ⚠️ `model_name` and `quantization` are deliberately NOT
+    /// swept: they are Technical Names — `openai/gpt-oss-120b`, `Q4_K_M` — and a vendor's name
+    /// inside one of those is the correct answer, not a leak.
+    #[test]
+    fn no_vendor_prose_reaches_our_render_path() {
+        let machine = machine();
+        let mut checked = 0usize;
+        for name in [
+            "Qwen/Qwen2.5-Coder-7B-Instruct",
+            "Qwen/Qwen2.5-Coder-14B-Instruct",
+            "openai/gpt-oss-20b",
+        ] {
+            let Ok(model) = named_model(name) else {
+                continue;
+            };
+            let Ok(receipt) = fit(&model, &machine) else {
+                continue;
+            };
+            checked += 1;
+            for token in ["llmfit", "heuristic", "Estimate-based"] {
+                assert!(
+                    !receipt.estimate_notice.contains(token),
+                    "{name}: the vendor's word {token:?} is on our screen: {:?}",
+                    receipt.estimate_notice
+                );
+            }
+            assert_eq!(receipt.estimate_notice, ESTIMATE_NOTICE);
+        }
+        // The vacuity half: a sweep that resolved no model would pass every assertion above.
+        assert!(
+            checked >= 2,
+            "only {checked} models resolved — the guard proves nothing"
+        );
+    }
+
+    /// The limit survived the rewrite. ⛔ Owning the sentence is not licence to soften it: the
+    /// number is derived, not measured, and the line has to still say so.
+    #[test]
+    fn our_notice_still_states_the_limit() {
+        let lowered = ESTIMATE_NOTICE.to_ascii_lowercase();
+        assert!(lowered.contains("estimated"), "{ESTIMATE_NOTICE}");
+        assert!(lowered.contains("not measured"), "{ESTIMATE_NOTICE}");
     }
 
     #[test]

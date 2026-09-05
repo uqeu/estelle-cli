@@ -324,10 +324,13 @@ pub(crate) fn feedback_success_cell(
     let issue_url = issue_url_for_category(category, thread_id, feedback_audience);
     let mut lines = vec![Line::from(match issue_url.as_ref() {
         Some(_) if feedback_audience == FeedbackAudience::OpenAiEmployee => {
-            format!("{prefix} Please report this in #codex-feedback:")
+            format!("{prefix} Report this in #codex-feedback:")
         }
-        Some(_) => format!("{prefix} Please open an issue using the following URL:"),
-        None => format!("{prefix} Thanks for the feedback!"),
+        Some(_) => format!("{prefix} Open an issue at this URL:"),
+        // No issue link to offer, so the prefix has already said everything true about this: the
+        // feedback landed. `Thanks for the feedback!` was the software thanking someone for
+        // talking to it, and it repeated the prefix in different words.
+        None => prefix.to_string(),
     })];
     match issue_url {
         Some(url) if feedback_audience == FeedbackAudience::OpenAiEmployee => {
@@ -335,7 +338,7 @@ pub(crate) fn feedback_success_cell(
                 "".into(),
                 Line::from(vec!["  ".into(), url.cyan().underlined()]),
                 "".into(),
-                Line::from("  Share this and add some info about your problem:"),
+                Line::from("  Share this along with what went wrong:"),
                 Line::from(vec![
                     "    ".into(),
                     format!("https://go/codex-feedback/{thread_id}").bold(),
@@ -348,7 +351,7 @@ pub(crate) fn feedback_success_cell(
                 Line::from(vec!["  ".into(), url.cyan().underlined()]),
                 "".into(),
                 Line::from(vec![
-                    "  Or mention your thread ID ".into(),
+                    "  Or mention the thread ID ".into(),
                     thread_id.to_string().bold(),
                     " in an existing issue.".into(),
                 ]),
@@ -567,8 +570,7 @@ pub(crate) fn feedback_upload_consent_params(
             super::SelectionItem {
                 name: "Yes".to_string(),
                 description: Some(
-                    "Share the current Codex session logs and diagnostics with the team for troubleshooting."
-                        .to_string(),
+                    "Share this session's logs and diagnostics with the team.".to_string(),
                 ),
                 actions: vec![yes_action],
                 dismiss_on_select: true,
@@ -884,7 +886,7 @@ mod tests {
         );
         assert_eq!(
             rendered,
-            "• Feedback uploaded. Please open an issue using the following URL:\n\n  https://github.com/openai/codex/issues/new?template=3-cli.yml&steps=Uploaded%20thread:%20thread-1\n\n  Or mention your thread ID thread-1 in an existing issue."
+            "• Feedback uploaded. Open an issue at this URL:\n\n  https://github.com/openai/codex/issues/new?template=3-cli.yml&steps=Uploaded%20thread:%20thread-1\n\n  Or mention the thread ID thread-1 in an existing issue."
         );
     }
 
@@ -901,7 +903,7 @@ mod tests {
         );
         assert_eq!(
             rendered,
-            "• Feedback uploaded. Please report this in #codex-feedback:\n\n  http://go/codex-feedback-internal\n\n  Share this and add some info about your problem:\n    https://go/codex-feedback/thread-2"
+            "• Feedback uploaded. Report this in #codex-feedback:\n\n  http://go/codex-feedback-internal\n\n  Share this along with what went wrong:\n    https://go/codex-feedback/thread-2"
         );
     }
 
@@ -918,7 +920,7 @@ mod tests {
         );
         assert_eq!(
             rendered,
-            "• Feedback recorded (no logs). Thanks for the feedback!\n\n  Thread ID: thread-3"
+            "• Feedback recorded (no logs).\n\n  Thread ID: thread-3"
         );
     }
 
@@ -938,7 +940,7 @@ mod tests {
                 ),
                 /*width*/ 120,
             );
-            assert!(rendered.contains("Please open an issue using the following URL:"));
+            assert!(rendered.contains("Open an issue at this URL:"));
             assert!(rendered.contains("thread-4"));
         }
     }

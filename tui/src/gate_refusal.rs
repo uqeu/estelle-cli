@@ -79,7 +79,14 @@ fn owned(line: Line<'_>) -> Line<'static> {
 ///
 /// Bounded by construction: every iteration consumes at least one character, so the loop cannot
 /// run longer than the input, and an empty input yields exactly one empty chunk.
-fn wrapped(text: &str, width: usize) -> Vec<String> {
+///
+/// 🔴 **SHARED BECAUSE THE RULE IS SHARED, NOT BECAUSE THE CODE IS HANDY.** This module's own
+/// header states it: a refusal may not be truncated, because `cols` clips with `…` and the
+/// actionable half of a refusal is at the END of the sentence. That rule applies verbatim to the
+/// graph-currency refusal in [`crate::graph_view`] and [`crate::production_hud`] — *"Sweep this
+/// repo first"* is the last clause of it. A second wrapper would be a second answer to how a
+/// refusal survives a narrow pane.
+pub(crate) fn wrapped(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut chunks = Vec::new();
     let mut rest = text.trim();

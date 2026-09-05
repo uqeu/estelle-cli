@@ -1,0 +1,38 @@
+── login · two stages ────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+◐ creating the account  ·  stage 2 of 2 · nothing has been charged to anything yet
+
+  ✓   stage 1    who you are                   khai@fatelabs.ca · device code accepted 12s ago
+  ▶   stage 2    who pays for model tokens     pick one now; the other four can wait
+
+── stage 1 · who you are ─────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  ✓   email           khai@fatelabs.ca            confirmed · your Estelle identity, never a model login
+  ✓   device code     BDXR-4417                   accepted on this machine · expires in 9m · headless-safe
+  ✓   Estelle plan    Free · 10M tokens           grounding only · none of it can reach a model
+
+── stage 2 · who pays for model tokens ───────────────────────────────────────────────────────────────────────────────────────
+
+  1  Estelle account        buys grounding: memory, code graph, recall and gate; never pays for model tokens
+  2  Claude subscription    imports the credential Claude Code stored on this machine · Pro, Max or Team
+  3  ChatGPT plan           the engine: your plan generates the answer · device code · headless-safe
+  4  Provider API key       Anthropic · OpenAI · Gemini · OpenRouter · DeepSeek · masked input
+  5  Local model            This machine · 128.0 GB RAM (111.7 GB available) · 18 CPU cores · Apple M5 Max
+
+  ↑↓ navigate · 1-9 or Enter select · Esc close
+
+── why two stages ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  an Estelle plan buys grounding: memory, the code graph, recall and the gate. it never pays for model tokens.
+  the model credential stays yours — your Claude plan, your ChatGPT plan, your API key, or this machine.
+  stage 2 can wait. grounding works without a model; answering does not.
+
+      what you get                                   needs      why
+  ✓   memory · code graph · recall · the gate        stage 1    already working, on Free, with no model
+  □   grounded answers, with citations               stage 2    needs a model credential to write the words
+  □   work: propose, verify, repair, PR              stage 2    needs a model credential and a swept repo
+
+  ~/estelle · main · $0.000 · ○ no model yet
+
+
+

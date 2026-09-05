@@ -4,7 +4,7 @@ expression: "render_lines(&view, 44)"
 ---
                                             
   PreToolUse hooks                          
-  Turn hooks on or off. Your changes are s  
+  Turn hooks on or off. Changes save autom  
                                             
   [x] Hook 1                                
                                             

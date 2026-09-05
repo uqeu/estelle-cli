@@ -1114,7 +1114,7 @@ async fn plugin_detail_popup_shows_admin_disabled_status_snapshot() {
         @"  Admin Blocked · Disabled by admin · ChatGPT Marketplace"
     );
     assert!(
-        popup.contains("This plugin is disabled by your workspace admin.")
+        popup.contains("Disabled by the workspace admin.")
             && !popup.contains("Install this plugin now."),
         "expected admin-disabled detail to block install, got:\n{popup}"
     );
@@ -3113,14 +3113,52 @@ async fn model_selection_popup_snapshot() {
     assert_chatwidget_snapshot!("model_selection_popup", popup);
 }
 
+/// 🔴 **THE PERSONALITY PICKER REFUSES; IT DOES NOT OPEN.**
+///
+/// This was `personality_selection_popup_snapshot`, snapshotting a rendered picker. It arrived red
+/// at `50edb00a7` and was never seen, because the lib suite aborted before reaching it: with the
+/// picker refusing, `render_bottom_popup` returns the COMPOSER, and a composer is a perfectly
+/// plausible-looking blob to snapshot — a stale `.snap` here would have gone green on the wrong
+/// surface entirely.
+///
+/// `/personality` is a DROPPED_COMMAND (founder, 2026-08-07) so `commands::resolve` never reaches
+/// the `SlashCommand::Personality` arm at `slash_dispatch.rs:286`. `open_personality_popup` is
+/// still reachable in code, and this pins what it does: refuse, name the model, and leave the
+/// bottom pane alone. Asserted on the REFUSAL TEXT rather than a snapshot, so it cannot pass by
+/// rendering something else that happens to match.
 #[tokio::test]
-async fn personality_selection_popup_snapshot() {
-    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+async fn personality_picker_refuses_and_names_the_model() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    // Past `is_session_configured`, so the refusal below is the MODEL refusal and not the
+    // "startup has not finished" one. Two refusals that read alike is one guard too few.
     chat.thread_id = Some(ThreadId::new());
     chat.open_personality_popup();
 
-    let popup = render_bottom_popup(&chat, /*width*/ 80);
-    assert_chatwidget_snapshot!("personality_selection_popup", popup);
+    let width = 80;
+    let height = 8;
+    let backend = VT100Backend::new(width, height);
+    let mut term = crate::custom_terminal::Terminal::with_options(backend).expect("terminal");
+    term.set_viewport_area(ratatui::layout::Rect::new(0, 0, width, height));
+    for lines in drain_insert_history(&mut rx) {
+        crate::insert_history::insert_history_lines(&mut term, lines)
+            .expect("insert history lines");
+    }
+    let history: String = term.backend().vt100().screen().contents();
+
+    assert!(
+        history.contains("gpt-5.4"),
+        "the refusal must name the model it is refusing for, got: {history:?}"
+    );
+    assert!(
+        history.contains("personalit"),
+        "the refusal must say what it is refusing, got: {history:?}"
+    );
+    // The bottom pane is untouched: no picker was pushed underneath the error.
+    let popup = render_bottom_popup(&chat, width);
+    assert!(
+        !popup.contains("Select Personality"),
+        "a refused picker must not also render, got: {popup:?}"
+    );
 }
 
 #[tokio::test]

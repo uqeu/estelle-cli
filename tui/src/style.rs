@@ -9,7 +9,6 @@ use crate::terminal_palette::stdout_color_level;
 use ratatui::style::Color;
 use ratatui::style::Style;
 
-const LIGHT_BG_ACCENT_RGB: (u8, u8, u8) = (0, 95, 135);
 // Decorative table rules should remain visible without competing with cell content.
 const TABLE_SEPARATOR_FG_ALPHA: f32 = 0.20;
 
@@ -46,14 +45,43 @@ pub fn proposed_plan_style_for(terminal_bg: Option<(u8, u8, u8)>) -> Style {
     }
 }
 
-/// Returns the shared accent style for the provided terminal background.
+/// The selected row's colour, in EVERY popup — the slash palette, the model picker, the settings
+/// list, the hooks browser and the keymap picker all read this one function.
+///
+/// 🔴 **IT WAS ANSI `Color::Cyan`, WHICH IS NOT A COLOUR WE OWN.** ANSI 6 is whatever the host
+/// terminal's theme says it is, so the one row the user is looking at was the one row Estelle did
+/// not choose the colour of. The gallery made this visible and countable: 51 cells of `#70C6CC` on
+/// `06-slash-palette` — the SVG's rendering of bare cyan — a value that appears in no palette this
+/// product ships, on the row the founder was reviewing when he asked for the selection to be the
+/// thing that marks a list instead of a box around it.
+///
+/// It is [`theme::Palette::cite`] now — Estelle's own accent blue, `#7FB3C8` on the dark ground and
+/// `#264B5E` on cream — which is the role this already was.
+///
+/// ⚠️ The cream value was `#38708C` until 2026-09-02, when every cream accent was re-seated for
+/// a light ground: it measured 3.89:1 on the #DDDAD1 paper against the dark accent's 8.10:1 on
+/// its own ground. See `theme.rs`'s cream block for the whole table.
+///
+/// ⚠️ **THE VALUES ARE WRITTEN HERE BECAUSE THIS MODULE CANNOT IMPORT `theme`.** `style` is in the
+/// `estelle_tui` library and `theme` is declared in the `estelle` binary. The binary owns a test
+/// that asserts these two equal their tokens — `the_popup_accent_is_the_products_cite_token` in
+/// `main.rs` — so this duplication is guarded rather than merely regretted. Same arrangement, and
+/// same reason, as `boot_scene::BootPalette`.
 pub(crate) fn accent_style_for(terminal_bg: Option<(u8, u8, u8)>) -> Style {
     if terminal_bg.is_some_and(is_light) {
-        Style::default().fg(best_color(LIGHT_BG_ACCENT_RGB)).bold()
+        Style::default().fg(CREAM_ACCENT).bold()
     } else {
-        Style::default().fg(Color::Cyan).bold()
+        Style::default().fg(DARK_ACCENT).bold()
     }
 }
+
+/// `theme::Palette::cite` on the dark ground.
+pub(crate) const DARK_ACCENT: Color = Color::from_u32(0x7F_B3_C8);
+/// `theme::Palette::cite` on cream.
+///
+/// ⚠️ This replaces `best_color((0, 95, 135))`, a value with no owner and no
+/// relationship to anything else on a cream frame.
+pub(crate) const CREAM_ACCENT: Color = Color::from_u32(0x26_4B_5E);
 
 fn table_separator_style_for(
     terminal_fg: Option<(u8, u8, u8)>,
@@ -499,19 +527,26 @@ mod tests {
     use ratatui::style::Modifier;
 
     #[test]
-    fn accent_style_uses_darker_cyan_on_light_backgrounds() {
+    fn accent_style_uses_the_cream_cite_token_on_light_backgrounds() {
         let style = accent_style_for(Some((255, 255, 255)));
 
-        assert_eq!(style.fg, Some(best_color(LIGHT_BG_ACCENT_RGB)));
+        assert_eq!(style.fg, Some(CREAM_ACCENT));
         assert!(style.add_modifier.contains(Modifier::BOLD));
     }
 
+    /// ⚠️ **`None` MEANS "THE TERMINAL DID NOT ANSWER", AND IT MUST NOT MEAN "LIGHT".** A terminal
+    /// that does not report its background is overwhelmingly a dark one, and guessing light there
+    /// would put the darker accent on a dark ground where it is nearly unreadable. The two inputs
+    /// are asserted separately so a change that collapsed them would fail rather than pass on one.
     #[test]
-    fn accent_style_uses_cyan_on_dark_or_unknown_backgrounds() {
-        let expected = Style::default().fg(Color::Cyan).bold();
+    fn accent_style_uses_the_dark_cite_token_on_dark_or_unknown_backgrounds() {
+        let expected = Style::default().fg(DARK_ACCENT).bold();
 
         assert_eq!(accent_style_for(Some((0, 0, 0))), expected);
         assert_eq!(accent_style_for(/*terminal_bg*/ None), expected);
+        // And the two grounds really do differ, so the assertions above are not both passing on
+        // one constant wearing two names.
+        assert_ne!(DARK_ACCENT, CREAM_ACCENT);
     }
 
     #[test]

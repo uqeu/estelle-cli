@@ -1,0 +1,36 @@
+── memory · uqeu/estelle ─────────────────────────────────────────────────────────────────────────────────────────────
+
+  memory used       █████████████░░░░░░░░░░░░░░░░░    41%  103M of 250M held
+  plan remaining                                           147M free · Ultra 250M
+  this repo                                                11.5M net new · 1,993 files
+
+  uqeu/estelle is about 11.5M memory-tokens; 147M of your 250M capacity is free.
+  fits  yes   nothing blocked · nothing bills as overflow
+
+  what a run that did NOT fit shows instead
+
+  blocked  0 tokens
+  billable overflow  0 tokens · $0.00
+  suggested plan  Ultra 400M fits — $119/mo
+
+── largest paths ─────────────────────────────────────────────────────────────────────────────────────────────────────
+    path                                   tokens    share
+›   logs/                                    4.9M    43.4%  excluded by default now
+    vendor-reference/                        2.1M    18.2%
+    docs/                                    1.4M    12.1%
+    src/estelle/serve/                       0.9M     7.8%  the part you ask about
+    cli-rs/tui/                              0.7M     6.1%
+
+  every figure here is a field POST /sweep/estimate already returns.
+  the client read `fits` and discarded the other thirteen — top_level.rs:2314.
+
+
+
+
+
+
+
+
+
+
+

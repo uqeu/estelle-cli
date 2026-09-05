@@ -258,10 +258,10 @@ impl ApprovalOverlay {
                     approval_keymap,
                 ),
                 request.network_approval_context.as_ref().map_or_else(
-                    || "Would you like to run the following command?".to_string(),
+                    || "Run the following command?".to_string(),
                     |network_approval_context| {
                         format!(
-                            "Do you want to approve network access to \"{}\"?",
+                            "Approve network access to \"{}\"?",
                             network_approval_context.host
                         )
                     },
@@ -269,15 +269,15 @@ impl ApprovalOverlay {
             ),
             ApprovalRequest::Permissions(_) => (
                 permissions_options(approval_keymap),
-                "Would you like to grant these permissions?".to_string(),
+                "Grant these permissions?".to_string(),
             ),
             ApprovalRequest::ApplyPatch(_) => (
                 patch_options(approval_keymap),
-                "Would you like to make the following edits?".to_string(),
+                "Make the following edits?".to_string(),
             ),
             ApprovalRequest::McpElicitation(request) => (
                 elicitation_options(approval_keymap),
-                format!("{} needs your approval.", request.server_name),
+                format!("{} needs approval.", request.server_name),
             ),
         };
 
@@ -415,13 +415,13 @@ impl ApprovalOverlay {
         );
         if request.thread_label().is_none() {
             let message = if granted_permissions.is_empty() {
-                "You did not grant additional permissions"
+                "No additional permissions granted"
             } else if strict_auto_review {
-                "You granted additional permissions with strict auto review"
+                "Additional permissions granted with strict auto review"
             } else if matches!(scope, PermissionGrantScope::Session) {
-                "You granted additional permissions for this session"
+                "Additional permissions granted for this session"
             } else {
-                "You granted additional permissions"
+                "Additional permissions granted"
             };
             self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
                 crate::history_cell::PlainHistoryCell::new(vec![message.into()]),
@@ -2195,10 +2195,16 @@ mod tests {
             })
             .collect();
 
+        // Assert what this test is NAMED for: the prompt names the host it is asking about, so a
+        // user can tell "approve example.com" from "approve evil.example". The assertion used to
+        // pin the whole sentence "Do you want to approve network access to ...?", which
+        // `89fca64d4` deliberately shortened to "Approve network access to ...?" when it rewrote
+        // 111 chatbot-voiced strings. A copy edit is not a regression; a MISSING HOST is. Pin the
+        // host, not the prose.
         assert!(
-            rendered.iter().any(|line| {
-                line.contains("Do you want to approve network access to \"example.com\"?")
-            }),
+            rendered
+                .iter()
+                .any(|line| line.contains("network access") && line.contains("\"example.com\"")),
             "expected network title to include host, got {rendered:?}"
         );
         assert!(

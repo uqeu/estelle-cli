@@ -1,0 +1,30 @@
+── skills · type to filter ───────────────────────────────────────────────────
+
+  › improve-codebase-architecture             ~640
+    refactor-cleaner                          ~410
+    systematic-debugging                      ~520
+    verification-before-completion            ~380
+    whitepaper-draft                          ~641
+    bug-hunt                                  ~310
+
+  » refactor the auth module▏
+  estelle · skill: improve-codebase-architecture
+
+  enter binds the skill to your next message · you never finish typing its name
+  esc closes the dropdown · it docks above the composer, it is not a page you leave
+  no frame, on purpose: the band says WHICH row, which a border never did
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -43,7 +43,7 @@ impl WidgetRef for &TrustDirectoryWidget {
 
         column.push(Line::from(vec![
             "> ".into(),
-            "You are in ".bold(),
+            "Working in ".bold(),
             self.cwd.to_string_lossy().to_string().into(),
         ]));
         column.push("");
@@ -51,7 +51,7 @@ impl WidgetRef for &TrustDirectoryWidget {
         if self.cwd != self.trust_target {
             #[allow(clippy::disallowed_methods)]
             let git_root_warning = Paragraph::new(format!(
-                "Note: You’re in a subdirectory of a Git project. Trusting will apply to the repository root: {}",
+                "Note: this is a subdirectory of a Git project. Trust applies to the repository root: {}",
                 self.trust_target.display()
             ))
             .yellow();

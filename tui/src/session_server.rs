@@ -242,6 +242,13 @@ impl From<WireAnswer> for AnswerReply {
                 })
                 .collect(),
             working_paths: answer.working_paths,
+            // 🔴 THE PERSISTED WIRE FORMAT PREDATES THE BLOCK, AND A REPLAY MUST NOT INVENT ONE.
+            // `WireAnswer` is what the session server wrote to disk; it carries no currency
+            // verdict, so a replayed answer discloses nothing rather than claiming a repo was
+            // current. ⚠️ That is a real gap, not a design: an answer decertified when it was
+            // first given comes back certified on replay, and closing it needs the persisted
+            // shape to carry the block.
+            code_currency: None,
         }
     }
 }

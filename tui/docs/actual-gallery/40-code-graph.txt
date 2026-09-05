@@ -1,0 +1,32 @@
+── graph · uqeu/estelle ────────────────────────────────────────────────────────────────────
+
+  / settle   6 of 5,608 symbols match · 4 files
+
+      symbol                  file:line                   in   out  role
+  ●   charge_card             billing/charge.rs:82        12     4  chokepoint · touching this moves 47 files
+  ●   settle_charge           billing/settle.rs:113        9     6  chokepoint · touching this moves 31 files
+  ◆   retry_gate              billing/retry.rs:41          7     3  gate · every charge passes through it
+  ◆   card_client             billing/client.rs:29         5     9  hub · 9 outbound edges, 1 provider
+  ○   receipt_writer          billing/receipt.rs:17        2     1  leaf · nothing imports it
+  ○   refund_card             billing/refund.rs:64         3     2  leaf · nothing imports it
+
+  enter opens the symbol · space filters · b shows the blast radius · d exports dot
+  fan-in and fan-out come off the swept graph at 1f5cc7a4, not inferred from imports.
+  a chokepoint is not a label: the file count is what the graph says touching it moves.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

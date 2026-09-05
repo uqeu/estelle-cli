@@ -155,7 +155,17 @@ impl CredentialStore {
         )
     }
 
-    pub(crate) fn resolve_with_environment(
+    /// [`Self::resolve`] with the environment supplied explicitly instead of read from the process.
+    ///
+    /// **`pub`, not `pub(crate)`, on purpose.** `resolve()` reads `ESTELLE_API_KEY` /
+    /// `ESTELLE_KEY` off the ambient process environment, so any test that asserts something about
+    /// the STORED backend and calls it will assert something different on a machine where a
+    /// developer has exported a key — which is the normal state for anyone actually using the
+    /// product. Four tests across two crates were doing exactly that; two failed loudly, one
+    /// asserted `is_ok()` and would have PASSED for the wrong reason, and the fourth lived in
+    /// `codex-tui` and could not reach this seam while it was crate-private. Pass `None` for the
+    /// stored backend, or `Some(..)` to exercise the environment branch on purpose.
+    pub fn resolve_with_environment(
         &self,
         environment_value: Option<std::ffi::OsString>,
     ) -> Result<ResolvedCredential, Error> {

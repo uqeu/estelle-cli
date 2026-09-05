@@ -1,34 +1,34 @@
 ESTELLE  ·  uqeu/estelle
 
-╌╌ session · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌  │  ┌ WORK DRAFT · /work · READ ONLY ─────────────────────┐
-                                                                                            │  │read-only · /apply submits this exact patch          │
-                                                                                            │  │billing/charge.rs                                    │
-                                                                                            │  │@@ -82 +82 @@                                        │
-                                                                                            │  │ 82     - old()                                      │
-                                                                                            │  │     82 + retry_after()                              │
-                                                                                            │  │                                                     │
-                                                                                            │  │                                                     │
-                                                                                            │  │                                                     │
-                                                                                            │  │                                                     │
-                                                                                            │  │                                                     │
-                                                                                            │  │                                                     │
-                                                                                            │  │                                                     │
-                                                                                            │  │                                                     │
-                                                                                            │  │                                                     │
-                                                                                            │  │                                                     │
-                                                                                            │  │                                                     │
-                                                                                            │  │                                                     │
-                                                                                            │  │                                                     │
-                                                                                            │  │                                                     │
-                                                                                            │  │                                                     │
-                                                                                            │  │                                                     │
-                                                                                            │  │                                                     │
-                                                                                            │  │                                                     │
-                                                                                            │  └─────────────────────────────────────────────────────┘
-╌╌ ask · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-
-› Ask Estelle
+── session · uqeu/estelle ────────────────────────────────────────────────────────────────  │  ── work draft · /work · read only ─────────────────────
+   uqeu/estelle · main                                                                      │  read-only · /apply submits this exact patch
+                                                                                            │  billing/charge.rs
+                                                                                            │  @@ -82 +82 @@
+                                                                                            │   82     - old()
+                                                                                            │       82 + retry_after()
+                                                                                            │
+                                                                                            │
+                                                                                            │
+                                                                                            │
+                                                                                            │
+                                                                                            │
+                                                                                            │
+                                                                                            │
+                                                                                            │
+                                                                                            │
+                                                                                            │
+                                                                                            │
+                                                                                            │
+                                                                                            │
+                                                                                            │
+                                                                                            │
 
 
-  ? for shortcuts
-tab focus · shift+tab autonomy · ctrl+t tasks · alt+m context · / commands  |  plan  ·  routing auto
+── ask · uqeu/estelle ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+
+
+
+
+
+  enter send · tab repo · ctrl+s spend · ctrl+g context · esc stop · ctrl+o selection

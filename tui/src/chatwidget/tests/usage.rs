@@ -97,7 +97,7 @@ fn reset_credit_options_use_generic_copy_when_backend_copy_is_missing() {
             credit_id: Some("future-credit".to_string()),
             name: "Full reset".to_string(),
             detail: Some("Does not expire.".to_string()),
-            description: "Reset your current usage limits.".to_string(),
+            description: "Reset the current usage limits.".to_string(),
         }]
     );
 }
@@ -590,7 +590,7 @@ async fn rate_limit_reset_picker_starts_with_soonest_expiries_and_keeps_all_rows
             && credit_id.as_deref() == Some("credit-8")
             && reset_title == "Full reset"
             && reset_detail.as_deref() == Some("Expires 09:39 on 26 Jun 2026.")
-            && reset_description == "Reset your current usage limits."
+            && reset_description == "Reset the current usage limits."
     );
 }
 
@@ -716,8 +716,13 @@ async fn no_credit_outcome_disables_reset_entry_in_usage_menu() {
         )),
     ));
     assert_eq!(chat.available_rate_limit_reset_credits, None);
+    // Ask the single owner what the message is. This pinned the literal "That reset is gone.",
+    // which the product has never said — so the assertion was testing a string that existed only
+    // in this file. What it MEANT to prove is that a retired credit renders the stale-credit
+    // popup rather than silently doing nothing; that is what it proves now.
     assert!(
-        render_bottom_popup(&chat, /*width*/ 80).contains("That reset is no longer available.")
+        render_bottom_popup(&chat, /*width*/ 80)
+            .contains(crate::chatwidget::usage::STALE_RESET_CREDIT_MESSAGE)
     );
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_matches!(rx.try_recv(), Ok(AppEvent::OpenRateLimitResetCredits));
@@ -779,7 +784,7 @@ async fn already_redeemed_is_an_idempotent_success() {
     ));
     assert!(
         render_bottom_popup(&chat, /*width*/ 80)
-            .contains("Usage reset. You have 0 usage limit resets left.")
+            .contains("Usage reset. 0 usage limit resets left.")
     );
 }
 
@@ -900,8 +905,7 @@ async fn rate_limit_reset_success_updates_popup_beneath_overlay() {
 
     chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert!(
-        render_bottom_popup(&chat, /*width*/ 80)
-            .contains("Usage reset. You have 1 usage limit reset left.")
+        render_bottom_popup(&chat, /*width*/ 80).contains("Usage reset. 1 usage limit reset left.")
     );
 }
 
@@ -921,7 +925,7 @@ async fn account_change_dismisses_reset_popup_beneath_overlay() {
         /*credit_id*/ None,
         "Full reset".to_string(),
         /*reset_detail*/ None,
-        "Reset your current usage limits.".to_string(),
+        "Reset the current usage limits.".to_string(),
     ));
     chat.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));

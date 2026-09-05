@@ -7,7 +7,7 @@ Buffer {
     content: [
         "                                                                                ",
         "                                                                                ",
-        "  Would you like to run the following command?                                  ",
+        "  Run the following command?                                                    ",
         "                                                                                ",
         "  Environment: remote                                                           ",
         "                                                                                ",
@@ -24,7 +24,7 @@ Buffer {
     styles: [
         x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 2, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
-        x: 46, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 28, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 15, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: BOLD,
         x: 21, y: 4, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 10, y: 6, fg: Reset, bg: Reset, underline: Reset, modifier: ITALIC,
@@ -34,7 +34,7 @@ Buffer {
         x: 4, y: 9, fg: Rgb(137, 180, 250), bg: Reset, underline: Reset, modifier: NONE,
         x: 8, y: 9, fg: Rgb(205, 214, 244), bg: Reset, underline: Reset, modifier: NONE,
         x: 20, y: 9, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 0, y: 11, fg: Cyan, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 0, y: 11, fg: Rgb(127, 179, 200), bg: Reset, underline: Reset, modifier: BOLD,
         x: 21, y: 11, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 48, y: 12, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
         x: 51, y: 12, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,

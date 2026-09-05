@@ -318,7 +318,7 @@ impl HooksBrowserView {
         let mut lines = vec![format!("{} hooks", event_label(event_name)).bold().into()];
         match review_needed_message(review_needed_count) {
             None => lines.push(
-                "Turn hooks on or off. Your changes are saved automatically."
+                "Turn hooks on or off. Changes save automatically."
                     .dim()
                     .into(),
             ),
@@ -1061,9 +1061,16 @@ mod tests {
             "hooks_browser_events_with_review_column",
             render_lines(&view, /*width*/ 112)
         );
+        // The selected row takes the SHARED accent, so ask the shared owner what that is rather
+        // than pinning a literal. This assertion was `Some(Color::Cyan)` — the accent as it stood
+        // at the `50edb00a7` import — and `ebf7d5108` moved the accent to `DARK_ACCENT`
+        // (0x7FB3C8) when the design book took over rendering. The sibling test
+        // `selected_event_rows_use_the_shared_accent_style` asks `accent_style()` and followed the
+        // move for free; this one could not, and nobody saw it go red because the lib suite
+        // aborted on a stack overflow before reaching it.
         assert_eq!(
             view.event_table_lines()[1].spans[3].style.fg,
-            Some(Color::Cyan)
+            accent_style().fg,
         );
         assert!(
             view.event_table_lines()[1].spans[3]

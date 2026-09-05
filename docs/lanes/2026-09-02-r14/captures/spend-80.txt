@@ -1,0 +1,16 @@
+SPEND
+Session vendor-list estimate  $0.054972
+Latest provider-list receipt  $0.054972
+Latest Estelle token invoice  $0.000000
+Estelle plan remaining      $45.75  ($4.25 spent of $50.00)
+Memory used / plan          1.2M / 10.0M  (8.8M remaining)  repo size estimated
+Vendor-list estimates are not Estelle charges or provider invoices.
+
+ ROLE / WORKER  SERVED MODEL            IN TOKE…  OUT TOK…        VENDOR LIST
+WORK RECEIPT
+ plan           claude-opus-4-8             2.2K       895          $0.033345
+ implement      moonshotai/kimi-k2.7-…      3.7K      1.7K          $0.010352
+ review         claude-opus-4-8             1.6K       135          $0.011275
+Per-role rows come only from routing.stage_usage and routing.review.
+
+Ctrl+S or Ctrl+Shift+S close   Esc close   no savings claim is made

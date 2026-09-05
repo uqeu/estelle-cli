@@ -22,8 +22,8 @@ use super::actions::matching_actions_for_key_event;
 use super::key_event_to_config_key_spec;
 
 const MISSING_KEY_HINT_DELAY: Duration = Duration::from_secs(3);
-const SHORT_MISSING_KEY_HINT: &str = "Tip: Codex can only inspect keys your terminal sends.";
-const DELAYED_MISSING_KEY_HINT: &str = "Still waiting? If nothing changes when you press a key, your terminal is not sending that key to Codex. Only received keys can be assigned as shortcuts.";
+const SHORT_MISSING_KEY_HINT: &str = "Codex can only inspect keys the terminal sends.";
+const DELAYED_MISSING_KEY_HINT: &str = "If nothing changes on a keypress, the terminal is not sending that key to Codex. Only received keys can be assigned as shortcuts.";
 
 struct KeymapDebugReport {
     detected: KeyBinding,

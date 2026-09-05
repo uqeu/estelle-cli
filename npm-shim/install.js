@@ -17,6 +17,10 @@ const RELEASE_BASE = `https://github.com/uqeu/estelle-cli/releases/download/v${P
 const MAX_REDIRECTS = 5;
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
+// Per-request wall-clock bound. `request.setTimeout` below only fires on socket INACTIVITY, so a
+// server that dribbles one byte a second is unbounded under it. One `install()` issues at most
+// 2 * (MAX_REDIRECTS + 1) requests, so the stated total bound is 2 * 6 * MAX_REQUEST_MILLIS.
+const MAX_REQUEST_MILLIS = 300_000;
 const ALLOWED_DOWNLOAD_HOSTS = new Set(['github.com', 'release-assets.githubusercontent.com']);
 
 function targetFor(platform, arch) {
@@ -44,23 +48,32 @@ function validateDownloadUrl(rawUrl) {
   return url;
 }
 
-function requestBuffer(rawUrl, limit, redirects = 0) {
+function requestBuffer(rawUrl, limit, redirects = 0, onProgress = null) {
   if (!Number.isSafeInteger(limit) || limit <= 0) throw new Error('download limit must be positive');
   if (!Number.isSafeInteger(redirects) || redirects < 0 || redirects > MAX_REDIRECTS) {
     throw new Error('release download exceeded its redirect bound');
   }
+  if (onProgress !== null && typeof onProgress !== 'function') throw new Error('progress reporter must be a function');
   const url = validateDownloadUrl(rawUrl);
   return new Promise((resolve, reject) => {
+    let deadline = null;
+    const settle = (handler) => (value) => {
+      if (deadline !== null) clearTimeout(deadline);
+      deadline = null;
+      handler(value);
+    };
+    const done = settle(resolve);
+    const fail = settle(reject);
     const request = https.get(url, (response) => {
       const location = response.headers.location;
       if ([301, 302, 303, 307, 308].includes(response.statusCode) && location) {
         response.resume();
-        requestBuffer(new URL(location, url).toString(), limit, redirects + 1).then(resolve, reject);
+        requestBuffer(new URL(location, url).toString(), limit, redirects + 1, onProgress).then(done, fail);
         return;
       }
       if (response.statusCode !== 200) {
         response.resume();
-        reject(new Error(`release download returned HTTP ${response.statusCode}`));
+        fail(new Error(`release download returned HTTP ${response.statusCode}`));
         return;
       }
       const declared = Number(response.headers['content-length'] || 0);
@@ -73,13 +86,20 @@ function requestBuffer(rawUrl, limit, redirects = 0) {
       response.on('data', (chunk) => {
         size += chunk.length;
         if (size > limit) response.destroy(new Error(`release download exceeded ${limit} bytes`));
-        else chunks.push(chunk);
+        else {
+          chunks.push(chunk);
+          if (onProgress) onProgress(size, declared);
+        }
       });
-      response.on('end', () => resolve(Buffer.concat(chunks)));
-      response.on('error', reject);
+      response.on('end', () => done(Buffer.concat(chunks)));
+      response.on('error', fail);
     });
+    deadline = setTimeout(
+      () => request.destroy(new Error(`release download exceeded ${MAX_REQUEST_MILLIS} ms`)),
+      MAX_REQUEST_MILLIS,
+    );
     request.setTimeout(30_000, () => request.destroy(new Error('release download timed out')));
-    request.on('error', reject);
+    request.on('error', fail);
   });
 }
 
@@ -134,15 +154,27 @@ function installVerifiedArchive(packageDir, target, manifest, archive) {
   }
 }
 
+// Where the launcher may install when the package directory is not writable by the running user
+// (a `sudo npm i -g` leaves root-owned files; a first run as the user must still be able to repair
+// itself). Keyed by version so an upgrade never runs a stale binary out of the cache.
+function fallbackPackageDir(version = PACKAGE_VERSION) {
+  if (!/^[0-9A-Za-z][0-9A-Za-z.-]*$/.test(version)) throw new Error('cache version must be a simple version string');
+  const root = process.env.ESTELLE_CACHE_DIR
+    || path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), 'estelle');
+  if (!path.isAbsolute(root)) throw new Error('cache directory must be absolute');
+  return path.join(root, `v${version}`);
+}
+
 async function install(options = {}) {
   const platform = options.platform || process.platform;
   const arch = options.arch || process.arch;
   const packageDir = options.packageDir || __dirname;
   const download = options.download || requestBuffer;
+  const onProgress = options.onProgress || null;
   const target = targetFor(platform, arch);
   const archiveName = `estelle-${target}.tar.gz`;
-  const manifest = await download(`${RELEASE_BASE}/SHA256SUMS`, MAX_MANIFEST_BYTES);
-  const archive = await download(`${RELEASE_BASE}/${archiveName}`, MAX_ARCHIVE_BYTES);
+  const manifest = await download(`${RELEASE_BASE}/SHA256SUMS`, MAX_MANIFEST_BYTES, 0, null);
+  const archive = await download(`${RELEASE_BASE}/${archiveName}`, MAX_ARCHIVE_BYTES, 0, onProgress);
   if (!Buffer.isBuffer(manifest) || !Buffer.isBuffer(archive)) throw new Error('release download returned non-bytes');
   return installVerifiedArchive(packageDir, target, manifest, archive);
 }
@@ -150,7 +182,11 @@ async function install(options = {}) {
 module.exports = {
   MAX_ARCHIVE_BYTES,
   MAX_MANIFEST_BYTES,
+  MAX_REQUEST_MILLIS,
+  PACKAGE_VERSION,
+  RELEASE_BASE,
   expectedChecksum,
+  fallbackPackageDir,
   install,
   installVerifiedArchive,
   nativeBinaryPath,

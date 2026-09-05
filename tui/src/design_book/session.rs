@@ -1,0 +1,542 @@
+//! The vocabulary a scripted session is written in, and the one place its columns are laid out.
+//!
+//! 🔴 **EVERY MULTI-COLUMN CELL WRAPPED TO COLUMN 0, IN SIX BEATS, FOR ONE REASON.** A film beat used
+//! to flatten a design-book screen into strings and hand them to the transcript. But a book screen
+//! renders at **its own fixed width** — 108 for the gate, 92 for memory, 84 for tools — while the
+//! session pane is whatever is left after the production rail takes the right-hand side. Every line
+//! wider than the pane was then re-wrapped by the transcript, which knows nothing about columns and
+//! starts every continuation at the left margin. So `no such package on PyPI; nearest` was followed
+//! by `is fastapi` at column 0, underneath the *other* column. The prose read as scrambled.
+//!
+//! ⚠️ **IT WAS NEVER A GATE-REFUSAL BUG.** It looked like one because that beat has the longest
+//! prose, and fixing it there would have left the same defect in five other beats. The cause is
+//! *rendering at a width the destination does not have*, so the fix is one function —
+//! [`table_lines`] — and every block in every film goes through it.
+//!
+//! ## What a wrapped cell does here
+//!
+//! A cell too long for its column is **word-wrapped into continuation rows**, and each continuation
+//! is emitted through [`crate::cols::row`] with the earlier cells blank. The continuation therefore
+//! starts at its own column's x, because `cols` padded the blanks in front of it — the position is
+//! *computed*, never typed. ⚠️ That is also why the wrap counts CHARACTERS and not bytes: `⏺` is
+//! three bytes and one column, and byte-based wrapping is precisely what produces the ragged left
+//! edge this module exists to prevent. `crate::cols` has a test for that glyph for the same reason.
+//!
+//! ## Why the vocabulary is the product's own
+//!
+//! A [`Say`] does not describe how something looks; it names WHICH KIND OF TURN it is, and
+//! `crate::transcript` decides the rest — once, for the live app and the film together. There is
+//! deliberately **no `Screen` variant any more**: naming a gallery frame put `09-gate-refused` on
+//! screen in a film for an investor, and a `Tool` receipt put `· 23 lines` beside it. Both are
+//! `demo --list`'s vocabulary, not a person's.
+
+use crate::cols::{Cell, Col, row};
+
+/// The narrowest column this module will shrink to before it gives up and lets a cell wrap more.
+const MIN_COL: usize = 8;
+
+/// 🔴 **THE NARROWEST COLUMN A CELL MAY BE WRAPPED INTO. BELOW THIS IT IS A SCRIPT DEFECT.**
+///
+/// The first wrap fix stopped continuations falling to column 0 and was verified on `/doctor`,
+/// `/models` and `/spend` — all multi-column, all with wide first columns. It never saw a MARKER
+/// column. `DIFF` is `[Col::l(2), Col::l(64)]` because column 0 holds `-` or `+`, and the beat's
+/// header row put `claims/upstream.py:141` in it. Twenty-two characters wrapped into two columns
+/// is eleven rows of two characters, rendering the path VERTICALLY — worse than the bug it
+/// replaced, because at least column 0 was readable.
+///
+/// ⚠️ **THE WIDTH WAS COMPUTED CORRECTLY AND `wrap` DID EXACTLY WHAT IT WAS TOLD.** There is no
+/// arithmetic to fix. The defect is a long value in a column sized for a glyph, which is a fact
+/// about the SCRIPT, and the only place it can be caught is where the two meet. So this refuses
+/// rather than rendering: a cell that must wrap below `MIN_WRAP` is a test failure, never output.
+const MIN_WRAP: usize = 8;
+
+/// Word-wrap `text` to `width` COLUMNS, never bytes.
+///
+/// ⚠️ **THIS IS THE THIRD WORD-WRAP IN THE TREE AND I AM SAYING SO RATHER THAN HIDING IT.**
+/// `wrapping::wrap_ranges_trim` is the real owner and is compiled into the LIBRARY, which the
+/// `estelle` binary does not declare; `gate_refusal::wrapped` is private to its module. Neither is
+/// reachable from here, so the choice was a local copy or a visibility change in a file another
+/// lane is holding. **When those merge, this should be deleted in favour of `wrapping`.**
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut out = Vec::new();
+    let mut line = String::new();
+    let mut line_cols = 0usize;
+    for word in text.split_whitespace() {
+        let word_cols = word.chars().count();
+        // A word longer than the column is broken rather than allowed to push the row — the same
+        // decision `cols::row` makes when it truncates, except nothing is lost here.
+        if word_cols > width {
+            if !line.is_empty() {
+                out.push(std::mem::take(&mut line));
+            }
+            let mut rest = word.chars().collect::<Vec<_>>();
+            while rest.len() > width {
+                out.push(rest.drain(..width).collect());
+            }
+            line = rest.into_iter().collect();
+            line_cols = line.chars().count();
+            continue;
+        }
+        let need = if line.is_empty() {
+            word_cols
+        } else {
+            word_cols + 1
+        };
+        if line_cols + need > width {
+            out.push(std::mem::take(&mut line));
+            line_cols = 0;
+        }
+        if !line.is_empty() {
+            line.push(' ');
+            line_cols += 1;
+        }
+        line.push_str(word);
+        line_cols += word_cols;
+    }
+    if !line.is_empty() {
+        out.push(line);
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
+}
+
+/// Shrink a column spec until it fits `width`, taking from the widest column first.
+///
+/// 🔴 **THE PANE IS NOT A CONSTANT AND THAT IS THE WHOLE POINT.** The session column is whatever is
+/// left after the production rail, so it is ~121 columns on a 200-wide terminal and ~91 on a
+/// 150-wide one. A table laid out against a number somebody typed will overflow one of those.
+fn fitted(columns: &[Col], width: usize) -> Vec<Col> {
+    let mut out = columns.to_vec();
+    let gaps: usize = out
+        .iter()
+        .take(out.len().saturating_sub(1))
+        .map(|col| col.gap)
+        .sum();
+    let mut total: usize = out.iter().map(|col| col.w).sum::<usize>() + gaps;
+    // Bounded: every pass removes at least one column of width, and the loop stops when the widest
+    // column has reached the floor. Power of Ten #2 — the bound is the total width itself.
+    let mut guard = total + 1;
+    while total > width && guard > 0 {
+        guard -= 1;
+        let Some(widest) = out
+            .iter_mut()
+            .filter(|col| col.w > MIN_COL)
+            .max_by_key(|col| col.w)
+        else {
+            break;
+        };
+        widest.w -= 1;
+        total -= 1;
+    }
+    out
+}
+
+/// Lay a `|`-delimited block out at `width`, wrapping any over-long cell INSIDE its own column.
+///
+/// This is the one function the founder's "the spacing is messed up" resolves to. Every row of every
+/// table in every film comes through here, and every line it returns was positioned by
+/// [`crate::cols::row`] — so a continuation cannot start at the left margin, and a column that does
+/// not line up is a `cols` test failure rather than something a reader notices on camera.
+pub(crate) fn table_lines(columns: &[Col], rows: &[&'static str], width: usize) -> Vec<String> {
+    owned_table(columns, rows, width)
+}
+
+/// The same layout, for rows computed at runtime rather than written in the script.
+pub(crate) fn owned_table(columns: &[Col], rows: &[&str], width: usize) -> Vec<String> {
+    let columns = fitted(columns, width);
+    let mut out = Vec::new();
+    for source in rows {
+        let mut cells: Vec<&str> = source.split('|').map(str::trim).collect();
+        assert!(
+            cells.len() <= columns.len(),
+            "script row {source:?} carries {} cells for {} columns",
+            cells.len(),
+            columns.len()
+        );
+        cells.resize(columns.len(), "");
+        let wrapped: Vec<Vec<String>> = cells
+            .iter()
+            .zip(&columns)
+            .enumerate()
+            .map(|(index, (text, col))| {
+                // 🔴 A MARKER COLUMN IS FOR A MARKER. A value that has to wrap into one is a row
+                // written against the wrong grid, and rendering it vertically is not an answer.
+                assert!(
+                    text.chars().count() <= col.w || col.w >= MIN_WRAP,
+                    "script row {source:?} puts {} characters in column {index}, which is {} wide \
+                     \u{2014} it would render one character per line. Put it in a wider column.",
+                    text.chars().count(),
+                    col.w
+                );
+                wrap(text, col.w)
+            })
+            .collect();
+        let height = wrapped.iter().map(Vec::len).max().unwrap_or(1);
+        for index in 0..height {
+            let line_cells = wrapped
+                .iter()
+                .map(|chunks| chunks.get(index).map_or("", String::as_str))
+                .zip(&columns)
+                .map(|(text, _)| Cell(text, ratatui::style::Color::Reset))
+                .collect::<Vec<_>>();
+            out.push(
+                row(&columns, &line_cells, 0)
+                    .spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string(),
+            );
+        }
+    }
+    out
+}
+
+// ── what a reply is made of ──────────────────────────────────────────────────────────────────
+
+/// One unit of a reply. Each variant names a kind of turn the PRODUCT already has.
+pub(crate) enum Say {
+    /// Prose, streamed in word-sized chunks so it reads as generation rather than as a slide.
+    Answer { text: &'static str, grounded: bool },
+    /// A command receipt: `● /gate` and its output. ⚠️ **Deliberately `Command` and not `Tool`** —
+    /// a tool receipt renders `· 23 lines` beside its label (`history_transcript.rs:167`), which is
+    /// a debug metric, and it put one on screen in a film for an investor.
+    Command {
+        name: &'static str,
+        lines: &'static [&'static str],
+    },
+    /// A command receipt whose output is an aligned, wrapped table.
+    Table {
+        name: &'static str,
+        columns: &'static [Col],
+        rows: &'static [&'static str],
+    },
+    /// The gate refusing, drawn by [`crate::gate_refusal`] itself at the REAL pane width — one
+    /// owner, and the only way its cells wrap inside their columns.
+    Gate,
+    /// 🔴 **THE ONE BEAT IN ANY FILM THAT IS NOT A FIXTURE.** Every row is measured on the machine
+    /// the film is being recorded on, live, by [`estelle_machine`] — the same `machine()`,
+    /// `named_model()` and `fit()` that `local_provider.rs` already ships. On the founder's laptop
+    /// that reads *Apple M5 Max · 128.0 GB RAM · 18 CPU cores · 107.5 GB Metal limit*, and a viewer
+    /// who knows hardware can check every number.
+    ///
+    /// ⚠️ **`tok/s` IS AN ESTIMATE AND THE SCREEN SAYS SO IN THE LIBRARY'S OWN WORDS.** `fit`
+    /// returns `estimate_notice` — *"Estimate-based output using current llmfit fit/speed
+    /// heuristics; not an exact benchmark."* — and it is printed verbatim under the table rather
+    /// than paraphrased. A speed number with no basis beside it is the kind of claim this film
+    /// exists to refuse.
+    LocalFleet,
+    /// A system note.
+    System(&'static str),
+    /// The product's own three-line refusal banner, painted by the one owner of that colour.
+    Failure([&'static str; 3]),
+    /// Silence inside a reply, in milliseconds before `--speed`. Estelle taking its time.
+    Wait(u32),
+}
+
+// ── what a person does at the keyboard ───────────────────────────────────────────────────────
+
+/// One instruction to the hands.
+///
+/// 🔴 **THE STUMBLES ARE DATA, NOT A RATE.** A sprinkled error probability produces UNIFORM
+/// imperfection, which reads as a machine imitating a person; a person does not misspell every
+/// fourth word. So a film scripts two or three specific stumbles and leaves everything else clean.
+pub(crate) enum Key {
+    Type(&'static str),
+    /// Type this, notice it, and backspace every character back out.
+    Oops(&'static str),
+    /// A familiar phrase, typed fast. A burst next to a slow patch is what makes a rate lumpy.
+    Burst(&'static str),
+    /// Hands off the keyboard, thinking about the next word.
+    Pause(u32),
+}
+
+// ── one beat ─────────────────────────────────────────────────────────────────────────────────
+
+/// One exchange: what gets typed, how long Estelle takes, what comes back, and how long it sits.
+///
+/// ⚠️ **`read_ms` IS NOT PADDING.** He asked for two and a half minutes *"so I can talk through
+/// it"*, and the extra time is for READING, not for more beats. A film that runs long loses a beat;
+/// it does not lose its silence.
+pub(crate) struct Beat {
+    pub typed: &'static [Key],
+    pub think_ms: u32,
+    pub reply: &'static [Say],
+    pub read_ms: u32,
+}
+
+/// One film.
+pub(crate) struct Film {
+    pub number: u8,
+    /// The repo the session runs in. Drives the real header and the real ask rule.
+    pub repo: &'static str,
+    pub branch: &'static str,
+    pub beats: &'static [Beat],
+}
+
+/// 🔴 **THE BOUNDS ARE NAMED CONSTANTS AND CHECKED BY A TEST, NOT BY THE PLAYER ALONE.**
+pub(crate) const MAX_BEATS: usize = 32;
+
+/// The wall-clock ceiling for one film at `--speed 1`.
+pub(crate) const MAX_FILM_MS: u32 = 6 * 60 * 1000;
+
+/// The narrowest session pane a film lays out against, used when the terminal cannot be measured.
+pub(crate) const FALLBACK_PANE: usize = 88;
+
+/// The local models the fleet beat reports on, by their exact catalogue names.
+///
+/// ⚠️ **EXACT NAMES, BECAUSE `named_model` REFUSES ANYTHING ELSE.** It does no fuzzy matching and
+/// no ranking by design — the server's Affinity owns model SELECTION, and the client only reports
+/// what a machine can run for a model somebody already named. Each of these was verified to resolve
+/// to exactly one row of the bundled catalogue; `the_local_fleet_still_resolves` fails if a
+/// catalogue update takes one away, rather than the film quietly losing a row on camera.
+pub(crate) const LOCAL_FLEET: &[&str] = &[
+    "openai/gpt-oss-120b",
+    "zai-org/GLM-4.5-Air",
+    "meta-llama/Llama-3.3-70B-Instruct",
+    "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+    "Qwen/Qwen2.5-Coder-14B-Instruct",
+    "Qwen/Qwen2.5-Coder-7B-Instruct",
+];
+
+/// The fleet beat's columns.
+static FLEET: &[Col] = &[Col::l(38), Col::l(9), Col::r(9), Col::r(11)];
+
+/// The detected machine, once per process.
+///
+/// ⚠️ **`SystemSpecs::detect()` IS NOT FREE AND THIS IS CALLED FROM CUE-SHEET CONSTRUCTION**, which
+/// the guards build dozens of times. Detecting per call took the suite from 25 s to 48 s and pushed
+/// the frame-budget test — a 50 ms perf assertion in a different module — over its limit under
+/// parallel load. **A slow helper that only shows up as someone else's flaky test is the worst kind
+/// of slow**, so the fact is derived once. The hardware does not change mid-recording.
+fn detected_machine() -> &'static estelle_machine::Machine {
+    static MACHINE: std::sync::OnceLock<estelle_machine::Machine> = std::sync::OnceLock::new();
+    MACHINE.get_or_init(estelle_machine::machine)
+}
+
+/// Measure this machine and what it can actually run, live.
+///
+/// Rows for models the catalogue no longer carries are DROPPED rather than faked, and the count is
+/// stated on the last line, so a film that lost a model says how many it is reporting instead of
+/// silently showing fewer.
+pub(crate) fn local_fleet_lines(width: usize) -> Vec<String> {
+    let machine = detected_machine();
+    let mut rows = vec!["model | fit | memory | est tok/s".to_string()];
+    let mut notice = None;
+    let mut found = 0usize;
+    for name in LOCAL_FLEET {
+        let Ok(model) = estelle_machine::named_model(name) else {
+            continue;
+        };
+        let Ok(fit) = estelle_machine::fit(&model, machine) else {
+            continue;
+        };
+        found += 1;
+        notice.get_or_insert_with(|| fit.estimate_notice.clone());
+        rows.push(format!(
+            "{} | {} | {:.1} GB | {:.1}",
+            name,
+            fit.fit_level.label(),
+            fit.memory_required_gb,
+            fit.estimated_tokens_per_second
+        ));
+    }
+    let borrowed = rows.iter().map(String::as_str).collect::<Vec<_>>();
+    // ⚠️ **THE SUMMARY IS PROSE AND IT IS LONGER THAN THE PANE.** Pushed whole it wrapped to
+    // column 0 and left the word `limit` alone on a line — the same defect as an unwrapped cell,
+    // in the one beat whose whole job is to be checkable by a viewer who knows hardware.
+    let mut out = wrap(&machine.summary_line(), width);
+    out.push(String::new());
+    out.extend(owned_table(FLEET, &borrowed, width));
+    out.push(String::new());
+    out.push(format!(
+        "{found} of {} models measured on this machine, just now.",
+        LOCAL_FLEET.len()
+    ));
+    if let Some(notice) = notice {
+        out.push(notice);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 🔴 **THE DEFECT, AS A UNIT TEST.** A long cell wraps inside its column, and every
+    /// continuation line starts at that column's x — never at the left margin.
+    #[test]
+    fn an_overlong_cell_wraps_inside_its_own_column() {
+        // ⚠️ **COLUMN 0 IS WIDE ENOUGH FOR ITS OWN CELL, AND THAT IS THE POINT OF THE FIXTURE.**
+        // The first version used `Col::l(18)` against a 20-character claim, so column 0 wrapped
+        // too and its second chunk legitimately appeared at indent 0 — the test read that as the
+        // defect it was written to catch. A guard whose fixture triggers the symptom by itself
+        // cannot tell the symptom from the bug.
+        static COLUMNS: &[Col] = &[Col::l(22), Col::l(40)];
+        let lines = table_lines(
+            COLUMNS,
+            &[
+                "import fastapi_turbo | no such package on PyPI; nearest is fastapi (0.115.6). The import would fail at load, not at test time.",
+            ],
+            80,
+        );
+        assert!(lines.len() > 1, "the cell did not wrap at all: {lines:?}");
+        // The second column starts at 18 + 2 (the gap). Every continuation must begin there.
+        for line in &lines[1..] {
+            let indent = line.chars().take_while(|c| *c == ' ').count();
+            assert_eq!(
+                indent, 24,
+                "a continuation began at column {indent} instead of its column's start: {line:?}"
+            );
+        }
+        // Nothing is lost on the way.
+        let joined = lines.join(" ");
+        for word in ["fastapi_turbo", "0.115.6", "test", "time."] {
+            assert!(
+                joined.contains(word),
+                "wrapping dropped {word:?}: {lines:?}"
+            );
+        }
+    }
+
+    /// 🔴 **A ONE-COLUMN BLOCK — THE SHAPE THE PREVIOUS FIX NEVER SAW.**
+    ///
+    /// The wrap fix was verified on `/doctor`, `/models` and `/spend`, all multi-column. A
+    /// single-column block takes a different path through `fitted` (no gaps to subtract) and was
+    /// covered by nothing, which is exactly the class of hole the marker-column defect came out of.
+    #[test]
+    fn a_single_column_block_wraps_without_losing_a_word() {
+        static ONE: &[Col] = &[Col::l(40)];
+        let lines = table_lines(
+            ONE,
+            &[
+                "A deterministic check against this repo's symbol graph. No model was asked, and no model can overrule it.",
+            ],
+            40,
+        );
+        assert!(
+            lines.len() > 1,
+            "a one-column block did not wrap: {lines:?}"
+        );
+        for line in &lines {
+            assert!(line.chars().count() <= 40, "{line:?} overran the pane");
+            assert!(
+                line.chars().count() > 4,
+                "a one-column block produced a near-empty line: {line:?}"
+            );
+        }
+        let joined = lines.join(" ");
+        for word in ["deterministic", "symbol", "overrule"] {
+            assert!(joined.contains(word), "wrapping dropped {word:?}");
+        }
+    }
+
+    /// 🔴 **THE GUARD THAT WOULD HAVE CAUGHT THE VERTICAL PATH, PROVEN TO FIRE.**
+    ///
+    /// A long value in a marker column renders one character per line. `MIN_WRAP` makes that a
+    /// panic rather than output. ⚠️ Both halves are asserted: a short value in the SAME narrow
+    /// column must still render, or the guard would simply ban marker columns.
+    #[test]
+    fn a_long_value_in_a_marker_column_is_refused_not_rendered_vertically() {
+        static MARKER: &[Col] = &[Col::l(2), Col::l(64)];
+        let vertical =
+            std::panic::catch_unwind(|| table_lines(MARKER, &["claims/upstream.py:141 | "], 88));
+        assert!(
+            vertical.is_err(),
+            "a 22-character path in a 2-wide column must be refused, not rendered vertically"
+        );
+        // The positive control: the column exists to hold a marker, and it still does.
+        let ok = table_lines(MARKER, &["- | for attempt in range(5):"], 88);
+        assert_eq!(ok.len(), 1, "{ok:?}");
+        assert!(ok[0].starts_with('-'), "{ok:?}");
+    }
+
+    /// A table fits the pane it is given, at every width the film can be recorded at.
+    #[test]
+    fn no_row_is_ever_wider_than_the_pane() {
+        static COLUMNS: &[Col] = &[Col::l(22), Col::l(14), Col::l(46)];
+        let rows = &[
+            "claude-opus-5 | anthropic | plan locked by you, and this cell is deliberately far too long for its column",
+            "kimi-k2.7-code | moonshot | healthy",
+        ];
+        for width in [120usize, 100, 91, 80, 64, 48] {
+            for line in table_lines(COLUMNS, rows, width) {
+                assert!(
+                    line.chars().count() <= width,
+                    "a {} column row overran a {width} column pane: {line:?}",
+                    line.chars().count()
+                );
+            }
+        }
+    }
+
+    /// ⚠️ **CHARACTERS, NOT BYTES.** `⏺` is three bytes and one column; a byte-based wrap breaks
+    /// the row early and produces exactly the ragged left edge this module exists to prevent.
+    #[test]
+    fn wrapping_counts_columns_not_bytes() {
+        let glyphs = "⏺ ⎿ ● ▲ ◐ ○ ■ ✓ ▶ □";
+        let lines = wrap(glyphs, 10);
+        for line in &lines {
+            assert!(
+                line.chars().count() <= 10,
+                "{line:?} is {} columns wide",
+                line.chars().count()
+            );
+        }
+        // A byte-based wrap would have produced far more lines than a column-based one.
+        assert!(lines.len() <= 3, "byte-counting wrap: {lines:?}");
+    }
+
+    /// A row that carries more cells than the grid has columns is a script defect, not a layout one.
+    #[test]
+    fn a_row_with_too_many_cells_is_refused() {
+        static COLUMNS: &[Col] = &[Col::l(6), Col::l(6)];
+        let overfull = std::panic::catch_unwind(|| table_lines(COLUMNS, &["a|b|c"], 40));
+        assert!(overfull.is_err());
+        // Positive control: the same grid lays a well-formed row out without complaint.
+        assert_eq!(table_lines(COLUMNS, &["a|b"], 40).len(), 1);
+    }
+
+    /// Two rows of one table still end on the same column after fitting.
+    #[test]
+    fn fitting_keeps_every_row_the_same_shape() {
+        static COLUMNS: &[Col] = &[Col::l(24), Col::l(16), Col::r(9)];
+        let lines = table_lines(
+            COLUMNS,
+            &[
+                "claims/fetcher.py:88 | urllib3 Retry | 3",
+                "claims/upstream.py:141 | while loop | 5",
+            ],
+            60,
+        );
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].chars().count(), lines[1].chars().count());
+        assert!(lines[0].ends_with('3'));
+        assert!(lines[1].ends_with('5'));
+    }
+
+    /// `fitted` never returns a spec wider than the pane while any column is above the floor.
+    #[test]
+    fn fitting_shrinks_the_widest_column_first_and_stops_at_the_floor() {
+        static COLUMNS: &[Col] = &[Col::l(10), Col::l(60)];
+        let narrow = fitted(COLUMNS, 40);
+        assert!(narrow[1].w < 60, "the widest column did not shrink");
+        assert!(
+            narrow[0].w >= MIN_COL,
+            "the narrow column went under the floor"
+        );
+        let total: usize = narrow.iter().map(|col| col.w).sum::<usize>() + narrow[0].gap;
+        assert!(
+            total <= 40,
+            "fitted spec is {total} wide for a 40 column pane"
+        );
+        // Alignment is preserved through the fit — a right-aligned column stays right-aligned.
+        static RIGHT: &[Col] = &[Col::l(10), Col::r(30)];
+        assert!(matches!(fitted(RIGHT, 25)[1].a, crate::cols::Align::R));
+    }
+}

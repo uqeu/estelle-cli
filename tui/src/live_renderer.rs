@@ -215,8 +215,26 @@ pub(super) fn repo_label(app: &App) -> &str {
 
 pub(super) fn status_bar_line(app: &App, now: Instant, width: usize) -> Line<'static> {
     let palette = app.theme.screen_palette();
+    // 🔴 **AN ARMED LOOP DRAWS EVEN WHEN NOTHING IS IN FLIGHT, AND THAT IS THE WHOLE POINT.**
+    //
+    // The complaint that produced the loop feature was *"I don't see you doing your loop"*, and
+    // `run_state` returns `None` whenever there is no active request — which is EXACTLY the state
+    // a waiting loop is in between firings. Returning `Line::default()` there would leave an
+    // unattended actor armed behind a blank status bar for the whole interval, which is the
+    // invisible case rather than a cosmetic one. So the band is computed first and is enough on
+    // its own to keep the row alive.
+    let loop_band = app
+        .agent_loop
+        .as_ref()
+        .map(|armed| armed.band(now, app.session_spend_usd));
     let Some((mark, left)) = run_state(app, now) else {
-        return Line::default();
+        return match loop_band {
+            Some(band) => Line::from(vec![
+                marks::Mark::Queued.span(&palette, pulse_tick(app, now), true),
+                Span::styled(band, Style::default().fg(palette.mid)),
+            ]),
+            None => Line::default(),
+        };
     };
     let mut right = String::new();
     if let Some(spend) = app.session_spend_usd {
@@ -227,10 +245,20 @@ pub(super) fn status_bar_line(app: &App, now: Instant, width: usize) -> Line<'st
         mark.span(&palette, pulse_tick(app, now), true),
         Span::styled(left.clone(), Style::default().fg(palette.mid)),
     ];
+    if let Some(band) = &loop_band {
+        spans.push(Span::styled(
+            format!("  \u{b7} {band}"),
+            Style::default().fg(palette.mid),
+        ));
+    }
     let tail_width = right.chars().count()
         + gate.as_ref().map_or(0, |gate| gate.chars().count() + 4)
         + usize::from(!right.is_empty());
-    let used = 2 + left.chars().count();
+    let used = 2
+        + left.chars().count()
+        + loop_band
+            .as_ref()
+            .map_or(0, |band| band.chars().count() + 4);
     let gap = width.saturating_sub(used).saturating_sub(tail_width).max(1);
     if !right.is_empty() || gate.is_some() {
         spans.push(Span::raw(" ".repeat(gap)));
@@ -399,7 +427,10 @@ fn queue_entry_summary(label: &str, width: usize) -> String {
     let suffix = format!(" \u{23ce} +{remaining} more");
     // Measured the same way `truncate_display` measures, so the reservation and the truncation
     // cannot disagree about how wide the suffix is.
-    let reserved = suffix.chars().map(|ch| ch.width().unwrap_or(0)).sum::<usize>();
+    let reserved = suffix
+        .chars()
+        .map(|ch| ch.width().unwrap_or(0))
+        .sum::<usize>();
     let room = width.saturating_sub(reserved);
     format!("{}{suffix}", truncate_display(first, room))
 }
@@ -442,9 +473,9 @@ pub(super) fn truncate_display(value: &str, max_width: usize) -> String {
 pub(super) fn render_picker(frame: &mut Frame<'_>, picker: &PickerSurface, area: Rect, app: &App) {
     let login_context = match picker.title.as_str() {
         "Connect Estelle" => Some([
-            Line::from("Estelle grounds your coding agent in your real codebase."),
+            Line::from("Estelle grounds the coding agent in the real codebase."),
             Line::from(
-                "It runs on the model plan or API key you already have — Estelle never bills you for model tokens.",
+                "Runs on an existing model plan or API key. Estelle never bills model tokens.",
             ),
         ]),
         "Choose how model tokens are paid" => Some([
@@ -766,8 +797,7 @@ pub(super) fn symbol_ground_layout(width: usize, height: usize) -> Arc<SymbolGro
             // not visual fit. The lily is drawn only where the box can hold its proportions;
             // elsewhere the flourish is pure dither, which is the graceful degradation.
             if x >= lily_x0
-                && let Some(symbol) =
-                    red_lily_braille(x - lily_x0, y, lily_width, height, opacity)
+                && let Some(symbol) = red_lily_braille(x - lily_x0, y, lily_width, height, opacity)
             {
                 cells[index] = symbol;
                 ink[index] = 2;
@@ -862,22 +892,28 @@ pub(super) fn render_symbol_ground(frame: &mut Frame<'_>, area: Rect, app: &App)
             }
             spans.push(Span::styled(
                 cells[start..end].iter().collect::<String>(),
+                // 🔴 **THREE LEVELS THAT DID NOT DESCEND.** The dither's ladder was
+                // `mid` → `#46433B`/`bright` → `ghost` + `Modifier::DIM`, and on the dark theme
+                // its FAINTEST level had the BRIGHTEST base colour (`#C8C2B3` against `mid`'s
+                // `#948E81`) — visible only on a terminal that honours `DIM` for a truecolor
+                // foreground, which many do not. On cream, level 1 was `bright`: the middle step
+                // of a texture painted at maximum contrast. Two themes, two different orderings,
+                // neither of them monotonic.
+                //
+                // It is one ladder now, out of the palette, descending in both themes:
+                // `mid` (nearest the ink) → `dim` → `tint` (nearest the ground). No modifier does
+                // the work, so the texture reads the same on a terminal that drops `DIM`.
+                //
+                // ⚠️ **NOT RED.** Red is a MEANING in this interface — `■` refusal, `▲` break —
+                // and a decorative texture wearing it says "something is wrong" on an idle
+                // startup frame. The motif keeps its shape and gives up the brand ink; the
+                // frame is asserted to contain no red cell at all while idle.
                 match ink_level {
-                    // ⚠️ **NOT RED.** Red is a MEANING in this interface — `■` refusal, `▲` break —
-                    // and a decorative texture wearing it says "something is wrong" on an idle
-                    // startup frame. The motif keeps its shape and gives up the brand ink; the
-                    // frame is asserted to contain no red cell at all while idle.
                     2 => Style::default()
                         .fg(palette.mid)
                         .add_modifier(Modifier::BOLD),
-                    1 => Style::default().fg(if app.theme == Theme::CreamInk {
-                        palette.bright
-                    } else {
-                        FATE_INK
-                    }),
-                    _ => Style::default()
-                        .fg(app.theme.ghost())
-                        .add_modifier(Modifier::DIM),
+                    1 => Style::default().fg(palette.dim),
+                    _ => Style::default().fg(palette.tint),
                 },
             ));
             start = end;
@@ -985,7 +1021,7 @@ pub(super) fn render_empty_state(frame: &mut Frame<'_>, area: Rect, app: &App) {
     if let Some(context) = &app.session_context {
         lines.push(Line::default());
         lines.push(Line::styled(
-            "Since your last session",
+            "Since the last session",
             Style::default()
                 .fg(app.theme.primary())
                 .add_modifier(Modifier::BOLD),
@@ -1108,7 +1144,8 @@ pub(super) fn render_gate_modal(
 ///
 /// ⚠️ `render_frame`'s `now` is an `Instant`, which is a monotonic reading with no epoch, so it
 /// cannot be compared to a server timestamp. A row whose observation is dated AHEAD of this clock
-/// therefore renders its age as `?` rather than as `0s`; see `orchestra_view::age`.
+/// therefore renders its `last seen` cell as `clock ahead` rather than as `0s`; see
+/// `orchestra_view::last_seen`.
 pub(super) fn epoch_seconds() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1191,7 +1228,7 @@ pub(super) fn render_context_panel(frame: &mut Frame<'_>, area: Rect, app: &App)
     }
     lines.push(Line::from(""));
     lines.push(Line::styled(
-        "Alt+M or /context closes",
+        "ctrl+g or /context closes",
         Style::default().fg(palette.dim),
     ));
     // ⚠️ This box was the one that rendered BESIDE the new language in a single row:
@@ -1202,7 +1239,7 @@ pub(super) fn render_context_panel(frame: &mut Frame<'_>, area: Rect, app: &App)
         .split(area);
     frame.render_widget(
         Paragraph::new(session_view::title_rule(
-            "context · alt+m · /context",
+            "context · ctrl+g · /context",
             usize::from(rows[0].width),
             &palette,
             if app.focus == FocusSurface::Auxiliary {
@@ -1474,7 +1511,10 @@ fn app_health_lines(app: &App, palette: &theme::Palette, width: usize) -> Vec<Li
     )];
 
     if !app.auth_resolved {
-        lines.push(dim_line("Connecting to Estelle...".to_string(), palette));
+        lines.push(dim_line(
+            "connecting · api.fatelabs.ca".to_string(),
+            palette,
+        ));
         return lines;
     }
     if app.client.is_none() {
@@ -2151,20 +2191,20 @@ pub(super) fn github_diff_lines(diff: &str, width: usize, app: &App) -> Vec<Line
     let number_width = 3_usize;
     let content_width = width.saturating_sub(number_width * 2 + 5);
 
-    let (add_line_bg, add_gutter_bg, del_line_bg, del_gutter_bg) = match app.theme {
-        Theme::Dark => (
-            Color::from_u32(0x21_3A_2B),
-            Color::from_u32(0x16_2E_20),
-            Color::from_u32(0x4A_22_1D),
-            Color::from_u32(0x36_17_14),
-        ),
-        Theme::CreamInk => (
-            Color::from_u32(0xDA_FB_E1),
-            Color::from_u32(0xAC_EE_BB),
-            Color::from_u32(0xFF_EB_E9),
-            Color::from_u32(0xFF_CE_CB),
-        ),
-    };
+    // 🔴 **ALL FOUR GROUNDS ARE THE PALETTE'S NOW, INCLUDING THE GUTTERS.**
+    //
+    // The line grounds moved to `diff_add`/`diff_del` in the previous pass, and the four GUTTER
+    // literals stayed here with a written reason — the gutter carries the line NUMBER and has to
+    // separate itself from the row it labels. The reason was right and the LOCATION was wrong: a
+    // documented literal inside a render function is still a second owner of a product colour, and
+    // the design book's colour read-back counted them at **20 untokened cells** on
+    // `05-proposed-diff`. The values did not change; the owner did.
+    let (add_line_bg, add_gutter_bg, del_line_bg, del_gutter_bg) = (
+        palette.diff_add,
+        palette.diff_add_gutter,
+        palette.diff_del,
+        palette.diff_del_gutter,
+    );
 
     for source in diff.lines() {
         if let Some(path) = source.strip_prefix("diff --git a/") {
@@ -2211,11 +2251,7 @@ pub(super) fn github_diff_lines(diff: &str, width: usize, app: &App) -> Vec<Line
                     content,
                     add_line_bg,
                     add_gutter_bg,
-                    if app.theme == Theme::CreamInk {
-                        FATE_INK
-                    } else {
-                        palette.green
-                    },
+                    palette.green,
                 );
                 new_line = new_line.saturating_add(1);
                 row
@@ -2227,11 +2263,18 @@ pub(super) fn github_diff_lines(diff: &str, width: usize, app: &App) -> Vec<Line
                     content,
                     del_line_bg,
                     del_gutter_bg,
-                    if app.theme == Theme::CreamInk {
-                        FATE_INK
-                    } else {
-                        FATE_BG
-                    },
+                    // 🔴 **A DELETION IS RED.** It was `FATE_BG` — the bone the whole product
+                    // writes ordinary text in — so a removed line was the same colour as a
+                    // comment, while the line that REPLACED it was green. The founder read the
+                    // diff and said so in four words: *"Red for deletions, green for additions."*
+                    // The two halves of a diff are the one place in this product where colour is
+                    // carrying the entire meaning, and only one half was carrying it.
+                    //
+                    // ⚠️ Cream changed too, and deliberately. It painted BOTH signs in
+                    // `FATE_INK`, so the light theme had no colour distinction at all and leaned
+                    // entirely on a background tint a colour-flattening terminal drops. Symmetric
+                    // in both themes is the only version that reads the same way twice.
+                    palette.red,
                 );
                 old_line = old_line.saturating_add(1);
                 row
@@ -2291,16 +2334,14 @@ fn collapse_composer_tail(
     area: Rect,
     background: Color,
 ) -> Option<(u16, u16)> {
-    let Some((prompt_row, prompt_col)) = (area.y..area.bottom()).find_map(|y| {
+    let (prompt_row, prompt_col) = (area.y..area.bottom()).find_map(|y| {
         (area.x..area.right())
             .find(|x| {
                 let symbol = frame.buffer_mut()[(*x, y)].symbol();
                 symbol == COMPOSER_PROMPT_GLYPH || symbol == PROMPT_GLYPH
             })
             .map(|x| (y, x))
-    }) else {
-        return None;
-    };
+    })?;
     // The composer widget draws U+203A, a small angle quote. Repainted HERE rather than in the
     // composer, because 80 lib snapshots carry that glyph and another lane is editing those same
     // files; the prompt is one cell, and taking it is cheaper than taking their diff.
@@ -2427,6 +2468,27 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         ),
         area,
     );
+    // 🔴 THE AFFINITY SURFACES ARE FULL-SCREEN, AND THEIR RENDER CALL WAS LOST IN A REFACTOR.
+    //
+    // `ctrl+s` opens the costs surface and Esc closes it; the state and the keys survived the move
+    // from `main.rs` to this module and the DRAW did not, because it lived in the 2,175-line
+    // renderer block that moved. The result compiled, held state, handled keys, and painted
+    // nothing - `affinity_cli::cost_line`, `plan_line`, `memory_line` and `highlight` were all
+    // dead code that no warning tied back to a missing screen.
+    //
+    // It returns early, exactly as the original did: these surfaces own the whole frame, so the
+    // transcript, composer and rails below must not draw underneath them.
+    if let Some(surface) = &app.affinity_surface {
+        surface.render(
+            frame,
+            area,
+            app.theme,
+            &app.affinity_costs,
+            app.account.as_ref(),
+            app.fleet.as_ref(),
+        );
+        return;
+    }
     let content_area = area;
     // `bottom_pane_desired_height` includes the composer's OWN chrome - its hint row and the
     // padding around it - which is what left a blank row between the ask rule and the prompt
@@ -2497,8 +2559,17 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
         && !show_context_panel
         && !app.citations.is_empty()
         && design_split.is_some();
-    // The design gives production a PERMANENT home on the right, not a `/prod` toggle: a rail
-    // you have to remember to open is, from the user's seat, a rail that is not there.
+    // Production has a PERMANENT home on the right; `/prod` is not a visibility toggle. The R9
+    // finding named opt-in as the reason the redesign never reached the customer: a rail you have
+    // to remember to open is, from the user's seat, a rail that is not there. The contract is
+    // written down in `production_is_a_permanent_rail_and_every_empty_section_has_an_action`.
+    //
+    // ⚠️ `app.prod_panel_visible` IS DELIBERATELY NOT READ HERE, AND THAT IS WHY IT HAD TO STOP
+    // GATING THE POLLER. While the rail rendered unconditionally and `poll_production_if_due`
+    // returned early on that flag - which defaulted to FALSE - the permanent rail polled NOTHING
+    // until the user typed `/prod`. It was on every frame and empty on every frame. The flag now
+    // means "are production updates running", it defaults to true, and the rail's own copy is the
+    // only thing that says whether data arrived.
     let prod_as_rail = !app.diff_panel_visible
         && !show_context_panel
         && !show_citation_pane
@@ -2739,14 +2810,12 @@ pub(super) fn render_frame(frame: &mut Frame<'_>, app: &App, now: Instant) {
             && !app.todo_visible
             && app.picker.is_none()
             && app.resume_picker.is_none()
-            // The production rail is permanent now, so it can no longer be a reason to drop
-            // the empty-state ground: the art lives in the session column, which is still
-            // empty. A rail the user asked for (diff, context, evidence) still displaces it.
+            // The production rail is permanent, so it can no longer be a reason to drop the
+            // empty-state ground: the art lives in the session column, which is still empty.
+            // A rail the user asked for (diff, context, evidence) still displaces it.
             && (!show_auxiliary_pane || prod_as_rail);
-        if show_ground {
-            if let Some(flourish) = flourish_area(transcript_root) {
-                render_symbol_ground(frame, flourish, app);
-            }
+        if show_ground && let Some(flourish) = flourish_area(transcript_root) {
+            render_symbol_ground(frame, flourish, app);
         }
         frame.render_widget(paragraph.scroll((scroll, 0)), transcript_root);
         if show_ground {

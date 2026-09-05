@@ -1,6 +1,7 @@
 ESTELLE  ·  uqeu/estelle
 
-╌╌ session · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+── session · uqeu/estelle ────────────────────────────────────────────────────────────────────────────────────────────────────────
+   uqeu/estelle · main
 
 
 
@@ -26,9 +27,8 @@ ESTELLE  ·  uqeu/estelle
 
 
 
+── monitor settings ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+> 1 Data retention (days)     45 · team · server
+↑↓ navigate · 1-9 or Enter select · Esc close
 
-┌ MONITOR SETTINGS ──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│> 1 Data retention (days)     30 · team · server                                                                                │
-│↑↓ navigate · 1-9 or Enter select · Esc close                                                                                   │
-└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-tab focus · shift+tab autonomy · ctrl+t tasks · alt+m context · / commands  |  plan  ·  routing auto
+

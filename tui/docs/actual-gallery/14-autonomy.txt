@@ -1,6 +1,7 @@
 ESTELLE  ·  uqeu/estelle
 
-╌╌ session · uqeu/estelle ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+── session · uqeu/estelle ────────────────────────────────────────────────────────────────────────────────────────────────────────
+   uqeu/estelle · main
 
 
 
@@ -23,12 +24,11 @@ ESTELLE  ·  uqeu/estelle
 
 
 
+── autonomy ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+> 1 plan                      verify · remember · retrieve · advise · current
+  2 accept-edits              + sandboxed diff · reviewable PR
+  3 branch                    + push to non-main branch · run CI · never merge
+  4 auto                      + guarded merge · commands · otherwise reviewable PR
+↑↓ navigate · 1-9 or Enter select · Esc close
 
-┌ AUTONOMY ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│> 1 plan                      verify · remember · retrieve · advise · current                                                   │
-│  2 accept-edits              + sandboxed diff · reviewable PR                                                                  │
-│  3 branch                    + push to non-main branch · run CI · never merge                                                  │
-│  4 auto                      + guarded merge · commands · otherwise reviewable PR                                              │
-│↑↓ navigate · 1-9 or Enter select · Esc close                                                                                   │
-└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-tab focus · shift+tab autonomy · ctrl+t tasks · alt+m context · / commands  |  plan  ·  routing auto
+

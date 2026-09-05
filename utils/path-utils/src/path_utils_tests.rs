@@ -113,3 +113,124 @@ mod path_comparison {
         Ok(())
     }
 }
+
+/// 🔬 **THE SYSCALL-ORDER PROOF.**
+///
+/// Ported from orca's `durable-file-write-syscall-proof.test.ts` (MIT), whose header names the
+/// trap precisely: *"an fsync moved after the rename still fsyncs a file, so a fsync-only log reads
+/// identically for the correct and the broken order."* A test that merely asserts "we called
+/// `sync_all` twice" passes on the broken sequence. The rename has to be in the same log.
+///
+/// **Where ours improves on theirs:** orca proves this by monkey-patching `fsyncSync`/`renameSync`
+/// on Node's `fs` module, which asserts on a *substituted* implementation and cannot exist in Rust.
+/// Here the recorder and production share one code path — `write_durably_with` — so the sequence
+/// asserted is the sequence the product executes; only the three syscalls differ. And where orca
+/// hardcodes a platform list for directory-fsync support, we record
+/// [`DurableStep::DirSyncUnsupported`] as an outcome, so a platform that cannot fsync a directory
+/// is a fact in the log rather than an assumption in the assertion.
+mod durable_write_order {
+    use super::super::*;
+    use std::path::Path;
+
+    /// Records what was called, in order, and performs the real effects so the file still lands.
+    struct RecordingOps {
+        log: Vec<&'static str>,
+        dir_sync_supported: bool,
+    }
+
+    impl DurableOps for RecordingOps {
+        fn sync_file(&mut self, file: &std::fs::File) -> std::io::Result<()> {
+            self.log.push("fsync:file");
+            file.sync_all()
+        }
+
+        fn rename(&mut self, tmp: NamedTempFile, target: &Path) -> std::io::Result<()> {
+            self.log.push("rename");
+            tmp.persist(target)
+                .map(|_| ())
+                .map_err(std::io::Error::from)
+        }
+
+        fn sync_dir(&mut self, dir: &Path) -> std::io::Result<()> {
+            self.log.push("fsync:dir");
+            if !self.dir_sync_supported {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    "simulated platform without directory fsync",
+                ));
+            }
+            RealDurableOps.sync_dir(dir)
+        }
+    }
+
+    #[test]
+    fn contents_are_fsynced_before_the_rename_and_the_directory_after() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let target = dir.path().join("nested").join("config.toml");
+        let mut ops = RecordingOps {
+            log: Vec::new(),
+            dir_sync_supported: true,
+        };
+        let mut steps = Vec::new();
+
+        write_durably_with(&mut ops, &target, "model = \"gpt-5.5\"\n", &mut steps)
+            .expect("durable write");
+
+        // The rename is IN the log. Without it, moving the file fsync after the rename would
+        // produce the identical assertion and this test would certify the broken order.
+        assert_eq!(ops.log, vec!["fsync:file", "rename", "fsync:dir"]);
+        assert_eq!(
+            steps,
+            vec![
+                DurableStep::SyncFile,
+                DurableStep::Rename,
+                DurableStep::SyncDir
+            ]
+        );
+        assert_eq!(
+            std::fs::read_to_string(&target).expect("target readable"),
+            "model = \"gpt-5.5\"\n"
+        );
+    }
+
+    #[test]
+    fn a_platform_without_directory_fsync_still_writes_and_says_so() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let target = dir.path().join("config.toml");
+        let mut ops = RecordingOps {
+            log: Vec::new(),
+            dir_sync_supported: false,
+        };
+        let mut steps = Vec::new();
+
+        // The bytes and the name are already durable by the time the directory fsync is attempted,
+        // so an unsupported platform must not turn a good write into an error.
+        write_durably_with(&mut ops, &target, "contents", &mut steps).expect("write must succeed");
+
+        assert_eq!(ops.log, vec!["fsync:file", "rename", "fsync:dir"]);
+        assert_eq!(
+            steps,
+            vec![
+                DurableStep::SyncFile,
+                DurableStep::Rename,
+                DurableStep::DirSyncUnsupported
+            ],
+            "an unsupported directory fsync must be RECORDED, never silently skipped"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&target).expect("target readable"),
+            "contents"
+        );
+    }
+
+    #[test]
+    fn the_shipped_entry_point_writes_through_the_same_path() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let target = dir.path().join("a").join("b").join("shipped.toml");
+        write_atomically(&target, "durable").expect("write_atomically");
+        assert_eq!(
+            std::fs::read_to_string(&target).expect("target readable"),
+            "durable"
+        );
+    }
+}

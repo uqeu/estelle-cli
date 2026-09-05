@@ -30,16 +30,28 @@ use crate::theme::Palette;
 /// used to carry (that `FleetAgent` has neither field) lives in this module's docs instead.
 pub(crate) const MISSING_PER_WORKER_SPEND: &str = "per-worker model + cost · no server contract";
 
-/// The design's worker row: glyph, worker, state, age, cost. The two fixed-width number columns
-/// and the glyph are constants; the state column takes whatever is left, because the state text
-/// is the half a narrower terminal should spend its columns on.
+/// The design's worker row: glyph, worker, state, last seen, cost. The two fixed-width number
+/// columns and the glyph are constants; the state column takes whatever is left, because the state
+/// text is the half a narrower terminal should spend its columns on.
+///
+/// 🔴 **`age` WAS A COLUMN HEADING NOBODY COULD READ, AND THE FOUNDER SAID SO.**
+/// *"I don't know what age ahead means, so that needs to be explained as well."* He was reading a
+/// column headed `age` whose every cell said `ahead`, and both words were ours.
+///
+/// `age` meant *how long ago the server last observed this worker's state* — `now -
+/// state_observed_at` — which is not the worker's run time and reads as if it were. `ahead` meant
+/// *the server dated this row in the future relative to your clock*, which is a clock-skew report
+/// wearing a one-word disguise. Neither was wrong; both were written for the person who had just
+/// implemented them. They are `last seen` and `clock ahead` now.
 const GLYPH: usize = 2;
 const WORKER: usize = 4;
-const AGE: usize = 5;
+/// `clock ahead` is eleven columns wide, so the column has to be too — a heading or a value
+/// truncated to `clock ah…` would have replaced one unreadable label with another.
+const LAST_SEEN: usize = 11;
 const COST: usize = 7;
 const GAP: usize = 2;
-/// `2 + 2 + 4 + 2 + <state> + 2 + 5 + 2 + 7`, with the state column excluded.
-const FIXED: usize = GLYPH + GAP + WORKER + GAP + GAP + AGE + GAP + COST;
+/// `2 + 2 + 4 + 2 + <state> + 2 + 11 + 2 + 7`, with the state column excluded.
+const FIXED: usize = GLYPH + GAP + WORKER + GAP + GAP + LAST_SEEN + GAP + COST;
 /// The narrowest state cell the table will draw before it simply truncates.
 const MIN_STATE: usize = 8;
 
@@ -49,7 +61,7 @@ fn columns(width: usize) -> [Col; 5] {
         Col::l(GLYPH),
         Col::l(WORKER),
         Col::l(state),
-        Col::r(AGE),
+        Col::r(LAST_SEEN),
         Col::r(COST),
     ]
 }
@@ -69,9 +81,12 @@ fn glyph(status: FleetAgentStatus, palette: &Palette) -> (&'static str, Color) {
         FleetAgentStatus::TimedOut => ("◷", palette.warn),
         FleetAgentStatus::Blocked => ("!", palette.warn),
         FleetAgentStatus::Cancelled => ("−", palette.dim),
-        FleetAgentStatus::Lost | FleetAgentStatus::NeedsInput | FleetAgentStatus::Unknown => {
-            ("?", palette.warn)
-        }
+        // ⚠️ `?` used to be a bare literal here and a second bare literal in the todo ledger, in
+        // neither enum and in neither test — see `marks::Mark`'s header for what that cost.
+        FleetAgentStatus::Lost | FleetAgentStatus::NeedsInput | FleetAgentStatus::Unknown => (
+            crate::marks::Mark::Unknown.glyph(),
+            crate::marks::Mark::Unknown.colour(palette),
+        ),
     }
 }
 
@@ -126,20 +141,23 @@ fn state(agent: &FleetAgent) -> String {
     }
 }
 
-/// How long ago this row's state was observed, or `?` when the server dated it impossibly.
+/// How long ago this row's state was last observed, in words a reader does not have to be told.
 ///
 /// ⚠️ This is the AGE OF THE OBSERVATION, not the worker's elapsed run time — the design's `41s`
 /// column. The contract carries `state_observed_at` and no start time, so the honest column is
-/// the one the wire supports, under the name the wire supports.
-fn age(agent: &FleetAgent, now_epoch_s: f64) -> String {
+/// the one the wire supports. What changed is the NAME: `last seen` says which of those two it is
+/// without a footnote, and `age` did not.
+fn last_seen(agent: &FleetAgent, now_epoch_s: f64) -> String {
     let elapsed = now_epoch_s - agent.state_observed_at;
     if !elapsed.is_finite() || !agent.state_observed_at.is_finite() {
-        return "?".to_string();
+        return crate::marks::Mark::Unknown.glyph().to_string();
     }
     // ⚠️ A row dated AHEAD of this client's clock has no age. `0s` would claim it was observed
-    // just now, which is the one thing we know it was not; `ahead` names the condition instead.
+    // just now, which is the one thing we know it was not — so the condition is NAMED. It used to
+    // be named `ahead`, one word, which told the reader that something was ahead of something and
+    // nothing about what or why. `clock ahead` says which two things disagree.
     if elapsed < 0.0 {
-        return "ahead".to_string();
+        return "clock ahead".to_string();
     }
     if elapsed < 90.0 {
         format!("{elapsed:.0}s")
@@ -217,7 +235,7 @@ pub(crate) fn lines(
     output.push(Line::from(""));
     output.push(head(
         &table,
-        &["", "wkr", "state", "age", "cost"],
+        &["", "wkr", "state", "last seen", "cost"],
         palette.dim,
         0,
     ));
@@ -235,7 +253,7 @@ pub(crate) fn lines(
                 Cell(mark, mark_colour),
                 Cell(&format!("w{}", agent.index), palette.dim),
                 Cell(&state(agent), state_colour),
-                Cell(&age(agent, now_epoch_s), palette.dim),
+                Cell(&last_seen(agent, now_epoch_s), palette.dim),
                 // ⚠️ NOT A ZERO AND NOT A BLANK: an em dash for "the server does not report this".
                 Cell("—", palette.dim),
             ],

@@ -188,7 +188,7 @@ const MULTI_AGENT_ENABLE_TITLE: &str = "Enable subagents?";
 const MULTI_AGENT_ENABLE_YES: &str = "Yes, enable";
 const MULTI_AGENT_ENABLE_NO: &str = "Not now";
 const MULTI_AGENT_ENABLE_NOTICE: &str = "Subagents will be enabled in the next session.";
-const TRUSTED_ACCESS_FOR_CYBER_VERIFICATION_WARNING: &str = "Your conversations have multiple flags for possible cybersecurity risk. Responses may take longer because extra safety checks are on. To get authorized for security work, join the Trusted Access for Cyber program: https://chatgpt.com/cyber";
+const TRUSTED_ACCESS_FOR_CYBER_VERIFICATION_WARNING: &str = "This session has multiple flags for possible cybersecurity risk. Responses take longer while extra safety checks run. Authorization for security work comes from the Trusted Access for Cyber program: https://chatgpt.com/cyber";
 const MEMORIES_DOC_URL: &str = "https://developers.openai.com/codex/memories";
 const MEMORIES_ENABLE_TITLE: &str = "Enable memories?";
 const MEMORIES_ENABLE_YES: &str = "Yes, enable";
@@ -1041,7 +1041,7 @@ impl ChatWidget {
             SelectionItem {
                 name: MULTI_AGENT_ENABLE_YES.to_string(),
                 description: Some(
-                    "Save the setting now. You will need a new session to use it.".to_string(),
+                    "Save the setting now. It takes effect in a new session.".to_string(),
                 ),
                 actions: vec![Box::new(|tx| {
                     tx.send(AppEvent::UpdateFeatureFlags {
@@ -1064,7 +1064,7 @@ impl ChatWidget {
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
             title: Some(MULTI_AGENT_ENABLE_TITLE.to_string()),
-            subtitle: Some("Subagents are currently disabled in your config.".to_string()),
+            subtitle: Some("Subagents are disabled in config.".to_string()),
             footer_hint: Some(standard_popup_hint_line()),
             items,
             ..Default::default()
@@ -1091,7 +1091,7 @@ impl ChatWidget {
             SelectionItem {
                 name: MEMORIES_ENABLE_YES.to_string(),
                 description: Some(
-                    "Save the setting now. You will need a new session to use it.".to_string(),
+                    "Save the setting now. It takes effect in a new session.".to_string(),
                 ),
                 actions: vec![Box::new(|tx| {
                     tx.send(AppEvent::UpdateFeatureFlags {
@@ -1111,7 +1111,7 @@ impl ChatWidget {
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
             title: Some(MEMORIES_ENABLE_TITLE.to_string()),
-            subtitle: Some("Memories are currently disabled in your config.".to_string()),
+            subtitle: Some("Memories are disabled in config.".to_string()),
             footer_note: Some(Line::from(vec![
                 "Learn more: ".dim(),
                 MEMORIES_DOC_URL.cyan().underlined(),

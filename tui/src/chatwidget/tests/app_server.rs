@@ -1,8 +1,7 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
-const SAFETY_BUFFERING_HEADER_TEXT: &str =
-    "Our systems are thinking a bit more about this request before responding.";
+const SAFETY_BUFFERING_HEADER_TEXT: &str = "An extra safety pass is running on this turn.";
 
 fn thread_settings_for_test(
     model: &str,
@@ -1425,7 +1424,7 @@ async fn live_app_server_model_verification_renders_warning() {
     assert_eq!(cells.len(), 1);
     let rendered = lines_to_single_string(&cells[0]);
     assert!(rendered.contains("multiple flags for possible cybersecurity risk"));
-    assert!(rendered.contains("extra safety checks are on"));
+    assert!(rendered.contains("extra safety checks run"));
     assert!(rendered.contains("Trusted Access for Cyber"));
     assert!(rendered.contains("https://chatgpt.com/cyber"));
 }

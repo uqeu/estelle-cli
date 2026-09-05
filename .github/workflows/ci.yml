@@ -1,0 +1,158 @@
+# 🔴 **NOTHING IN THIS REPOSITORY RAN ON A PUSH UNTIL THIS FILE EXISTED.**
+#
+# Every other workflow here is `workflow_dispatch:` only — `release.yml`, and the four receipt
+# probes. So `cargo fmt`, `cargo clippy` and `cargo test` fired exactly once per release, by hand,
+# at the moment they are most expensive to fix. Measured on `integration/cli-0.3.0-20260903`, that
+# is what had accumulated behind the gap:
+#
+#   * `cargo fmt --check` red at 6 sites in 3 files — the release gate's FIRST command.
+#   * `cargo clippy -D warnings` reporting 1 finding and actually holding 23: one deny-level error
+#     halted compilation before the lint pass reached the rest, so the count itself was wrong.
+#   * `cargo test -p estelle-tui --lib` unable to FINISH — a worker overflowed its 2 MiB stack and
+#     SIGABRTed after ~136 of 3,260 tests, printing no `test result:` line at all. An absence reads
+#     as a pass, which is why every recorded baseline for that crate said "154 tests".
+#   * 8 real test failures behind that abort, 5 of them red since the fork import a month earlier.
+#
+# None of those needed a clever instrument. They needed one that RAN. A guard reachable only from
+# the path someone remembered to trigger is a guard on that path.
+#
+# This deliberately mirrors `release.yml`'s `validate` job rather than inventing a second contract,
+# so the cheap gate and the release gate cannot drift into disagreeing about what "green" means.
+# RUST_MIN_STACK is NOT set here: it lives in `.cargo/config.toml`'s `[env]` block so that a
+# developer's bare `cargo test` gets the same 8 MiB floor this job does. If it were set here, CI
+# would pass while the suite kept aborting on every laptop — which is the exact shape being fixed.
+name: CI
+
+on:
+  push:
+    branches-ignore:
+      - "gh-readonly-queue/**"
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: fmt, clippy and unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      - name: Lints
+        run: cargo clippy --locked -p estelle-acp -p estelle-client -p estelle-tui --all-targets -- -D warnings
+      - name: Unit tests
+        run: cargo test --locked -p estelle-acp -p estelle-client -p estelle-tui
+      - name: The suite must have FINISHED, not merely not-failed
+        shell: bash
+        run: |
+          set -euo pipefail
+          # ⚠️ `cargo test` exits 0 when a target aborts before printing its counts, because there
+          # is no failure to report — that is the whole defect this repository just paid for. So
+          # assert on the innermost observable: the declared test count of the crate that overflows.
+          # A floor, not an equality, so adding tests never turns this red for the wrong reason.
+          declared=$(cargo test --locked -p estelle-tui --lib -- --list 2>/dev/null | grep -c ': test$')
+          echo "estelle-tui --lib declares ${declared} tests"
+          test "${declared}" -gt 3000
+          ran=$(cargo test --locked -p estelle-tui --lib 2>&1 | tee /dev/stderr | grep -c '^test result: ')
+          test "${ran}" -eq 1
+
+  # 🔴 `npm test --prefix npm-shim` ran ONLY inside `release.yml`, i.e. once per release, by hand.
+  # The defect it would have caught: npm 12 blocks `postinstall` by default, `postinstall` is the
+  # only step that fetches the native binary, and so `npm i -g @fatelabs/estelle` exited 0 and left
+  # a CLI that died with `spawnSync .../vendor/<target>/estelle ENOENT`. Measured 2026-09-04 on one
+  # box varying only the npm major: 10.9.9 ok, 11.19.1 ok, 12.0.2 broken. npm 12 ships with current
+  # Node, so that was the DEFAULT first experience. Same lesson as the header above: the instrument
+  # existed, it just did not RUN on the path that shipped.
+  npm-launcher:
+    name: npm launcher — unit tests and a real npm 12 global install
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - name: Launcher and installer unit tests
+        run: npm test --prefix npm-shim
+      - name: A blocked postinstall must leave a diagnosable CLI, never ENOENT
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global npm@12.0.2
+          npm --version | grep -Eq '^12\.'
+          # `./npm-shim`, NOT `npm-shim`. npm 12 resolves a bare name as a REGISTRY package and
+          # this job's first run died on `404 GET https://registry.npmjs.org/npm-shim`; npm 10
+          # had accepted the same word locally. The leading `./` is what makes it a folder spec.
+          npm pack ./npm-shim --ignore-scripts --pack-destination "$RUNNER_TEMP"
+          mkdir -p "$RUNNER_TEMP/prefix"
+          npm install -g "$RUNNER_TEMP"/fatelabs-estelle-*.tgz --prefix "$RUNNER_TEMP/prefix" \
+            --no-audit --no-fund
+          package="$RUNNER_TEMP/prefix/lib/node_modules/@fatelabs/estelle"
+          # Prove the REPRODUCTION is still real before asserting on the repair. If npm ever stops
+          # blocking this postinstall, `vendor/` appears, the diagnostic below becomes unreachable,
+          # and a silent green here would be a verdict on a contract nobody is exercising.
+          # ⚠️ NAME THE GAP: this installs a local TARBALL, and measured on npm 12.0.2 a tarball spec
+          # is blocked even WITH `--allow-scripts=@fatelabs/estelle` — the flag matched only a
+          # registry spec. So this line asserts "npm blocks scripts for THIS install shape", which is
+          # weaker than "npm blocks scripts for the customer's `npm i -g @fatelabs/estelle`". Nothing
+          # here can test the registry shape, because the version under test is not published yet.
+          if test -e "$package/vendor"; then
+            echo "npm $(npm --version) no longer blocks this postinstall; re-read this guard" >&2
+            exit 1
+          fi
+          # ESTELLE_SKIP_DOWNLOAD stands in for offline/proxy/403: the arm where the lazy download
+          # itself cannot run. The arm where it CAN run needs the release assets for this exact
+          # version to exist, which is untrue on a pre-release commit, so it is covered by the unit
+          # tests (stubbed install) and by the release job — not here. Stated, not hidden.
+          set +e
+          output=$(ESTELLE_SKIP_DOWNLOAD=1 "$RUNNER_TEMP/prefix/bin/estelle" --version 2>&1)
+          exit_status=$?
+          set -e
+          printf '%s\n' "$output"
+          test "$exit_status" -eq 1
+          grep -q 'npm 12 blocks package install scripts by default' <<<"$output"
+          grep -q -- '--allow-scripts=@fatelabs/estelle' <<<"$output"
+          if grep -q ENOENT <<<"$output"; then
+            echo "the launcher fell back to the raw spawn error this job exists to prevent" >&2
+            exit 1
+          fi
+      # The step above proves the CLI EXPLAINS itself. This one proves it WORKS — the whole point of
+      # the lazy fallback — by letting it download for real. It can only run once this version's
+      # release assets are published, which is false on a pre-release commit, so it says out loud
+      # when it measured nothing rather than passing quietly over an unexercised contract.
+      - name: When the release assets exist, the lazy download must yield a working CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./npm-shim/package.json').version")
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${version}/estelle-x86_64-unknown-linux-gnu.tar.gz"
+          code=$(curl -sIL -o /dev/null -w '%{http_code}' "$url")
+          if test "$code" != "200"; then
+            echo "NOT MEASURED: v${version} release assets are absent (HTTP ${code} for ${url})."
+            echo "NOT MEASURED: the live lazy-download arm is unexercisable until this version ships."
+            exit 0
+          fi
+          binary="$RUNNER_TEMP/prefix/bin/estelle"
+          first=$("$binary" --version 2>"$RUNNER_TEMP/lazy.err")
+          cat "$RUNNER_TEMP/lazy.err"
+          test "$first" = "estelle ${version}"
+          grep -q "npm blocked this package's install script" "$RUNNER_TEMP/lazy.err"
+          grep -q 'verified and installed' "$RUNNER_TEMP/lazy.err"
+          # A second run must reuse what the first installed: same answer, and nothing on stderr.
+          second=$("$binary" --version 2>"$RUNNER_TEMP/second.err")
+          test "$second" = "estelle ${version}"
+          if test -s "$RUNNER_TEMP/second.err"; then
+            echo "the launcher re-announced itself on a run that should have been silent" >&2
+            cat "$RUNNER_TEMP/second.err" >&2
+            exit 1
+          fi
+          echo "MEASURED: blocked postinstall -> lazy verified download -> estelle ${version}, second run silent"

@@ -27,6 +27,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::Command;
 use crate::commands;
+use crate::plugin_currency;
 use estelle_tui::ground_block;
 use estelle_tui::ground_block::FlaggedOutcome;
 use estelle_tui::session_gap;
@@ -78,6 +79,7 @@ fn contract(command: &Command) -> Contract {
         | Command::Mcp { .. }
         | Command::McpServer
         | Command::Screens { .. }
+        | Command::Demo { .. }
         | Command::Upgrade { .. }
         | Command::Version => Contract::Local,
         Command::Init { .. }
@@ -546,7 +548,7 @@ fn guard_hook(payload: &HookPayload) -> Vec<String> {
     };
     vec![hook_message(
         Some(format!(
-            "⛔ Estelle: this command looks like {reason} — read it again before running."
+            "⛔ Estelle: {reason} — read the command again before running it."
         )),
         Some(format!(
             "Estelle's Bash guard flagged the command as {reason}. Confirm the target is intended; advisory, not a block."
@@ -612,50 +614,6 @@ fn context_hook_offline(payload: &HookPayload, gate_disabled: bool) -> Option<Ve
     }
 }
 
-/// How long the UserPromptSubmit context hook may spend before giving up and injecting nothing.
-///
-/// Bounded, and the bound is a named constant, because this runs on the hot path of every single
-/// message a person sends. The plugin manifest allows this hook 30 s
-/// (`estelle-plugin/hooks/hooks.json`, `UserPromptSubmit`), so this sits well inside the host's
-/// budget and the hook always returns cleanly rather than being killed with its work discarded.
-///
-/// 🔴 **IT WAS 4 s, AND AT 4 s IT COULD NEVER SUCCEED — 0 OF 15 PROMPTS ENRICHED.** The number was
-/// picked to sit under a 10 s host budget, not measured against the server it calls, and that is
-/// the whole defect: **a deadline chosen from the CALLER's constraint and never checked against the
-/// CALLEE's floor is not a deadline, it is a guaranteed no-op with a delay attached.** Measured
-/// 2026-09-01 against production, `POST /search` with `{"code": false}` (this hook's exact wire
-/// shape) has a hard floor of **5.93 s** — n=15 across prompt lengths 26…2846 chars, min 5.93 s,
-/// median 6.11 s, max 22.83 s — of which the server's own `timings.total_s` accounts for only
-/// 2.06–2.19 s; the remaining ~3.9 s is time-to-first-byte the server does not measure
-/// (DNS+TCP+TLS is 90 ms, so it is not the connection). A 4 s budget is BELOW the floor, so it
-/// expired on every prompt: measured end-to-end at 4.01–4.03 s with **0/15** injections. It cost
-/// the user four seconds a message and delivered nothing, which is worse than the bug it replaced.
-///
-/// ⛰️ **THE FLOOR IS THE SERVER'S, AND IT IS NOT MOVING THIS ROUND.** The server lane measured
-/// the same afternoon against prod `e8c0f20d`: an **EMPTY** query — rejected at `api_intel.py:331`
-/// *before any search runs* — still costs **3.9–4.1 s**, because the caller is resolved three
-/// times per request (`api_shared.py:181`, `api_shared.py:248`, `estelle_server.py:4705` →
-/// `endpoint_runs.py:112`) plus `ledger.may_serve` and `_admit_recall`
-/// (`estelle_server.py:9518-9528`) at ~352 ms per Postgres round trip. That is a **~4.0 s
-/// pre-handler floor before the query is even read**, and it is an auth change nobody is making
-/// today. So this constant is chosen against a floor it cannot lower.
-///
-/// ⚠️ **20 s IS A JUDGEMENT CALL ON A MEASURED DISTRIBUTION, AND HERE IS ITS LIMIT.** Four numbers
-/// bound it: the observed floor **5.93 s**, the server lane's independent whole-request floor
-/// **~8.2 s** with `code_terms` at zero, the observed max **22.83 s**, and the host's kill at
-/// **30 s** (`estelle-plugin/hooks/hooks.json`). 20 s leaves a **10 s margin under the host kill**,
-/// which is the margin that matters: being killed by the host is the original defect — the work is
-/// done, the answer is discarded, and the user's prompt goes with it. It clears 14 of 15 samples;
-/// the one it drops is the 22.83 s outlier, and dropping that is the deadline doing its job, not
-/// failing. 25 s would cover it and halve the margin; that trade was taken deliberately.
-///
-/// 🚫 **AND THE COMMENT THAT USED TO LIVE HERE CLAIMED "never a stall" WHILE THE SHIPPED BINARY
-/// HAD NO BOUND AT ALL.** That sentence is why the founder's input was discarded. n=15 on one
-/// machine against one loaded production server on one afternoon is a thin basis for a hot-path
-/// constant and a hostile reader should say so out loud. **The durable fix is the server floor,
-/// not this number** — no client-side deadline can make a 6 s call fast, it can only choose
-/// between waiting and giving up. Re-measure before moving it, and move it DOWN the day the
-/// server does.
 /// The HOST's kill for `UserPromptSubmit`, in seconds — the number the customer's host actually
 /// enforces, and the only reason this hook needs a deadline of its own at all.
 ///
@@ -668,6 +626,14 @@ fn context_hook_offline(payload: &HookPayload, gate_disabled: bool) -> Option<Ve
 /// the output away, which is the exact defect this module exists to remove, entering through the
 /// other door. `the_installer_table_and_the_shipped_manifest_agree_on_the_context_budget` reads the
 /// JSON and fails if they ever part again.
+///
+/// 🔴 IT IS A NAMED CONSTANT BECAUSE TWO THINGS READ IT AND THEY MUST NEVER DISAGREE:
+/// [`HOOK_TABLE`]'s `UserPromptSubmit` row (which becomes the host budget on all three doors) and
+/// [`CONTEXT_HOOK_BUDGET`] (the client's own give-up, derived below by subtraction). Before this
+/// constant existed the two doors said 10 s and 30 s while the client budget was justified in
+/// prose against the 30 — so a CLI-door user had a client budget sitting ABOVE the host's kill,
+/// which is the exact configuration in which the work completes and the answer is thrown away
+/// with the user's prompt.
 const CONTEXT_HOOK_HOST_BUDGET_S: u64 = 30;
 
 /// Seconds reserved INSIDE the host budget for everything that is not the HTTP call — `npx`
@@ -694,6 +660,13 @@ const CONTEXT_HOOK_NOTICE_RESERVE_S: u64 = 10;
 /// **DERIVED, never typed** — and the subtraction is evaluated at compile time, so a reserve larger
 /// than the host budget is a build failure rather than a zero-length deadline that aborts instantly.
 ///
+/// 🔴 **A DEADLINE JUSTIFIED AGAINST A NUMBER THE CUSTOMER'S HOST DOES NOT USE IS NOT A
+/// DEADLINE.** [`CONTEXT_HOOK_HOST_BUDGET_S`] is the host's kill — the same number
+/// [`HOOK_TABLE`]'s `UserPromptSubmit` row writes into all three doors — and this is that number
+/// minus a named reserve. Before the derivation existed the two were independent: the budget's
+/// own docstring reasoned against the plugin manifest's 30 s while a CLI-door customer's host
+/// kill was 10 s, so the client waited twice as long as the host would allow.
+///
 /// 🔴 **IT WAS 4 s, AND AT 4 s IT COULD NEVER SUCCEED — 0 OF 15 PROMPTS ENRICHED.** The number was
 /// picked to sit under a 10 s host budget, not measured against the server it calls, and that is
 /// the whole defect: **a deadline chosen from the CALLER's constraint and never checked against the
@@ -715,8 +688,9 @@ const CONTEXT_HOOK_NOTICE_RESERVE_S: u64 = 10;
 /// pre-handler floor before the query is even read**, and it is an auth change nobody is making
 /// today. So this constant is chosen against a floor it cannot lower.
 ///
-/// ⚠️ **20 s IS A JUDGEMENT CALL ON A MEASURED DISTRIBUTION, AND HERE IS ITS LIMIT.** Four numbers
-/// bound it: the observed floor **5.93 s**, the server lane's independent whole-request floor
+/// ⚠️ **20 s IS A JUDGEMENT CALL ON A MEASURED DISTRIBUTION, AND HERE IS ITS LIMIT.** It was
+/// chosen (`03c98bab5`, 2026-09-01) against four numbers measured that afternoon: the
+/// observed floor **5.93 s**, the server lane's independent whole-request floor
 /// **~8.2 s** with `code_terms` at zero, the observed max **22.83 s**, and the host's kill at
 /// **30 s**. It clears 14 of 15 samples; the one it drops is the 22.83 s outlier, and dropping that
 /// is the deadline doing its job, not failing.
@@ -739,7 +713,8 @@ const CONTEXT_HOOK_BUDGET: std::time::Duration =
 /// `{"query": …}` asked for the full code branch on every keystroke. Measured against production
 /// on 2026-09-01 with this hook's exact wire shape: `{"query": Q}` = 133.4 s
 /// (`code_terms` 94.6 s over 200 terms · `code_search` 21.0 s returning ZERO matches ·
-/// `graph_lookup` 3.2 s · `recall` 12.7 s) against `{"query": Q, "code": false}` = 8.4 s. **15.9×.**
+/// `graph_lookup` 3.2 s · `recall` 12.7 s) against `{"query": Q, "code": false}` = 8.4 s —
+/// **15.9×**, with the `recall` field BYTE-IDENTICAL between them.
 /// [`context_recall_lines`] reads ONLY `recall`, so 89% of that work was computed and discarded
 /// unread — the hook paid for citations it then threw away, and the founder's prompt was killed
 /// mid-flight and dropped for it.
@@ -748,10 +723,12 @@ const CONTEXT_HOOK_BUDGET: std::time::Duration =
 /// server fast, and it is not the deadline — [`CONTEXT_HOOK_BUDGET`] is. Both are needed: a
 /// cheaper request still has no bound on it, and a bound alone still wastes 89% of the work.
 ///
-/// ⛔ DO NOT COPY THIS INTO THE SIBLING CALL SITE. `recall` (`top_level.rs`, the `estelle recall`
-/// command) sends the same body and READS `reply["code"]` through `append_citations`; setting
-/// `code: false` there silently deletes its citations. The rule is not "the hook is fast", it is
-/// "ask only for the fields you read".
+/// ⛔ DO NOT COPY THIS INTO THE SIBLING CALL SITES. `Endpoint::Search` has five callers in this
+/// workspace and they do not agree on what they read. `recall` (`top_level.rs`) and the TUI's
+/// `memory.search` dispatch (`main.rs`) both render `reply["code"]`; `/grep`
+/// (`commands.rs`) asks for `"code": true` outright. Only the two callers that read `recall` and
+/// nothing else may suppress it. The rule is not "the hook is fast", it is **"ask only for the
+/// fields you read"**.
 fn context_search_body(query: &str) -> Value {
     json!({"query": query, "code": false})
 }
@@ -940,21 +917,8 @@ where
     };
     // Same scoping rule as `ground` — the hook reads the namespace the sync hook writes.
     // Any failure at all (no credentials, offline, slow server, no memory yet) is total
-    // silence: never a stall and never an error on the hot path of every send.
+    // silence: never an error on the hot path of every send.
     //
-    // 🔴 THAT SENTENCE WAS A CLAIM THIS CODE DID NOT HAVE, AND THE FOUNDER FOUND IT THE HARD WAY.
-    // The comment promised "never a stall", and there was no deadline anywhere: the call simply
-    // inherited whatever the server took. Measured on production 2026-08-31, `POST /search` scoped to
-    // a real repo answers in **13.4 seconds** and returns 54 KB. The Claude Code plugin gives this
-    // hook a 10-second budget, so EVERY prompt the user typed spent ten seconds blocked, was killed
-    // mid-flight, printed `UserPromptSubmit hook timed out after 10s — output discarded`, and threw
-    // the work away. The feature cost ten seconds a message and delivered nothing.
-    //
-    // ⚠️ AND THE SAME PROBE FOUND WORSE NEXT DOOR: `POST /search` with NO repo scope does not answer
-    // at all — 90 seconds, no status, no body — while an empty query WITH a repo correctly 400s in
-    // four. That is a server defect and a resource-exhaustion vector, and it is filed for the serve
-    // lane; it is NOT what this deadline fixes. This fixes only our half: an OPTIONAL enrichment must
-    // never be able to hold a person's keystroke hostage, whatever the server does.
     // ⚠️ THE HALF THIS DEADLINE DOES NOT COVER, NAMED RATHER THAN HIDDEN. `Api::resolve` is
     // SYNCHRONOUS — it reads `~/.estelle/auth.json` (no keychain, no network) and builds the
     // reqwest client. It is deliberately NOT inside the timeout below, because wrapping a
@@ -978,6 +942,18 @@ where
 /// SessionStart: the returning-customer brief, from local evidence only (session_gap makes no
 /// network call). Silent in every failure mode — the one thing it must never do is speak when
 /// it cannot tell whether it should.
+///
+/// 🔴 **IT ALSO CARRIES THE STALE-PLUGIN NOTICE, AND THAT ADDS NO LATENCY.** The founder's own
+/// Claude Code ran the plugin two releases behind for days and nothing told him
+/// (`plugin_currency`, which documents the measurement). This row's host budget is **5 seconds**
+/// (`HOOK_TABLE` below) and a cold `npx` path has been measured at 162s, so
+/// [`plugin_currency::welcome_line`] reads a cached answer off disk and NEVER blocks on the
+/// network — cold cache means silence this session and a detached refresh for the next one.
+///
+/// ⚠️ The two notices are INDEPENDENT. The session brief being empty must not suppress the
+/// staleness line: they answer different questions, and the early `return` that used to sit
+/// between them would have made a stale plugin invisible to every first-time-in-this-repo
+/// session.
 async fn welcome_hook(payload: &HookPayload) -> Vec<String> {
     let cwd = if payload.cwd.trim().is_empty() {
         std::env::current_dir().unwrap_or_default()
@@ -987,16 +963,21 @@ async fn welcome_hook(payload: &HookPayload) -> Vec<String> {
     if cwd.as_os_str().is_empty() {
         return Vec::new();
     }
+
+    let mut messages = Vec::new();
     let context = session_gap::welcome_context(&cwd, chrono::Utc::now()).await;
-    if context.is_empty() {
-        return Vec::new();
+    if !context.is_empty() {
+        let text = context.human_lines.join("\n");
+        messages.push(hook_message(
+            Some(text),
+            Some(context.model_context()),
+            "SessionStart",
+        ));
     }
-    let text = context.human_lines.join("\n");
-    vec![hook_message(
-        Some(text),
-        Some(context.model_context()),
-        "SessionStart",
-    )]
+    if let Some(line) = plugin_currency::welcome_line().await {
+        messages.push(hook_message(Some(line), None, "SessionStart"));
+    }
+    messages
 }
 
 // A checkpoint is a NETWORK WRITE of the customer's conversation, so what it carries is a
@@ -1922,7 +1903,14 @@ fn hook_sync_refusal(path: &str, content: &str) -> Option<String> {
     })
 }
 
-/// The command a host runs for every hook -- the SAME string the published PLUGIN writes.
+/// The command `install-hooks` writes for every hook, on both hosts.
+///
+/// ⚠️ **IT IS NO LONGER THE SAME STRING THE PLUGIN WRITES, AND THAT IS DELIBERATE.**
+/// [`PLUGIN_HOOK_RUNNER`] stays on `npx` because a plugin customer may never have run
+/// `estelle` at all, so that door has no PATH guarantee to lean on. `install-hooks` is the
+/// CLI-user path BY DEFINITION — they ran `npm i -g @fatelabs/estelle`, so the binary is on
+/// PATH — and the two doors therefore have genuinely different constraints. An assertion
+/// that they are byte-identical would now be forcing a false statement green.
 ///
 /// 🔴 **A HOOK COMMAND MUST NOT NAME A PATH ON ONE MACHINE.** This used to be
 /// `std::env::current_exe()`, the absolute path of whichever binary happened to run
@@ -1935,16 +1923,37 @@ fn hook_sync_refusal(path: &str, content: &str) -> Option<String> {
 ///     trust hash to `Modified`, silently unregistering every handler.
 ///   * it pointed into a build directory whenever a developer installed from source, so a
 ///     `cargo clean` broke the install with no error at hook time.
+///
 /// This is the same defect as the bounded-context hook that "shipped to nobody" because it ran from
 /// an absolute path on one machine. Second file, same shape.
 ///
-/// ⚠️ **`@0` IS DELIBERATELY NOT A VERSION LOCK AND MUST NOT BE READ AS ONE.** Measured: `npx
-/// <pkg>@<range>` is a SATISFACTION TEST against what is already installed, not "fetch the newest
-/// match" -- with 8.3.0 present, `npx -y uuid@8` created ZERO cache entries while `uuid@9` created
-/// one. So this string resolves to whatever 0.x the machine already has, and only fetches when it
-/// has none. It is kept BYTE-IDENTICAL to the published plugin's command on purpose: two spellings
-/// of "how do you run an Estelle hook" is two owners of one fact.
-const PORTABLE_HOOK_RUNNER: &str = "npx -y @fatelabs/estelle@0";
+/// 🔴 **AND IT IS NOT `npx` EITHER — MEASURED, AND THE COLD NUMBER IS DISQUALIFYING.** This
+/// constant briefly read `npx -y @fatelabs/estelle@0`. Measured as a hook runner:
+///
+/// ```text
+///   npx -y @fatelabs/estelle@0     warm 2144 ms   OFFLINE / COLD CACHE 70,580 ms   0 bytes
+///   plugin-root launcher           warm  849 ms   offline 40 ms   583-byte JSON naming its silence
+///   bare binary (floor)            warm  839 ms
+/// ```
+///
+/// **70,580 ms is 2.35x the 30 s host budget** ([`CONTEXT_HOOK_HOST_BUDGET_S`]): the host kills the
+/// hook, DISCARDS its output, and the customer pays a 30-second stall on a turn that is silently
+/// ungrounded — the exact defect this module exists to remove, re-entering through the runner. The
+/// +1.3 s warm is the smaller half of the argument; the cold path is the disqualifier. The same
+/// cold-`npx` shape is measured independently at 162 s in [`welcome_hook`]'s docstring.
+///
+/// ⚠️ **`@0` WAS ALSO BROKEN BY CONSTRUCTION.** `@0` is the range `>=0.0.0 <1.0.0`, so on the day
+/// 1.0.0 ships every customer holding that string freezes on the last 0.x — permanently, silently,
+/// with no error at hook time. (It is additionally a SATISFACTION TEST, not "fetch the newest
+/// match": with 8.3.0 present, `npx -y uuid@8` created ZERO cache entries while `uuid@9` created
+/// one — so the string resolves to whatever 0.x the machine already has.)
+///
+/// ▶ **SO IT IS A BARE PATH NAME.** `estelle` resolves through PATH, which means it FOLLOWS
+/// UPGRADES — the whole reason `current_exe()` was wrong — at ~0 ms over the bare binary, with no
+/// network round trip on any prompt. It still contains no machine-local path, so
+/// `no_installed_hook_command_names_a_machine_local_path` and its negative control are unchanged
+/// in meaning and still pass.
+const PORTABLE_HOOK_RUNNER: &str = "estelle";
 
 fn install_hooks() -> Result<Vec<String>, String> {
     let claude_path = claude_settings_path()?;
@@ -1993,18 +2002,6 @@ fn codex_hooks_path() -> Result<PathBuf, String> {
         .ok_or_else(|| "could not locate CODEX_HOME for Codex hooks".to_string())
 }
 
-fn shell_command_path(path: &Path) -> String {
-    let value = path.to_string_lossy();
-    if value
-        .chars()
-        .all(|character| character.is_ascii_alphanumeric() || "/._-".contains(character))
-    {
-        value.into_owned()
-    } else {
-        format!("'{}'", value.replace('\'', "'\\''"))
-    }
-}
-
 fn install_hooks_at(path: &Path, host: HookHost, runner: &str) -> Result<(), String> {
     let existed = path.exists();
     let mut settings = read_json_object_or_empty(path)?;
@@ -2048,8 +2045,9 @@ fn read_json_object_or_empty(path: &Path) -> Result<Value, String> {
     Ok(value)
 }
 
-/// The host a hook file is written for. One table, two renderings — the per-host deltas are
-/// enumerated in `estelle_hook_groups` / `hook_timeout` and pinned by the contract tests.
+/// The host a hook file is written for. One table, THREE renderings — the per-host deltas are
+/// enumerated in `estelle_hook_groups` / `hook_timeout` / [`plugin_hooks_manifest`] and pinned by
+/// the contract tests.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum HookHost {
     Claude,
@@ -2063,25 +2061,59 @@ struct HookRow {
     event: &'static str,
     matcher: Option<&'static str>,
     mode: &'static str,
+    /// 🔴 THE ONE OWNER OF THIS ROW'S HOST BUDGET. Every door reads THIS field: the Claude
+    /// settings file, the Codex hooks file, and the plugin manifest shipped in
+    /// `estelle-plugin/hooks/hooks.json` (rendered by [`plugin_hooks_manifest`] and pinned
+    /// byte-for-byte by `the_plugin_manifest_is_generated_from_the_one_hook_table`). It used to
+    /// own only two of the three, and the third drifted for exactly as long as nobody compared
+    /// them — see that test's docstring for the four rows that disagreed.
     timeout: u64,
     /// Claude Code only. Codex skips async handlers WITH A WARNING (vendored codex
     /// hooks/src/engine/discovery.rs:480-506), so the Codex file never carries the key — an
     /// async marker there would mean "installed but cannot fire".
     claude_async: bool,
+    /// Whether this row ships to the PLUGIN door as well as the two `install-hooks` doors.
+    ///
+    /// Read only by [`plugin_hooks_manifest`], which is a verification artifact rather than a
+    /// runtime path — hence the `dead_code` allowance, whose reason is exactly that: the shipped
+    /// manifest is a checked-in file, and this field is what makes the check possible.
+    ///
+    /// ⚠️ A DECLARED EXEMPTION, NOT A SILENT ONE. `shift` is `false` because the shipped
+    /// manifest has never carried it: `estelle-plugin/hooks/hooks.json` is inside a per-version
+    /// SHA-256 cache contract (`scripts/test-plugin-identity.py`), and adding a hook that fires
+    /// on every `Read` is a product decision with a release attached, not a drift fix. It is
+    /// written down here so the guard can enforce the absence instead of being blind to it.
+    #[cfg_attr(not(test), allow(dead_code))]
+    plugin: bool,
+    /// Plugin door only. The manifest marks BOTH long-running writers async; the Claude
+    /// settings door marks only `Stop` (see [`HookRow::claude_async`] — Codex would skip an
+    /// async `sync` row with a warning, and `install-hooks` writes both hosts from one shape).
+    #[cfg_attr(not(test), allow(dead_code))]
+    plugin_async: bool,
 }
 
-/// THE hook contract — every row `install-hooks` writes, for both hosts, from one table.
+/// THE hook contract — every row `install-hooks` writes, for both hosts, plus the plugin
+/// manifest, from one table.
 ///
-/// The async PostToolUse sync row the JS hook ships is DROPPED on purpose (founder's order):
-/// on Codex it is skipped with a warning, i.e. an installed hook that cannot fire. `async`
-/// survives only on the Stop checkpoint row, Claude side.
+/// The async PostToolUse sync row the JS hook ships is DROPPED on the `install-hooks` doors
+/// (founder's order): on Codex it is skipped with a warning, i.e. an installed hook that cannot
+/// fire. `async` survives only on the Stop checkpoint row, Claude side.
+///
+/// 🔴 THE THREE SERVER-BOUND BUDGETS ARE 30 s BECAUSE THAT IS WHAT WAS MEASURED, AND THIS TABLE
+/// USED TO SAY OTHERWISE THAN THE ARTIFACT CUSTOMERS RUN. `ground` was 15 s against a measured
+/// 16.6 s call (`416f6d6ac`); `context` was 10 s against a measured 93.6 s median at the
+/// founder's prompt lengths; `sync` was 20 s. v0.2.32 raised all three to 30 s **in the plugin
+/// manifest only**, so the same hook got 30 s through the plugin door and 10–20 s through
+/// `estelle install-hooks` — measured off the shipped 0.2.32 binary, four rows disagreed.
 const HOOK_TABLE: &[HookRow] = &[
     HookRow {
         event: "PreToolUse",
         matcher: Some("Write|Edit"),
         mode: "ground",
-        timeout: 15,
+        timeout: 30,
         claude_async: false,
+        plugin: true,
+        plugin_async: false,
     },
     HookRow {
         event: "PreToolUse",
@@ -2089,6 +2121,8 @@ const HOOK_TABLE: &[HookRow] = &[
         mode: "guard",
         timeout: 10,
         claude_async: false,
+        plugin: true,
+        plugin_async: false,
     },
     HookRow {
         event: "PostToolUse",
@@ -2096,13 +2130,17 @@ const HOOK_TABLE: &[HookRow] = &[
         mode: "shift",
         timeout: 5,
         claude_async: false,
+        plugin: false,
+        plugin_async: false,
     },
     HookRow {
         event: "PostToolUse",
         matcher: Some("Write|Edit"),
         mode: "sync",
-        timeout: 20,
+        timeout: 30,
         claude_async: false,
+        plugin: true,
+        plugin_async: true,
     },
     HookRow {
         event: "PostToolUse",
@@ -2110,6 +2148,8 @@ const HOOK_TABLE: &[HookRow] = &[
         mode: "distil",
         timeout: 10,
         claude_async: false,
+        plugin: true,
+        plugin_async: false,
     },
     HookRow {
         event: "Stop",
@@ -2117,6 +2157,8 @@ const HOOK_TABLE: &[HookRow] = &[
         mode: "checkpoint",
         timeout: 30,
         claude_async: true,
+        plugin: true,
+        plugin_async: true,
     },
     HookRow {
         event: "PreCompact",
@@ -2124,6 +2166,8 @@ const HOOK_TABLE: &[HookRow] = &[
         mode: "checkpoint",
         timeout: 30,
         claude_async: false,
+        plugin: true,
+        plugin_async: false,
     },
     HookRow {
         event: "SessionEnd",
@@ -2131,6 +2175,8 @@ const HOOK_TABLE: &[HookRow] = &[
         mode: "checkpoint",
         timeout: 30,
         claude_async: false,
+        plugin: true,
+        plugin_async: false,
     },
     HookRow {
         event: "SessionStart",
@@ -2138,6 +2184,8 @@ const HOOK_TABLE: &[HookRow] = &[
         mode: "welcome",
         timeout: 5,
         claude_async: false,
+        plugin: true,
+        plugin_async: false,
     },
     HookRow {
         event: "UserPromptSubmit",
@@ -2148,6 +2196,8 @@ const HOOK_TABLE: &[HookRow] = &[
         // client deadline could never fire on their machine. See [`CONTEXT_HOOK_HOST_BUDGET_S`].
         timeout: CONTEXT_HOOK_HOST_BUDGET_S,
         claude_async: false,
+        plugin: true,
+        plugin_async: false,
     },
 ];
 
@@ -2193,6 +2243,95 @@ fn estelle_hook_groups(host: HookHost, runner: &str) -> Vec<(String, Value)> {
             (row.event.to_string(), group)
         })
         .collect()
+}
+
+#[cfg(test)]
+/// The runner the PLUGIN door invokes. It is `npx`, not the installed binary, because a plugin
+/// customer may never have run `estelle` at all — and it is pinned to a major (ADR 0015).
+const PLUGIN_HOOK_RUNNER: &str = "npx -y @fatelabs/estelle@0";
+
+#[cfg(test)]
+/// The `description` field of the shipped plugin manifest, quoted verbatim.
+///
+/// ✅ THE TWO FALSE SENTENCES ARE GONE, AND THE VERSION BUMP IS WHAT PAID FOR IT.
+///
+/// Until 0.2.33 this string told the reader to run a `plugin-hooks` subcommand that does not
+/// exist and to edit a `cli/bin/hook.js` that does not exist — grep both, in this repo, and you
+/// get nothing. The sentences survived because the file is byte-frozen:
+/// `scripts/test-plugin-identity.py` hashes every byte under `estelle-plugin/` into a SHA-256
+/// keyed by the workspace version, under the rule *"never rewrite an existing version's digest to
+/// bless changed bytes under a cache key customers already hold"*. v0.2.32 was published, so
+/// correcting the text COST a version bump — and the previous docstring said, correctly, to fix
+/// the sentence in the same commit that bumps the version. The version moved to 0.2.33, so it is
+/// fixed here and 0.2.33 gets its own digest. **v0.2.32's digest is untouched.**
+///
+/// The replacement names the real owner: [`HOOK_TABLE`] in this file, rendered by
+/// [`plugin_hooks_manifest`] and pinned byte-for-byte by
+/// `the_plugin_manifest_is_generated_from_the_one_hook_table`.
+const PLUGIN_MANIFEST_DESCRIPTION: &str = "Estelle — memory + the grounding gate, always on. \
+    GENERATED from `HOOK_TABLE` in tui/src/top_level.rs; do not edit this file — change that \
+    table and re-run its test with ESTELLE_REGENERATE_PLUGIN_HOOKS=1. These hooks execute \
+    commands on the customer's machine: the runner is pinned to a major (ADR 0015), every \
+    settings write is backup-before-write and refuses an unparseable file.";
+
+#[cfg(test)]
+/// The PLUGIN door's manifest — `estelle-plugin/hooks/hooks.json` — rendered from [`HOOK_TABLE`].
+///
+/// 🔴 THIS EXISTS BECAUSE THE TIMEOUT HAD TWO OWNERS AND ONLY ONE OF THEM EVER MOVED. v0.2.32
+/// raised `ground`, `sync` and `context` to 30 s by hand-editing the manifest; [`HOOK_TABLE`],
+/// which is what `estelle install-hooks` writes, still said 15 / 20 / 10. Same product, same
+/// hook, a different budget decided by which door the customer came through. Two owners that
+/// agree are indistinguishable from one until they drift, and this pair had drifted twice.
+///
+/// The per-door deltas are DATA on the row, not a second list: `plugin` says whether the row
+/// ships here at all, `plugin_async` carries the manifest's own async marking, and the command
+/// shape (no `--event`, `statusMessage` including the word `hook`) is written once, here. The
+/// timeout is read from `row.timeout` and from nowhere else.
+///
+/// Returns the exact bytes of the file, trailing newline included, so the guard can compare
+/// bytes rather than a shape — a structural comparison would pass over reordered keys and over a
+/// description nobody is reading.
+fn plugin_hooks_manifest() -> Result<String, serde_json::Error> {
+    let mut events: Vec<(String, Vec<Value>)> = Vec::new();
+    for row in HOOK_TABLE.iter().filter(|row| row.plugin) {
+        let mut handler = serde_json::Map::new();
+        handler.insert("type".to_string(), json!("command"));
+        handler.insert(
+            "command".to_string(),
+            json!(format!("{PLUGIN_HOOK_RUNNER} hook {}", row.mode)),
+        );
+        handler.insert("timeout".to_string(), json!(row.timeout));
+        if row.plugin_async {
+            handler.insert("async".to_string(), json!(true));
+        }
+        handler.insert(
+            "statusMessage".to_string(),
+            json!(format!("Estelle hook {}", row.mode)),
+        );
+        let mut group = serde_json::Map::new();
+        if let Some(matcher) = row.matcher {
+            group.insert("matcher".to_string(), json!(matcher));
+        }
+        group.insert("hooks".to_string(), json!([Value::Object(handler)]));
+        let group = Value::Object(group);
+        match events.iter_mut().find(|(name, _)| name == row.event) {
+            Some((_, groups)) => groups.push(group),
+            None => events.push((row.event.to_string(), vec![group])),
+        }
+    }
+    let mut hooks = serde_json::Map::new();
+    for (event, groups) in events {
+        hooks.insert(event, Value::Array(groups));
+    }
+    let mut root = serde_json::Map::new();
+    root.insert(
+        "description".to_string(),
+        json!(PLUGIN_MANIFEST_DESCRIPTION),
+    );
+    root.insert("hooks".to_string(), Value::Object(hooks));
+    let mut text = serde_json::to_string_pretty(&Value::Object(root))?;
+    text.push('\n');
+    Ok(text)
 }
 
 fn merge_estelle_hooks(settings: &mut Value, host: HookHost, runner: &str) -> Result<(), String> {
@@ -2428,6 +2567,7 @@ async fn run_authenticated(
         | Command::Mcp { .. }
         | Command::McpServer
         | Command::Screens { .. }
+        | Command::Demo { .. }
         | Command::Upgrade { .. }
         | Command::Version => Err("local command reached the remote dispatcher".to_string()),
     }
@@ -2624,6 +2764,23 @@ fn collect_files(
         });
     }
     Ok((files, skipped))
+}
+
+/// Measure the same bounded, git-visible inventory `/sweep` would send, but retain only path and byte
+/// count for the read-only capacity endpoint. Content never leaves this function.
+pub(crate) fn sweep_estimate_payload(root: &Path) -> Result<Vec<Value>, String> {
+    let (files, _skipped) = collect_files(root, &[])?;
+    let payload = files
+        .into_iter()
+        .map(|file| json!({"path": file.path, "bytes": file.content.len()}))
+        .collect::<Vec<_>>();
+    assert!(payload.len() <= INGEST_MAX_FILES);
+    assert!(
+        payload
+            .iter()
+            .all(|row| row.get("path").is_some() && row.get("bytes").is_some())
+    );
+    Ok(payload)
 }
 
 fn bounded_inventory(paths: Vec<PathBuf>) -> Vec<PathBuf> {
@@ -2875,12 +3032,18 @@ where
         )
         .await
         .map_err(SweepFailure::Client)?;
+    // 🔴 **READ THE WHOLE ANSWER, ON BOTH BRANCHES.** `fit_report` measures fourteen fields and
+    // this call site used to read one of them, then rendered the refusal through `concise_value`
+    // — whose `sensitive_key` guard strikes out every key containing `token`, which is every token
+    // COUNT in the body. A user was refused with no number and no sentence. See `sweep_estimate`.
+    let estimate_report = crate::sweep_estimate::estimate_lines(&estimate);
     if estimate.get("fits") == Some(&Value::Bool(false)) {
         return Err(SweepFailure::Local(format!(
-            "this sweep does not fit the account capacity: {}",
-            concise_value(&estimate)
+            "this sweep does not fit the account capacity:\n{}",
+            estimate_report.join("\n")
         )));
     }
+    lines.extend(estimate_report);
     match sweep_transport(file_count) {
         SweepTransport::Sync => {
             report(SweepProgress {
@@ -3015,7 +3178,7 @@ where
                         .get("message")
                         .and_then(Value::as_str)
                         .filter(|message| !message.trim().is_empty())
-                        .unwrap_or("Repo swept. Your agent can now recall and verify against it.")
+                        .unwrap_or("Repo swept. Recall and verify are live on it.")
                         .to_string(),
                 );
                 report(SweepProgress {
@@ -3619,7 +3782,7 @@ fn await_github_callback(
                         write_github_callback_response(
                             &mut stream,
                             200,
-                            "Estelle: GitHub authorized. You can close this tab and return to your terminal.\n",
+                            "Estelle: GitHub authorized. Close this tab; the terminal has it.\n",
                         )?;
                         return Ok(pair);
                     }
@@ -3627,7 +3790,7 @@ fn await_github_callback(
                         write_github_callback_response(
                             &mut stream,
                             400,
-                            "Estelle: GitHub authorization failed. Close this tab and try again in your terminal.\n",
+                            "Estelle: GitHub authorization failed. Close this tab; retry in the terminal.\n",
                         )?;
                         return Err(error);
                     }
@@ -4406,7 +4569,7 @@ fn suite_empty_message(suite: &str, action: &str, reply: &Value) -> Option<Strin
             })
         }
         ("monitor", "alerts") if empty("rules") => {
-            Some("No alert rules exist. Nothing will page you when production breaks.".to_string())
+            Some("No alert rules exist. A production break pages nobody.".to_string())
         }
         ("monitor", "uptime") if empty("status") || empty("checks") => {
             Some("No uptime checks are registered.".to_string())
@@ -6202,13 +6365,21 @@ tests/test_serve.py:88: AssertionError\n\
         merge_estelle_hooks(&mut value, HookHost::Claude, "estelle").expect("hook declaration");
         let hooks = &value["hooks"];
 
-        // (event, matcher, mode, timeout) — the contract, row for row. `async` is asserted
-        // separately because it may appear on exactly one row of the whole table.
+        // (event, matcher, mode, timeout) — the contract, row for row, WRITTEN OUT rather than
+        // derived: a list built from HOOK_TABLE could never catch a regression in HOOK_TABLE.
+        // `async` is asserted separately because it may appear on exactly one row of the table.
+        //
+        // 🔴 ground/sync/context READ 15/20/10 UNTIL 2026-09-02 AND THAT WAS THE DEFECT, NOT THE
+        // GUARD. v0.2.32 raised those three to 30 s in the plugin manifest only; this test then
+        // sat green over the numbers its own sibling commit had declared wrong, because nothing
+        // compared the two doors. `the_plugin_manifest_is_generated_from_the_one_hook_table` is
+        // the comparison that was missing; these literals are the second, independent statement
+        // of the same contract, and they are meant to be edited deliberately, together.
         let expected: [(&str, Option<&str>, &str, u64); 10] = [
-            ("PreToolUse", Some("Write|Edit"), "ground", 15),
+            ("PreToolUse", Some("Write|Edit"), "ground", 30),
             ("PreToolUse", Some("Bash"), "guard", 10),
             ("PostToolUse", Some("Read|Write|Edit"), "shift", 5),
-            ("PostToolUse", Some("Write|Edit"), "sync", 20),
+            ("PostToolUse", Some("Write|Edit"), "sync", 30),
             ("PostToolUse", Some("Bash"), "distil", 10),
             ("Stop", None, "checkpoint", 30),
             ("PreCompact", None, "checkpoint", 30),
@@ -6269,10 +6440,10 @@ tests/test_serve.py:88: AssertionError\n\
         let hooks = &value["hooks"];
 
         let expected: [(&str, Option<&str>, &str, u64); 10] = [
-            ("PreToolUse", Some("Write|Edit"), "ground", 15),
+            ("PreToolUse", Some("Write|Edit"), "ground", 30),
             ("PreToolUse", Some("Bash"), "guard", 10),
             ("PostToolUse", Some("Read|Write|Edit"), "shift", 5),
-            ("PostToolUse", Some("Write|Edit"), "sync", 20),
+            ("PostToolUse", Some("Write|Edit"), "sync", 30),
             ("PostToolUse", Some("Bash"), "distil", 10),
             ("Stop", None, "checkpoint", 30),
             ("PreCompact", None, "checkpoint", 30),
@@ -6311,6 +6482,176 @@ tests/test_serve.py:88: AssertionError\n\
                 "Codex never carries async ({event} {mode})"
             );
         }
+    }
+
+    /// The manifest a PLUGIN customer installs, read off disk at compile time. `include_str!`
+    /// rather than a runtime read: the bytes that ship are the bytes this test compares, and a
+    /// test that reads a file at runtime silently passes when the file has moved.
+    const SHIPPED_PLUGIN_MANIFEST: &str = include_str!("../../estelle-plugin/hooks/hooks.json");
+
+    /// 🔴 THE TIMEOUT HAD TWO OWNERS AND NOTHING COMPARED THEM.
+    ///
+    /// v0.2.32 raised three hook budgets to 30 s by editing `estelle-plugin/hooks/hooks.json`.
+    /// [`HOOK_TABLE`] — which is what `estelle install-hooks` writes — was not touched, and no
+    /// guard anywhere in this repository read both files. Measured off the SHIPPED v0.2.32
+    /// binary (`install-hooks` into a sandboxed `HOME`) against the SHIPPED manifest, **four**
+    /// rows disagreed, not the three that were reported:
+    ///
+    /// ```text
+    ///   event/matcher/mode                      CLI door      plugin door
+    ///   PreToolUse  Write|Edit        ground    15            30
+    ///   PostToolUse Write|Edit        sync      20            30 + async
+    ///   PostToolUse Read|Write|Edit   shift      5            ABSENT
+    ///   UserPromptSubmit              context   10            30
+    /// ```
+    ///
+    /// So this asserts BYTE EQUALITY between the shipped manifest and [`plugin_hooks_manifest`].
+    /// Bytes, not shape: a structural comparison passes over reordered keys, over a description
+    /// nobody reads, and over whitespace that changes the SHA-256 in
+    /// `scripts/test-plugin-identity.py` — which is a per-version cache contract, so a byte that
+    /// moves without a version bump is itself a defect this test must surface.
+    ///
+    /// ⚠️ WHAT IT DOES NOT PROVE. It pins the two doors to one table; it does not prove either
+    /// number is *right*. The 30 s figures are the plugin lane's measurement (`5fa67c32d`), and
+    /// `shift`'s absence from the plugin door is a DECLARED exemption (`HookRow::plugin`), not a
+    /// verdict that the plugin door should never have it.
+    ///
+    /// ▶ TO REGENERATE, DO NOT COPY-PASTE THE DIFF — run the generator, the way `insta` blesses a
+    /// snapshot: `ESTELLE_REGENERATE_PLUGIN_HOOKS=1 cargo test -p estelle-tui --bin estelle
+    /// the_plugin_manifest_is_generated`. A hand-copied expectation is a second list again, and
+    /// this whole commit exists because a number was typed in two places. The write is behind an
+    /// explicit environment variable so an ordinary run can never move the file.
+    ///
+    /// 🔗 AND THE REGENERATION IS SUPPOSED TO BREAK SOMETHING. `estelle-plugin/**` is inside a
+    /// per-version SHA-256 in `scripts/test-plugin-identity.py`, so regenerating after a table
+    /// change turns THAT guard red until the workspace version is bumped and a new digest is
+    /// registered. The two guards compose on purpose: you cannot change a shipped hook budget
+    /// without also admitting that customers holding the old version have the old one.
+    #[test]
+    fn the_plugin_manifest_is_generated_from_the_one_hook_table() {
+        let generated = plugin_hooks_manifest().expect("the manifest serialises");
+        if std::env::var_os("ESTELLE_REGENERATE_PLUGIN_HOOKS").is_some() {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../estelle-plugin/hooks/hooks.json");
+            std::fs::write(&path, &generated).expect("regenerate the plugin manifest");
+            panic!(
+                "REGENERATED {} from HOOK_TABLE. Re-run without \
+                 ESTELLE_REGENERATE_PLUGIN_HOOKS, and expect \
+                 scripts/test-plugin-identity.py to demand a version bump if the bytes moved.",
+                path.display()
+            );
+        }
+        assert_eq!(
+            generated, SHIPPED_PLUGIN_MANIFEST,
+            "estelle-plugin/hooks/hooks.json has drifted from HOOK_TABLE. It is GENERATED — \
+             re-run with ESTELLE_REGENERATE_PLUGIN_HOOKS=1, or change the table. Do not hand-edit \
+             one door."
+        );
+    }
+
+    /// The plugin door and the `install-hooks` doors must never disagree about a row they share.
+    ///
+    /// Byte equality above already implies this, and it is asserted separately anyway because the
+    /// two failures read completely differently: a byte diff says "the file moved", this says
+    /// "the two doors give the same hook a different budget", which is the defect. It also names
+    /// the rows the plugin door does not carry, so an exemption cannot grow silently.
+    #[test]
+    fn both_doors_give_every_shared_hook_the_same_budget() {
+        let manifest: Value =
+            serde_json::from_str(SHIPPED_PLUGIN_MANIFEST).expect("the shipped manifest is JSON");
+        let mut shipped: Vec<(String, String, u64)> = Vec::new();
+        for (event, groups) in manifest["hooks"].as_object().expect("hooks object") {
+            for group in groups.as_array().expect("event groups") {
+                for handler in group["hooks"].as_array().expect("handlers") {
+                    let command = handler["command"].as_str().expect("command");
+                    let mode = command
+                        .rsplit(" hook ")
+                        .next()
+                        .expect("every plugin command names its mode");
+                    let timeout = handler["timeout"].as_u64().expect("timeout");
+                    shipped.push((event.clone(), mode.to_string(), timeout));
+                }
+            }
+        }
+        assert!(
+            !shipped.is_empty(),
+            "parsed nothing out of the shipped manifest — this guard would pass over an empty \
+             file, so the vacuity check is the assertion"
+        );
+
+        let mut exempt: Vec<&str> = Vec::new();
+        for row in HOOK_TABLE {
+            let found = shipped
+                .iter()
+                .find(|(event, mode, _)| event == row.event && mode == row.mode);
+            match (row.plugin, found) {
+                (true, Some((_, _, timeout))) => assert_eq!(
+                    *timeout, row.timeout,
+                    "{}/{}: the plugin door says {timeout}s and HOOK_TABLE says {}s — one hook, \
+                     one budget, whichever door the customer came through",
+                    row.event, row.mode, row.timeout
+                ),
+                (true, None) => panic!(
+                    "{}/{} is declared plugin:true and is missing from the shipped manifest",
+                    row.event, row.mode
+                ),
+                (false, Some(_)) => panic!(
+                    "{}/{} is declared plugin:false but the shipped manifest carries it",
+                    row.event, row.mode
+                ),
+                (false, None) => exempt.push(row.mode),
+            }
+        }
+        assert_eq!(
+            exempt,
+            vec!["shift"],
+            "the plugin door's exemptions are enumerated, not inferred — a new one needs a \
+             written reason on HookRow::plugin before it lands here"
+        );
+        assert_eq!(
+            shipped.len(),
+            HOOK_TABLE.iter().filter(|row| row.plugin).count(),
+            "the shipped manifest carries a handler HOOK_TABLE does not declare"
+        );
+    }
+
+    /// 🔴 THE CLIENT'S OWN DEADLINE MUST SIT UNDER THE HOST'S KILL — ON **EVERY** DOOR.
+    ///
+    /// This is the third form of the two-owners defect and the worst one. [`CONTEXT_HOOK_BUDGET`]
+    /// was justified in prose against the plugin manifest's 30 s while a CLI-door user's host
+    /// budget was [`HOOK_TABLE`]'s 10 s — a 20 s client budget sitting ABOVE the host's kill, in
+    /// exactly the configuration where the work completes and the answer is discarded with the
+    /// user's prompt. Prose cannot hold that invariant; arithmetic can, so the constant is now
+    /// derived by subtraction and this asserts the derivation against BOTH doors' real numbers.
+    #[test]
+    fn the_context_budget_sits_under_the_host_kill_on_every_door() {
+        let row = HOOK_TABLE
+            .iter()
+            .find(|row| row.event == "UserPromptSubmit" && row.mode == "context")
+            .expect("the table declares the context hook");
+        assert_eq!(
+            row.timeout, CONTEXT_HOOK_HOST_BUDGET_S,
+            "the table row and the constant the budget is derived from are one owner"
+        );
+
+        let manifest: Value =
+            serde_json::from_str(SHIPPED_PLUGIN_MANIFEST).expect("the shipped manifest is JSON");
+        let plugin_kill = manifest["hooks"]["UserPromptSubmit"][0]["hooks"][0]["timeout"]
+            .as_u64()
+            .expect("the plugin door declares a context timeout");
+
+        for (door, kill) in [("install-hooks", row.timeout), ("plugin", plugin_kill)] {
+            assert!(
+                CONTEXT_HOOK_BUDGET < Duration::from_secs(kill),
+                "{door} door kills the context hook at {kill}s but the client waits \
+                 {CONTEXT_HOOK_BUDGET:?} — the work finishes and is thrown away with the prompt"
+            );
+        }
+        assert_eq!(
+            CONTEXT_HOOK_BUDGET,
+            Duration::from_secs(CONTEXT_HOOK_HOST_BUDGET_S - CONTEXT_HOOK_NOTICE_RESERVE_S),
+            "the budget is derived from the host kill, never typed independently"
+        );
     }
 
     #[test]
@@ -7416,10 +7757,10 @@ tests/test_serve.py:88: AssertionError\n\
         );
     }
 
-    /// ⛔ THE TRAP, PINNED. The sibling `/search` caller — the `estelle recall` command — sends
-    /// the same endpoint and READS `reply["code"]` through `append_citations`. Copying
-    /// `code: false` there would silently delete every citation it prints, with no test going
-    /// red anywhere near it. So this asserts the two bodies are DIFFERENT SHAPES on purpose:
+    /// ⛔ THE TRAP, PINNED. The sibling `/search` callers — the `estelle recall` command and the
+    /// TUI's `memory.search` dispatch — send the same endpoint and READ `reply["code"]`. Copying
+    /// `code: false` there would silently delete every citation they print, with no test going
+    /// red anywhere near them. So this asserts the two bodies are DIFFERENT SHAPES on purpose:
     /// the hook suppresses code because it never reads it; `recall` must not.
     #[test]
     fn only_the_caller_that_ignores_code_is_allowed_to_suppress_it() {
@@ -7789,7 +8130,7 @@ tests/test_serve.py:88: AssertionError\n\
         let alerts = render_suite_reply("monitor", "alerts", &json!({"rules": [], "active": []}))
             .expect("alerts")
             .join("\n");
-        assert!(alerts.contains("Nothing will page you"));
+        assert!(alerts.contains("pages nobody"), "{alerts}");
 
         let uptime = render_suite_reply(
             "monitor",
@@ -8258,33 +8599,65 @@ mod portable_hook_runner_tests {
             for (event, group) in estelle_hook_groups(host, PORTABLE_HOOK_RUNNER) {
                 let rendered = serde_json::to_string(&group).expect("group serialises");
                 assert!(
-                    !rendered.contains("/Users/") && !rendered.contains("/home/")
-                        && !rendered.contains("target/release") && !rendered.contains("target/debug"),
+                    !rendered.contains("/Users/")
+                        && !rendered.contains("/home/")
+                        && !rendered.contains("target/release")
+                        && !rendered.contains("target/debug"),
                     "{event:?} on {host:?} wrote a machine-local path: {rendered}"
                 );
                 assert!(
-                    rendered.contains("npx -y @fatelabs/estelle@0 hook"),
+                    rendered.contains("estelle hook"),
                     "{event:?} on {host:?} did not use the portable runner: {rendered}"
                 );
             }
         }
     }
 
-    /// The two install paths must AGREE. The plugin's published hooks.json uses this exact string;
-    /// a second spelling here is two owners of one fact, and they will drift.
+    /// 🔴 THE TWO DOORS SPELL THE RUNNER DIFFERENTLY, ON PURPOSE — AND THIS PINS THE REASON.
+    ///
+    /// This test used to assert the two strings were BYTE-IDENTICAL. That assertion is now FALSE:
+    /// `install-hooks` writes a bare PATH name (`estelle`) because its user installed the package
+    /// and has the binary on PATH, while the plugin door keeps `npx` because a plugin customer may
+    /// never have run `estelle` at all. Forcing the old equality green would have been a guard
+    /// asserting a thing that is not true, so it is replaced by the invariant that actually
+    /// protects the customer: **the CLI door must never resolve its runner over the network.**
+    ///
+    /// Measured (see [`PORTABLE_HOOK_RUNNER`]): `npx` on a cold cache costs 70,580 ms against a
+    /// 30 s host budget, so the host kills the hook and discards the answer. A runner containing a
+    /// path separator would be machine-local; a runner containing `npx` would be network-resolved.
+    /// Both are regressions, and both are named here rather than left to prose.
+    ///
+    /// ⚠️ WHAT IT DOES NOT PROVE: that `estelle` is actually ON the customer's PATH. That is a
+    /// property of their install, not of this string, and no unit test in this repo can see it.
     #[test]
-    fn the_installer_and_the_plugin_spell_the_runner_identically() {
-        assert_eq!(PORTABLE_HOOK_RUNNER, "npx -y @fatelabs/estelle@0");
+    fn the_cli_door_resolves_its_runner_locally_and_the_plugin_door_does_not_have_to() {
+        assert!(
+            !PORTABLE_HOOK_RUNNER.contains("npx"),
+            "the CLI door must not resolve its runner over the network: {PORTABLE_HOOK_RUNNER}"
+        );
+        assert!(
+            !PORTABLE_HOOK_RUNNER.contains('/') && !PORTABLE_HOOK_RUNNER.contains('\\'),
+            "the CLI door's runner must be a PATH name, never a path: {PORTABLE_HOOK_RUNNER}"
+        );
+        assert_eq!(PORTABLE_HOOK_RUNNER, "estelle");
+        // The plugin door is pinned separately and deliberately still differs.
+        assert_eq!(PLUGIN_HOOK_RUNNER, "npx -y @fatelabs/estelle@0");
+        assert_ne!(
+            PORTABLE_HOOK_RUNNER, PLUGIN_HOOK_RUNNER,
+            "if these ever become equal again, one of the two doors has taken the other's \
+             constraint by accident rather than by decision"
+        );
     }
 
     /// NEGATIVE CONTROL: the assertion above is only meaningful if a machine-local runner would
     /// actually FAIL it. Prove the detector fires rather than trusting that it would.
     #[test]
     fn a_machine_local_runner_would_be_caught() {
-        let (_event, group) = estelle_hook_groups(HookHost::Codex, "/Users/someone/target/release/estelle")
-            .into_iter()
-            .next()
-            .expect("at least one hook group");
+        let (_event, group) =
+            estelle_hook_groups(HookHost::Codex, "/Users/someone/target/release/estelle")
+                .into_iter()
+                .next()
+                .expect("at least one hook group");
         let rendered = serde_json::to_string(&group).expect("group serialises");
         assert!(
             rendered.contains("/Users/") && rendered.contains("target/release"),
