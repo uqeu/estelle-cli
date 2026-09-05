@@ -81,7 +81,7 @@
           {
             "type": "command",
             "command": "npx -y @fatelabs/estelle@0 hook checkpoint",
-            "timeout": 30,
+            "timeout": 3,
             "statusMessage": "Estelle hook checkpoint"
           }
         ]
@@ -93,7 +93,7 @@
           {
             "type": "command",
             "command": "npx -y @fatelabs/estelle@0 hook welcome",
-            "timeout": 5,
+            "timeout": 30,
             "statusMessage": "Estelle hook welcome"
           }
         ]

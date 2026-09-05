@@ -216,8 +216,14 @@ if hooks_path.is_file():
     check("shipping hook bundle does NOT carry the shift row",
           not any(" hook shift" in command for command in commands),
           str(sorted(commands)))
+    # ⚠️ THESE ARE A SECOND, INDEPENDENT STATEMENT OF `HOOK_TABLE`, AND THEY MOVE DELIBERATELY WITH IT.
+    # `welcome` was 5 until 2026-09-05, when `welcome` took on the upload that `SessionEnd` can no longer
+    # perform inside Codex's three-second clamp; its ceiling is now 30 with `HANDOFF_DRAIN_BUDGET` (20s)
+    # bounding the work underneath. `checkpoint` is deliberately absent from this list: it appears on three
+    # events with two different budgets (30 on Stop/PreCompact, 3 on SessionEnd), so a single expected
+    # value here would be a claim that is false on one of them.
     for mode, expected in (("ground", 30), ("sync", 30), ("context", 30),
-                           ("guard", 10), ("distil", 10), ("welcome", 5)):
+                           ("guard", 10), ("distil", 10), ("welcome", 30)):
         command = f"npx -y @fatelabs/estelle@0 hook {mode}"
         matching = [h for c, h in commands.items() if c == command]
         check(f"shipping timeout for {mode} is {expected}s",

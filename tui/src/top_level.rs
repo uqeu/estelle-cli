@@ -30,7 +30,9 @@ use crate::commands;
 use crate::plugin_currency;
 use estelle_tui::ground_block;
 use estelle_tui::ground_block::FlaggedOutcome;
+use estelle_tui::host_transcript;
 use estelle_tui::session_gap;
+use estelle_tui::session_handoff;
 
 const SOURCE_EXTENSIONS: &[&str] = &[
     "c", "cpp", "cs", "go", "h", "hpp", "java", "js", "jsx", "kt", "md", "php", "py", "rb", "rs",
@@ -183,6 +185,16 @@ where
 /// seven died with it. That is why the tolerance below is on EVERY field rather than the one
 /// field one host nulls today: the defect is the SHAPE, not the name.
 ///
+/// 🔴 **AND THE STRUCT MODELS EIGHT OF THE TWENTY FIELDS THE HOST CAN SEND — ON PURPOSE.**
+/// Measured across all eleven vendored schemas: `agent_id`, `agent_transcript_path`,
+/// `agent_type`, `last_assistant_message`, `model`, `permission_mode`, `reason`, `source`,
+/// `stop_hook_active`, `tool_use_id`, `trigger` and `turn_id` are host facts **no mode reads**.
+/// They are DROPPED, never rejected, because this struct carries no `#[serde(deny_unknown_fields)]`
+/// — and that omission is now a CONTRACT rather than an accident: [`hook_schema_contract_tests`]
+/// drives a payload built from every one of those schemas, plus a field no host ships yet,
+/// through `run_hook_with` and asserts every verb still reaches dispatch. **A host adding a
+/// field must never break a verb**, and until that module existed nothing anywhere said so.
+///
 /// The host contract says so in writing. Codex's own generated schemas mark `transcript_path`
 /// **required** with type `["string", "null"]` in all eleven hook events
 /// (`hooks/schema/generated/*.command.input.schema.json`, built from `NullableString` in
@@ -212,6 +224,29 @@ struct HookPayload {
     #[serde(default, deserialize_with = "null_is_absent")]
     hook_event_name: String,
 }
+
+/// 🔴 THE WHOLE CONTRACT, DRIVEN FROM THE HOST'S OWN GENERATED SCHEMAS.
+///
+/// [`HookPayload`] above tolerates a payload it does not fully model — serde ignores a field
+/// this struct has no place for, because there is deliberately no `#[serde(deny_unknown_fields)]`
+/// on it. That tolerance was **accidental and unasserted** until this module: the host requires
+/// twenty distinct fields across eleven events and this struct names eight, and one attribute
+/// would have taken all eight verbs down the way a single `null` already did once.
+///
+/// The tests build a payload for every `hooks/schema/generated/*.command.input.schema.json` at
+/// RUN TIME and drive it through [`run_hook_with`], so they cannot go stale when the host
+/// changes its contract — and they include the mutation an over-tolerant fix would represent:
+/// a genuinely malformed payload must still be refused, on a named branch.
+#[cfg(test)]
+#[path = "hook_schema_contract_tests.rs"]
+mod hook_schema_contract_tests;
+
+/// The checkpoint parser, driven by the founder's REAL `~/.codex/sessions` rollouts rather than
+/// by fixtures this repo authored. See the module docs for the pair it makes unreachable and for
+/// why its oracle is structural rather than a substring match.
+#[cfg(test)]
+#[path = "host_transcript_corpus_tests.rs"]
+mod host_transcript_corpus_tests;
 
 impl HookPayload {
     /// The transcript the host materialized for this session, or `None` when it has none.
@@ -965,7 +1000,13 @@ async fn welcome_hook(payload: &HookPayload) -> Vec<String> {
     }
 
     let mut messages = Vec::new();
-    let context = session_gap::welcome_context(&cwd, chrono::Utc::now()).await;
+    let now = chrono::Utc::now();
+    // 🔴 ORDER IS LOAD-BEARING. The gap context is read FIRST, off the checkpoint the last
+    // `Stop` wrote. Draining first would be reading a store this call is about to change.
+    let context = session_gap::welcome_context(&cwd, now).await;
+    // Pay whatever an earlier SessionEnd could only promise. SessionStart is the event that HAS
+    // the budget SessionEnd does not: Codex clamps SessionEnd to 3s and allows this one 600.
+    drain_handoffs(now).await;
     if !context.is_empty() {
         let text = context.human_lines.join("\n");
         messages.push(hook_message(
@@ -1053,26 +1094,126 @@ fn base64_decoded_len(value: &str) -> Option<usize> {
 }
 
 fn human_bytes(bytes: usize) -> String {
-    if bytes < 1_000 {
-        format!("{bytes} B")
-    } else {
-        format!("{} kB", bytes.div_ceil(1_000))
+    // A transcript can be 35 GB, and "35293767 kB" is a number nobody reads. The kB rung is
+    // unchanged so the image markers it already renders keep their exact wording.
+    match bytes {
+        0..1_000 => format!("{bytes} B"),
+        1_000..1_000_000 => format!("{} kB", bytes.div_ceil(1_000)),
+        1_000_000..1_000_000_000 => format!("{} MB", bytes.div_ceil(1_000_000)),
+        _ => format!("{} GB", bytes.div_ceil(1_000_000_000)),
     }
 }
 
-/// The conversation `[{role, content}]` inside a Claude Code transcript (JSONL), ready to
-/// checkpoint. The host writes this file itself and hands every hook its path, which is what
-/// makes always-on checkpointing possible WITHOUT the model choosing to cooperate. Never
-/// fails: a malformed line is skipped, not fatal.
-fn transcript_messages(text: &str) -> Vec<Value> {
-    let mut out = Vec::new();
-    for line in text.lines() {
-        if line.trim().is_empty() {
-            continue;
+/// The turns that will travel, and how many older ones did NOT.
+///
+/// `dropped` exists because a count that only the extractor knows is a count nobody can disclose:
+/// the caller cannot recompute it without a second pass that would immediately drift.
+struct Conversation {
+    messages: Vec<Value>,
+    /// Turns evicted by [`CHECKPOINT_MAX_MESSAGES`]. Older than the ones kept, never newer.
+    dropped: usize,
+}
+
+/// ONE OWNER FOR "THIS CHECKPOINT IS PARTIAL".
+///
+/// 🔴 **A CAPPED READ MEANS "THERE IS MORE", NEVER "THAT IS ALL THERE IS."** A checkpoint built
+/// from the tail of a 35 GB rollout and one built from a whole 12 KB session are the same JSON
+/// shape, and without this they read identically — a partial session would be stored, summarised
+/// and resumed as if it were the whole thing.
+///
+/// Two independent caps can each make a checkpoint partial and they are disclosed together:
+/// the byte window ([`host_transcript::TAIL_MAX_BYTES`]) and the turn cap
+/// ([`CHECKPOINT_MAX_MESSAGES`]).
+#[derive(Clone, Copy, Debug, Default)]
+struct Truncation {
+    /// Bytes between the head and the tail window were never read.
+    window: bool,
+    /// Turns evicted by the message cap.
+    dropped_turns: usize,
+    file_bytes: u64,
+    read_bytes: u64,
+}
+
+impl Truncation {
+    fn is_partial(self) -> bool {
+        self.window || self.dropped_turns > 0
+    }
+
+    /// The sentence a human (or a model) reads at the top of the oldest surviving turn.
+    ///
+    /// It travels INSIDE the conversation rather than only beside it, because a field a consumer
+    /// does not know about is a field a consumer drops — and then the partial session reads whole
+    /// again, which is the exact failure this guards.
+    fn marker(self) -> String {
+        let mut reasons = Vec::new();
+        if self.window {
+            reasons.push(format!(
+                "only the first {} and last {} of a {} transcript were read",
+                human_bytes(usize::try_from(host_transcript::HEAD_MAX_BYTES).unwrap_or(usize::MAX)),
+                human_bytes(usize::try_from(host_transcript::TAIL_MAX_BYTES).unwrap_or(usize::MAX)),
+                human_bytes(usize::try_from(self.file_bytes).unwrap_or(usize::MAX)),
+            ));
         }
-        let Ok(record) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
+        if self.dropped_turns > 0 {
+            reasons.push(format!(
+                "{} older turn(s) exceeded the {CHECKPOINT_MAX_MESSAGES}-turn cap",
+                self.dropped_turns
+            ));
+        }
+        format!(
+            "[Estelle: this checkpoint is PARTIAL — {}. Earlier turns exist and are not here.]",
+            reasons.join("; ")
+        )
+    }
+
+    /// The machine-readable half, for `client`.
+    fn fields(self) -> serde_json::Map<String, Value> {
+        let mut fields = serde_json::Map::new();
+        fields.insert("transcript_partial".to_string(), json!(self.is_partial()));
+        fields.insert("transcript_bytes".to_string(), json!(self.file_bytes));
+        fields.insert("transcript_read_bytes".to_string(), json!(self.read_bytes));
+        fields.insert("turns_dropped".to_string(), json!(self.dropped_turns));
+        fields
+    }
+}
+
+/// Stamp the partial-read marker onto the oldest surviving turn. A no-op when nothing was cut,
+/// so a whole session never claims to be partial either.
+fn disclose_truncation(conversation: &mut Conversation, truncation: Truncation) {
+    if !truncation.is_partial() {
+        return;
+    }
+    let Some(first) = conversation
+        .messages
+        .first_mut()
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    let content = first
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let disclosed = format!("{}\n{content}", truncation.marker())
+        .chars()
+        .take(CHECKPOINT_MAX_CHARS)
+        .collect::<String>();
+    first.insert("content".to_string(), json!(disclosed));
+}
+
+/// The conversation `[{role, content}]` inside a host transcript, ready to checkpoint. The host
+/// writes the file itself and hands every hook its path, which is what makes always-on
+/// checkpointing possible WITHOUT the model choosing to cooperate. Never fails: a record it does
+/// not understand is skipped, not fatal.
+///
+/// 🔴 **ONE EXTRACTOR, TWO HOSTS.** This reads *host-shaped* records — the shape Claude Code
+/// writes directly and the shape [`host_transcript::host_records`] translates a Codex rollout into.
+/// There is deliberately no `if codex { … }` here or in its two siblings: a second extractor is
+/// how one host grows a rule the other never learns, and Codex support existed for eight months
+/// as a function that returned empty on every real file.
+fn transcript_messages(records: &[Value]) -> Conversation {
+    let mut out = Vec::new();
+    for record in records {
         let kind = record
             .get("type")
             .and_then(Value::as_str)
@@ -1119,16 +1260,20 @@ fn transcript_messages(text: &str) -> Vec<Value> {
                 .collect::<String>(),
         }));
     }
-    if out.len() > CHECKPOINT_MAX_MESSAGES {
-        out = out.split_off(out.len() - CHECKPOINT_MAX_MESSAGES);
+    let dropped = out.len().saturating_sub(CHECKPOINT_MAX_MESSAGES);
+    if dropped > 0 {
+        out = out.split_off(dropped);
     }
-    out
+    Conversation {
+        messages: out,
+        dropped,
+    }
 }
 
 /// The client facts a resume needs, read from the newest transcript record that carries each
 /// one — a session that switched branch mid-run must resume on the branch it ended on. A fact
 /// that is absent is OMITTED rather than defaulted: a guessed branch is worse than no branch.
-fn transcript_context(text: &str) -> serde_json::Map<String, Value> {
+fn transcript_context(records: &[Value]) -> serde_json::Map<String, Value> {
     let mut context = serde_json::Map::new();
     let mut put = |key: &str, value: Option<&Value>| {
         let text = match value {
@@ -1138,13 +1283,7 @@ fn transcript_context(text: &str) -> serde_json::Map<String, Value> {
         };
         context.insert(key.to_string(), Value::String(text));
     };
-    for line in text.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let Ok(record) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
+    for record in records {
         if record
             .get("isSidechain")
             .and_then(Value::as_bool)
@@ -1179,15 +1318,9 @@ fn transcript_context(text: &str) -> serde_json::Map<String, Value> {
 /// Read from the host's own transcript — the same source the checkpoint uses. Order is
 /// load-bearing: the file the customer was in when they stopped is the one the welcome names
 /// first, so the reverse happens BEFORE deduping.
-fn transcript_files(text: &str) -> Vec<PathBuf> {
+fn transcript_files(records: &[Value]) -> Vec<PathBuf> {
     let mut written = Vec::new();
-    for line in text.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let Ok(record) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
+    for record in records {
         if record
             .get("isSidechain")
             .and_then(Value::as_bool)
@@ -1211,7 +1344,13 @@ fn transcript_files(text: &str) -> Vec<PathBuf> {
                 .get("name")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            if !matches!(name, "Write" | "Edit" | "MultiEdit" | "NotebookEdit") {
+            // `apply_patch` is Codex's spelling, carried here by `host_transcript::host_records` from
+            // the `patch_apply_end` / `FileChange` events — the ONLY record family in a rollout
+            // that names a path the session actually wrote.
+            if !matches!(
+                name,
+                "Write" | "Edit" | "MultiEdit" | "NotebookEdit" | "apply_patch"
+            ) {
                 continue;
             }
             let file = block
@@ -1254,41 +1393,62 @@ async fn checkpoint_local(payload: &HookPayload, state_path: Option<PathBuf>) ->
     // 🔴 A CHECKPOINT WITHOUT A TRANSCRIPT IS NOT A FAILURE — IT IS A SESSION THIS HOST CANNOT
     // SUMMARISE (`transcript_path: null`, which Codex sends for any thread with no materialized
     // local rollout). This is the ONLY mode of eight that reads the transcript, so it degrades
-    // alone: the other seven run untouched.
-    //
-    // ⚠️ THE LIMIT, STATED: this line reaches almost nobody. stdout is the host's envelope and
-    // checkpoint is deliberately silent there (a warning on every Stop is how a user learns to
-    // ignore Estelle), so the reason goes to stderr — which Codex reads ONLY on exit code 2
-    // (`hooks/src/events/stop.rs`) and Claude Code shows only under `--debug`. It is a note for
-    // someone already asking "why did nothing checkpoint?", NOT a notification. A customer whose
-    // host supplies no transcript loses checkpointing and is not told.
+    // alone: the other seven run untouched. The reason is spoken by `checkpoint_refused`, which
+    // owns the channel and states its own limits.
     let Some(transcript_path) = payload.transcript() else {
-        #[expect(
-            clippy::print_stderr,
-            reason = "the only channel a silent-by-design hook has for a human debugging it; stdout is the host's envelope"
-        )]
-        {
-            eprintln!(
-                "Estelle checkpoint skipped: this host supplied no transcript_path, so there is no conversation to summarise. Every other Estelle hook is unaffected."
-            );
-        }
-        return None;
+        return checkpoint_refused(
+            "Estelle checkpoint skipped: this host supplied no transcript_path, so there is no conversation to summarise. Every other Estelle hook is unaffected.",
+        );
     };
-    let raw = fs::read_to_string(transcript_path).ok()?;
-    let messages = transcript_messages(&raw);
-    if messages.is_empty() {
-        return None;
+    // 🔴 BOUNDED, STREAMED, AND NEVER `read_to_string` AGAIN. The founder's rollouts run to
+    // 35.3 GB (p95 530.8 MB); reading one whole is an out-of-memory abort, and reading it three
+    // times — which is what three text-taking extractors did — is that cost tripled.
+    let bounded = match host_transcript::read_bounded(Path::new(transcript_path)) {
+        Ok(bounded) => bounded,
+        Err(error) => {
+            return checkpoint_refused(&format!(
+                "Estelle checkpoint skipped: the transcript at {transcript_path} could not be read ({error}). Every other Estelle hook is unaffected."
+            ));
+        }
+    };
+    let parsed = host_transcript::host_records(&bounded.text);
+    // 🔴 AN UNRECOGNISED FORMAT IS A REASON, NOT A SHRUG. Returning `None` here silently is
+    // precisely how Codex support stayed broken and unnoticed: it is byte-identical to
+    // "nothing to save".
+    let Some(dialect) = parsed.dialect else {
+        return checkpoint_refused(&format!(
+            "Estelle checkpoint skipped: {transcript_path} is not a transcript format Estelle recognises ({} record(s) read, {} unparseable, {} in an unknown shape). Nothing was saved for this session.",
+            parsed.lines, parsed.unreadable_lines, parsed.unrecognised_lines
+        ));
+    };
+    let mut conversation = transcript_messages(&parsed.records);
+    if conversation.messages.is_empty() {
+        return checkpoint_refused(&format!(
+            "Estelle checkpoint skipped: {transcript_path} parsed as a {} ({} records) but carried no user or assistant turns, so there is nothing to summarise.",
+            dialect.label(),
+            parsed.lines
+        ));
     }
+    let truncation = Truncation {
+        window: bounded.truncated,
+        dropped_turns: conversation.dropped,
+        file_bytes: bounded.file_bytes,
+        read_bytes: bounded.read_bytes,
+    };
+    disclose_truncation(&mut conversation, truncation);
     // `event` is WHY this fired — a PreCompact checkpoint is the pre-wall snapshot, SessionEnd
     // the outage snapshot, Stop routine; a resume that cannot tell them apart cannot rank them.
     // NOTE what is deliberately absent: account_id and team_id. The server resolves those from
     // the API key. A client that ASSERTS its own identity is the hole, not the feature.
+    //
+    // `name` is READ OFF THE FILE, never assumed: it said `"claude-code"` unconditionally, which
+    // would have been a false claim about every Codex session had any ever been captured.
     let mut client = json!({
-        "name": "claude-code",
+        "name": dialect.client_name(),
         "event": payload.hook_event_name,
     });
-    if let (Some(client), context) = (client.as_object_mut(), transcript_context(&raw)) {
-        for (key, value) in context {
+    if let (Some(client), context) = (client.as_object_mut(), transcript_context(&parsed.records)) {
+        for (key, value) in context.into_iter().chain(truncation.fields()) {
             client.insert(key, value);
         }
     }
@@ -1312,7 +1472,7 @@ async fn checkpoint_local(payload: &HookPayload, state_path: Option<PathBuf>) ->
     ) {
         session_gap::record_checkpoint_to(
             PathBuf::from(cwd),
-            transcript_files(&raw),
+            transcript_files(&parsed.records),
             chrono::Utc::now(),
             state_path,
         )
@@ -1320,13 +1480,69 @@ async fn checkpoint_local(payload: &HookPayload, state_path: Option<PathBuf>) ->
     }
     Some(json!({
         "session_id": session_id,
-        "messages": messages,
+        "messages": conversation.messages,
         "client": client,
     }))
 }
 
+/// ONE OWNER FOR "THE CHECKPOINT DID NOT RUN, AND HERE IS WHY".
+///
+/// 🔴 **NEVER FAIL SILENTLY.** Every early `None` in [`checkpoint_local`] used to be a bare
+/// return, which made "this host's format is unknown" indistinguishable from "there was nothing
+/// to save" — the silence that hid a total Codex outage for eight months.
+///
+/// ⚠️ THE LIMIT, STATED, AND IT IS THE SAME ONE AS BEFORE: stdout is the host's envelope and
+/// checkpoint is deliberately silent there (a warning on every Stop is how a customer learns to
+/// ignore Estelle), so the reason goes to **stderr** — which Codex renders only on a non-zero
+/// exit (`hooks/src/events/stop.rs`) and Claude Code shows only under `--debug`. This is a note
+/// for someone already asking "why did nothing checkpoint?", NOT a notification. A customer whose
+/// transcript Estelle cannot read still loses checkpointing and is still not told.
+fn checkpoint_refused(reason: &str) -> Option<Value> {
+    #[expect(
+        clippy::print_stderr,
+        reason = "the only channel a silent-by-design hook has for a human debugging it; stdout is the host's envelope"
+    )]
+    {
+        eprintln!("{reason}");
+    }
+    None
+}
+
+/// 🔴 THE THREE-SECOND EVENT. `checkpoint` is wired to Stop, PreCompact and SessionEnd, and
+/// exactly one of them cannot afford what the other two do.
+///
+/// Codex clamps SessionEnd — and ONLY SessionEnd — to `SESSION_END_MAX_TIMEOUT_SEC = 3`
+/// (`hooks/src/events/session_end.rs`, applied by `normalize_command_hook` at
+/// `hooks/src/engine/discovery.rs:605`; every other event gets `timeout_sec.unwrap_or(600)`).
+/// That is upstream's design, identical in this fork, and no plugin can ask for more. The full
+/// checkpoint is a network POST whose measured round trip is 4.5–15s, so on SessionEnd it was
+/// being killed mid-flight — and killed silently, which is the worse half.
+///
+/// So SessionEnd defers: it writes a local note naming the transcript the host already wrote,
+/// and the NEXT session's SessionStart pays it. Stop and PreCompact are UNCHANGED — they have
+/// the full budget and keep doing the full durable write. Turning a network round trip into a
+/// local write is the only thing that honestly fits in three seconds.
 async fn checkpoint_hook(payload: &HookPayload) -> Result<Vec<String>, String> {
-    let Some(body) = checkpoint_local(payload, session_gap::state_path()).await else {
+    checkpoint_hook_at(
+        payload,
+        session_gap::state_path(),
+        session_handoff::state_path(),
+    )
+    .await
+}
+
+/// The injectable half of [`checkpoint_hook`] — the hook passes the real home-derived paths,
+/// tests pass temporary ones. Same seam `record_checkpoint_to` already uses, and for the same
+/// reason: a test that has to move `HOME` to observe a hook is a test that races every other test.
+async fn checkpoint_hook_at(
+    payload: &HookPayload,
+    gap_state: Option<PathBuf>,
+    handoff_state: Option<PathBuf>,
+) -> Result<Vec<String>, String> {
+    if payload.hook_event_name.trim() == session_handoff::DEFERRED_EVENT {
+        return checkpoint_handoff(payload, handoff_state).await;
+    }
+    let Some(body) = checkpoint_local(payload, gap_state).await else {
         return Ok(Vec::new());
     };
     let Ok(api) = Api::resolve() else {
@@ -1334,6 +1550,143 @@ async fn checkpoint_hook(payload: &HookPayload) -> Result<Vec<String>, String> {
     };
     let _ = api.post(Endpoint::Checkpoint, &body).await;
     Ok(Vec::new())
+}
+
+/// The SessionEnd half: a local, bounded, durable note that a checkpoint is OWED. No transcript
+/// read, no network, no git — the three things that do not fit.
+///
+/// ⚠️ AND IT DOES NOT FAIL SILENTLY. Every other checkpoint failure is silent by design (a
+/// warning on every turn is how a customer learns to ignore Estelle), but this one is different:
+/// its silence costs the customer the session memory they are paying for, at the moment they can
+/// no longer do anything about it. So the reason goes to **stderr** and the hook exits non-zero,
+/// which is exactly the pair Codex surfaces — `parse_completed` in
+/// `hooks/src/events/session_end.rs` renders `run_result.stderr` verbatim as a hook error on ANY
+/// non-zero exit. Silence here would be indistinguishable from success.
+async fn checkpoint_handoff(
+    payload: &HookPayload,
+    state_path: Option<PathBuf>,
+) -> Result<Vec<String>, String> {
+    // 🔴 NO TRANSCRIPT IS NOT A FAILURE — IT IS A SESSION WITH NOTHING TO HAND OFF.
+    // Codex sends `transcript_path: null` for any thread with no materialized local rollout, and it
+    // sends it on EVERY event, so refusing here would make the loud path fire on ordinary sessions —
+    // which is how a customer learns to ignore the one warning that matters. The loud refusal below
+    // is reserved for the case where there IS something to defer and the note could not be written.
+    // Same reasoning, and the same stderr-only channel, as `checkpoint_local`'s own skip.
+    if payload.transcript().is_none() {
+        #[expect(
+            clippy::print_stderr,
+            reason = "the only channel a silent-by-design hook has for a human debugging it; stdout is the host's envelope"
+        )]
+        {
+            eprintln!(
+                "Estelle checkpoint skipped at SessionEnd: this host supplied no transcript_path, so \
+                 there is no conversation to hand off. Every other Estelle hook is unaffected."
+            );
+        }
+        return Ok(Vec::new());
+    }
+    let state_path = state_path.ok_or_else(|| session_handoff::HandoffError::NoHome.to_string());
+    let outcome = match state_path {
+        Ok(state_path) => session_handoff::record(
+            session_handoff::PendingCheckpoint {
+                session_id: payload.session_id.trim().to_string(),
+                transcript_path: payload.transcript().unwrap_or_default().to_string(),
+                cwd: payload.cwd.trim().to_string(),
+                event: payload.hook_event_name.trim().to_string(),
+                at: String::new(),
+            },
+            state_path,
+            chrono::Utc::now(),
+        )
+        .await
+        .map_err(|error| error.to_string()),
+        Err(error) => Err(error),
+    };
+    let Err(reason) = outcome else {
+        return Ok(Vec::new());
+    };
+    #[expect(
+        clippy::print_stderr,
+        reason = "the channel Codex reads on a non-zero SessionEnd exit; stdout is the host's envelope"
+    )]
+    {
+        eprintln!(
+            "Estelle could not hand this session off: {reason}. This session's final checkpoint \
+             was NOT saved and the next session will not resume it."
+        );
+    }
+    Err(format!("session handoff not written: {reason}"))
+}
+
+/// How many deferred checkpoints one returning session will pay for, and how long it may spend
+/// doing it. Both bound work the customer did not ask for: a `SessionStart` that spends a minute
+/// uploading old sessions has replaced one broken experience with another.
+const HANDOFF_DRAIN_BUDGET: Duration = Duration::from_secs(20);
+
+/// Pay the checkpoints earlier SessionEnds could not. Bounded by count in
+/// [`session_handoff::MAX_CLAIM_PER_START`] and by wall clock in [`HANDOFF_DRAIN_BUDGET`].
+///
+/// ⚠️ A CLAIMED NOTE IS ALREADY GONE FROM THE STORE — at most once, never twice, which is the
+/// direction this repo has already paid to learn (a double run bills the customer twice, and
+/// there is no per-execution idempotency anywhere to catch it). A note the budget does not reach
+/// is reported on stderr rather than dropped without a word.
+async fn drain_handoffs(now: chrono::DateTime<chrono::Utc>) {
+    let Some(state_path) = session_handoff::state_path() else {
+        return;
+    };
+    let owed = session_handoff::claim(state_path, now).await;
+    if owed.is_empty() {
+        return;
+    }
+    let deadline = Instant::now() + HANDOFF_DRAIN_BUDGET;
+    let mut unpaid = 0usize;
+    for pending in owed {
+        if Instant::now() >= deadline {
+            unpaid += 1;
+            continue;
+        }
+        if !upload_deferred_checkpoint(&pending).await {
+            unpaid += 1;
+        }
+    }
+    if unpaid == 0 {
+        return;
+    }
+    #[expect(
+        clippy::print_stderr,
+        reason = "a dropped checkpoint is a fact the customer is entitled to, and stdout is the host's envelope"
+    )]
+    {
+        eprintln!(
+            "Estelle could not upload {unpaid} deferred checkpoint(s) from an earlier session \
+             within {}s; they were not saved.",
+            HANDOFF_DRAIN_BUDGET.as_secs()
+        );
+    }
+}
+
+/// Replay one deferred note through the SAME body builder the live path uses, so a deferred
+/// checkpoint and a live one cannot drift into two shapes. Returns whether it reached the API.
+async fn upload_deferred_checkpoint(pending: &session_handoff::PendingCheckpoint) -> bool {
+    // Built through the host's own wire shape rather than the struct literal, so this stays
+    // correct while another lane is changing `HookPayload`'s fields.
+    let Ok(payload) = serde_json::from_value::<HookPayload>(json!({
+        "session_id": pending.session_id,
+        "transcript_path": pending.transcript_path,
+        "cwd": pending.cwd,
+        "hook_event_name": pending.event,
+    })) else {
+        return false;
+    };
+    // `None` for the gap state: the gap was already recorded by the Stop that preceded this
+    // session's end, and re-recording it now would stamp TODAY over the moment the work stopped.
+    let Some(body) = checkpoint_local(&payload, None).await else {
+        return false;
+    };
+    let Ok(api) = Api::resolve() else {
+        return false;
+    };
+    api.post(Endpoint::Checkpoint, &body).await.is_ok()
 }
 
 /// The /verify request body `ground_hook` sends, before the client injects `repo` — named so
@@ -2049,7 +2402,7 @@ fn read_json_object_or_empty(path: &Path) -> Result<Value, String> {
 /// enumerated in `estelle_hook_groups` / `hook_timeout` / [`plugin_hooks_manifest`] and pinned by
 /// the contract tests.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum HookHost {
+pub(crate) enum HookHost {
     Claude,
     Codex,
 }
@@ -2169,20 +2522,28 @@ const HOOK_TABLE: &[HookRow] = &[
         plugin: true,
         plugin_async: false,
     },
+    // 🔴 THREE SECONDS, AND THE NUMBER IS THE CONTRACT. Codex clamps SessionEnd — and only
+    // SessionEnd — to `SESSION_END_MAX_TIMEOUT_SEC = 3`, so the 30 that used to sit here was
+    // rewritten on every load with a warning in the customer's terminal. `checkpoint` on this
+    // event no longer does the network write at all; it records a local handoff that the next
+    // SessionStart pays. Declaring 3 is now the TRUE budget on both hosts, not a concession.
     HookRow {
         event: "SessionEnd",
         matcher: None,
         mode: "checkpoint",
-        timeout: 30,
+        timeout: 3,
         claude_async: false,
         plugin: true,
         plugin_async: false,
     },
+    // Raised from 5 because `welcome` now also drains the checkpoints SessionEnd deferred, and
+    // that IS a network write. Bounded below this by `HANDOFF_DRAIN_BUDGET`, so the ceiling has
+    // headroom over the work rather than defining it.
     HookRow {
         event: "SessionStart",
         matcher: None,
         mode: "welcome",
-        timeout: 5,
+        timeout: 30,
         claude_async: false,
         plugin: true,
         plugin_async: false,
@@ -6383,8 +6744,11 @@ tests/test_serve.py:88: AssertionError\n\
             ("PostToolUse", Some("Bash"), "distil", 10),
             ("Stop", None, "checkpoint", 30),
             ("PreCompact", None, "checkpoint", 30),
-            ("SessionEnd", None, "checkpoint", 30),
-            ("SessionStart", None, "welcome", 5),
+            // 3, not 30: Codex clamps SessionEnd and this verb no longer needs more — see
+            // `checkpoint_handoff`. Claude Code is given the same honest number.
+            ("SessionEnd", None, "checkpoint", 3),
+            // 30, because `welcome` now drains the checkpoints SessionEnd deferred.
+            ("SessionStart", None, "welcome", 30),
             // 30, matching BOTH shipped manifests. It was 10 — see `CONTEXT_HOOK_HOST_BUDGET_S`.
             ("UserPromptSubmit", None, "context", 30),
         ];
@@ -6449,7 +6813,8 @@ tests/test_serve.py:88: AssertionError\n\
             ("PreCompact", None, "checkpoint", 30),
             // Codex clamps SessionEnd to 3s — say 3 rather than be silently rewritten.
             ("SessionEnd", None, "checkpoint", 3),
-            ("SessionStart", None, "welcome", 5),
+            // 30, because `welcome` now drains the checkpoints SessionEnd deferred.
+            ("SessionStart", None, "welcome", 30),
             // 30, matching BOTH shipped manifests. It was 10 — see `CONTEXT_HOOK_HOST_BUDGET_S`.
             ("UserPromptSubmit", None, "context", 30),
         ];
@@ -7790,6 +8155,219 @@ tests/test_serve.py:88: AssertionError\n\
         );
     }
 
+    /// What the SessionEnd branch must fit inside, IN PROCESS.
+    ///
+    /// Codex's ceiling is 3.000s (`SESSION_END_MAX_TIMEOUT_SEC`). The shipped plugin invokes the
+    /// runner as `npx -y @fatelabs/estelle@0`, whose own startup was measured at **0.90 / 0.97 /
+    /// 1.10 s** over three warm runs on the founder's machine — so roughly a third of the ceiling
+    /// is spent before a single line of this code executes. 1.5s leaves the remainder with margin.
+    const SESSION_END_LOCAL_BUDGET: Duration = Duration::from_millis(1_500);
+
+    /// A transcript large enough that reading it is a real cost rather than a rounding error.
+    const OVERSIZED_TRANSCRIPT_BYTES: usize = 32 * 1024 * 1024;
+
+    fn checkpoint_fixture(root: &Path) -> (PathBuf, HookPayload) {
+        let transcript = root.join("transcript.jsonl");
+        let records = [
+            json!({"type": "user", "cwd": root.to_string_lossy(), "gitBranch": "main",
+                   "version": "2.0.0", "message": {"role": "user", "content": "fix the retry loop"}}),
+            json!({"type": "assistant", "message": {"role": "assistant", "model": "claude",
+                   "content": [{"type": "text", "text": "looking"}]}}),
+        ];
+        let raw = records
+            .iter()
+            .map(serde_json::to_string)
+            .collect::<Result<Vec<_>, _>>()
+            .expect("fixture JSONL")
+            .join("\n");
+        fs::write(&transcript, &raw).expect("fixture transcript");
+        let payload = serde_json::from_value::<HookPayload>(json!({
+            "session_id": "session-end-1",
+            "transcript_path": transcript.to_string_lossy(),
+            "cwd": root.to_string_lossy(),
+            "hook_event_name": "Stop",
+        }))
+        .expect("payload");
+        (transcript, payload)
+    }
+
+    fn with_event(payload: &HookPayload, event: &str) -> HookPayload {
+        serde_json::from_value(json!({
+            "session_id": payload.session_id,
+            "transcript_path": payload.transcript(),
+            "cwd": payload.cwd,
+            "hook_event_name": event,
+        }))
+        .expect("payload")
+    }
+
+    /// 🔴 THE PAIR THAT CANNOT BOTH BE TRUE: for one payload, the checkpoint is DEFERRED and it
+    /// is DONE. Exactly one of the two stores moves, decided only by `hook_event_name`.
+    ///
+    /// This is the assertion that holds the AIM. A timing bound would not: on a warm page cache a
+    /// 32 MB read costs about 10 ms, so a regression that put the transcript read back on the
+    /// SessionEnd path would sail through any wall-clock budget and still be killed at 3 s on a
+    /// cold cache in front of a customer. Here it cannot: the SessionEnd row asserts the gap store
+    /// was never written, which is only true while that path parses nothing.
+    ///
+    /// ⚠️ THE LIMIT, STATED: Stop's row stops at `checkpoint_local`, not at `checkpoint_hook_at`.
+    /// Driving Stop through the hook would attempt a real POST on any machine with
+    /// `ESTELLE_API_KEY` exported — which is the normal state for anyone using the product — so
+    /// this proves Stop still BUILDS the full body, not that it still posts it.
+    #[tokio::test]
+    async fn exactly_one_of_defer_and_do_happens_and_the_event_decides_which() {
+        let root = tempfile::tempdir().expect("checkpoint root");
+        let (_transcript, stop_payload) = checkpoint_fixture(root.path());
+        let gap_state = root.path().join("gap").join("last-session.json");
+        let handoff_state = root.path().join("handoff").join("pending-checkpoints.json");
+
+        // SessionEnd: the note is written and NOTHING is parsed.
+        let end_payload = with_event(&stop_payload, session_handoff::DEFERRED_EVENT);
+        checkpoint_hook_at(
+            &end_payload,
+            Some(gap_state.clone()),
+            Some(handoff_state.clone()),
+        )
+        .await
+        .expect("the handoff must succeed on a writable machine");
+
+        assert!(
+            handoff_state.is_file(),
+            "SessionEnd must leave a durable note that a checkpoint is owed"
+        );
+        assert!(
+            !gap_state.exists(),
+            "SessionEnd must NOT parse the transcript — the gap store moving here means the \
+             three-second path is reading the file again"
+        );
+
+        // Stop: the same transcript still produces the full body, untouched by this change.
+        let body = checkpoint_local(&stop_payload, Some(gap_state.clone()))
+            .await
+            .expect("Stop keeps doing the full durable write");
+        assert_eq!(body["client"]["event"], json!("Stop"));
+        assert_eq!(
+            body["messages"].as_array().expect("messages").len(),
+            2,
+            "Stop still parses the conversation"
+        );
+        assert!(
+            gap_state.is_file(),
+            "Stop still records the local gap — the two events are not both deferred"
+        );
+    }
+
+    /// The deferred note completes inside the budget, measured, on a transcript far larger than
+    /// the median. 32 MB is chosen against the real distribution: 161 rollouts on the founder's
+    /// machine measured median 19.3 MB, p75 100.4 MB, p95 530.8 MB, max 35.3 GB.
+    ///
+    /// ⚠️ THIS TEST IS ABOUT SENSITIVITY, NOT AIM. It bounds the local write; it cannot tell a
+    /// deferred path from a fast one. `exactly_one_of_defer_and_do_happens_and_the_event_decides_which`
+    /// holds the aim.
+    #[tokio::test]
+    async fn the_deferred_checkpoint_completes_inside_the_session_end_budget() {
+        let root = tempfile::tempdir().expect("checkpoint root");
+        let (transcript, payload) = checkpoint_fixture(root.path());
+        let filler = "x".repeat(OVERSIZED_TRANSCRIPT_BYTES);
+        fs::write(&transcript, filler.as_bytes()).expect("oversized transcript");
+        assert!(
+            fs::metadata(&transcript).expect("transcript").len()
+                >= OVERSIZED_TRANSCRIPT_BYTES as u64,
+            "a budget assertion over a small file measures nothing"
+        );
+
+        let handoff_state = root.path().join("pending-checkpoints.json");
+        let payload = with_event(&payload, session_handoff::DEFERRED_EVENT);
+        let started = Instant::now();
+        checkpoint_hook_at(&payload, None, Some(handoff_state.clone()))
+            .await
+            .expect("handoff");
+        let elapsed = started.elapsed();
+
+        assert!(
+            handoff_state.is_file(),
+            "a fast return that wrote nothing is not a pass"
+        );
+        assert!(
+            elapsed < SESSION_END_LOCAL_BUDGET,
+            "the SessionEnd handoff took {elapsed:?}, over the {SESSION_END_LOCAL_BUDGET:?} \
+             budget left by Codex's 3s clamp once the npx runner's ~1.0s startup is subtracted"
+        );
+    }
+
+    /// 🔴 THE PAIR THAT KEEPS THE LOUD PATH CREDIBLE: a SessionEnd is quiet-and-wrote-nothing, or it
+    /// is loud-and-refused. It is never quiet about a note it failed to write, and never loud about a
+    /// session that had nothing to hand off.
+    ///
+    /// Codex sends `transcript_path: null` for any thread with no materialized rollout — on every
+    /// event, on ordinary sessions. An earlier version of this branch refused there, which turned the
+    /// one warning that matters into noise on every shutdown. `a_codex_payload_with_a_null_transcript
+    /// _path_reaches_every_mode` caught it, which is exactly the job that test already had.
+    #[tokio::test]
+    async fn a_session_with_no_transcript_is_quiet_and_one_that_cannot_be_written_is_not() {
+        let root = tempfile::tempdir().expect("checkpoint root");
+        let (_transcript, payload) = checkpoint_fixture(root.path());
+        let end = with_event(&payload, session_handoff::DEFERRED_EVENT);
+
+        // QUIET: no transcript, so nothing is owed. Ok, and no note.
+        let no_transcript = serde_json::from_value::<HookPayload>(json!({
+            "session_id": "session-end-1",
+            "transcript_path": Value::Null,
+            "cwd": root.path().to_string_lossy(),
+            "hook_event_name": session_handoff::DEFERRED_EVENT,
+        }))
+        .expect("payload");
+        let state = root.path().join("quiet").join("pending-checkpoints.json");
+        checkpoint_handoff(&no_transcript, Some(state.clone()))
+            .await
+            .expect("a session Codex gave no transcript for is not a failure to report");
+        assert!(
+            !state.exists(),
+            "nothing was owed, so nothing may be written — a note pointing at no transcript would be \
+             replayed forever and never resolve"
+        );
+
+        // LOUD: there IS something to hand off and the store cannot take it.
+        let blocker = root.path().join("blocked");
+        fs::write(&blocker, b"not a directory").expect("fixture blocker");
+        checkpoint_handoff(&end, Some(blocker.join("pending.json")))
+            .await
+            .expect_err("a checkpoint that was owed and could not be recorded must be an Err");
+    }
+
+    /// A handoff that cannot be written says WHY, on the channel the host actually reads.
+    ///
+    /// Codex's `parse_completed` (`hooks/src/events/session_end.rs`) renders `run_result.stderr`
+    /// verbatim as a hook error on ANY non-zero exit, so the pair — non-zero exit AND a reason on
+    /// stderr — is what makes this legible. Silence here is indistinguishable from success, and
+    /// the cost of that confusion is the customer's session memory.
+    #[tokio::test]
+    async fn a_handoff_that_cannot_be_written_refuses_out_loud_with_its_reason() {
+        let root = tempfile::tempdir().expect("checkpoint root");
+        let (_transcript, payload) = checkpoint_fixture(root.path());
+        let payload = with_event(&payload, session_handoff::DEFERRED_EVENT);
+
+        // No home directory to derive a path from: the branch a machine without `$HOME` takes.
+        let error = checkpoint_handoff(&payload, None).await.expect_err(
+            "an unwritable handoff must be an Err, which is what makes the exit non-zero",
+        );
+        assert!(
+            error.contains("home directory"),
+            "the refusal must name the missing thing; got {error}"
+        );
+
+        // And a store whose parent cannot be created reports the io reason rather than swallowing it.
+        let blocker = root.path().join("blocked");
+        fs::write(&blocker, b"not a directory").expect("fixture blocker");
+        let error = checkpoint_handoff(&payload, Some(blocker.join("pending.json")))
+            .await
+            .expect_err("an unwritable path must be an Err");
+        assert!(
+            error.contains("could not be written"),
+            "the refusal must name the failure; got {error}"
+        );
+    }
+
     #[tokio::test]
     async fn checkpoint_records_the_local_gap_before_any_network() {
         let root = tempfile::tempdir().expect("checkpoint root");
@@ -7935,14 +8513,21 @@ tests/test_serve.py:88: AssertionError\n\
                 .expect("record"),
             );
         }
-        let messages = transcript_messages(&lines.join("\n"));
+        let conversation =
+            transcript_messages(&host_transcript::host_records(&lines.join("\n")).records);
+        let messages = &conversation.messages;
         assert_eq!(messages.len(), CHECKPOINT_MAX_MESSAGES);
+        assert_eq!(
+            conversation.dropped, 51,
+            "the turns the cap evicted are COUNTED, because a checkpoint that drops turns \
+             silently reads as a whole session"
+        );
         // The cap keeps the TAIL — recent turns are what a resume needs.
         assert_eq!(
             messages.last().expect("tail")["content"],
             json!(format!("turn {}", CHECKPOINT_MAX_MESSAGES + 49))
         );
-        for message in &messages {
+        for message in messages {
             assert!(
                 message["content"]
                     .as_str()
@@ -7962,7 +8547,11 @@ tests/test_serve.py:88: AssertionError\n\
         let token = format!("ghp_{}", "A".repeat(36));
         let record = json!({"type": "user", "message": {"role": "user", "content":
             format!("here is my token {token} — why is auth failing?")}});
-        let messages = transcript_messages(&serde_json::to_string(&record).expect("record"));
+        let messages = transcript_messages(
+            &host_transcript::host_records(&serde_json::to_string(&record).expect("record"))
+                .records,
+        )
+        .messages;
         let wire = serde_json::to_string(&messages).expect("wire");
         assert!(
             !wire.contains(&token),
