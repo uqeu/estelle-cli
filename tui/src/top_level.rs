@@ -656,7 +656,80 @@ fn context_hook_offline(payload: &HookPayload, gate_disabled: bool) -> Option<Ve
 /// not this number** — no client-side deadline can make a 6 s call fast, it can only choose
 /// between waiting and giving up. Re-measure before moving it, and move it DOWN the day the
 /// server does.
-const CONTEXT_HOOK_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
+/// The HOST's kill for `UserPromptSubmit`, in seconds — the number the customer's host actually
+/// enforces, and the only reason this hook needs a deadline of its own at all.
+///
+/// 🔑 **ONE OWNER (Power of Ten #9).** Both shipped manifests declare 30 for the `context` verb
+/// (`estelle-plugin/hooks/hooks.json`), and [`HOOK_TABLE`] — the table `install-hooks` WRITES into
+/// `~/.claude/settings.json` and `$CODEX_HOME/hooks.json` — now reads this same constant instead of
+/// carrying its own integer. It used to carry `10`, so a customer who installed via the CLI ran the
+/// recall call under a ceiling **three times smaller** than one who installed the plugin, and the
+/// 20 s deadline below could never fire on their machine: the host killed the hook first and threw
+/// the output away, which is the exact defect this module exists to remove, entering through the
+/// other door. `the_installer_table_and_the_shipped_manifest_agree_on_the_context_budget` reads the
+/// JSON and fails if they ever part again.
+const CONTEXT_HOOK_HOST_BUDGET_S: u64 = 30;
+
+/// Seconds reserved INSIDE the host budget for everything that is not the HTTP call — `npx`
+/// resolution, process start, reading stdin, resolving the credential, and **writing the
+/// could-not-ground notice**.
+///
+/// 🔴 **THE RESERVE IS WHAT MAKES THE NOTICE POSSIBLE.** A failure notice that is itself killed by
+/// the host has fixed nothing: the turn proceeds ungrounded and silent, exactly as before. The
+/// deadline below therefore exists to lose the race deliberately, early enough that there is still
+/// time to say so.
+///
+/// ⚠️ **IT DISAGREES WITH THE PYTHON HOOK'S RESERVE, AND THAT IS SAID OUT LOUD RATHER THAN HIDDEN.**
+/// `scripts/hooks/hook_budget.py` in the server repo uses `CLIENT_OVERHEAD_RESERVE_S = 5`, deriving
+/// 25 s. This is 10 s, deriving 20 s, because 20 s is the number that was measured against
+/// production (see below) and 25 s halves the margin. They are two different runners on the same
+/// door — the Rust binary is what `npx @fatelabs/estelle@0 hook context` executes and therefore what
+/// customers run; the Python file is this repo's own dogfood hook. Two owners of one derived fact is
+/// a defect whichever way it resolves, and it is filed here rather than papered over.
+const CONTEXT_HOOK_NOTICE_RESERVE_S: u64 = 10;
+
+/// How long the UserPromptSubmit context hook may spend on the network before giving up and saying
+/// so.
+///
+/// **DERIVED, never typed** — and the subtraction is evaluated at compile time, so a reserve larger
+/// than the host budget is a build failure rather than a zero-length deadline that aborts instantly.
+///
+/// 🔴 **IT WAS 4 s, AND AT 4 s IT COULD NEVER SUCCEED — 0 OF 15 PROMPTS ENRICHED.** The number was
+/// picked to sit under a 10 s host budget, not measured against the server it calls, and that is
+/// the whole defect: **a deadline chosen from the CALLER's constraint and never checked against the
+/// CALLEE's floor is not a deadline, it is a guaranteed no-op with a delay attached.** Measured
+/// 2026-09-01 against production, `POST /search` with `{"code": false}` (this hook's exact wire
+/// shape) has a hard floor of **5.93 s** — n=15 across prompt lengths 26…2846 chars, min 5.93 s,
+/// median 6.11 s, max 22.83 s — of which the server's own `timings.total_s` accounts for only
+/// 2.06–2.19 s; the remaining ~3.9 s is time-to-first-byte the server does not measure
+/// (DNS+TCP+TLS is 90 ms, so it is not the connection). A 4 s budget is BELOW the floor, so it
+/// expired on every prompt: measured end-to-end at 4.01–4.03 s with **0/15** injections. It cost
+/// the user four seconds a message and delivered nothing, which is worse than the bug it replaced.
+///
+/// ⛰️ **THE FLOOR IS THE SERVER'S, AND IT IS NOT MOVING THIS ROUND.** The server lane measured
+/// the same afternoon against prod `e8c0f20d`: an **EMPTY** query — rejected at `api_intel.py:331`
+/// *before any search runs* — still costs **3.9–4.1 s**, because the caller is resolved three
+/// times per request (`api_shared.py:181`, `api_shared.py:248`, `estelle_server.py:4705` →
+/// `endpoint_runs.py:112`) plus `ledger.may_serve` and `_admit_recall`
+/// (`estelle_server.py:9518-9528`) at ~352 ms per Postgres round trip. That is a **~4.0 s
+/// pre-handler floor before the query is even read**, and it is an auth change nobody is making
+/// today. So this constant is chosen against a floor it cannot lower.
+///
+/// ⚠️ **20 s IS A JUDGEMENT CALL ON A MEASURED DISTRIBUTION, AND HERE IS ITS LIMIT.** Four numbers
+/// bound it: the observed floor **5.93 s**, the server lane's independent whole-request floor
+/// **~8.2 s** with `code_terms` at zero, the observed max **22.83 s**, and the host's kill at
+/// **30 s**. It clears 14 of 15 samples; the one it drops is the 22.83 s outlier, and dropping that
+/// is the deadline doing its job, not failing.
+///
+/// 🚫 **AND THE COMMENT THAT USED TO LIVE HERE CLAIMED "never a stall" WHILE THE SHIPPED BINARY
+/// HAD NO BOUND AT ALL.** That sentence is why the founder's input was discarded. n=15 on one
+/// machine against one loaded production server on one afternoon is a thin basis for a hot-path
+/// constant and a hostile reader should say so out loud. **The durable fix is the server floor,
+/// not this number** — no client-side deadline can make a 6 s call fast, it can only choose
+/// between waiting and giving up. Re-measure before moving it, and move it DOWN the day the
+/// server does.
+const CONTEXT_HOOK_BUDGET: std::time::Duration =
+    std::time::Duration::from_secs(CONTEXT_HOOK_HOST_BUDGET_S - CONTEXT_HOOK_NOTICE_RESERVE_S);
 
 /// The exact body the context hook puts on the wire, as one named function, so the shape is
 /// assertable without a network and pinned by a test that reads the real request bytes.
@@ -692,6 +765,142 @@ fn context_search_body(query: &str) -> Value {
 /// `context_hook_budget_fires_against_a_slow_server` stands up a real HTTP server that delays
 /// past the budget, drives this function through the real `reqwest` client, and asserts both
 /// that it returned NOTHING and that it returned EARLY.
+/// What the network half of the context hook actually ACHIEVED — three facts that used to be one
+/// `Vec::new()`.
+///
+/// 🔴 **THE DEFECT THIS TYPE EXISTS TO MAKE UNSPELLABLE.** `context_recall_lines` returned
+/// `Vec<String>`, and `main` renders an empty vector as a single newline with `ExitCode::SUCCESS`
+/// (`tui/src/main.rs`, the `Ok(lines)` arm). So *the deadline expired*, *the server refused*, *the
+/// credential was missing* and *there is genuinely nothing to recall* all left the process as
+/// **1 byte, exit 0** — and a turn that was never grounded is then indistinguishable, to the model
+/// and to the human, from one that was grounded clean. That is this repo's own rule twice over: a
+/// capped or failed read means "cannot answer", never "that's all there is"; and a field's absence
+/// and its zero must never be the same wire bytes.
+///
+/// Every variant renders to a NON-EMPTY envelope ([`context_lines`]), which is what makes
+/// "exited 0 and said nothing about grounding" unreachable rather than merely unlikely.
+#[derive(Debug, Eq, PartialEq)]
+enum ContextOutcome {
+    /// The server answered and had memory for this prompt. The payload is the recall text.
+    Grounded(String),
+    /// The server answered, looked, and had nothing relevant. A MEASURED empty — the honest
+    /// "that's all there is", and the only one of the three entitled to say it.
+    NothingToRecall,
+    /// No grounding was obtained. The payload is a PREDICATE saying why, in the same vocabulary
+    /// [`transport_detail`] uses, so the reader is sent to the right system.
+    Ungrounded(String),
+}
+
+/// A 200 that carries no `recall` key at all. Measured against the server source 2026-09-04: the
+/// success path always sets it (`api_intel.py:554`) and the `scope_empty` path sets it to `""`
+/// (`api_intel.py:534`), but the `scope_ask` path returns without it (`api_intel.py:512-514`).
+///
+/// ⚠️ The wording deliberately stops at what is observable. Naming a cause we did not verify on
+/// this response would be a fabricated cause on a real symptom.
+const NO_RECALL_FIELD_DETAIL: &str =
+    "answered without a recall field, so this hook cannot tell whether the repository has memory";
+
+/// OUR deadline expiring, phrased so the subject is unmistakably us.
+///
+/// ⚠️ It does NOT reuse [`transport_detail`]'s `Timeout` arm, which names
+/// `estelle_client::DEFAULT_TIMEOUT` — the 120 s transport floor. Two different deadlines with one
+/// sentence between them is exactly the "one meaning per name" violation that made `UNREACHABLE`
+/// cover four opposite facts.
+fn context_budget_detail(budget: Duration) -> String {
+    format!(
+        "did not answer within the {}s this hook allows itself (the host kills the hook at {CONTEXT_HOOK_HOST_BUDGET_S}s, so it gives up early enough to say so)",
+        budget.as_secs()
+    )
+}
+
+/// The human line and the model line that make an ungrounded turn VISIBLE.
+///
+/// Both halves matter and neither substitutes for the other: the `systemMessage` is what stops the
+/// founder losing an afternoon to a silently degraded session, and the `additionalContext` is what
+/// stops the MODEL reading an absent grounding certificate as a clean one. It is deliberately short
+/// — a notice that costs a paragraph on the hot path of every prompt is a notice somebody mutes.
+fn ungrounded_lines(detail: &str) -> Vec<String> {
+    vec![hook_message(
+        Some(format!(
+            "⚠ Estelle did not ground this turn — it {detail}. Nothing was added to your prompt."
+        )),
+        Some(format!(
+            "Estelle did not ground this turn: it {detail}. No repository memory reached you. \
+             Treat this as MISSING grounding, not as a clean grounding result, and verify any \
+             claim about this repository before stating it."
+        )),
+        "UserPromptSubmit",
+    )]
+}
+
+/// One outcome, one envelope — the ONLY place a [`ContextOutcome`] becomes bytes.
+///
+/// 🔑 The match has no wildcard arm on purpose: a fourth outcome cannot be added without a compiler
+/// error here, which is the cheapest available guarantee that the next variant is also given a
+/// voice. (A structural check can prove a thing EXISTS and can never prove it RUNS — so the
+/// invariant is *also* asserted at runtime over every variant in
+/// `a_searched_prompt_never_exits_quiet_and_ungrounded`.)
+fn context_lines(outcome: ContextOutcome) -> Vec<String> {
+    match outcome {
+        // Silent to the human — a line on every prompt is how a feature gets muted. The model gets
+        // the context. The event name MUST be UserPromptSubmit: Claude Code ignores
+        // additionalContext whose hookEventName does not match the event that fired.
+        ContextOutcome::Grounded(recall) => {
+            vec![hook_message(None, Some(recall), "UserPromptSubmit")]
+        }
+        // Also silent to the human — this is not a fault and must not read as one — but NOT silent
+        // to the model, because "Estelle looked and found nothing" and "Estelle never answered" are
+        // different facts and the model has no other way to tell them apart.
+        ContextOutcome::NothingToRecall => vec![hook_message(
+            None,
+            Some(
+                "Estelle searched this repository's memory and it answered with nothing relevant \
+                 to this prompt. That is a measured empty result, not a failure to reach Estelle."
+                    .to_string(),
+            ),
+            "UserPromptSubmit",
+        )],
+        ContextOutcome::Ungrounded(detail) => ungrounded_lines(&detail),
+    }
+}
+
+async fn context_recall(
+    client: &Client,
+    cancel: &CancellationToken,
+    repo: &Repo,
+    query: &str,
+    budget: Duration,
+) -> ContextOutcome {
+    let body = context_search_body(query);
+    let request = client.post_scoped::<Value, Value>(Endpoint::Search, repo, &body, cancel);
+    let result = match tokio::time::timeout(budget, request).await {
+        // OUR deadline, not the server's, and the wording says so: `transport_detail`'s Timeout arm
+        // names `DEFAULT_TIMEOUT` (the 120 s transport floor), which is a different subject.
+        Err(_elapsed) => return ContextOutcome::Ungrounded(context_budget_detail(budget)),
+        // 🔴 THE LINE THE WHOLE MODULE TURNS ON. This arm used to be folded into the one above by a
+        // `let Ok(Ok(result)) = … else { return Vec::new() }`, so a server that ANSWERED and
+        // declined produced byte-for-byte the same output as a server that was merely slow: none.
+        // Measured on the founder's own machine 2026-09-04, 4/4 runs: `POST /search` → **429**
+        // `too many concurrent requests` in 0.616 s, hook stdout **1 byte**, exit **0**. Every
+        // prompt that afternoon was ungrounded and nothing anywhere said so.
+        Ok(Err(error)) => return ContextOutcome::Ungrounded(transport_failure_detail(&error)),
+        Ok(Ok(result)) => result,
+    };
+    // ⚖️ ABSENCE AND ZERO ARE NOT THE SAME WIRE BYTES. A response with NO `recall` field is a shape
+    // this hook does not understand — it cannot say whether the repo has memory — while a response
+    // with an EMPTY `recall` is the server having looked and found nothing. The first is a failure
+    // to ground; the second is a grounding result that happens to be empty. Collapsing them is how
+    // "we never asked" comes to read as "there is nothing there".
+    match result.get("recall").and_then(Value::as_str).map(str::trim) {
+        Some(recall) if !recall.is_empty() => ContextOutcome::Grounded(recall.to_string()),
+        Some(_) => ContextOutcome::NothingToRecall,
+        None => ContextOutcome::Ungrounded(NO_RECALL_FIELD_DETAIL.to_string()),
+    }
+}
+
+/// The composed network half: ask, then say what happened. Split from [`context_recall`] so the
+/// classification can be asserted without re-parsing an envelope, and from [`context_lines`] so the
+/// envelope can be asserted without a socket.
 async fn context_recall_lines(
     client: &Client,
     cancel: &CancellationToken,
@@ -699,34 +908,29 @@ async fn context_recall_lines(
     query: &str,
     budget: Duration,
 ) -> Vec<String> {
-    let body = context_search_body(query);
-    let request = client.post_scoped::<Value, Value>(Endpoint::Search, repo, &body, cancel);
-    let Ok(Ok(result)) = tokio::time::timeout(budget, request).await else {
-        // Expired or errored: return NOTHING, exit 0. Silence is the correct outcome — the model
-        // simply does not get the extra context this turn, and the human sees no error, because a
-        // failure to enrich is not a failure of their prompt.
-        return Vec::new();
-    };
-    let recall = result
-        .get("recall")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or_default();
-    // Silent to the human — a line on every prompt is how a feature gets muted. The model gets
-    // the context. The event name MUST be UserPromptSubmit: Claude Code ignores
-    // additionalContext whose hookEventName does not match the event that fired.
-    if recall.is_empty() {
-        Vec::new()
-    } else {
-        vec![hook_message(
-            None,
-            Some(recall.to_string()),
-            "UserPromptSubmit",
-        )]
-    }
+    context_lines(context_recall(client, cancel, repo, query, budget).await)
 }
 
 async fn context_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>, String> {
+    context_hook_with(payload, repo, Api::resolve).await
+}
+
+/// The context hook with its credential resolver passed in.
+///
+/// 🔬 **THE PARAMETER EXISTS BECAUSE THE BRANCH SURVIVED A MUTANT.** Restoring
+/// `return Ok(Vec::new())` to the missing-credential arm was killed by NOTHING: 78/78 still passed,
+/// because `Api::resolve` reads this machine's real credential store and no test could make it
+/// fail. That is the partial-guard species — the suite failed correctly on the two failure branches
+/// it could reach and was **silent about the third**, so its green read as a verdict on all of
+/// them. A branch no test can drive is a branch with no test, however many tests surround it.
+async fn context_hook_with<F>(
+    payload: &HookPayload,
+    repo: &Repo,
+    resolve: F,
+) -> Result<Vec<String>, String>
+where
+    F: FnOnce() -> Result<Api, String>,
+{
     let gate_disabled = std::env::var_os("ESTELLE_GATE_DISABLED").is_some();
     if let Some(lines) = context_hook_offline(payload, gate_disabled) {
         return Ok(lines);
@@ -758,8 +962,15 @@ async fn context_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>,
     // worse than no deadline: it reads as a bound in review. Measured cost of everything outside
     // the bound is reported in the commit; if it ever stops being negligible the answer is
     // `spawn_blocking`, not a decorative wrapper.
-    let Ok(api) = Api::resolve() else {
-        return Ok(Vec::new());
+    //
+    // 🔴 AND THE CREDENTIAL BRANCH WAS SILENT TOO — the worst of the three, because the fix is on
+    // the reader's own machine and nothing pointed them at it. `NO_CREDENTIAL_DETAIL` deliberately
+    // does not interpolate the resolver's message: `Error::CredentialIo` wraps an `io::Error` that
+    // can carry a local path, and this line reaches a terminal and an on-disk transcript.
+    let Ok(api) = resolve() else {
+        return Ok(context_lines(ContextOutcome::Ungrounded(
+            NO_CREDENTIAL_DETAIL.to_string(),
+        )));
     };
     Ok(context_recall_lines(&api.client, &api.cancel, repo, &query, CONTEXT_HOOK_BUDGET).await)
 }
@@ -1909,7 +2120,10 @@ const HOOK_TABLE: &[HookRow] = &[
         event: "UserPromptSubmit",
         matcher: None,
         mode: "context",
-        timeout: 10,
+        // 🔑 NOT A LITERAL. This table is what `install-hooks` WRITES, so a typed 10 here meant a
+        // CLI-installed customer ran the recall call under a third of the plugin's ceiling and the
+        // client deadline could never fire on their machine. See [`CONTEXT_HOOK_HOST_BUDGET_S`].
+        timeout: CONTEXT_HOOK_HOST_BUDGET_S,
         claude_async: false,
     },
 ];
@@ -5977,7 +6191,8 @@ tests/test_serve.py:88: AssertionError\n\
             ("PreCompact", None, "checkpoint", 30),
             ("SessionEnd", None, "checkpoint", 30),
             ("SessionStart", None, "welcome", 5),
-            ("UserPromptSubmit", None, "context", 10),
+            // 30, matching BOTH shipped manifests. It was 10 — see `CONTEXT_HOOK_HOST_BUDGET_S`.
+            ("UserPromptSubmit", None, "context", 30),
         ];
         assert_eq!(
             hooks.as_object().expect("events").len(),
@@ -6041,7 +6256,8 @@ tests/test_serve.py:88: AssertionError\n\
             // Codex clamps SessionEnd to 3s — say 3 rather than be silently rewritten.
             ("SessionEnd", None, "checkpoint", 3),
             ("SessionStart", None, "welcome", 5),
-            ("UserPromptSubmit", None, "context", 10),
+            // 30, matching BOTH shipped manifests. It was 10 — see `CONTEXT_HOOK_HOST_BUDGET_S`.
+            ("UserPromptSubmit", None, "context", 30),
         ];
         assert_eq!(hooks.as_object().expect("events").len(), 7);
         for (event, matcher, mode, timeout) in expected {
@@ -6629,9 +6845,17 @@ tests/test_serve.py:88: AssertionError\n\
             context_recall_lines(&client, &cancel, &repo, "a prompt worth enriching", BUDGET).await;
         let elapsed = started.elapsed();
 
+        // 🔴 THIS ASSERTION USED TO READ `lines.is_empty()`. That is the defect, written down as a
+        // requirement: an expired budget produced ZERO bytes and exit 0, so the turn continued with
+        // no grounding and nothing said so. It must now SAY it gave up.
+        assert_eq!(
+            grounding_statements(&lines).len(),
+            1,
+            "an expired budget must still state a grounding result: {lines:?}"
+        );
         assert!(
-            lines.is_empty(),
-            "an expired budget injects NOTHING, never a partial or an error: {lines:?}"
+            human_line(&lines).is_some_and(|line| line.contains("did not ground")),
+            "the human is told, not just the model: {lines:?}"
         );
         assert!(
             elapsed < SERVER_DELAY,
@@ -6677,6 +6901,495 @@ tests/test_serve.py:88: AssertionError\n\
             elapsed >= SERVER_DELAY,
             "it really waited for the slow server ({elapsed:?}); if this is instant the mock is \
              not delaying and neither test is measuring a deadline"
+        );
+    }
+
+    /// Exactly the bytes `main` writes for a hook run, so these tests assert on what the HOST sees
+    /// rather than on our own `Vec<String>`.
+    ///
+    /// ⚠️ ONE OWNER, MIRRORED — stated rather than hidden. The formatting lives in
+    /// `tui/src/main.rs` (`let body = format!("{}\n", lines.join("\n"))`) and is duplicated here.
+    /// The mirror is pinned by the `assert_eq!` in
+    /// `an_empty_hook_result_is_the_one_byte_the_founder_measured`, which fails if either side
+    /// moves, so the duplication cannot rot silently.
+    fn hook_stdout(lines: &[String]) -> String {
+        format!("{}\n", lines.join("\n"))
+    }
+
+    /// Every non-empty `hookSpecificOutput.additionalContext` this hook emits, read out of the
+    /// ENVELOPE the host parses — not out of our types. The host's reading is the only one that
+    /// decides whether the turn was grounded.
+    fn grounding_statements(lines: &[String]) -> Vec<String> {
+        lines
+            .iter()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter_map(|envelope| {
+                envelope
+                    .get("hookSpecificOutput")
+                    .and_then(|specific| specific.get("additionalContext"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|context| !context.is_empty())
+                    .map(str::to_string)
+            })
+            .collect()
+    }
+
+    /// The `systemMessage` — what the human actually reads in their terminal.
+    fn human_line(lines: &[String]) -> Option<String> {
+        lines
+            .iter()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .find_map(|envelope| {
+                envelope
+                    .get("systemMessage")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+    }
+
+    /// The symptom, pinned as a number so the invariant below is anchored to something measured.
+    ///
+    /// MEASURED on the founder's machine 2026-09-04, shipped 0.2.32 build, 4/4 runs against
+    /// production: stdout **1 byte**, exit **0**, in 0.81–0.86 s, while `POST /search` was
+    /// answering **429**. One byte is a bare newline, and it is what `Ok(Vec::new())` renders to.
+    #[test]
+    fn an_empty_hook_result_is_the_one_byte_the_founder_measured() {
+        assert_eq!(
+            hook_stdout(&[]).len(),
+            1,
+            "if this is not 1, the mirror of main.rs's output formatting has drifted and every \
+             byte-count assertion in this module is measuring the wrong thing"
+        );
+    }
+
+    /// Every outcome the network half can produce. Adding a variant to [`ContextOutcome`] makes the
+    /// match below fail to compile, which is what forces the next author to this list.
+    fn every_context_outcome() -> Vec<ContextOutcome> {
+        fn _exhaustive(outcome: &ContextOutcome) {
+            match outcome {
+                ContextOutcome::Grounded(_) => (),
+                ContextOutcome::NothingToRecall => (),
+                ContextOutcome::Ungrounded(_) => (),
+            }
+        }
+        vec![
+            ContextOutcome::Grounded("the retry policy lives in serve/backend.py".to_string()),
+            ContextOutcome::NothingToRecall,
+            ContextOutcome::Ungrounded(context_budget_detail(CONTEXT_HOOK_BUDGET)),
+            ContextOutcome::Ungrounded(transport_detail(TransportFailure::Http(429))),
+            ContextOutcome::Ungrounded(transport_detail(TransportFailure::Refused)),
+            ContextOutcome::Ungrounded(transport_detail(TransportFailure::Dns)),
+            ContextOutcome::Ungrounded(transport_detail(TransportFailure::BadResponse)),
+            ContextOutcome::Ungrounded(transport_detail(TransportFailure::Cancelled)),
+            ContextOutcome::Ungrounded(transport_detail(TransportFailure::Unknown)),
+            ContextOutcome::Ungrounded(NO_RECALL_FIELD_DETAIL.to_string()),
+            ContextOutcome::Ungrounded(NO_CREDENTIAL_DETAIL.to_string()),
+        ]
+    }
+
+    /// 🔴🔴 **THE PAIR THAT CANNOT BOTH BE TRUE.**
+    ///
+    /// > *"the hook exited 0"* and *"the hook produced no grounding and said nothing about it"*
+    /// > must be unreachable together.
+    ///
+    /// It is stated over OUTCOMES, not over causes, on purpose. A test written as "a 429 must warn"
+    /// catches a 429 and nothing else; a future variant — a new status, a new refusal shape, a
+    /// deadline nobody has invented yet — walks straight past it. This one goes red for any outcome
+    /// that renders to silence, whatever produced it.
+    ///
+    /// ⚠️ WHAT IT DOES NOT PROVE, SAID OUT LOUD. It proves every outcome RENDERS to a statement.
+    /// It cannot prove the code REACHES one of these outcomes on a given failure — a structural
+    /// check can prove a thing exists and can never prove it runs. That half is
+    /// `context_hook_states_a_result_for_every_real_server_answer`, which drives the real
+    /// deserialization path against a real HTTP server.
+    #[test]
+    fn a_searched_prompt_never_exits_quiet_and_ungrounded() {
+        for outcome in every_context_outcome() {
+            let label = format!("{outcome:?}");
+            let lines = context_lines(outcome);
+            let stdout = hook_stdout(&lines);
+            assert!(
+                stdout.len() > 1,
+                "{label} rendered to {} byte(s) — that is the silent exit-0 this whole module \
+                 exists to make unreachable",
+                stdout.len()
+            );
+            let statements = grounding_statements(&lines);
+            assert_eq!(
+                statements.len(),
+                1,
+                "{label} must state exactly one grounding result to the model; got {statements:?}"
+            );
+            for line in &lines {
+                let envelope: Value = serde_json::from_str(line)
+                    .unwrap_or_else(|error| panic!("{label} emitted non-JSON: {error}"));
+                assert_eq!(
+                    envelope["hookSpecificOutput"]["hookEventName"],
+                    json!("UserPromptSubmit"),
+                    "{label}: Claude Code DISCARDS additionalContext whose hookEventName does not \
+                     match the event that fired, so a wrong name here is silence wearing a JSON \
+                     costume"
+                );
+            }
+        }
+    }
+
+    /// The other half of the pair: the two outcomes that are ALLOWED to be quiet to the human must
+    /// stay quiet, or the notice becomes noise on the hot path of every prompt and gets muted.
+    #[test]
+    fn only_a_failure_to_ground_speaks_to_the_human() {
+        assert_eq!(
+            human_line(&context_lines(ContextOutcome::Grounded(
+                "recall".to_string()
+            ))),
+            None,
+            "a successful recall must not print a line on every prompt"
+        );
+        assert_eq!(
+            human_line(&context_lines(ContextOutcome::NothingToRecall)),
+            None,
+            "an empty-but-answered search is not a fault and must not read as one"
+        );
+        assert!(
+            human_line(&context_lines(ContextOutcome::Ungrounded(
+                "stopped".to_string()
+            )))
+            .is_some_and(|line| line.contains("did not ground")),
+            "a failure to ground is the ONE case the human must see"
+        );
+    }
+
+    /// ⚖️ ABSENCE IS NOT ZERO — asserted on the bytes, because that is where it was violated.
+    ///
+    /// "Estelle looked and found nothing" and "Estelle never answered" produced identical output
+    /// before this change. They must now differ, and the difference must be legible without
+    /// knowing which branch produced it.
+    #[test]
+    fn a_measured_empty_and_a_failure_to_reach_are_different_bytes() {
+        let measured = hook_stdout(&context_lines(ContextOutcome::NothingToRecall));
+        let failed = hook_stdout(&context_lines(ContextOutcome::Ungrounded(
+            transport_detail(TransportFailure::Http(429)),
+        )));
+        assert_ne!(measured, failed);
+        assert!(measured.contains("measured empty result"));
+        assert!(
+            failed.contains("429"),
+            "the status the server sent is named: {failed}"
+        );
+    }
+
+    /// 🔬 THE REAL DESERIALIZATION PATH, DRIVEN BY REAL SERVER-SHAPED ANSWERS.
+    ///
+    /// A double friendlier than production certifies code production rejects, so these bodies are
+    /// not invented: they are the four 200/4xx shapes read out of the server source on 2026-09-04
+    /// — the success path (`api_intel.py:554` plus the certificate keys from
+    /// `context_certificate.py:218-223` and `retrieval_coverage` from `api_intel.py:495-501`), the
+    /// `scope_empty` path that sets `recall` to `""` (`api_intel.py:534`), the `scope_ask` path
+    /// that returns **no `recall` key at all** (`api_intel.py:512-514`), and the 429 envelope this
+    /// hook actually met in production (`{"error": {"message": …, "code": 429}}`).
+    ///
+    /// Each one goes through the real `reqwest` client, the real `post_scoped` deserialization and
+    /// the real `Error::Http` construction. NOT ONE of them may leave stdout at one byte.
+    #[tokio::test]
+    async fn context_hook_states_a_result_for_every_real_server_answer() {
+        let timings = json!({
+            "stages": {"auth": 0.472, "rate_limit": 0.008, "concurrency_slot": 0.136},
+            "stages_sum_s": 0.616, "elapsed_s": 0.616, "total_s": 0.616,
+            "attributed_s": 0.616, "unattributed_s": 0.0
+        });
+        // (label, status, body, the SENTENCE that answer must produce, whether it is the recall)
+        let cases: Vec<(&str, u16, Value, &str, bool)> = vec![
+            (
+                "success",
+                200,
+                json!({
+                    "recall": "CURRENCY: index current.\n\nthe retry policy lives in serve/backend.py",
+                    "repo": "uqeu/estelle",
+                    "scope": "repo:uqeu/estelle",
+                    "code_currency": {"checked": true, "repo": "uqeu/estelle", "known": true,
+                                      "stale": false, "actionable": false, "note": ""},
+                    "relevance": {"status": "anchored", "anchors_asked": 3,
+                                  "anchors": ["retry", "policy", "backend"], "detail": ""},
+                    "prose_currency": {"checked": true, "status": "fresh", "age_days": 1,
+                                       "dated": true, "cited_paths": 2, "resolved": 2,
+                                       "unresolved": [], "unjudged": 0, "because": "",
+                                       "actionable": false, "note": ""},
+                    "retrieval_coverage": {"state": "complete", "what": "vector recall", "shown": 8,
+                                           "bound": 8, "pool": 8, "complete": true,
+                                           "truncated": false},
+                    "timings": timings, "request_timings": timings
+                }),
+                "the retry policy lives in serve/backend.py",
+                true,
+            ),
+            (
+                "scope_empty — recall present and EMPTY",
+                200,
+                json!({"recall": "", "code": [], "scope_empty": true,
+                       "reason": "no memory for this repository yet", "repo": "",
+                       "scope": "account default (no single repo resolved)",
+                       "timings": timings, "request_timings": timings}),
+                "measured empty result",
+                false,
+            ),
+            (
+                "scope_ask — recall key ABSENT",
+                200,
+                json!({"scope_ask": true, "question": "which repository did you mean?",
+                       "candidates": ["uqeu/estelle", "uqeu/estelle-cli"],
+                       "reason": "two repositories match",
+                       "timings": timings, "request_timings": timings}),
+                "without a recall field",
+                false,
+            ),
+            (
+                "429 — the one measured in production",
+                429,
+                json!({"error": {"message": "too many concurrent requests — retry in a moment",
+                                 "code": 429},
+                       "request_timings": timings}),
+                "429",
+                false,
+            ),
+        ];
+
+        for (label, status, body, expected, expect_recall) in cases {
+            let server = wiremock::MockServer::start().await;
+            wiremock::Mock::given(wiremock::matchers::method("POST"))
+                .and(wiremock::matchers::path("/search"))
+                .respond_with(wiremock::ResponseTemplate::new(status).set_body_json(body.clone()))
+                .mount(&server)
+                .await;
+            let (client, cancel) = hook_client(&server.uri());
+            let repo = Repo::new("uqeu/estelle").expect("repo");
+            let lines = context_recall_lines(
+                &client,
+                &cancel,
+                &repo,
+                "where is the retry policy set?",
+                CONTEXT_HOOK_BUDGET,
+            )
+            .await;
+
+            let stdout = hook_stdout(&lines);
+            assert!(
+                stdout.len() > 1,
+                "[{label}] the process wrote {} byte(s) — a real server answer became silence",
+                stdout.len()
+            );
+            let statements = grounding_statements(&lines);
+            assert_eq!(
+                statements.len(),
+                1,
+                "[{label}] exactly one grounding statement: {statements:?}"
+            );
+            // 🔑 EACH ANSWER GETS ITS OWN SENTENCE. Asserting only "something was said" would pass
+            // over a hook that answered every one of the four with the same wrong sentence, which
+            // is the collapse this change exists to undo.
+            assert!(
+                statements[0].contains(expected),
+                "[{label}] expected the statement to contain {expected:?}: {statements:?}"
+            );
+            if expect_recall {
+                assert_eq!(
+                    human_line(&lines),
+                    None,
+                    "[{label}] the happy path stays quiet to the human"
+                );
+            } else {
+                assert!(
+                    !statements[0].contains("the retry policy lives in serve/backend.py"),
+                    "[{label}] nothing was recalled, so nothing may be presented as recall"
+                );
+            }
+        }
+    }
+
+    /// 🔴 A 429 IS AN ANSWER, AND ANSWERS USED TO BE SILENCE.
+    ///
+    /// The single line this whole lane turns on: `let Ok(Ok(result)) = timeout(..).await else`
+    /// folded *the server refused* into *the server was slow* into *nothing*. This drives a real
+    /// 429 through the real client and demands the STATUS be named — a reader sent to "check the
+    /// network" when the server answered in 0.6 s loses the afternoon.
+    #[tokio::test]
+    async fn a_server_that_answers_and_declines_is_never_reported_as_silence() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/search"))
+            .respond_with(wiremock::ResponseTemplate::new(429).set_body_json(
+                json!({"error": {"message": "too many concurrent requests", "code": 429}}),
+            ))
+            .mount(&server)
+            .await;
+        let (client, cancel) = hook_client(&server.uri());
+        let repo = Repo::new("uqeu/estelle").expect("repo");
+
+        let started = Instant::now();
+        let outcome = context_recall(
+            &client,
+            &cancel,
+            &repo,
+            "where is the retry policy set?",
+            CONTEXT_HOOK_BUDGET,
+        )
+        .await;
+        let elapsed = started.elapsed();
+
+        let ContextOutcome::Ungrounded(detail) = &outcome else {
+            panic!("a 429 is a failure to ground, not a result: {outcome:?}");
+        };
+        assert!(detail.contains("429"), "the status is named: {detail}");
+        assert!(
+            detail.contains("reachable"),
+            "a server that ANSWERED must not be reported as unreachable: {detail}"
+        );
+        // NEGATIVE CONTROL on the deadline: this returned because the server replied, not because
+        // the budget expired. If those two were confusable the detail above would be untrustworthy.
+        assert!(
+            elapsed < CONTEXT_HOOK_BUDGET,
+            "the 429 arrived before the budget; {elapsed:?} means the deadline fired instead"
+        );
+    }
+
+    /// 🔴 THE BRANCH THAT SURVIVED THE MUTANT, NOW DRIVEN.
+    ///
+    /// A machine with no usable Estelle credential is the case where silence is WORST: the fix is
+    /// on the reader's own machine and nothing was pointing them at it. `Api::resolve` reads the
+    /// real credential store, so before `context_hook_with` took its resolver as a parameter this
+    /// branch was unreachable from a test and a mutant restoring `Ok(Vec::new())` here killed
+    /// nothing while 78 other tests stayed green.
+    ///
+    /// ⚠️ AND IT ASSERTS THE ABSENCE OF THE RESOLVER'S OWN TEXT. `Error::CredentialIo` wraps an
+    /// `io::Error` that can carry a local path, and this line lands in a terminal and an on-disk
+    /// transcript.
+    #[tokio::test]
+    async fn a_machine_with_no_credential_is_told_so_rather_than_left_quiet() {
+        let payload: HookPayload =
+            serde_json::from_value(json!({"prompt": "where is the retry policy set?"}))
+                .expect("payload");
+        let repo = Repo::new("uqeu/estelle").expect("repo");
+        let lines = context_hook_with(&payload, &repo, || {
+            Err("/Users/someone/.estelle/auth.json: permission denied".to_string())
+        })
+        .await
+        .expect("the hook does not fail the turn over a missing credential");
+
+        assert!(
+            hook_stdout(&lines).len() > 1,
+            "a missing credential must not render to the silent exit-0: {lines:?}"
+        );
+        let statements = grounding_statements(&lines);
+        assert_eq!(statements.len(), 1, "{statements:?}");
+        assert!(
+            statements[0].contains("no usable credential"),
+            "the model is told WHY it has no grounding: {statements:?}"
+        );
+        assert!(
+            human_line(&lines).is_some_and(|line| line.contains("estelle login")),
+            "the human is pointed at the fix, which is on their own machine: {lines:?}"
+        );
+        for line in &lines {
+            assert!(
+                !line.contains("permission denied") && !line.contains("/Users/someone"),
+                "the resolver's own message can carry a local path and must never be echoed: {line}"
+            );
+        }
+    }
+
+    /// The negative control for the test above: the SAME entry point, with a resolver that
+    /// succeeds, must not produce the credential notice. Without this, a `context_hook_with` that
+    /// emitted the notice unconditionally would satisfy it forever.
+    #[tokio::test]
+    async fn a_resolvable_credential_does_not_produce_the_credential_notice() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/search"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
+                json!({"recall": "the retry policy lives in serve/backend.py", "repo": "uqeu/estelle"}),
+            ))
+            .mount(&server)
+            .await;
+        let (client, cancel) = hook_client(&server.uri());
+        let api = Api {
+            client,
+            api_key: estelle_client::ApiKey::new("test-key").expect("key"),
+            cancel,
+        };
+        let payload: HookPayload =
+            serde_json::from_value(json!({"prompt": "where is the retry policy set?"}))
+                .expect("payload");
+        let repo = Repo::new("uqeu/estelle").expect("repo");
+        let lines = context_hook_with(&payload, &repo, move || Ok(api))
+            .await
+            .expect("hook");
+
+        let statements = grounding_statements(&lines);
+        assert_eq!(statements.len(), 1, "{statements:?}");
+        assert!(
+            !statements[0].contains("no usable credential"),
+            "a working credential must not report a missing one: {statements:?}"
+        );
+        assert!(
+            statements[0].contains("the retry policy lives in serve/backend.py"),
+            "and the recall is what reaches the model: {statements:?}"
+        );
+    }
+
+    /// 🔑 ONE OWNER FOR THE HOST BUDGET, read out of the JSON rather than restated.
+    ///
+    /// `HOOK_TABLE` is the GENERATOR — it is what `install-hooks` writes into a customer's
+    /// `settings.json` — and it carried a typed `10` while both shipped manifests said `30`. A
+    /// customer who installed via the CLI therefore ran the recall call under a third of the
+    /// plugin's ceiling, where the 20 s client deadline can never fire and the host discards the
+    /// output instead: the silent-ungrounded turn, entering through the other door.
+    #[test]
+    fn the_installer_table_and_the_shipped_manifest_agree_on_the_context_budget() {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root")
+            .join("estelle-plugin/hooks/hooks.json");
+        let raw = std::fs::read_to_string(&manifest)
+            .unwrap_or_else(|error| panic!("read {}: {error}", manifest.display()));
+        let value: Value = serde_json::from_str(&raw).expect("manifest JSON");
+        let mut declared = Vec::new();
+        for blocks in value["hooks"].as_object().expect("hooks map").values() {
+            for block in blocks.as_array().expect("event blocks") {
+                for handler in block["hooks"].as_array().expect("handlers") {
+                    let command = handler["command"].as_str().unwrap_or_default();
+                    if command.split_whitespace().last() == Some("context") {
+                        declared.push(handler["timeout"].as_u64().expect("timeout is an integer"));
+                    }
+                }
+            }
+        }
+        // Vacuity guard WITH a shape assertion: non-empty is not correctly-parsed.
+        assert_eq!(
+            declared.len(),
+            1,
+            "expected exactly one `hook context` handler in the shipped manifest, found {declared:?}"
+        );
+        assert_eq!(
+            declared[0], CONTEXT_HOOK_HOST_BUDGET_S,
+            "the shipped manifest gives `hook context` {}s while this binary's installer writes \
+             {CONTEXT_HOOK_HOST_BUDGET_S}s — one set of customers runs the recall call under a \
+             different ceiling than the other",
+            declared[0]
+        );
+        let row = HOOK_TABLE
+            .iter()
+            .find(|row| row.mode == "context")
+            .expect("the installer table declares the context verb");
+        assert_eq!(row.timeout, CONTEXT_HOOK_HOST_BUDGET_S);
+        assert!(
+            CONTEXT_HOOK_BUDGET.as_secs() < CONTEXT_HOOK_HOST_BUDGET_S,
+            "a client deadline at or above the host's cap is killed mid-request — the same no-op \
+             as too small a deadline, wearing a different cause"
+        );
+        assert_eq!(
+            CONTEXT_HOOK_BUDGET.as_secs(),
+            CONTEXT_HOOK_HOST_BUDGET_S - CONTEXT_HOOK_NOTICE_RESERVE_S,
+            "the client deadline is DERIVED from the host cap, never typed beside it"
         );
     }
 
