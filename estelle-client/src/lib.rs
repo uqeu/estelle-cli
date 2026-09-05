@@ -3,6 +3,7 @@
 mod auth;
 mod auth_record;
 mod endpoint;
+mod key_display;
 mod repo;
 pub mod secret_engine;
 mod types;
@@ -855,6 +856,8 @@ pub use auth::find_secret_shape;
 pub use auth::is_secret_shaped;
 pub use auth::mask_secret;
 pub use auth::redact_secrets;
+pub use key_display::is_elided_key_prefix;
+pub use key_display::mask_key_row;
 pub use secret_engine::SecretFinding;
 pub use secret_engine::find_secret_shapes;
 pub use secret_engine::redact_secrets_engine;
