@@ -142,6 +142,7 @@ mod goal_files;
 pub mod ground_block;
 mod history_cell;
 mod hooks_rpc;
+pub mod host_transcript;
 mod ide_context;
 mod inline_visualization;
 pub(crate) mod insert_history;

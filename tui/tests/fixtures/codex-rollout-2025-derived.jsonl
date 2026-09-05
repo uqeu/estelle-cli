@@ -1,0 +1,11 @@
+{"id":"<id-1>","timestamp":"2026-01-01T00:00:00.000Z","instructions":null,"git":{"commit_hash":"0000000000000000000000000000000000000000","branch":"main","repository_url":"https://example.invalid/demo.git"}}
+{"record_type":"state"}
+{"type":"message","role":"user","content":[{"type":"input_text","text":"<text-2>"}]}
+{"record_type":"state"}
+{"type":"message","role":"user","content":[{"type":"input_text","text":"<text-3>"}]}
+{"type":"reasoning","id":"<id-4>","summary":[{"type":"summary_text","text":"<text-5>"},{"type":"summary_text","text":"<text-6>"}],"content":null,"encrypted_content":"<text-7>"}
+{"type":"function_call","name":"shell","arguments":"<text-8>","call_id":"<id-9>"}
+{"type":"function_call_output","call_id":"<id-10>","output":"<text-11>"}
+{"type":"reasoning","id":"<id-12>","summary":[{"type":"summary_text","text":"<text-13>"}],"content":null,"encrypted_content":"<text-14>"}
+{"type":"function_call","name":"shell","arguments":"<text-15>","call_id":"<id-16>"}
+{"type":"function_call_output","call_id":"<id-17>","output":"<text-18>"}

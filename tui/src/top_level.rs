@@ -30,6 +30,7 @@ use crate::commands;
 use crate::plugin_currency;
 use estelle_tui::ground_block;
 use estelle_tui::ground_block::FlaggedOutcome;
+use estelle_tui::host_transcript;
 use estelle_tui::session_gap;
 use estelle_tui::session_handoff;
 
@@ -239,6 +240,13 @@ struct HookPayload {
 #[cfg(test)]
 #[path = "hook_schema_contract_tests.rs"]
 mod hook_schema_contract_tests;
+
+/// The checkpoint parser, driven by the founder's REAL `~/.codex/sessions` rollouts rather than
+/// by fixtures this repo authored. See the module docs for the pair it makes unreachable and for
+/// why its oracle is structural rather than a substring match.
+#[cfg(test)]
+#[path = "host_transcript_corpus_tests.rs"]
+mod host_transcript_corpus_tests;
 
 impl HookPayload {
     /// The transcript the host materialized for this session, or `None` when it has none.
@@ -1086,26 +1094,126 @@ fn base64_decoded_len(value: &str) -> Option<usize> {
 }
 
 fn human_bytes(bytes: usize) -> String {
-    if bytes < 1_000 {
-        format!("{bytes} B")
-    } else {
-        format!("{} kB", bytes.div_ceil(1_000))
+    // A transcript can be 35 GB, and "35293767 kB" is a number nobody reads. The kB rung is
+    // unchanged so the image markers it already renders keep their exact wording.
+    match bytes {
+        0..1_000 => format!("{bytes} B"),
+        1_000..1_000_000 => format!("{} kB", bytes.div_ceil(1_000)),
+        1_000_000..1_000_000_000 => format!("{} MB", bytes.div_ceil(1_000_000)),
+        _ => format!("{} GB", bytes.div_ceil(1_000_000_000)),
     }
 }
 
-/// The conversation `[{role, content}]` inside a Claude Code transcript (JSONL), ready to
-/// checkpoint. The host writes this file itself and hands every hook its path, which is what
-/// makes always-on checkpointing possible WITHOUT the model choosing to cooperate. Never
-/// fails: a malformed line is skipped, not fatal.
-fn transcript_messages(text: &str) -> Vec<Value> {
-    let mut out = Vec::new();
-    for line in text.lines() {
-        if line.trim().is_empty() {
-            continue;
+/// The turns that will travel, and how many older ones did NOT.
+///
+/// `dropped` exists because a count that only the extractor knows is a count nobody can disclose:
+/// the caller cannot recompute it without a second pass that would immediately drift.
+struct Conversation {
+    messages: Vec<Value>,
+    /// Turns evicted by [`CHECKPOINT_MAX_MESSAGES`]. Older than the ones kept, never newer.
+    dropped: usize,
+}
+
+/// ONE OWNER FOR "THIS CHECKPOINT IS PARTIAL".
+///
+/// 🔴 **A CAPPED READ MEANS "THERE IS MORE", NEVER "THAT IS ALL THERE IS."** A checkpoint built
+/// from the tail of a 35 GB rollout and one built from a whole 12 KB session are the same JSON
+/// shape, and without this they read identically — a partial session would be stored, summarised
+/// and resumed as if it were the whole thing.
+///
+/// Two independent caps can each make a checkpoint partial and they are disclosed together:
+/// the byte window ([`host_transcript::TAIL_MAX_BYTES`]) and the turn cap
+/// ([`CHECKPOINT_MAX_MESSAGES`]).
+#[derive(Clone, Copy, Debug, Default)]
+struct Truncation {
+    /// Bytes between the head and the tail window were never read.
+    window: bool,
+    /// Turns evicted by the message cap.
+    dropped_turns: usize,
+    file_bytes: u64,
+    read_bytes: u64,
+}
+
+impl Truncation {
+    fn is_partial(self) -> bool {
+        self.window || self.dropped_turns > 0
+    }
+
+    /// The sentence a human (or a model) reads at the top of the oldest surviving turn.
+    ///
+    /// It travels INSIDE the conversation rather than only beside it, because a field a consumer
+    /// does not know about is a field a consumer drops — and then the partial session reads whole
+    /// again, which is the exact failure this guards.
+    fn marker(self) -> String {
+        let mut reasons = Vec::new();
+        if self.window {
+            reasons.push(format!(
+                "only the first {} and last {} of a {} transcript were read",
+                human_bytes(usize::try_from(host_transcript::HEAD_MAX_BYTES).unwrap_or(usize::MAX)),
+                human_bytes(usize::try_from(host_transcript::TAIL_MAX_BYTES).unwrap_or(usize::MAX)),
+                human_bytes(usize::try_from(self.file_bytes).unwrap_or(usize::MAX)),
+            ));
         }
-        let Ok(record) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
+        if self.dropped_turns > 0 {
+            reasons.push(format!(
+                "{} older turn(s) exceeded the {CHECKPOINT_MAX_MESSAGES}-turn cap",
+                self.dropped_turns
+            ));
+        }
+        format!(
+            "[Estelle: this checkpoint is PARTIAL — {}. Earlier turns exist and are not here.]",
+            reasons.join("; ")
+        )
+    }
+
+    /// The machine-readable half, for `client`.
+    fn fields(self) -> serde_json::Map<String, Value> {
+        let mut fields = serde_json::Map::new();
+        fields.insert("transcript_partial".to_string(), json!(self.is_partial()));
+        fields.insert("transcript_bytes".to_string(), json!(self.file_bytes));
+        fields.insert("transcript_read_bytes".to_string(), json!(self.read_bytes));
+        fields.insert("turns_dropped".to_string(), json!(self.dropped_turns));
+        fields
+    }
+}
+
+/// Stamp the partial-read marker onto the oldest surviving turn. A no-op when nothing was cut,
+/// so a whole session never claims to be partial either.
+fn disclose_truncation(conversation: &mut Conversation, truncation: Truncation) {
+    if !truncation.is_partial() {
+        return;
+    }
+    let Some(first) = conversation
+        .messages
+        .first_mut()
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    let content = first
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let disclosed = format!("{}\n{content}", truncation.marker())
+        .chars()
+        .take(CHECKPOINT_MAX_CHARS)
+        .collect::<String>();
+    first.insert("content".to_string(), json!(disclosed));
+}
+
+/// The conversation `[{role, content}]` inside a host transcript, ready to checkpoint. The host
+/// writes the file itself and hands every hook its path, which is what makes always-on
+/// checkpointing possible WITHOUT the model choosing to cooperate. Never fails: a record it does
+/// not understand is skipped, not fatal.
+///
+/// 🔴 **ONE EXTRACTOR, TWO HOSTS.** This reads *host-shaped* records — the shape Claude Code
+/// writes directly and the shape [`host_transcript::host_records`] translates a Codex rollout into.
+/// There is deliberately no `if codex { … }` here or in its two siblings: a second extractor is
+/// how one host grows a rule the other never learns, and Codex support existed for eight months
+/// as a function that returned empty on every real file.
+fn transcript_messages(records: &[Value]) -> Conversation {
+    let mut out = Vec::new();
+    for record in records {
         let kind = record
             .get("type")
             .and_then(Value::as_str)
@@ -1152,16 +1260,20 @@ fn transcript_messages(text: &str) -> Vec<Value> {
                 .collect::<String>(),
         }));
     }
-    if out.len() > CHECKPOINT_MAX_MESSAGES {
-        out = out.split_off(out.len() - CHECKPOINT_MAX_MESSAGES);
+    let dropped = out.len().saturating_sub(CHECKPOINT_MAX_MESSAGES);
+    if dropped > 0 {
+        out = out.split_off(dropped);
     }
-    out
+    Conversation {
+        messages: out,
+        dropped,
+    }
 }
 
 /// The client facts a resume needs, read from the newest transcript record that carries each
 /// one — a session that switched branch mid-run must resume on the branch it ended on. A fact
 /// that is absent is OMITTED rather than defaulted: a guessed branch is worse than no branch.
-fn transcript_context(text: &str) -> serde_json::Map<String, Value> {
+fn transcript_context(records: &[Value]) -> serde_json::Map<String, Value> {
     let mut context = serde_json::Map::new();
     let mut put = |key: &str, value: Option<&Value>| {
         let text = match value {
@@ -1171,13 +1283,7 @@ fn transcript_context(text: &str) -> serde_json::Map<String, Value> {
         };
         context.insert(key.to_string(), Value::String(text));
     };
-    for line in text.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let Ok(record) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
+    for record in records {
         if record
             .get("isSidechain")
             .and_then(Value::as_bool)
@@ -1212,15 +1318,9 @@ fn transcript_context(text: &str) -> serde_json::Map<String, Value> {
 /// Read from the host's own transcript — the same source the checkpoint uses. Order is
 /// load-bearing: the file the customer was in when they stopped is the one the welcome names
 /// first, so the reverse happens BEFORE deduping.
-fn transcript_files(text: &str) -> Vec<PathBuf> {
+fn transcript_files(records: &[Value]) -> Vec<PathBuf> {
     let mut written = Vec::new();
-    for line in text.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let Ok(record) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
+    for record in records {
         if record
             .get("isSidechain")
             .and_then(Value::as_bool)
@@ -1244,7 +1344,13 @@ fn transcript_files(text: &str) -> Vec<PathBuf> {
                 .get("name")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            if !matches!(name, "Write" | "Edit" | "MultiEdit" | "NotebookEdit") {
+            // `apply_patch` is Codex's spelling, carried here by `host_transcript::host_records` from
+            // the `patch_apply_end` / `FileChange` events — the ONLY record family in a rollout
+            // that names a path the session actually wrote.
+            if !matches!(
+                name,
+                "Write" | "Edit" | "MultiEdit" | "NotebookEdit" | "apply_patch"
+            ) {
                 continue;
             }
             let file = block
@@ -1287,41 +1393,62 @@ async fn checkpoint_local(payload: &HookPayload, state_path: Option<PathBuf>) ->
     // 🔴 A CHECKPOINT WITHOUT A TRANSCRIPT IS NOT A FAILURE — IT IS A SESSION THIS HOST CANNOT
     // SUMMARISE (`transcript_path: null`, which Codex sends for any thread with no materialized
     // local rollout). This is the ONLY mode of eight that reads the transcript, so it degrades
-    // alone: the other seven run untouched.
-    //
-    // ⚠️ THE LIMIT, STATED: this line reaches almost nobody. stdout is the host's envelope and
-    // checkpoint is deliberately silent there (a warning on every Stop is how a user learns to
-    // ignore Estelle), so the reason goes to stderr — which Codex reads ONLY on exit code 2
-    // (`hooks/src/events/stop.rs`) and Claude Code shows only under `--debug`. It is a note for
-    // someone already asking "why did nothing checkpoint?", NOT a notification. A customer whose
-    // host supplies no transcript loses checkpointing and is not told.
+    // alone: the other seven run untouched. The reason is spoken by `checkpoint_refused`, which
+    // owns the channel and states its own limits.
     let Some(transcript_path) = payload.transcript() else {
-        #[expect(
-            clippy::print_stderr,
-            reason = "the only channel a silent-by-design hook has for a human debugging it; stdout is the host's envelope"
-        )]
-        {
-            eprintln!(
-                "Estelle checkpoint skipped: this host supplied no transcript_path, so there is no conversation to summarise. Every other Estelle hook is unaffected."
-            );
-        }
-        return None;
+        return checkpoint_refused(
+            "Estelle checkpoint skipped: this host supplied no transcript_path, so there is no conversation to summarise. Every other Estelle hook is unaffected.",
+        );
     };
-    let raw = fs::read_to_string(transcript_path).ok()?;
-    let messages = transcript_messages(&raw);
-    if messages.is_empty() {
-        return None;
+    // 🔴 BOUNDED, STREAMED, AND NEVER `read_to_string` AGAIN. The founder's rollouts run to
+    // 35.3 GB (p95 530.8 MB); reading one whole is an out-of-memory abort, and reading it three
+    // times — which is what three text-taking extractors did — is that cost tripled.
+    let bounded = match host_transcript::read_bounded(Path::new(transcript_path)) {
+        Ok(bounded) => bounded,
+        Err(error) => {
+            return checkpoint_refused(&format!(
+                "Estelle checkpoint skipped: the transcript at {transcript_path} could not be read ({error}). Every other Estelle hook is unaffected."
+            ));
+        }
+    };
+    let parsed = host_transcript::host_records(&bounded.text);
+    // 🔴 AN UNRECOGNISED FORMAT IS A REASON, NOT A SHRUG. Returning `None` here silently is
+    // precisely how Codex support stayed broken and unnoticed: it is byte-identical to
+    // "nothing to save".
+    let Some(dialect) = parsed.dialect else {
+        return checkpoint_refused(&format!(
+            "Estelle checkpoint skipped: {transcript_path} is not a transcript format Estelle recognises ({} record(s) read, {} unparseable, {} in an unknown shape). Nothing was saved for this session.",
+            parsed.lines, parsed.unreadable_lines, parsed.unrecognised_lines
+        ));
+    };
+    let mut conversation = transcript_messages(&parsed.records);
+    if conversation.messages.is_empty() {
+        return checkpoint_refused(&format!(
+            "Estelle checkpoint skipped: {transcript_path} parsed as a {} ({} records) but carried no user or assistant turns, so there is nothing to summarise.",
+            dialect.label(),
+            parsed.lines
+        ));
     }
+    let truncation = Truncation {
+        window: bounded.truncated,
+        dropped_turns: conversation.dropped,
+        file_bytes: bounded.file_bytes,
+        read_bytes: bounded.read_bytes,
+    };
+    disclose_truncation(&mut conversation, truncation);
     // `event` is WHY this fired — a PreCompact checkpoint is the pre-wall snapshot, SessionEnd
     // the outage snapshot, Stop routine; a resume that cannot tell them apart cannot rank them.
     // NOTE what is deliberately absent: account_id and team_id. The server resolves those from
     // the API key. A client that ASSERTS its own identity is the hole, not the feature.
+    //
+    // `name` is READ OFF THE FILE, never assumed: it said `"claude-code"` unconditionally, which
+    // would have been a false claim about every Codex session had any ever been captured.
     let mut client = json!({
-        "name": "claude-code",
+        "name": dialect.client_name(),
         "event": payload.hook_event_name,
     });
-    if let (Some(client), context) = (client.as_object_mut(), transcript_context(&raw)) {
-        for (key, value) in context {
+    if let (Some(client), context) = (client.as_object_mut(), transcript_context(&parsed.records)) {
+        for (key, value) in context.into_iter().chain(truncation.fields()) {
             client.insert(key, value);
         }
     }
@@ -1345,7 +1472,7 @@ async fn checkpoint_local(payload: &HookPayload, state_path: Option<PathBuf>) ->
     ) {
         session_gap::record_checkpoint_to(
             PathBuf::from(cwd),
-            transcript_files(&raw),
+            transcript_files(&parsed.records),
             chrono::Utc::now(),
             state_path,
         )
@@ -1353,9 +1480,32 @@ async fn checkpoint_local(payload: &HookPayload, state_path: Option<PathBuf>) ->
     }
     Some(json!({
         "session_id": session_id,
-        "messages": messages,
+        "messages": conversation.messages,
         "client": client,
     }))
+}
+
+/// ONE OWNER FOR "THE CHECKPOINT DID NOT RUN, AND HERE IS WHY".
+///
+/// 🔴 **NEVER FAIL SILENTLY.** Every early `None` in [`checkpoint_local`] used to be a bare
+/// return, which made "this host's format is unknown" indistinguishable from "there was nothing
+/// to save" — the silence that hid a total Codex outage for eight months.
+///
+/// ⚠️ THE LIMIT, STATED, AND IT IS THE SAME ONE AS BEFORE: stdout is the host's envelope and
+/// checkpoint is deliberately silent there (a warning on every Stop is how a customer learns to
+/// ignore Estelle), so the reason goes to **stderr** — which Codex renders only on a non-zero
+/// exit (`hooks/src/events/stop.rs`) and Claude Code shows only under `--debug`. This is a note
+/// for someone already asking "why did nothing checkpoint?", NOT a notification. A customer whose
+/// transcript Estelle cannot read still loses checkpointing and is still not told.
+fn checkpoint_refused(reason: &str) -> Option<Value> {
+    #[expect(
+        clippy::print_stderr,
+        reason = "the only channel a silent-by-design hook has for a human debugging it; stdout is the host's envelope"
+    )]
+    {
+        eprintln!("{reason}");
+    }
+    None
 }
 
 /// 🔴 THE THREE-SECOND EVENT. `checkpoint` is wired to Stop, PreCompact and SessionEnd, and
@@ -1435,8 +1585,7 @@ async fn checkpoint_handoff(
         }
         return Ok(Vec::new());
     }
-    let state_path =
-        state_path.ok_or_else(|| session_handoff::HandoffError::NoHome.to_string());
+    let state_path = state_path.ok_or_else(|| session_handoff::HandoffError::NoHome.to_string());
     let outcome = match state_path {
         Ok(state_path) => session_handoff::record(
             session_handoff::PendingCheckpoint {
@@ -8199,9 +8348,9 @@ tests/test_serve.py:88: AssertionError\n\
         let payload = with_event(&payload, session_handoff::DEFERRED_EVENT);
 
         // No home directory to derive a path from: the branch a machine without `$HOME` takes.
-        let error = checkpoint_handoff(&payload, None)
-            .await
-            .expect_err("an unwritable handoff must be an Err, which is what makes the exit non-zero");
+        let error = checkpoint_handoff(&payload, None).await.expect_err(
+            "an unwritable handoff must be an Err, which is what makes the exit non-zero",
+        );
         assert!(
             error.contains("home directory"),
             "the refusal must name the missing thing; got {error}"
@@ -8364,14 +8513,21 @@ tests/test_serve.py:88: AssertionError\n\
                 .expect("record"),
             );
         }
-        let messages = transcript_messages(&lines.join("\n"));
+        let conversation =
+            transcript_messages(&host_transcript::host_records(&lines.join("\n")).records);
+        let messages = &conversation.messages;
         assert_eq!(messages.len(), CHECKPOINT_MAX_MESSAGES);
+        assert_eq!(
+            conversation.dropped, 51,
+            "the turns the cap evicted are COUNTED, because a checkpoint that drops turns \
+             silently reads as a whole session"
+        );
         // The cap keeps the TAIL — recent turns are what a resume needs.
         assert_eq!(
             messages.last().expect("tail")["content"],
             json!(format!("turn {}", CHECKPOINT_MAX_MESSAGES + 49))
         );
-        for message in &messages {
+        for message in messages {
             assert!(
                 message["content"]
                     .as_str()
@@ -8391,7 +8547,11 @@ tests/test_serve.py:88: AssertionError\n\
         let token = format!("ghp_{}", "A".repeat(36));
         let record = json!({"type": "user", "message": {"role": "user", "content":
             format!("here is my token {token} — why is auth failing?")}});
-        let messages = transcript_messages(&serde_json::to_string(&record).expect("record"));
+        let messages = transcript_messages(
+            &host_transcript::host_records(&serde_json::to_string(&record).expect("record"))
+                .records,
+        )
+        .messages;
         let wire = serde_json::to_string(&messages).expect("wire");
         assert!(
             !wire.contains(&token),
