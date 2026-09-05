@@ -78,7 +78,7 @@ const SESSION_HELP: [(&str, &str); 50] = [
     ),
     (
         "keys",
-        "your API keys — prefixes and expiry state, never raw keys",
+        "your API keys — label, prefix, status; read-only, manage them in the dashboard",
     ),
     (
         "team",
@@ -1227,41 +1227,10 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
             }
             lines
         }
-        "keys" => {
-            if reply.me_keys.is_empty() {
-                return vec![
-                    "No keys on this account. New keys are created on the dashboard and shown once."
-                        .to_string(),
-                ];
-            }
-            let mut lines = vec![format!(
-                "{} keys  |  raw keys are never returned — prefixes only",
-                reply.me_keys.len()
-            )];
-            for key in &reply.me_keys {
-                let mut row = format!(
-                    "{}  |  {}  |  {}",
-                    key.label.as_deref().unwrap_or("(unlabelled)"),
-                    key.prefix.as_deref().unwrap_or("prefix not returned"),
-                    key.id.as_deref().unwrap_or("id not returned")
-                );
-                if let Some(created) = key.created_at.as_deref() {
-                    row.push_str(&format!("  |  created {created}"));
-                }
-                row.push_str(&match key.expires_at.as_deref() {
-                    Some(expires) => format!("  |  expires {expires}"),
-                    None => "  |  never expires".to_string(),
-                });
-                if key.expired == Some(true) {
-                    row.push_str("  |  expired");
-                }
-                if key.revoked == Some(true) {
-                    row.push_str("  |  revoked");
-                }
-                lines.push(row);
-            }
-            lines
-        }
+        // The `/keys` surface has its own file. It gained a label column, a status column and the
+        // line that says where key management actually lives, and the layout that carries them
+        // does not belong in the middle of a 40-arm match — see `keys_view`.
+        "keys" => crate::keys_view::render(reply),
         "team" => {
             if let Some(board) = reply.leaderboard.as_ref().and_then(Value::as_array) {
                 // /team board — the honest per-actor board. Zero-activity members are included
@@ -4157,17 +4126,25 @@ mod tests {
             "prefix missing\n{rendered}"
         );
         assert!(
-            rendered.contains("expired"),
-            "expired flag missing\n{rendered}"
+            rendered.contains("EXPIRED"),
+            "expired state missing\n{rendered}"
         );
         assert!(
-            rendered.contains("revoked"),
-            "revoked flag missing\n{rendered}"
+            rendered.contains("REVOKED"),
+            "revoked state missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("ACTIVE"),
+            "active state missing\n{rendered}"
         );
         assert!(
             !rendered.contains("estelle_live_abcdef"),
             "a raw key appeared — the server sends prefixes only"
         );
+        // ⚠️ THIS TEST PASSED THROUGH THE WHOLE REGRESSION. It asserts what the RENDERER emits,
+        // and the founder's screen showed `[credential hidden]` twice because the drift was in
+        // the DISPLAY half. `keys_view_tests` drives renderer + masker together; this one stays
+        // because it still pins the renderer's own contract, and it is now labelled as half.
     }
 
     #[test]

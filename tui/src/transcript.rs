@@ -374,12 +374,7 @@ pub(crate) fn render(
                     ),
                 ])];
                 rendered.extend(lines.iter().map(|line| {
-                    let safe = if name == "skills" {
-                        mask_skill_catalog_line(line)
-                    } else {
-                        mask_secret(line)
-                    };
-                    semantic_line(&safe, palette.semantic, None)
+                    semantic_line(&command_line_mask(name, line), palette.semantic, None)
                 }));
                 items.push(HistoryTranscriptItem::Lines(rendered));
             }
@@ -653,6 +648,26 @@ fn push_segment(
     spans.push(Span::styled(segment.to_string(), style));
     if !whitespace && !word.is_empty() {
         *previous_word = word.to_ascii_lowercase();
+    }
+}
+
+/// The single decision of what a command's output line looks like on the way to the screen.
+///
+/// 🔴 **THIS IS WHERE `/keys` BECAME A LIST OF TWO HIDDEN THINGS.** `render_remote_reply` had
+/// always emitted the label and the server's already-elided prefix, and
+/// `keys_reply_lists_keys_with_expiry_state_and_never_a_raw_key` asserted that and passed — while
+/// the founder's screen showed `[credential hidden]` twice, because the line reached DISPLAY and
+/// [`mask_secret`] masks any value that merely CONTAINS `estelle_live_`. The test covered the half
+/// that PRODUCES the row; the drift was in the half that SHOWS it. Naming this function is the
+/// rest of the fix: the choice used to be an inline `if` inside a `map` inside a `match` arm,
+/// where nothing could assert on it without driving a terminal.
+pub(crate) fn command_line_mask(name: &str, line: &str) -> String {
+    match name {
+        "skills" => mask_skill_catalog_line(line),
+        // The one surface whose SUBJECT is the key inventory. `mask_key_row` is the same
+        // judgement made per TOKEN, so a real key in any column is still replaced in full.
+        "keys" => estelle_client::mask_key_row(line),
+        _ => mask_secret(line),
     }
 }
 
