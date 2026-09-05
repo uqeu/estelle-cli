@@ -183,6 +183,16 @@ where
 /// seven died with it. That is why the tolerance below is on EVERY field rather than the one
 /// field one host nulls today: the defect is the SHAPE, not the name.
 ///
+/// 🔴 **AND THE STRUCT MODELS EIGHT OF THE TWENTY FIELDS THE HOST CAN SEND — ON PURPOSE.**
+/// Measured across all eleven vendored schemas: `agent_id`, `agent_transcript_path`,
+/// `agent_type`, `last_assistant_message`, `model`, `permission_mode`, `reason`, `source`,
+/// `stop_hook_active`, `tool_use_id`, `trigger` and `turn_id` are host facts **no mode reads**.
+/// They are DROPPED, never rejected, because this struct carries no `#[serde(deny_unknown_fields)]`
+/// — and that omission is now a CONTRACT rather than an accident: [`hook_schema_contract_tests`]
+/// drives a payload built from every one of those schemas, plus a field no host ships yet,
+/// through `run_hook_with` and asserts every verb still reaches dispatch. **A host adding a
+/// field must never break a verb**, and until that module existed nothing anywhere said so.
+///
 /// The host contract says so in writing. Codex's own generated schemas mark `transcript_path`
 /// **required** with type `["string", "null"]` in all eleven hook events
 /// (`hooks/schema/generated/*.command.input.schema.json`, built from `NullableString` in
@@ -212,6 +222,22 @@ struct HookPayload {
     #[serde(default, deserialize_with = "null_is_absent")]
     hook_event_name: String,
 }
+
+/// 🔴 THE WHOLE CONTRACT, DRIVEN FROM THE HOST'S OWN GENERATED SCHEMAS.
+///
+/// [`HookPayload`] above tolerates a payload it does not fully model — serde ignores a field
+/// this struct has no place for, because there is deliberately no `#[serde(deny_unknown_fields)]`
+/// on it. That tolerance was **accidental and unasserted** until this module: the host requires
+/// twenty distinct fields across eleven events and this struct names eight, and one attribute
+/// would have taken all eight verbs down the way a single `null` already did once.
+///
+/// The tests build a payload for every `hooks/schema/generated/*.command.input.schema.json` at
+/// RUN TIME and drive it through [`run_hook_with`], so they cannot go stale when the host
+/// changes its contract — and they include the mutation an over-tolerant fix would represent:
+/// a genuinely malformed payload must still be refused, on a named branch.
+#[cfg(test)]
+#[path = "hook_schema_contract_tests.rs"]
+mod hook_schema_contract_tests;
 
 impl HookPayload {
     /// The transcript the host materialized for this session, or `None` when it has none.
@@ -2049,7 +2075,7 @@ fn read_json_object_or_empty(path: &Path) -> Result<Value, String> {
 /// enumerated in `estelle_hook_groups` / `hook_timeout` / [`plugin_hooks_manifest`] and pinned by
 /// the contract tests.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum HookHost {
+pub(crate) enum HookHost {
     Claude,
     Codex,
 }
