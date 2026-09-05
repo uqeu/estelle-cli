@@ -61,6 +61,17 @@ PLUGIN_CONTRACT_SHA256_BY_VERSION = {
     # runner change is on the `install-hooks` door only (PORTABLE_HOOK_RUNNER), which is
     # NOT part of the shipped plugin bundle.
     "0.3.1": "f422f956a2b3c07fad287082bfb79494c02f717ddba074d6157df5e8bc1b30e1",
+    # 0.3.2 merges the Codex branches: the rollout parser (`host_transcript`), the nullable
+    # `transcript_path` that failed all eight hook verbs in Codex, the SessionEnd budget, and the
+    # untrusted-hook discovery guard.
+    # 🔴 UNLIKE 0.3.1, THE VERSION IS **NOT** THE ONLY BYTE-BEARING FACT THAT MOVED. `hooks.json`
+    # changed too, and it is a customer-visible behaviour change: SessionEnd `checkpoint` 30s -> 3s
+    # and SessionStart `welcome` 5s -> 30s. The host only ever GRANTED SessionEnd 3 seconds, so
+    # asking for 30 was a claim the platform never honoured and nothing checkpointed; the real work
+    # is now the `welcome` drain, measured at 19.0s for one 484KB Codex rollout against a 20s
+    # HANDOFF_DRAIN_BUDGET -- which is why that hook needed 30 and not 5.
+    # `.mcp.json` and `README.md` ARE byte-identical to 0.3.1 (verified with git diff, not assumed).
+    "0.3.2": "9a2c0503a2f14b7546fb942299cd196a65f62741ac8204bd8d68abd114d04b66",
 }
 
 #: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.

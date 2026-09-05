@@ -1,6 +1,6 @@
 {
   "name": "@fatelabs/estelle",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "The trust layer under your AI coding agents. Estelle grounds every model in your real codebase and refuses to ship what isn't true: repository memory, a deterministic grounding gate, and grounded review. Model-agnostic, BYOK.",
   "bin": {
     "estelle": "bin/estelle.js"
