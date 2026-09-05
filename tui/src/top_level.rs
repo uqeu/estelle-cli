@@ -1922,13 +1922,36 @@ fn hook_sync_refusal(path: &str, content: &str) -> Option<String> {
     })
 }
 
+/// The command a host runs for every hook -- the SAME string the published PLUGIN writes.
+///
+/// 🔴 **A HOOK COMMAND MUST NOT NAME A PATH ON ONE MACHINE.** This used to be
+/// `std::env::current_exe()`, the absolute path of whichever binary happened to run
+/// `install-hooks`. That is wrong three ways and we have paid for each:
+///   * it made the CLI a PREREQUISITE. A customer who installs only the marketplace plugin got a
+///     hooks file pointing at a binary they never downloaded. The plugin's own `hooks.json` has
+///     always used the portable form, so the two install paths disagreed about what a hook IS.
+///   * it froze the version at install time. Upgrading the package left every hook pointing at the
+///     old binary, and re-running the installer is the only repair -- which on Codex ALSO resets the
+///     trust hash to `Modified`, silently unregistering every handler.
+///   * it pointed into a build directory whenever a developer installed from source, so a
+///     `cargo clean` broke the install with no error at hook time.
+/// This is the same defect as the bounded-context hook that "shipped to nobody" because it ran from
+/// an absolute path on one machine. Second file, same shape.
+///
+/// ⚠️ **`@0` IS DELIBERATELY NOT A VERSION LOCK AND MUST NOT BE READ AS ONE.** Measured: `npx
+/// <pkg>@<range>` is a SATISFACTION TEST against what is already installed, not "fetch the newest
+/// match" -- with 8.3.0 present, `npx -y uuid@8` created ZERO cache entries while `uuid@9` created
+/// one. So this string resolves to whatever 0.x the machine already has, and only fetches when it
+/// has none. It is kept BYTE-IDENTICAL to the published plugin's command on purpose: two spellings
+/// of "how do you run an Estelle hook" is two owners of one fact.
+const PORTABLE_HOOK_RUNNER: &str = "npx -y @fatelabs/estelle@0";
+
 fn install_hooks() -> Result<Vec<String>, String> {
     let claude_path = claude_settings_path()?;
     let codex_path = codex_hooks_path()?;
-    let runner = std::env::current_exe().map_err(|error| error.to_string())?;
-    let runner = shell_command_path(&runner);
-    install_hooks_at(&claude_path, HookHost::Claude, &runner)?;
-    install_hooks_at(&codex_path, HookHost::Codex, &runner)?;
+    let runner = PORTABLE_HOOK_RUNNER;
+    install_hooks_at(&claude_path, HookHost::Claude, runner)?;
+    install_hooks_at(&codex_path, HookHost::Codex, runner)?;
     Ok(vec![
         "Estelle hooks installed for the full session lifecycle (ground, guard, sync, distil, checkpoint, welcome, context).".to_string(),
         format!("Claude Code settings: {}", claude_path.display()),
@@ -8218,6 +8241,54 @@ tests/test_serve.py:88: AssertionError\n\
                 MemoryMethod::Post,
                 json!({"skill": "test-gen"})
             )
+        );
+    }
+}
+
+#[cfg(test)]
+mod portable_hook_runner_tests {
+    use super::*;
+
+    /// THE PAIR THAT CANNOT BOTH BE TRUE: a hook command was written, AND it names a path that
+    /// exists only on the machine that ran the installer. Stated over the OUTPUT rather than over
+    /// `current_exe`, so it catches any future way of reintroducing a machine-local runner.
+    #[test]
+    fn no_installed_hook_command_names_a_machine_local_path() {
+        for host in [HookHost::Claude, HookHost::Codex] {
+            for (event, group) in estelle_hook_groups(host, PORTABLE_HOOK_RUNNER) {
+                let rendered = serde_json::to_string(&group).expect("group serialises");
+                assert!(
+                    !rendered.contains("/Users/") && !rendered.contains("/home/")
+                        && !rendered.contains("target/release") && !rendered.contains("target/debug"),
+                    "{event:?} on {host:?} wrote a machine-local path: {rendered}"
+                );
+                assert!(
+                    rendered.contains("npx -y @fatelabs/estelle@0 hook"),
+                    "{event:?} on {host:?} did not use the portable runner: {rendered}"
+                );
+            }
+        }
+    }
+
+    /// The two install paths must AGREE. The plugin's published hooks.json uses this exact string;
+    /// a second spelling here is two owners of one fact, and they will drift.
+    #[test]
+    fn the_installer_and_the_plugin_spell_the_runner_identically() {
+        assert_eq!(PORTABLE_HOOK_RUNNER, "npx -y @fatelabs/estelle@0");
+    }
+
+    /// NEGATIVE CONTROL: the assertion above is only meaningful if a machine-local runner would
+    /// actually FAIL it. Prove the detector fires rather than trusting that it would.
+    #[test]
+    fn a_machine_local_runner_would_be_caught() {
+        let (_event, group) = estelle_hook_groups(HookHost::Codex, "/Users/someone/target/release/estelle")
+            .into_iter()
+            .next()
+            .expect("at least one hook group");
+        let rendered = serde_json::to_string(&group).expect("group serialises");
+        assert!(
+            rendered.contains("/Users/") && rendered.contains("target/release"),
+            "the detector cannot see a machine-local path, so the guard above is decoration"
         );
     }
 }
