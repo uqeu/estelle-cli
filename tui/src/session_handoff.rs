@@ -127,10 +127,9 @@ impl std::fmt::Display for HandoffError {
                 formatter,
                 "the host's SessionEnd payload carried a {field} longer than {MAX_FIELD_CHARS} characters"
             ),
-            Self::Unwritable(detail) => write!(
-                formatter,
-                "the handoff file could not be written: {detail}"
-            ),
+            Self::Unwritable(detail) => {
+                write!(formatter, "the handoff file could not be written: {detail}")
+            }
         }
     }
 }
@@ -227,11 +226,7 @@ fn claim_blocking(state_path: &Path, now: DateTime<Utc>) -> Vec<PendingCheckpoin
         for entry in leftovers {
             store.insert(entry.session_id.clone(), entry);
         }
-        let newest = store
-            .keys()
-            .next_back()
-            .cloned()
-            .unwrap_or_default();
+        let newest = store.keys().next_back().cloned().unwrap_or_default();
         prune(&mut store, now, &newest);
         let _ = write_store(state_path, &store);
     }

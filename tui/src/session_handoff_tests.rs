@@ -37,7 +37,9 @@ async fn a_recorded_handoff_survives_to_disk_and_names_the_transcript() {
 
     // NOT `is_ok()`: the return value is a claim about the call. The note itself is the fact.
     let store = store_on_disk(&state);
-    let entry = store.get("session-1").expect("the note must be keyed by session id");
+    let entry = store
+        .get("session-1")
+        .expect("the note must be keyed by session id");
     assert_eq!(entry.transcript_path, "/tmp/rollout-session-1.jsonl");
     assert_eq!(entry.cwd, "/Users/someone/repo");
     assert_eq!(entry.event, DEFERRED_EVENT);
@@ -68,9 +70,9 @@ async fn the_deferred_path_never_touches_the_transcript() {
         "the fixture is only meaningful while this path is absent"
     );
 
-    record(pending.clone(), state.clone(), at(10))
-        .await
-        .expect("a missing transcript must NOT stop the handoff — the path is a pointer, not a read");
+    record(pending.clone(), state.clone(), at(10)).await.expect(
+        "a missing transcript must NOT stop the handoff — the path is a pointer, not a read",
+    );
 
     assert_eq!(
         store_on_disk(&state)["session-unreadable"].transcript_path,
@@ -192,7 +194,11 @@ async fn a_note_older_than_the_age_bound_is_dropped_rather_than_uploaded() {
         .await
         .expect("record");
     let store = store_on_disk(&state);
-    assert_eq!(store.len(), 1, "the stale note did not survive the next write");
+    assert_eq!(
+        store.len(),
+        1,
+        "the stale note did not survive the next write"
+    );
     assert!(store.contains_key("fresh"));
 }
 
@@ -264,8 +270,11 @@ fn a_corrupt_store_is_refused_rather_than_read_unbounded() {
     );
 
     let oversized = root.path().join("oversized.json");
-    fs::write(&oversized, vec![b'x'; usize::try_from(MAX_STATE_BYTES).expect("cap") + 1])
-        .expect("fixture");
+    fs::write(
+        &oversized,
+        vec![b'x'; usize::try_from(MAX_STATE_BYTES).expect("cap") + 1],
+    )
+    .expect("fixture");
     assert!(
         read_store(&oversized).is_err(),
         "the size bound is checked BEFORE the read, so a huge file is never loaded"
@@ -283,7 +292,10 @@ async fn the_store_is_private_to_the_user() {
         .await
         .expect("record");
 
-    let mode = fs::metadata(&state).expect("store metadata").permissions().mode();
+    let mode = fs::metadata(&state)
+        .expect("store metadata")
+        .permissions()
+        .mode();
     assert_eq!(
         mode & 0o077,
         0,
