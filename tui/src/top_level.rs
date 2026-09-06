@@ -684,7 +684,7 @@ const CONTEXT_HOOK_HOST_BUDGET_S: u64 = 30;
 /// `scripts/hooks/hook_budget.py` in the server repo uses `CLIENT_OVERHEAD_RESERVE_S = 5`, deriving
 /// 25 s. This is 10 s, deriving 20 s, because 20 s is the number that was measured against
 /// production (see below) and 25 s halves the margin. They are two different runners on the same
-/// door — the Rust binary is what `npx @fatelabs/estelle@0 hook context` executes and therefore what
+/// door — the Rust binary is what the plugin door's runner (`PLUGIN_HOOK_RUNNER`) executes and therefore what
 /// customers run; the Python file is this repo's own dogfood hook. Two owners of one derived fact is
 /// a defect whichever way it resolves, and it is filed here rather than papered over.
 const CONTEXT_HOOK_NOTICE_RESERVE_S: u64 = 10;
@@ -2608,8 +2608,162 @@ fn estelle_hook_groups(host: HookHost, runner: &str) -> Vec<(String, Value)> {
 
 #[cfg(test)]
 /// The runner the PLUGIN door invokes. It is `npx`, not the installed binary, because a plugin
-/// customer may never have run `estelle` at all — and it is pinned to a major (ADR 0015).
-const PLUGIN_HOOK_RUNNER: &str = "npx -y @fatelabs/estelle@0";
+/// customer may never have run `estelle` at all.
+///
+/// 🔴 **A SEMVER RANGE IS A SATISFACTION TEST AGAINST THE DISK, NOT A REQUEST TO THE REGISTRY.**
+/// This constant read `npx -y @fatelabs/estelle@0` until 2026-09-06, and that string does not
+/// fetch anything when npm can already satisfy `>=0.0.0 <1.0.0` from a copy on the machine. The
+/// customer then runs whatever stale build they happen to have, forever, and **no publish can
+/// move them** — the failure is silent, and the hook still exits 0.
+///
+/// MEASURED 2026-09-06 in isolated npm prefixes/caches, against two shadows, with a sentinel
+/// version (`0.0.1` / `0.0.2`) that exists nowhere in the registry, so its appearance in the
+/// output is proof the spec resolved to disk. Registry latest was `0.3.2` throughout:
+///
+/// ```text
+///   spec                                             global install   ./node_modules in cwd
+///   npx -y @fatelabs/estelle@0                       0.0.1  DISK      0.0.2  DISK
+///   npx -y --package=@fatelabs/estelle@0 -- estelle  0.3.2  registry  0.0.2  DISK
+///   npx -y --package=@fatelabs/estelle@latest -- …   0.3.2  registry  0.3.2  registry
+///   npx -y @fatelabs/estelle@latest                  0.3.2  registry  0.3.2  registry
+/// ```
+///
+/// ⚠️ **`--package` IS NOT THE FIX, AND BELIEVING IT WAS WOULD HAVE SHIPPED HALF A REPAIR.**
+/// `--package=…@0` escapes the *global* shadow and is still satisfied by a `./node_modules` copy
+/// in the hook's working directory — which is every JavaScript customer's repo, i.e. the common
+/// case, not the exotic one. **The discriminator is the DIST-TAG**: a tag has no meaning on disk,
+/// so npm must ask the registry what it points at. Proven by negative control — inside the
+/// shadowed repo, `--package=@fatelabs/estelle@no-such-tag-xyz` fails `ETARGET / notarget`
+/// instead of quietly running the local `0.0.2`. A range would have found the local copy.
+///
+/// Cost, measured on a clean machine (no global install, no `node_modules`, empty npm cache):
+/// **cold 6,854 ms, warm 380 ms** — against the smallest budget this runner carries, 10 s
+/// (`guard`, `distil`). Warm is within noise of the old spec (397 ms measured back to back).
+///
+/// ⚠️ **THIS GIVES UP THE MAJOR PIN, AND THAT IS A REAL COST, NOT A ROUNDING ERROR.** ADR 0015
+/// pins the runner to a major; `latest` crosses one. The honest statement of the trade is that
+/// `@0` did not deliver the pin either — it delivered *whatever 0.x is already on the disk*,
+/// which is strictly worse than an upgrade, because it is invisible. ▶ **The repair that gets
+/// both is a dist-tag we own that tracks the 0.x line** — `npm dist-tag add
+/// @fatelabs/estelle@<latest 0.x> v0-latest`, then spell this `@v0-latest`. That is a registry
+/// operation, so it is named here rather than done here. `plugin_hook_command_resolves_from_disk`
+/// is written over the RULE (a range is satisfiable from disk, a tag is not) and not over the
+/// literal `latest`, so making that switch needs no change to the guard.
+const PLUGIN_HOOK_RUNNER: &str = "npx -y --package=@fatelabs/estelle@latest -- estelle";
+
+/// Version specifiers a hook command may carry, and whether npm can satisfy them from disk.
+///
+/// npm's `--ignore-existing` was REMOVED in npm 12 (`npx: the --ignore-existing argument has been
+/// removed`, observed on npm 12.0.2), so a command carrying it is a hard failure at hook time
+/// rather than a safety measure — which is why it is a rejection here and not an alternative.
+#[cfg(test)]
+const NPX_SPEC_SEPARATOR: &str = "--";
+
+/// The bin the plugin door must name explicitly rather than let npm infer from the package spec.
+#[cfg(test)]
+const PLUGIN_HOOK_BIN: &str = "estelle";
+
+/// 🔴 **THE PAIR THAT CANNOT BOTH BE TRUE: a hook command SHIPPED, and npm can answer it from a
+/// copy already on the customer's disk.**
+///
+/// Returns `Some(reason)` when the command CAN resolve locally, `None` when every clause holds.
+/// Stated over the COMMAND STRING because that is the whole of what ships — the manifest carries
+/// no other lever — and over the *shape of the specifier* rather than any version string, because
+/// a version pin is exactly the thing that goes stale.
+///
+/// The clauses, each one a measured failure rather than a preference (see [`PLUGIN_HOOK_RUNNER`]):
+///   1. **it must go through `npx` at all** — a bare `estelle` is a PATH lookup, which is the
+///      disk by definition. (The `install-hooks` door deliberately uses that form; it is a
+///      different door with a different constraint, and it is NOT what ships in the bundle.)
+///   2. **the package must be named by `--package=`**, not positionally, so the executed binary
+///      is chosen by us rather than inferred from the spec.
+///   3. **the version part must be a DIST-TAG, never a semver range or version.** This is the
+///      clause that carries the whole result: a range is satisfied from disk (measured, twice,
+///      with a sentinel), a tag has no on-disk meaning so npm must ask the registry (measured,
+///      and proven by an `ETARGET` on a tag that does not exist). A tag cannot begin with a
+///      digit, a range operator, or `v`+digit — npm refuses to create a dist-tag that parses as
+///      a version — so "first character is a letter, and not `v` followed by a digit" is the
+///      test, and it admits `latest`, `beta` and a future `v0-latest` alike.
+///   4. **there must be an explicit `--` before the binary name**, and that binary must be
+///      `PLUGIN_HOOK_BIN`.
+///   5. **`--ignore-existing` must not appear** — removed in npm 12, so it fails the hook.
+///
+/// ⚠️ **WHAT THIS DOES NOT PROVE.** It is a check on a STRING. It proves the shipped spec is not
+/// *satisfiable* from disk under the resolution rules measured on npm 12.0.2; it does not run
+/// npm, so it cannot prove what a customer's npm actually does, and a future npm that resolves
+/// dist-tags from a local cache would defeat it silently. The measurement in
+/// `PLUGIN_HOOK_RUNNER` is the evidence; this is the ratchet that stops it regressing.
+#[cfg(test)]
+fn plugin_hook_command_resolves_from_disk(command: &str) -> Option<String> {
+    let tokens: Vec<&str> = command.split_whitespace().collect();
+    if tokens.first() != Some(&"npx") {
+        return Some(format!(
+            "does not invoke npx, so it is resolved from the machine: {command:?}"
+        ));
+    }
+    if tokens.contains(&"--ignore-existing") {
+        return Some(format!(
+            "carries --ignore-existing, which npm 12 removed and now errors on: {command:?}"
+        ));
+    }
+    let Some(spec) = tokens
+        .iter()
+        .find_map(|token| token.strip_prefix("--package="))
+    else {
+        return Some(format!(
+            "names its package positionally rather than with --package=: {command:?}"
+        ));
+    };
+    // Split on the LAST '@' so a scoped name (`@fatelabs/estelle`) keeps its leading marker.
+    let Some((name, version)) = spec.rsplit_once('@') else {
+        return Some(format!(
+            "package spec {spec:?} carries no version part, so npm defaults to a range: {command:?}"
+        ));
+    };
+    if name.is_empty() {
+        return Some(format!("package spec {spec:?} has no name: {command:?}"));
+    }
+    // npm decides this with `semver.validRange`: valid => range/version, invalid => dist-tag
+    // (`npm-package-arg`). Reimplementing semver here would be a second owner of that fact, so
+    // the rule is the narrow shape npa was OBSERVED to classify, pinned by the oracle table in
+    // `the_disk_local_detector_fires_on_every_shape_that_was_measured_resolving_locally`:
+    // a tag starts with a letter, and `v` followed by digits then `.` or nothing is a VERSION
+    // wearing a letter (`v0` is the range `0`, `v0.3.2` is the version `0.3.2`) — while
+    // `v0-latest` is a tag, because `0-latest` is not a semver.
+    let leading_v_then_semver = {
+        let mut rest = version
+            .strip_prefix(['v', 'V'])
+            .unwrap_or_default()
+            .chars()
+            .peekable();
+        let mut digits = 0_usize;
+        while rest.peek().is_some_and(char::is_ascii_digit) {
+            rest.next();
+            digits += 1;
+        }
+        digits > 0 && matches!(rest.peek(), None | Some('.'))
+    };
+    let looks_like_a_tag =
+        version.starts_with(|first: char| first.is_ascii_alphabetic()) && !leading_v_then_semver;
+    if !looks_like_a_tag {
+        return Some(format!(
+            "version part {version:?} is a semver range or version, which npm satisfies from a \
+             copy already on disk instead of asking the registry: {command:?}"
+        ));
+    }
+    let Some(separator) = tokens.iter().position(|token| *token == NPX_SPEC_SEPARATOR) else {
+        return Some(format!(
+            "has no explicit {NPX_SPEC_SEPARATOR:?} before the binary name: {command:?}"
+        ));
+    };
+    if tokens.get(separator + 1) != Some(&PLUGIN_HOOK_BIN) {
+        return Some(format!(
+            "does not name {PLUGIN_HOOK_BIN:?} immediately after {NPX_SPEC_SEPARATOR:?}: \
+             {command:?}"
+        ));
+    }
+    None
+}
 
 #[cfg(test)]
 /// The `description` field of the shipped plugin manifest, quoted verbatim.
@@ -6914,6 +7068,111 @@ tests/test_serve.py:88: AssertionError\n\
         );
     }
 
+    /// 🔴 NO SHIPPED HOOK COMMAND MAY BE ANSWERABLE FROM THE CUSTOMER'S DISK.
+    ///
+    /// Asserted over the BYTES THAT SHIP (`SHIPPED_PLUGIN_MANIFEST`), not over
+    /// [`PLUGIN_HOOK_RUNNER`], so a hand-edit of the manifest is caught by the same clause as a
+    /// change to the constant. Every command in the file is checked, so a row added later cannot
+    /// enter through a door this guard is not looking at.
+    ///
+    /// The failure this exists to stop was silent and permanent: `npx -y @fatelabs/estelle@0`
+    /// asks npm to *satisfy a range*, and npm satisfies it from a global install or from
+    /// `./node_modules` in the hook's working directory. The customer runs a stale build, the
+    /// hook exits 0, and shipping a new version changes nothing for them.
+    ///
+    /// ⚠️ WHAT IT DOES NOT PROVE: that npm behaves this way on the customer's machine. It is a
+    /// string check standing on a measurement recorded in [`PLUGIN_HOOK_RUNNER`]'s docstring; it
+    /// cannot see a future npm that resolves dist-tags from a local cache.
+    #[test]
+    fn no_shipped_hook_command_can_resolve_to_a_disk_local_binary() {
+        let manifest: Value =
+            serde_json::from_str(SHIPPED_PLUGIN_MANIFEST).expect("the shipped manifest is JSON");
+        let mut checked = 0_usize;
+        for (event, groups) in manifest["hooks"].as_object().expect("hooks object") {
+            for group in groups.as_array().expect("event groups") {
+                for handler in group["hooks"].as_array().expect("handlers") {
+                    let command = handler["command"]
+                        .as_str()
+                        .expect("every shipped handler names a command");
+                    assert_eq!(
+                        plugin_hook_command_resolves_from_disk(command),
+                        None,
+                        "shipped {event} hook can be answered from the customer's disk"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        // A vacuity guard: an empty manifest would pass every clause above without checking one.
+        assert_eq!(
+            checked,
+            HOOK_TABLE.iter().filter(|row| row.plugin).count(),
+            "the sweep did not visit every shipped row, so its green covers less than it claims"
+        );
+    }
+
+    /// NEGATIVE CONTROL, AND ITS ORACLE IS A MEASUREMENT RATHER THAN AN OPINION.
+    ///
+    /// Each row below was RUN on 2026-09-06 against two shadows built with sentinel versions that
+    /// exist nowhere in the registry (a global `@fatelabs/estelle@0.0.1` in an isolated npm
+    /// prefix, and a `./node_modules/@fatelabs/estelle@0.0.2` in the working directory), with
+    /// registry latest at `0.3.2`. The `expected` column is what the detector must say; the
+    /// comment is what npm actually did. A detector that cannot fail on the string we shipped
+    /// yesterday is decoration.
+    ///
+    /// The version-part rows are additionally pinned against npm's OWN classifier rather than
+    /// against my reading of semver — `npm-package-arg` on npm 12.0.2, asked directly:
+    ///
+    /// ```text
+    ///   @0  range   @v0  range   @0.x  range   @^0.3  range   @0.3.2  version   @v0.3.2  version
+    ///   @latest  tag        @beta  tag        @v0-latest  tag
+    /// ```
+    ///
+    /// `range` and `version` are both satisfiable from disk; only `tag` forces a registry
+    /// lookup. `@v0-latest` was ALSO confirmed behaviourally: inside the shadowed repo it fails
+    /// `ETARGET / notarget` rather than running the local `0.0.2`.
+    #[test]
+    fn the_disk_local_detector_fires_on_every_shape_that_was_measured_resolving_locally() {
+        for (command, resolves_locally) in [
+            // ran 0.0.1 (global shadow) and 0.0.2 (node_modules shadow) — the shipped defect
+            ("npx -y @fatelabs/estelle@0 hook sync", true),
+            // escaped the global shadow, ran 0.0.2 under the node_modules shadow — half a repair
+            (
+                "npx -y --package=@fatelabs/estelle@0 -- estelle hook sync",
+                true,
+            ),
+            // a bare PATH name is the disk by definition
+            ("estelle hook sync", true),
+            // npm 12 removed the flag; the hook errors instead of running
+            (
+                "npx -y --ignore-existing --package=@fatelabs/estelle@latest -- estelle hook sync",
+                true,
+            ),
+            // an exact pin escapes both shadows but freezes the customer on one build
+            (
+                "npx -y --package=@fatelabs/estelle@0.3.2 -- estelle hook sync",
+                true,
+            ),
+            // ran 0.3.2 through BOTH shadows — the shipped fix
+            (
+                "npx -y --package=@fatelabs/estelle@latest -- estelle hook sync",
+                false,
+            ),
+            // the dist-tag we do not own yet, spelled the way the follow-up would spell it
+            (
+                "npx -y --package=@fatelabs/estelle@v0-latest -- estelle hook sync",
+                false,
+            ),
+        ] {
+            let verdict = plugin_hook_command_resolves_from_disk(command);
+            assert_eq!(
+                verdict.is_some(),
+                resolves_locally,
+                "detector disagreed with the measurement for {command:?}: {verdict:?}"
+            );
+        }
+    }
+
     /// The plugin door and the `install-hooks` doors must never disagree about a row they share.
     ///
     /// Byte equality above already implies this, and it is asserted separately anyway because the
@@ -9230,7 +9489,10 @@ mod portable_hook_runner_tests {
         );
         assert_eq!(PORTABLE_HOOK_RUNNER, "estelle");
         // The plugin door is pinned separately and deliberately still differs.
-        assert_eq!(PLUGIN_HOOK_RUNNER, "npx -y @fatelabs/estelle@0");
+        assert_eq!(
+            PLUGIN_HOOK_RUNNER,
+            "npx -y --package=@fatelabs/estelle@latest -- estelle"
+        );
         assert_ne!(
             PORTABLE_HOOK_RUNNER, PLUGIN_HOOK_RUNNER,
             "if these ever become equal again, one of the two doors has taken the other's \

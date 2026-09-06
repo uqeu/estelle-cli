@@ -13,6 +13,68 @@
 //! ⚠️ **DETECTION, NOT PREVENTION.** It prints one line naming both versions and the refresh
 //! command. It never updates anything, never writes into the plugin tree, and never asks.
 //!
+//! # Why it does not self-update — the measured reason, not a preference
+//!
+//! The founder's requirement (2026-09-06): *"The customer installs ONE thing: the plugin. The
+//! plugin asks our GitHub every session 'am I the newest version?' If no, it updates itself."*
+//! The analogy is Windows Update: the running version asks the server and repairs itself.
+//!
+//! Three facts decide how far that can be taken, and two of them were measured on the founder's
+//! own machine on 2026-09-06 rather than assumed.
+//!
+//! **1. The host owns the tree, and each host already ships the update verb.** Neither is a
+//! thing this crate should reimplement — `claude plugin marketplace update fatelabs`
+//! (`claude --version` 2.1.258) and `codex plugin marketplace upgrade fatelabs`
+//! (`codex --version` codex-cli 0.153.4) are what [`refresh_command`] already prints. Making
+//! this module *run* that command, detached, from the `welcome` hook is a small change: the
+//! detached-spawn pattern is already here for [`version_check::refresh_cache`], and the update
+//! lands for the NEXT session because both hosts bind the plugin tree at load. That matches the
+//! Windows analogy exactly — Windows Update also applies on restart.
+//!
+//! **2. AND THE TWO HOSTS ARE NOT SYMMETRIC ABOUT PINNING, WHICH IS WHAT MAKES THIS A SECURITY
+//! DECISION RATHER THAN A CHORE.** Read off each host's own `--help`, not remembered:
+//!
+//! ```text
+//!   codex plugin marketplace add <SOURCE> --ref <REF>   "Git ref to fetch for Git marketplace
+//!                                                        sources"; SOURCE is owner/repo[@ref]
+//!   claude plugin marketplace add <source>              options are --scope and --sparse ONLY
+//!   claude plugin marketplace update [name]             no options but -h
+//! ```
+//!
+//! So Codex CAN be pinned to a signed release tag and **Claude Code cannot** — at 2.1.258 there
+//! is no ref/tag/commit option on either verb. Confirmed in the state file:
+//! `~/.claude/plugins/known_marketplaces.json` records the `fatelabs` source as
+//! `{"source":"github","repo":"uqeu/estelle-cli"}` with **no `ref`, no `branch`, no `commit`
+//! key at all**. A Claude marketplace clone tracks the default branch, full stop.
+//!
+//! **3. THE THREAT MODEL, STATED PLAINLY.** The plugin's hooks execute shell commands on the
+//! customer's machine on every tool call (`estelle-plugin/hooks/hooks.json`). An unattended
+//! `git fetch` + reload of a branch we control therefore means: **anything that can write to
+//! `uqeu/estelle-cli`'s default branch gets code execution on every customer within one
+//! session, with no human in the loop and no review.** That includes a stolen maintainer token,
+//! a malicious force-push, and a compromised CI job with push rights. Today's posture — print a
+//! line, let the human type the command — is a weak gate technically, but it is the customer's
+//! own act, which is the thing a SOC2 change-management control is actually asking about.
+//!
+//! ▶ **RECOMMENDATION (needs the founder's ratification; NOT implemented here).** Ship the
+//! auto-update as a **default-OFF dial**, the same shape as every other autonomous action in
+//! this product (`ADR 0012`: propose by default, autonomy opt-in and proof-gated). Then:
+//!
+//! * **Codex door — do the safe version now.** Pin the marketplace to a release tag with
+//!   `--ref`, and let the opt-in updater move that pin only to a tag our own release workflow
+//!   produced. A tag we sign is a reviewed artifact; the default branch is not.
+//! * **Claude door — do NOT auto-update, even opted in, until the host can pin.** With no `ref`
+//!   support there is no version of this that is not "fetch and execute HEAD of a branch". The
+//!   honest thing is to keep the notice and say why. Reimplementing the update with raw `git`
+//!   would not fix it: the danger is the unreviewed CONTENT, not the command that fetches it.
+//! * **What this would NOT protect against, in either door:** a compromise of the release
+//!   workflow itself, of the signing key, or of the npm package the hooks invoke — the tag
+//!   proves *we published it*, never that it is *safe*. And nothing here defends a customer who
+//!   opts in against a malicious release we ourselves cut.
+//!
+//! Until that dial exists, this module stays detection-only, and the gap is named rather than
+//! quietly left as a TODO.
+//!
 //! # 🔴 AND THEN IT TOLD A CODEX USER TO RUN A CLAUDE CODE COMMAND (2026-09-05)
 //!
 //! The first version of this file had exactly ONE plugin tree in it — `~/.claude/plugins/…` —
@@ -62,8 +124,18 @@
 //!
 //! # Why the BINARY's version is not the answer
 //!
-//! The plugin's hooks run `npx -y @fatelabs/estelle@0` (`estelle-plugin/hooks/hooks.json`), so
-//! npm resolves the newest 0.x on every call and the binary is usually current. What goes stale
+//! 🔴 **THIS SECTION USED TO REST ON A CLAIM THAT WAS MEASURABLY FALSE, AND THE FALSE HALF WAS
+//! THE REASSURING HALF.** It read: *"The plugin's hooks run `npx -y @fatelabs/estelle@0`, so npm
+//! resolves the newest 0.x on every call and the binary is usually current."* npm does NOT resolve
+//! the newest match for a range — it checks whether a copy already on the machine SATISFIES it.
+//! Measured 2026-09-06 with sentinel versions that exist nowhere in the registry, while the
+//! registry was at 0.3.2: a global `@fatelabs/estelle@0.0.1` and a `./node_modules` copy at
+//! `0.0.2` were each run by that string. So the binary was NOT usually current; it was whatever
+//! the machine already had, forever, with no error. The runner is now
+//! `npx -y --package=@fatelabs/estelle@latest -- estelle` (a dist-tag has no on-disk meaning, so
+//! npm must ask the registry) — see `PLUGIN_HOOK_RUNNER` in `top_level.rs` for the full table.
+//!
+//! With that corrected, the binary IS current on every call. What goes stale
 //! is the plugin's own tree — its `hooks.json` timeouts, its skills, its commands — because the
 //! host only re-copies when the installed and resolved versions differ. That is exactly why the
 //! founder's binary was fine and his hooks were not, and it is why the subject here is the

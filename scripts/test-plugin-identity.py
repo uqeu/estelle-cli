@@ -33,6 +33,12 @@ MCP_SERVER_NAME = "estelle"
 MCP_URL = "https://api.fatelabs.ca/mcp"
 REPOSITORY = "https://github.com/uqeu/estelle-cli"
 
+#: The plugin door's runner, WRITTEN OUT so this guard is a second opinion rather than an echo of
+#: `PLUGIN_HOOK_RUNNER` in `tui/src/top_level.rs`. It was `npx -y @fatelabs/estelle@0` until
+#: 2026-09-06, which npm satisfies from a copy already on the customer's disk — measured, twice,
+#: with sentinel versions. See that constant's docstring for the table.
+PLUGIN_HOOK_RUNNER = "npx -y --package=@fatelabs/estelle@latest -- estelle"
+
 # Ported from vercel-labs/fx `src/builtins/tools.zig:992-1025` at
 # 19ae8f5401c734806d3df45e7430c34dfa159bd0: hash the complete model-facing
 # contract, including ordering, instead of trusting a count. Claude Code keys
@@ -72,6 +78,25 @@ PLUGIN_CONTRACT_SHA256_BY_VERSION = {
     # HANDOFF_DRAIN_BUDGET -- which is why that hook needed 30 and not 5.
     # `.mcp.json` and `README.md` ARE byte-identical to 0.3.1 (verified with git diff, not assumed).
     "0.3.2": "9a2c0503a2f14b7546fb942299cd196a65f62741ac8204bd8d68abd114d04b66",
+    # 0.3.3 changes the RUNNER on all nine plugin-door rows, and nothing else:
+    # `npx -y @fatelabs/estelle@0 hook <verb>` -> `npx -y --package=@fatelabs/estelle@latest --
+    # estelle hook <verb>`. Every timeout, matcher and async marker is byte-unchanged.
+    #
+    # 🔴 THE OLD STRING NEVER REACHED THE REGISTRY WHEN THE CUSTOMER ALREADY HAD A COPY. `@0` is
+    # the range `>=0.0.0 <1.0.0`, and npm SATISFIES a range from disk instead of fetching.
+    # Measured 2026-09-06 in isolated npm prefixes and caches, with sentinel versions that exist
+    # nowhere in the registry, while the registry was at 0.3.2:
+    #   global @fatelabs/estelle@0.0.1 installed  -> `npx -y @fatelabs/estelle@0` ran 0.0.1
+    #   ./node_modules/@fatelabs/estelle@0.0.2    -> `npx -y @fatelabs/estelle@0` ran 0.0.2
+    # So a customer froze on whatever build they had, permanently and silently, and no publish
+    # could move them. `--package=` alone is NOT the repair: it escapes the global shadow and is
+    # still answered by ./node_modules (measured). The DIST-TAG is what forces the registry --
+    # a tag has no on-disk meaning, proven by an ETARGET on a tag that does not exist.
+    #
+    # ⚠️ CUSTOMER COST, STATED RATHER THAN HIDDEN: Codex hashes the raw command into the hook's
+    # trust identity, so all nine doors become `Modified` and are DISCOVERED BUT NOT RUN until
+    # the customer clears them once with `/hooks`. That is one action per customer per host.
+    "0.3.3": "cb82420b8474315632e39fa83dd7d94b06ef97c76b77ead233fa6a18d4841b4b",
 }
 
 #: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.
@@ -235,11 +260,34 @@ if hooks_path.is_file():
     # value here would be a claim that is false on one of them.
     for mode, expected in (("ground", 30), ("sync", 30), ("context", 30),
                            ("guard", 10), ("distil", 10), ("welcome", 30)):
-        command = f"npx -y @fatelabs/estelle@0 hook {mode}"
+        command = f"{PLUGIN_HOOK_RUNNER} hook {mode}"
         matching = [h for c, h in commands.items() if c == command]
         check(f"shipping timeout for {mode} is {expected}s",
               bool(matching) and all(h.get("timeout") == expected for h in matching),
               f"{command!r} -> {[h.get('timeout') for h in matching]!r}")
+
+    # 🔴 NO SHIPPED COMMAND MAY BE ANSWERABLE FROM THE CUSTOMER'S DISK.
+    #
+    # A SECOND, INDEPENDENT statement of the Rust guard
+    # (`no_shipped_hook_command_can_resolve_to_a_disk_local_binary`), and deliberately so: the
+    # Rust one reads the same bytes through `include_str!`, so if the renderer and the guard ever
+    # share a mistake they agree with each other. This one parses the shipped JSON from disk and
+    # knows nothing about `HOOK_TABLE`.
+    #
+    # MEASURED 2026-09-06 with sentinel versions that exist nowhere in the registry:
+    # `npx -y @fatelabs/estelle@0` ran a global `0.0.1` and a `./node_modules` `0.0.2` while the
+    # registry was at `0.3.2`. A semver RANGE is a satisfaction test against the disk; a DIST-TAG
+    # has no on-disk meaning, so npm must ask the registry (proven by `ETARGET` on a tag that does
+    # not exist). The clause is therefore about the SHAPE of the version part, not its value.
+    for command in sorted(commands):
+        tokens = command.split()
+        specs = [t[len("--package="):] for t in tokens if t.startswith("--package=")]
+        version = specs[0].rsplit("@", 1)[-1] if specs and "@" in specs[0][1:] else ""
+        is_tag = bool(version) and version[0].isalpha() and not re.match(r"^v\d", version)
+        check(f"shipped command cannot resolve to a disk-local binary ({tokens[-1]})",
+              tokens[:1] == ["npx"] and bool(specs) and is_tag
+              and "--" in tokens and "--ignore-existing" not in tokens,
+              f"{command!r} (version part {version!r})")
 
 # ── the server entry is the HOSTED one, and carries no credential ─────────────
 servers = mcp["mcpServers"]

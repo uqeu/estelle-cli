@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @fatelabs/estelle@0 hook ground",
+            "command": "npx -y --package=@fatelabs/estelle@latest -- estelle hook ground",
             "timeout": 30,
             "statusMessage": "Estelle hook ground"
           }
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @fatelabs/estelle@0 hook guard",
+            "command": "npx -y --package=@fatelabs/estelle@latest -- estelle hook guard",
             "timeout": 10,
             "statusMessage": "Estelle hook guard"
           }
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @fatelabs/estelle@0 hook sync",
+            "command": "npx -y --package=@fatelabs/estelle@latest -- estelle hook sync",
             "timeout": 30,
             "async": true,
             "statusMessage": "Estelle hook sync"
@@ -43,7 +43,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @fatelabs/estelle@0 hook distil",
+            "command": "npx -y --package=@fatelabs/estelle@latest -- estelle hook distil",
             "timeout": 10,
             "statusMessage": "Estelle hook distil"
           }
@@ -55,7 +55,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @fatelabs/estelle@0 hook checkpoint",
+            "command": "npx -y --package=@fatelabs/estelle@latest -- estelle hook checkpoint",
             "timeout": 30,
             "async": true,
             "statusMessage": "Estelle hook checkpoint"
@@ -68,7 +68,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @fatelabs/estelle@0 hook checkpoint",
+            "command": "npx -y --package=@fatelabs/estelle@latest -- estelle hook checkpoint",
             "timeout": 30,
             "statusMessage": "Estelle hook checkpoint"
           }
@@ -80,7 +80,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @fatelabs/estelle@0 hook checkpoint",
+            "command": "npx -y --package=@fatelabs/estelle@latest -- estelle hook checkpoint",
             "timeout": 3,
             "statusMessage": "Estelle hook checkpoint"
           }
@@ -92,7 +92,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @fatelabs/estelle@0 hook welcome",
+            "command": "npx -y --package=@fatelabs/estelle@latest -- estelle hook welcome",
             "timeout": 30,
             "statusMessage": "Estelle hook welcome"
           }
@@ -104,7 +104,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @fatelabs/estelle@0 hook context",
+            "command": "npx -y --package=@fatelabs/estelle@latest -- estelle hook context",
             "timeout": 30,
             "statusMessage": "Estelle hook context"
           }
