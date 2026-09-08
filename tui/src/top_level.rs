@@ -27,6 +27,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::Command;
 use crate::commands;
+use crate::hook_timings;
 use crate::plugin_currency;
 use estelle_tui::ground_block;
 use estelle_tui::ground_block::FlaggedOutcome;
@@ -818,11 +819,60 @@ const NO_RECALL_FIELD_DETAIL: &str =
 /// `estelle_client::DEFAULT_TIMEOUT` — the 120 s transport floor. Two different deadlines with one
 /// sentence between them is exactly the "one meaning per name" violation that made `UNREACHABLE`
 /// cover four opposite facts.
-fn context_budget_detail(budget: Duration) -> String {
+/// Write one flight-recorder line. **Best-effort and infallible by construction** — it runs on
+/// the hot path of every prompt, and a recorder that can fail a turn is worse than no recorder.
+///
+/// It exists as a named function rather than three inline `append` calls so the three outcome
+/// arms of [`context_recall`] cannot drift into recording different things, and so a reader can
+/// point at ONE line and say "this is where the hook learns what it costs".
+fn record_timings(
+    phase: hook_timings::Phase,
+    elapsed: Duration,
+    budget: Duration,
+    server_timings: Option<Value>,
+    log: Option<&Path>,
+) {
+    hook_timings::append(
+        &hook_timings::Breadcrumb {
+            phase,
+            elapsed,
+            budget,
+            server_timings,
+        },
+        log,
+    );
+}
+
+fn context_budget_detail(budget: Duration, elapsed: Duration, log: Option<&Path>) -> String {
     format!(
-        "did not answer within the {}s this hook allows itself (the host kills the hook at {CONTEXT_HOOK_HOST_BUDGET_S}s, so it gives up early enough to say so)",
-        budget.as_secs()
+        "was still waiting for a response from POST /search {:.1}s in, and gave up at the {}s this \
+         hook allows itself (the host kills the hook at {CONTEXT_HOOK_HOST_BUDGET_S}s, so it gives \
+         up early enough to say so). No response arrived, so there is no server stage breakdown for \
+         THIS call — {}",
+        elapsed.as_secs_f64(),
+        budget.as_secs(),
+        context_previous_call_clause(log),
     )
+}
+
+/// What the flight recorder can say about a HEALTHY call from this machine, appended to the
+/// abandonment message so the reader has something to compare against.
+///
+/// ⚠️ THE `None` ARM IS THE CAREFUL ONE. [`hook_timings::last_answered`] reads a BOUNDED window,
+/// so "nothing found" means *this hook cannot see one*, never *there were none* — and the wording
+/// says exactly that. The path is spelled `~/...` rather than resolved, because this string
+/// reaches a terminal and an on-disk transcript and an absolute path carries the username.
+fn context_previous_call_clause(log: Option<&Path>) -> String {
+    match hook_timings::last_answered(log) {
+        Some(summary) => format!(
+            "the last call this machine recorded an ANSWER for took {summary}. Full record: \
+             ~/.estelle/context-hook.jsonl"
+        ),
+        None => "no answered call is present in the recent window of \
+                 ~/.estelle/context-hook.jsonl, so this hook cannot say what a healthy call costs \
+                 here yet"
+            .to_string(),
+    }
 }
 
 /// The human line and the model line that make an ungrounded turn VISIBLE.
@@ -882,20 +932,45 @@ async fn context_recall(
     repo: &Repo,
     query: &str,
     budget: Duration,
+    log: Option<&Path>,
 ) -> ContextOutcome {
     let body = context_search_body(query);
     let request = client.post_scoped::<Value, Value>(Endpoint::Search, repo, &body, cancel);
+    // 🔑 STARTED BEFORE THE AWAIT, SO THE NUMBER IS MEASURED RATHER THAN THE BUDGET RESTATED.
+    // `tokio::time::timeout` hands back only `Elapsed`, which carries no duration, and a message
+    // that prints the budget on the timeout path is a claim about our CONFIG dressed as a claim
+    // about the RUN — the two are equal only when the budget is exactly what expired.
+    let started = std::time::Instant::now();
     let result = match tokio::time::timeout(budget, request).await {
         // OUR deadline, not the server's, and the wording says so: `transport_detail`'s Timeout arm
         // names `DEFAULT_TIMEOUT` (the 120 s transport floor), which is a different subject.
-        Err(_elapsed) => return ContextOutcome::Ungrounded(context_budget_detail(budget)),
+        Err(_elapsed) => {
+            let elapsed = started.elapsed();
+            record_timings(
+                hook_timings::Phase::AwaitingResponse,
+                elapsed,
+                budget,
+                None,
+                log,
+            );
+            return ContextOutcome::Ungrounded(context_budget_detail(budget, elapsed, log));
+        }
         // 🔴 THE LINE THE WHOLE MODULE TURNS ON. This arm used to be folded into the one above by a
         // `let Ok(Ok(result)) = … else { return Vec::new() }`, so a server that ANSWERED and
         // declined produced byte-for-byte the same output as a server that was merely slow: none.
         // Measured on the founder's own machine 2026-09-04, 4/4 runs: `POST /search` → **429**
         // `too many concurrent requests` in 0.616 s, hook stdout **1 byte**, exit **0**. Every
         // prompt that afternoon was ungrounded and nothing anywhere said so.
-        Ok(Err(error)) => return ContextOutcome::Ungrounded(transport_failure_detail(&error)),
+        Ok(Err(error)) => {
+            record_timings(
+                hook_timings::Phase::TransportFailed,
+                started.elapsed(),
+                budget,
+                None,
+                log,
+            );
+            return ContextOutcome::Ungrounded(transport_failure_detail(&error));
+        }
         Ok(Ok(result)) => result,
     };
     // ⚖️ ABSENCE AND ZERO ARE NOT THE SAME WIRE BYTES. A response with NO `recall` field is a shape
@@ -903,6 +978,18 @@ async fn context_recall(
     // with an EMPTY `recall` is the server having looked and found nothing. The first is a failure
     // to ground; the second is a grounding result that happens to be empty. Collapsing them is how
     // "we never asked" comes to read as "there is nothing there".
+    // 🔴 THE FIELD THE HOOK WAS ALREADY BEING SENT AND THREW AWAY. `POST /search` returns a
+    // `timings` object (auth · concurrency_slot · account_admission · recall.embedder_init ·
+    // recall.dense · recall.sparse · recall.rerank_provider · recall.retrieve_context, plus
+    // elapsed_s / unattributed_s). Recording it here is what makes the NEXT abandonment — which
+    // by definition arrives with no timings of its own — readable next to a real profile.
+    record_timings(
+        hook_timings::Phase::Answered,
+        started.elapsed(),
+        budget,
+        result.get("timings").cloned(),
+        log,
+    );
     match result.get("recall").and_then(Value::as_str).map(str::trim) {
         Some(recall) if !recall.is_empty() => ContextOutcome::Grounded(recall.to_string()),
         Some(_) => ContextOutcome::NothingToRecall,
@@ -919,8 +1006,9 @@ async fn context_recall_lines(
     repo: &Repo,
     query: &str,
     budget: Duration,
+    log: Option<&Path>,
 ) -> Vec<String> {
-    context_lines(context_recall(client, cancel, repo, query, budget).await)
+    context_lines(context_recall(client, cancel, repo, query, budget, log).await)
 }
 
 async fn context_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>, String> {
@@ -971,7 +1059,15 @@ where
             NO_CREDENTIAL_DETAIL.to_string(),
         )));
     };
-    Ok(context_recall_lines(&api.client, &api.cancel, repo, &query, CONTEXT_HOOK_BUDGET).await)
+    Ok(context_recall_lines(
+        &api.client,
+        &api.cancel,
+        repo,
+        &query,
+        CONTEXT_HOOK_BUDGET,
+        None,
+    )
+    .await)
 }
 
 /// SessionStart: the returning-customer brief, from local evidence only (session_gap makes no
@@ -2421,9 +2517,37 @@ struct HookRow {
     /// own only two of the three, and the third drifted for exactly as long as nobody compared
     /// them — see that test's docstring for the four rows that disagreed.
     timeout: u64,
-    /// Claude Code only. Codex skips async handlers WITH A WARNING (vendored codex
-    /// hooks/src/engine/discovery.rs:480-506), so the Codex file never carries the key — an
-    /// async marker there would mean "installed but cannot fire".
+    /// Claude Code only, and the REASON WRITTEN HERE WAS FALSE — corrected 2026-09-07 by
+    /// measurement rather than by re-reading the source that made the claim.
+    ///
+    /// 🔴 **"CODEX SKIPS ASYNC HANDLERS WITH A WARNING" IS NOT TRUE OF codex-cli 0.153.4.**
+    /// This field's docstring cited `hooks/src/engine/discovery.rs:480-506` for that, and
+    /// upstream at that region says something different: `runs_async = r#async && event_name !=
+    /// SessionEnd`, and the warning it emits ("running async {event} hook synchronously in
+    /// {path}") fires **only for SessionEnd**, which is DOWNGRADED to synchronous rather than
+    /// skipped. Every other event keeps `async` and is dispatched through
+    /// `command_runtime.schedule_async_hook` (`engine/dispatcher.rs`), which really does spawn
+    /// the command.
+    ///
+    /// MEASURED against the INSTALLED build (`codex-cli 0.153.4`,
+    /// `@openai/codex-darwin-arm64` vendor binary), three `codex exec` turns, with a shim that
+    /// logs its own spawn BEFORE reading stdin — so "never spawned" cannot be confused with
+    /// "spawned and blocked on stdin":
+    ///
+    /// | run | Stop group | `async: true` handler |
+    /// |---|---|---|
+    /// | 1 | one async + one sync sibling | **SPAWNED**, same millisecond as the sync one |
+    /// | 2 | async ONLY (the shipped shape) | **SPAWNED**, read its 504-byte payload |
+    /// | 3 | async only, FRESH `CODEX_HOME` | **SPAWNED**, read its 505-byte payload |
+    ///
+    /// ⚠️ **WHAT THAT DOES AND DOES NOT LICENSE.** It falsifies the stated mechanism; it does
+    /// NOT mean the key should be turned on for Codex here. The measurement covers `codex exec`
+    /// on macOS at ONE version — not the interactive TUI the founder actually uses, and not the
+    /// `SessionEnd` row, which upstream really does downgrade. Turning `async` on for the Codex
+    /// door is a product change with a release attached, so this correction leaves BEHAVIOUR
+    /// untouched and fixes only the claim: today the Codex file omits the key, and the honest
+    /// reason is *"we have not measured the TUI, and a synchronous hook is the conservative
+    /// default"* — not *"Codex cannot run it"*.
     claude_async: bool,
     /// Whether this row ships to the PLUGIN door as well as the two `install-hooks` doors.
     ///
@@ -7759,12 +7883,14 @@ tests/test_serve.py:88: AssertionError\n\
             .await;
         let (client, cancel) = hook_client(&server.uri());
         let repo = Repo::new("fatelabs/estelle").expect("repo");
+        let log = isolated_breadcrumb("real-answer");
         let lines = context_recall_lines(
             &client,
             &cancel,
             &repo,
             "where is the retry policy set?",
             CONTEXT_HOOK_BUDGET,
+            Some(&log),
         )
         .await;
 
@@ -7829,8 +7955,16 @@ tests/test_serve.py:88: AssertionError\n\
         let repo = Repo::new("fatelabs/estelle").expect("repo");
 
         let started = Instant::now();
-        let lines =
-            context_recall_lines(&client, &cancel, &repo, "a prompt worth enriching", BUDGET).await;
+        let log = isolated_breadcrumb("budget");
+        let lines = context_recall_lines(
+            &client,
+            &cancel,
+            &repo,
+            "a prompt worth enriching",
+            BUDGET,
+            Some(&log),
+        )
+        .await;
         let elapsed = started.elapsed();
 
         // 🔴 THIS ASSERTION USED TO READ `lines.is_empty()`. That is the defect, written down as a
@@ -7849,6 +7983,32 @@ tests/test_serve.py:88: AssertionError\n\
             elapsed < SERVER_DELAY,
             "the budget must give up before the server answers — {elapsed:?} >= {SERVER_DELAY:?} \
              means the deadline did not fire"
+        );
+
+        // 🔴 THE DEFECT THIS PAIR OF ASSERTIONS IS WRITTEN AGAINST. The old sentence named OUR
+        // budget and nothing else — "it did not answer within the 20s this hook allows itself" —
+        // which the founder saw repeatedly and could do nothing with. It must now name WHAT it was
+        // waiting on and HOW LONG it actually waited.
+        let model_line = grounding_statements(&lines)
+            .first()
+            .cloned()
+            .expect("one grounding statement");
+        assert!(
+            model_line.contains("waiting for a response from POST /search"),
+            "the message must name the call it was blocked on: {model_line}"
+        );
+        // ⚠️ AND THE ELAPSED TIME MUST BE MEASURED, NOT THE BUDGET RESTATED. `0.3s` is the budget;
+        // a real run overshoots it slightly, so this asserts the SHAPE of a measured second-count
+        // and that the message is not simply echoing `BUDGET` back with no decimal.
+        assert!(
+            model_line.contains("s in, and gave up at the 0s"),
+            "the message must carry a measured elapsed alongside the budget: {model_line}"
+        );
+        // The breadcrumb clause is always present in one of its two forms — the reader is never
+        // left without a next step.
+        assert!(
+            model_line.contains("~/.estelle/context-hook.jsonl"),
+            "the message must point at the flight recorder: {model_line}"
         );
     }
 
@@ -7870,8 +8030,16 @@ tests/test_serve.py:88: AssertionError\n\
         let repo = Repo::new("fatelabs/estelle").expect("repo");
 
         let started = Instant::now();
-        let lines =
-            context_recall_lines(&client, &cancel, &repo, "a prompt worth enriching", BUDGET).await;
+        let log = isolated_breadcrumb("budget");
+        let lines = context_recall_lines(
+            &client,
+            &cancel,
+            &repo,
+            "a prompt worth enriching",
+            BUDGET,
+            Some(&log),
+        )
+        .await;
         let elapsed = started.elapsed();
 
         assert_eq!(
@@ -7936,6 +8104,25 @@ tests/test_serve.py:88: AssertionError\n\
             })
     }
 
+    /// 🔴 EVERY TEST BELOW WRITES ITS BREADCRUMB HERE, NEVER TO `$HOME`.
+    ///
+    /// Caught on this branch by running the suite and then finding real test records in the
+    /// founder's own `~/.estelle/context-hook.jsonl`: `record_timings(.., None)` resolves to the
+    /// live path, so a test that exercised the network half was polluting the artifact the
+    /// feature exists to produce — and would have made `last_answered` read a fixture on a real
+    /// machine. Isolation has to cover EVERY path the run writes, not just the obvious one.
+    fn isolated_breadcrumb(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "estelle-ctx-{name}-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|since| since.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        dir.join("context-hook.jsonl")
+    }
+
     /// The symptom, pinned as a number so the invariant below is anchored to something measured.
     ///
     /// MEASURED on the founder's machine 2026-09-04, shipped 0.2.32 build, 4/4 runs against
@@ -7964,7 +8151,11 @@ tests/test_serve.py:88: AssertionError\n\
         vec![
             ContextOutcome::Grounded("the retry policy lives in serve/backend.py".to_string()),
             ContextOutcome::NothingToRecall,
-            ContextOutcome::Ungrounded(context_budget_detail(CONTEXT_HOOK_BUDGET)),
+            ContextOutcome::Ungrounded(context_budget_detail(
+                CONTEXT_HOOK_BUDGET,
+                Duration::from_millis(19_400),
+                Some(Path::new("/nonexistent/context-hook.jsonl")),
+            )),
             ContextOutcome::Ungrounded(transport_detail(TransportFailure::Http(429))),
             ContextOutcome::Ungrounded(transport_detail(TransportFailure::Refused)),
             ContextOutcome::Ungrounded(transport_detail(TransportFailure::Dns)),
@@ -8151,12 +8342,14 @@ tests/test_serve.py:88: AssertionError\n\
                 .await;
             let (client, cancel) = hook_client(&server.uri());
             let repo = Repo::new("uqeu/estelle").expect("repo");
+            let log = isolated_breadcrumb("every-answer");
             let lines = context_recall_lines(
                 &client,
                 &cancel,
                 &repo,
                 "where is the retry policy set?",
                 CONTEXT_HOOK_BUDGET,
+                Some(&log),
             )
             .await;
 
@@ -8214,12 +8407,14 @@ tests/test_serve.py:88: AssertionError\n\
         let repo = Repo::new("uqeu/estelle").expect("repo");
 
         let started = Instant::now();
+        let log = isolated_breadcrumb("transport");
         let outcome = context_recall(
             &client,
             &cancel,
             &repo,
             "where is the retry policy set?",
             CONTEXT_HOOK_BUDGET,
+            Some(&log),
         )
         .await;
         let elapsed = started.elapsed();
