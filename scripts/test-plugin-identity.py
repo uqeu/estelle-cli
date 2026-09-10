@@ -117,6 +117,22 @@ PLUGIN_CONTRACT_SHA256_BY_VERSION = {
     # customer clears them once with `/hooks`. The nine existing rows are byte-identical and keep
     # the trust they already have.
     "0.3.4": "f83a38978c3facb3dd5524152badaee5fb5972609ff5553cc0f0ff156433926c",
+    # 0.3.5 changes THE VERSION STRING AND NOTHING ELSE inside this contract. Verified rather than
+    # asserted: `git diff v0.3.4 HEAD -- .claude-plugin/ estelle-plugin/` is exactly two lines,
+    # `"version": "0.3.4"` -> `"0.3.5"` in `.claude-plugin/marketplace.json` and
+    # `estelle-plugin/.claude-plugin/plugin.json`. Every hook row's event, command, matcher, timeout
+    # and async marker is BYTE-UNCHANGED, so no door arrives untrusted and nobody re-clears `/hooks`.
+    #
+    # ⚠️ THE FIRST COMPARISON I RAN WAS VACUOUS AND SAID "NOTHING CHANGED". `v0.3.4` was not fetched
+    # in that checkout, so the diff resolved against nothing and returned empty — the reassuring
+    # answer, for the wrong reason. The tag is fetched and resolves to 93dbaa630c53 above.
+    #
+    # 🔴 WHAT THE RELEASE CARRIES, all of it in the RUNNER rather than this contract: `SubagentStop`
+    # re-checkpointed the PARENT's transcript and dropped the subagent's own work. The host has
+    # always sent `agent_transcript_path` on that event; `HookPayload` modelled eight fields and none
+    # of the three subagent ones, so nothing ever read it. Measured on the founder's machine
+    # 2026-09-10: 3,086 subagent transcripts on disk, 0 of 254 session rows naming one.
+    "0.3.5": "8321df873b215bcd7e6478cd3b0507150b60e4db0ad931c237353a1778bfd2db",
 }
 
 #: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.
