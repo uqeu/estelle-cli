@@ -224,6 +224,26 @@ struct HookPayload {
     cwd: String,
     #[serde(default, deserialize_with = "null_is_absent")]
     hook_event_name: String,
+    /// The SUBAGENT's OWN transcript, sent only on `SubagentStop`. `Option` for the same reason
+    /// `transcript_path` is: "the host gave us nothing" and "the host gave us `\"\"`" are different
+    /// facts and only one of them is a bug.
+    ///
+    /// 🔴 THE HOST HAS ALWAYS SENT THIS AND NOTHING HAS EVER READ IT. Measured on Claude Code
+    /// 2.1.266, `SubagentStop` carries `session_id`, `agent_id`, `agent_type`, `transcript_path`
+    /// AND `agent_transcript_path`; the runner modelled eight fields and none of the last three, so
+    /// a subagent finishing checkpointed the PARENT's conversation and never its own work. Measured
+    /// the same day on the founder's machine: 3,086 subagent transcripts on disk, and his dashboard
+    /// showed two sessions while three were running.
+    #[serde(default, alias = "agentTranscriptPath")]
+    agent_transcript_path: Option<String>,
+    /// The subagent's stable id — the parent's own Task result carries the same handle, which is
+    /// what makes a turn attributable rather than merely present.
+    #[serde(default, alias = "agentId", deserialize_with = "null_is_absent")]
+    agent_id: String,
+    /// What KIND of agent it was (`Explore`, `general-purpose`). Empty on a host that does not
+    /// stamp it, in which case the id is the label: a real id beats an invented type name.
+    #[serde(default, alias = "agentType", deserialize_with = "null_is_absent")]
+    agent_type: String,
 }
 
 /// 🔴 THE WHOLE CONTRACT, DRIVEN FROM THE HOST'S OWN GENERATED SCHEMAS.
@@ -256,10 +276,53 @@ impl HookPayload {
     /// whitespace are four spellings of the same fact, and they are collapsed here so two
     /// consumers cannot disagree about which of them counts.
     fn transcript(&self) -> Option<&str> {
+        // 🔴 ON `SubagentStop` THE SUBAGENT'S OWN FILE IS THE WORK; `transcript_path` IS THE
+        // PARENT'S. The host sends both. Until this line, `SubagentStop` re-checkpointed the parent
+        // conversation at the moment a child finished — so every subagent's actual engineering was
+        // dropped, and the row above this one in `HOOK_TABLE` says so in as many words: *"this row
+        // closes 'a subagent finishing checkpoints nothing' and no more."* This is the "no more".
+        //
+        // ⚠️ THE SESSION ID IS DELIBERATELY UNTOUCHED. The host sets `session_id` to the PARENT's on
+        // this event and there is no second session id anywhere in the payload; minting one would
+        // break the only link that exists (745/745). So the subagent's turns land ON the parent's
+        // row, attributed by `subagent_label`, which is exactly what the server's
+        // `subagent_attribution` reader expects.
+        if self.hook_event_name.trim() == "SubagentStop"
+            && let Some(agent) = self
+                .agent_transcript_path
+                .as_deref()
+                .map(str::trim)
+                .filter(|path| !path.is_empty())
+        {
+            return Some(agent);
+        }
         self.transcript_path
             .as_deref()
             .map(str::trim)
             .filter(|path| !path.is_empty())
+    }
+
+    /// `Some("<type-or-id> <id>")` when this payload describes a subagent, else `None`.
+    ///
+    /// The label the server parses out of `[subagent: <author> <id>] `. The author may hold spaces,
+    /// the id may not — which is why the id goes LAST and why an id that is not a safe token is
+    /// refused outright rather than emitted into a prefix that would not parse back.
+    fn subagent_label(&self) -> Option<String> {
+        let id = self.agent_id.trim();
+        if id.is_empty() || id.len() > 128 {
+            return None;
+        }
+        let mut chars = id.chars();
+        if !chars.next()?.is_ascii_alphanumeric()
+            || !chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+        {
+            return None;
+        }
+        let author = match self.agent_type.trim() {
+            "" => id,
+            kind => kind,
+        };
+        Some(format!("{author} {id}"))
     }
 }
 
@@ -1591,6 +1654,25 @@ async fn checkpoint_local(payload: &HookPayload, state_path: Option<PathBuf>) ->
         read_bytes: bounded.read_bytes,
     };
     disclose_truncation(&mut conversation, truncation);
+    // 🔴 ATTRIBUTION RIDES IN THE CONTENT, AND THAT IS NOT BELT-AND-BRACES. `handle_checkpoint`
+    // accepts exactly session_id/messages/task/client and SILENTLY DROPS every other field, so an
+    // `author` key would not survive the wire: the capture would look attributed and read back
+    // anonymous. The server's `subagent_attribution` parses `[subagent: <author> <id>] ` back out
+    // of the text for that reason, and this is the only channel that reaches it.
+    if let Some(label) = payload.subagent_label() {
+        for message in &mut conversation.messages {
+            let Some(content) = message.get("content").and_then(Value::as_str) else {
+                continue;
+            };
+            if content.is_empty() {
+                continue;
+            }
+            let attributed = format!("[subagent: {label}] {content}");
+            if let Some(object) = message.as_object_mut() {
+                object.insert("content".to_string(), Value::String(attributed));
+            }
+        }
+    }
     // `event` is WHY this fired — a PreCompact checkpoint is the pre-wall snapshot, SessionEnd
     // the outage snapshot, Stop routine; a resume that cannot tell them apart cannot rank them.
     // NOTE what is deliberately absent: account_id and team_id. The server resolves those from
@@ -7046,6 +7128,11 @@ tests/test_serve.py:88: AssertionError\n\
             transcript_path: None,
             cwd: root.path().display().to_string(),
             hook_event_name: "PostToolUse".to_string(),
+            // Not a subagent event: spelled out rather than defaulted so a new field on
+            // `HookPayload` breaks this loudly instead of silently changing what is under test.
+            agent_transcript_path: None,
+            agent_id: String::new(),
+            agent_type: String::new(),
         };
 
         assert!(
@@ -8231,6 +8318,78 @@ tests/test_serve.py:88: AssertionError\n\
     /// precheck classifies it Silent and the hook exits 0 with one byte, which is precisely the
     /// bug), and there is **no second session id** — `session_id` is the PARENT's, and `agent_id`
     /// plus `agent_type` are the only discriminators the host supplies.
+    /// A REAL `SubagentStop` payload, from the host's own vendored schema surface. Written out
+    /// rather than constructed so a field the host renames cannot be silently satisfied by a
+    /// builder that renames it too.
+    const REAL_SUBAGENT_STOP: &str = r#"{"agent_id":"a643abf0b","agent_type":"Explore","agent_transcript_path":"/tmp/probe/PARENT/subagents/agent-a643abf0b.jsonl","cwd":"/tmp/probe","hook_event_name":"SubagentStop","session_id":"b8efe6d6-b4f6-4901-aaa7-ba08f7bed67d","transcript_path":"/tmp/probe/parent.jsonl"}"#;
+
+    /// 🔴 THE SUBAGENT'S OWN FILE IS THE WORK; `transcript_path` IS THE PARENT'S, AND THE HOST
+    /// SENDS BOTH. Before this, `SubagentStop` re-checkpointed the parent conversation at the
+    /// moment a child finished, so every subagent's engineering was dropped — measured on the
+    /// founder's machine 2026-09-10: 3,086 subagent transcripts on disk, 0 of his session rows
+    /// naming one, and a dashboard showing two sessions while three were running.
+    #[test]
+    fn subagent_stop_checkpoints_the_subagents_own_transcript() {
+        let payload: HookPayload = serde_json::from_str(REAL_SUBAGENT_STOP).expect("payload");
+        assert_eq!(
+            payload.transcript(),
+            Some("/tmp/probe/PARENT/subagents/agent-a643abf0b.jsonl"),
+            "the subagent's own file, not the parent's"
+        );
+    }
+
+    /// THE CONTROL, and it is the whole risk of the change above: every OTHER event must still read
+    /// the parent's transcript. A payload that carries an agent path on the wrong event, or no
+    /// agent path at all, must fall through unchanged.
+    #[test]
+    fn every_other_event_still_reads_the_parents_transcript() {
+        let stop: HookPayload = serde_json::from_str(
+            r#"{"hook_event_name":"Stop","session_id":"s","transcript_path":"/tmp/parent.jsonl","agent_transcript_path":"/tmp/agent.jsonl"}"#,
+        )
+        .expect("payload");
+        assert_eq!(stop.transcript(), Some("/tmp/parent.jsonl"));
+
+        let no_agent: HookPayload = serde_json::from_str(
+            r#"{"hook_event_name":"SubagentStop","session_id":"s","transcript_path":"/tmp/parent.jsonl"}"#,
+        )
+        .expect("payload");
+        assert_eq!(
+            no_agent.transcript(),
+            Some("/tmp/parent.jsonl"),
+            "a SubagentStop with no agent path must degrade to the parent, never to nothing"
+        );
+    }
+
+    /// The label the server's `subagent_attribution` parses back out of `[subagent: <author> <id>] `.
+    /// The author may hold spaces, the id may not — so the id goes LAST.
+    #[test]
+    fn the_subagent_label_is_the_servers_prefix_contract() {
+        let payload: HookPayload = serde_json::from_str(REAL_SUBAGENT_STOP).expect("payload");
+        assert_eq!(payload.subagent_label().as_deref(), Some("Explore a643abf0b"));
+    }
+
+    /// An id that would not round-trip through the prefix is refused rather than emitted into a
+    /// prefix the reader cannot parse. A missing TYPE is not a refusal — the id becomes the label,
+    /// because a real id beats an invented type name.
+    #[test]
+    fn an_unsafe_agent_id_is_refused_and_a_missing_type_is_not() {
+        let unsafe_id: HookPayload = serde_json::from_str(
+            r#"{"hook_event_name":"SubagentStop","session_id":"s","agent_id":"has space","agent_type":"Explore"}"#,
+        )
+        .expect("payload");
+        assert_eq!(unsafe_id.subagent_label(), None);
+
+        let no_type: HookPayload = serde_json::from_str(
+            r#"{"hook_event_name":"SubagentStop","session_id":"s","agent_id":"a643abf0b"}"#,
+        )
+        .expect("payload");
+        assert_eq!(no_type.subagent_label().as_deref(), Some("a643abf0b a643abf0b"));
+
+        let not_a_subagent: HookPayload =
+            serde_json::from_str(r#"{"hook_event_name":"Stop","session_id":"s"}"#).expect("payload");
+        assert_eq!(not_a_subagent.subagent_label(), None, "no agent_id, no prefix");
+    }
+
     const REAL_SUBAGENT_START: &str = r#"{"agent_id":"a4b33c15888ed526a","agent_type":"general-purpose","cwd":"/tmp/probe","hook_event_name":"SubagentStart","prompt_id":"37dcf2a6-e005-4744-89bd-6a9a1ca2dd44","session_id":"b8efe6d6-b4f6-4901-aaa7-ba08f7bed67d","transcript_path":"/tmp/probe/parent.jsonl"}"#;
 
     /// The parent id inside [`REAL_SUBAGENT_START`]. Written out rather than parsed so a payload
