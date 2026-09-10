@@ -547,8 +547,11 @@ fn hook_event_label(mode: &str, expected: Option<&str>, payload: Option<&str>) -
             "ground" | "guard" => "PreToolUse",
             "shift" | "sync" | "distil" => "PostToolUse",
             "welcome" => "SessionStart",
-            "context" => "UserPromptSubmit",
-            "checkpoint" => "Stop|PreCompact|SessionEnd",
+            // Both verbs answer more than one event. The label is only ever the FALLBACK — the
+            // payload's own `hook_event_name` wins whenever it is present — but a fallback that
+            // names one of two doors is a diagnostic that points at the wrong one.
+            "context" => "UserPromptSubmit|SubagentStart",
+            "checkpoint" => "Stop|SubagentStop|PreCompact|SessionEnd",
             _ => "unknown",
         })
         .to_string()
@@ -1000,6 +1003,15 @@ async fn context_recall(
 /// The composed network half: ask, then say what happened. Split from [`context_recall`] so the
 /// classification can be asserted without re-parsing an envelope, and from [`context_lines`] so the
 /// envelope can be asserted without a socket.
+///
+/// 🔴 **THE CACHE WRITE LIVES HERE, INSIDE THE COMPOSITION, AND NOT AT THE CALL SITE.** The
+/// alternative — `context_recall` in `context_hook_with`, store, then `context_lines` — leaves
+/// this function used by TESTS ONLY, so every envelope assertion would then be driving a path
+/// production no longer takes. A double that is not the shipped composition certifies code the
+/// customer never runs; the fix is one composition for both, which is this.
+///
+/// `parent_session` is the id the grounding is filed under. It is empty on every path that has no
+/// session (a host that sent none), and an empty id stores nothing — checked, not assumed.
 async fn context_recall_lines(
     client: &Client,
     cancel: &CancellationToken,
@@ -1007,8 +1019,28 @@ async fn context_recall_lines(
     query: &str,
     budget: Duration,
     log: Option<&Path>,
+    parent_session: &str,
 ) -> Vec<String> {
-    context_lines(context_recall(client, cancel, repo, query, budget, log).await)
+    let outcome = context_recall(client, cancel, repo, query, budget, log).await;
+    // 🔴 STORED ON THE ONE DURABLE OUTCOME THIS RUNNER HAS, AND THE LIMIT IS SAID OUT LOUD.
+    // The parent has already paid for this recall — a slot, a request and ~6 s — so every subagent
+    // the turn spawns INHERITS it (`crate::subagent_context::inherited_context`) rather than each
+    // issuing its own `/search`; twelve of those is the recorded 429 that starves the account.
+    // ⚠️ The Python twin caches on FIVE returns because it has five durable context sources. This
+    // hook has exactly ONE, so a single write site is TOTAL here rather than nearly-total — the
+    // day a second durable source is added it must write here too, or this becomes the partial
+    // guard: correct on the fraction it covers, silent about the rest.
+    // ⚠️ `NothingToRecall` and `Ungrounded` are deliberately NOT stored. They describe a MOMENT
+    // (the server had nothing; the deadline expired), and inheriting one an hour later would dress
+    // a stale status line as repository grounding.
+    if let ContextOutcome::Grounded(recall) = &outcome {
+        // Best effort by construction: a failed cache write must never cost the human the context
+        // they paid for. The consequence of a miss is visible where it matters — the subagent is
+        // told NO INHERITED CONTEXT out loud rather than handed silence.
+        let _stored =
+            crate::subagent_context::store_grounding(parent_session, recall, repo.as_str());
+    }
+    context_lines(outcome)
 }
 
 async fn context_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>, String> {
@@ -1031,6 +1063,32 @@ async fn context_hook_with<F>(
 where
     F: FnOnce() -> Result<Api, String>,
 {
+    // 🔴 THE SUBAGENT DOOR, ANSWERED BEFORE ANYTHING THAT COSTS MONEY OR A CONCURRENCY SLOT.
+    // `SubagentStart` and `UserPromptSubmit` share this verb because the dispatch in
+    // `run_hook_with` is a CLOSED match whose final arm is an error — a NEW verb would be a row a
+    // customer's already-installed binary refuses. Reusing `context` is what makes the manifest
+    // row shippable to the copies already out there.
+    //
+    // ⚠️ IT RETURNS BEFORE THE PRECHECK AND BEFORE THE NETWORK, DELIBERATELY. A `SubagentStart`
+    // payload carries NO `prompt` (measured on Claude Code 2.1.266: the host sends exactly
+    // `agent_id`, `agent_type`, `cwd`, `hook_event_name`, `prompt_id`, `session_id`,
+    // `transcript_path`), so the precheck below would classify it `Silent` and this hook would
+    // exit 0 with one byte — which is what the published runner did. And issuing `/search` here
+    // would put every subagent on the account's FULL concurrency limit; twelve of them is the
+    // recorded 429 outage. There is no path from this branch to the network.
+    if payload.hook_event_name.trim() == crate::subagent_context::SUBAGENT_START_EVENT {
+        return Ok(
+            crate::subagent_context::inherited_context(&payload.session_id)
+                .map(|context| {
+                    vec![hook_message(
+                        None,
+                        Some(context),
+                        crate::subagent_context::SUBAGENT_START_EVENT,
+                    )]
+                })
+                .unwrap_or_default(),
+        );
+    }
     let gate_disabled = std::env::var_os("ESTELLE_GATE_DISABLED").is_some();
     if let Some(lines) = context_hook_offline(payload, gate_disabled) {
         return Ok(lines);
@@ -1066,6 +1124,7 @@ where
         &query,
         CONTEXT_HOOK_BUDGET,
         None,
+        &payload.session_id,
     )
     .await)
 }
@@ -2637,6 +2696,27 @@ const HOOK_TABLE: &[HookRow] = &[
         plugin: true,
         plugin_async: true,
     },
+    // 🔴 `Stop` FIRES FOR THE MAIN THREAD ONLY. On a session whose engineering was done by
+    // subagents, that is the minority of the work: every subagent finished and checkpointed
+    // NOTHING, and the `Stop` row reported cleanly over it. The verb is unchanged — `checkpoint`
+    // already reads `payload.session_id`, which the host sets to the PARENT's id on this event
+    // (measured on Claude Code 2.1.266: `SubagentStop` carries `session_id`, `agent_id`,
+    // `agent_type`, `transcript_path` AND `agent_transcript_path`, and there is no second session
+    // id anywhere in it). Nothing mints one; minting one would break the only link that exists.
+    // ⚠️ THE LIMIT: `transcript_path` on this event is the PARENT's transcript, so this row
+    // captures the parent conversation at the moment a subagent finished, not the subagent's own
+    // file (`agent_transcript_path`). Reading that file is a separate change with its own
+    // attribution story; this row closes "a subagent finishing checkpoints nothing" and no more.
+    // `claude_async` for the same reason as `Stop`: a subagent finishing must not block the turn.
+    HookRow {
+        event: "SubagentStop",
+        matcher: None,
+        mode: "checkpoint",
+        timeout: 30,
+        claude_async: true,
+        plugin: true,
+        plugin_async: true,
+    },
     HookRow {
         event: "PreCompact",
         matcher: None,
@@ -2679,6 +2759,30 @@ const HOOK_TABLE: &[HookRow] = &[
         // 🔑 NOT A LITERAL. This table is what `install-hooks` WRITES, so a typed 10 here meant a
         // CLI-installed customer ran the recall call under a third of the plugin's ceiling and the
         // client deadline could never fire on their machine. See [`CONTEXT_HOOK_HOST_BUDGET_S`].
+        timeout: CONTEXT_HOOK_HOST_BUDGET_S,
+        claude_async: false,
+        plugin: true,
+        plugin_async: false,
+    },
+    // 🔴 THE ONLY DOOR THAT CAN PUSH REPOSITORY CONTEXT INTO A SUBAGENT. `UserPromptSubmit` fires
+    // on the HUMAN's prompt; a subagent is spawned by the parent's `Task` tool and never submits
+    // one, so before this row a subagent started with nothing — and the runner said so with `rc 0`
+    // and one byte, which reads exactly like a clean pass. See [`crate::subagent_context`].
+    //
+    // ⚠️ IT SHARES THE `context` VERB DELIBERATELY. `run_hook_with`'s dispatch is a CLOSED match
+    // whose last arm is an error, so a NEW verb here would be a row every already-installed binary
+    // REFUSES. Reusing `context` is what makes this shippable to copies that are already out there
+    // — the row lands the day the plugin updates, without waiting for the binary.
+    //
+    // ⚠️ AND THE 30 IS NOT THE SAME 30 AS `UserPromptSubmit`'s. That budget is sized against a
+    // measured `POST /search`; this branch issues NO request at all (it reads one file), so 30 is
+    // simply the shared ceiling rather than a measurement. It is not `plugin_async`: the whole
+    // point is that the context arrives BEFORE the subagent's first turn, and a detached hook has
+    // no such guarantee.
+    HookRow {
+        event: "SubagentStart",
+        matcher: None,
+        mode: "context",
         timeout: CONTEXT_HOOK_HOST_BUDGET_S,
         claude_async: false,
         plugin: true,
@@ -2910,8 +3014,11 @@ fn plugin_hook_command_resolves_from_disk(command: &str) -> Option<String> {
 const PLUGIN_MANIFEST_DESCRIPTION: &str = "Estelle — memory + the grounding gate, always on. \
     GENERATED from `HOOK_TABLE` in tui/src/top_level.rs; do not edit this file — change that \
     table and re-run its test with ESTELLE_REGENERATE_PLUGIN_HOOKS=1. These hooks execute \
-    commands on the customer's machine: the runner is pinned to a major (ADR 0015), every \
-    settings write is backup-before-write and refuses an unparseable file.";
+    commands on the customer's machine: the runner is resolved through the `latest` dist-tag \
+    rather than the major-version range ADR 0015 chose, because a range is a satisfaction test \
+    against the customer's disk and no publish could move them off a stale copy (measured, see \
+    PLUGIN_HOOK_RUNNER); every settings write is backup-before-write and refuses an unparseable \
+    file.";
 
 #[cfg(test)]
 /// The PLUGIN door's manifest — `estelle-plugin/hooks/hooks.json` — rendered from [`HOOK_TABLE`].
@@ -6985,7 +7092,12 @@ tests/test_serve.py:88: AssertionError\n\
         assert_eq!(parsed.hooks.session_end.len(), 1);
         assert_eq!(parsed.hooks.session_start.len(), 1);
         assert_eq!(parsed.hooks.user_prompt_submit.len(), 1);
-        assert_eq!(parsed.hooks.handler_count(), 10);
+        // The two subagent doors are asserted BY NAME, not merely counted: `HooksFile` deserialises
+        // a whole event into a typed field, so a row landing on the wrong key would keep the total
+        // and lose the door — a count alone cannot tell those apart.
+        assert_eq!(parsed.hooks.subagent_start.len(), 1);
+        assert_eq!(parsed.hooks.subagent_stop.len(), 1);
+        assert_eq!(parsed.hooks.handler_count(), 12);
         for (_event, groups) in parsed.hooks.into_matcher_groups() {
             for group in &groups {
                 for handler in &group.hooks {
@@ -7014,13 +7126,14 @@ tests/test_serve.py:88: AssertionError\n\
         // compared the two doors. `the_plugin_manifest_is_generated_from_the_one_hook_table` is
         // the comparison that was missing; these literals are the second, independent statement
         // of the same contract, and they are meant to be edited deliberately, together.
-        let expected: [(&str, Option<&str>, &str, u64); 10] = [
+        let expected: [(&str, Option<&str>, &str, u64); 12] = [
             ("PreToolUse", Some("Write|Edit"), "ground", 30),
             ("PreToolUse", Some("Bash"), "guard", 10),
             ("PostToolUse", Some("Read|Write|Edit"), "shift", 5),
             ("PostToolUse", Some("Write|Edit"), "sync", 30),
             ("PostToolUse", Some("Bash"), "distil", 10),
             ("Stop", None, "checkpoint", 30),
+            ("SubagentStop", None, "checkpoint", 30),
             ("PreCompact", None, "checkpoint", 30),
             // 3, not 30: Codex clamps SessionEnd and this verb no longer needs more — see
             // `checkpoint_handoff`. Claude Code is given the same honest number.
@@ -7029,11 +7142,12 @@ tests/test_serve.py:88: AssertionError\n\
             ("SessionStart", None, "welcome", 30),
             // 30, matching BOTH shipped manifests. It was 10 — see `CONTEXT_HOOK_HOST_BUDGET_S`.
             ("UserPromptSubmit", None, "context", 30),
+            ("SubagentStart", None, "context", 30),
         ];
         assert_eq!(
             hooks.as_object().expect("events").len(),
-            7,
-            "the table spans seven distinct events"
+            9,
+            "the table spans nine distinct events"
         );
         let mut async_rows = Vec::new();
         for (event, matcher, mode, timeout) in expected {
@@ -7072,7 +7186,17 @@ tests/test_serve.py:88: AssertionError\n\
         // The founder's order: the async PostToolUse sync row is DROPPED (Codex would skip it
         // with a warning — an installed hook that cannot fire), and Claude carries async on the
         // Stop checkpoint row only.
-        assert_eq!(async_rows, vec!["Stop/checkpoint".to_string()]);
+        // 🔴 TWO ROWS NOW, AND THE SECOND IS DELIBERATE. `SubagentStop` carries `async` for exactly
+        // the reason `Stop` does — a checkpoint is a network write measured at 25-33 s, and a
+        // subagent finishing must not block the turn behind it. Written out rather than derived, so
+        // an accidental third async row is a red.
+        assert_eq!(
+            async_rows,
+            vec![
+                "Stop/checkpoint".to_string(),
+                "SubagentStop/checkpoint".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -7081,13 +7205,14 @@ tests/test_serve.py:88: AssertionError\n\
         merge_estelle_hooks(&mut value, HookHost::Codex, "estelle").expect("hook declaration");
         let hooks = &value["hooks"];
 
-        let expected: [(&str, Option<&str>, &str, u64); 10] = [
+        let expected: [(&str, Option<&str>, &str, u64); 12] = [
             ("PreToolUse", Some("Write|Edit"), "ground", 30),
             ("PreToolUse", Some("Bash"), "guard", 10),
             ("PostToolUse", Some("Read|Write|Edit"), "shift", 5),
             ("PostToolUse", Some("Write|Edit"), "sync", 30),
             ("PostToolUse", Some("Bash"), "distil", 10),
             ("Stop", None, "checkpoint", 30),
+            ("SubagentStop", None, "checkpoint", 30),
             ("PreCompact", None, "checkpoint", 30),
             // Codex clamps SessionEnd to 3s — say 3 rather than be silently rewritten.
             ("SessionEnd", None, "checkpoint", 3),
@@ -7095,8 +7220,9 @@ tests/test_serve.py:88: AssertionError\n\
             ("SessionStart", None, "welcome", 30),
             // 30, matching BOTH shipped manifests. It was 10 — see `CONTEXT_HOOK_HOST_BUDGET_S`.
             ("UserPromptSubmit", None, "context", 30),
+            ("SubagentStart", None, "context", 30),
         ];
-        assert_eq!(hooks.as_object().expect("events").len(), 7);
+        assert_eq!(hooks.as_object().expect("events").len(), 9);
         for (event, matcher, mode, timeout) in expected {
             let groups = hooks[event].as_array().expect("event groups");
             let group = groups
@@ -7891,6 +8017,7 @@ tests/test_serve.py:88: AssertionError\n\
             "where is the retry policy set?",
             CONTEXT_HOOK_BUDGET,
             Some(&log),
+            "",
         )
         .await;
 
@@ -7963,6 +8090,7 @@ tests/test_serve.py:88: AssertionError\n\
             "a prompt worth enriching",
             BUDGET,
             Some(&log),
+            "",
         )
         .await;
         let elapsed = started.elapsed();
@@ -8038,6 +8166,7 @@ tests/test_serve.py:88: AssertionError\n\
             "a prompt worth enriching",
             BUDGET,
             Some(&log),
+            "",
         )
         .await;
         let elapsed = started.elapsed();
@@ -8057,6 +8186,201 @@ tests/test_serve.py:88: AssertionError\n\
             elapsed >= SERVER_DELAY,
             "it really waited for the slow server ({elapsed:?}); if this is instant the mock is \
              not delaying and neither test is measuring a deadline"
+        );
+    }
+
+    /// The `SubagentStart` payload EXACTLY as Claude Code 2.1.266 writes it to a hook's stdin,
+    /// captured 2026-09-10 from one real `claude -p` run with a settings file logging every hook
+    /// event, one `general-purpose` subagent dispatched by the Agent tool. The observed order was
+    /// `SessionStart -> UserPromptSubmit -> PreToolUse(Agent) -> SubagentStart -> SubagentStop ->
+    /// PostToolUse(Agent) -> Stop`.
+    ///
+    /// 🔴 IT IS PINNED RATHER THAN SYNTHESISED, because a double more forgiving than the host
+    /// certifies code the host would reject — the defect this repo has paid for three times. Two
+    /// facts here are load-bearing and both are ABSENCES: there is **no `prompt`** (so the prompt
+    /// precheck classifies it Silent and the hook exits 0 with one byte, which is precisely the
+    /// bug), and there is **no second session id** — `session_id` is the PARENT's, and `agent_id`
+    /// plus `agent_type` are the only discriminators the host supplies.
+    const REAL_SUBAGENT_START: &str = r#"{"agent_id":"a4b33c15888ed526a","agent_type":"general-purpose","cwd":"/tmp/probe","hook_event_name":"SubagentStart","prompt_id":"37dcf2a6-e005-4744-89bd-6a9a1ca2dd44","session_id":"b8efe6d6-b4f6-4901-aaa7-ba08f7bed67d","transcript_path":"/tmp/probe/parent.jsonl"}"#;
+
+    /// The parent id inside [`REAL_SUBAGENT_START`]. Written out rather than parsed so a payload
+    /// edit that changes the id cannot silently make the inheritance tests agree with themselves.
+    const REAL_PARENT_SESSION: &str = "b8efe6d6-b4f6-4901-aaa7-ba08f7bed67d";
+
+    /// The exact key set the host sends on `SubagentStart`, pinned so a test double cannot quietly
+    /// grow a field production never receives — in particular `prompt`, whose ABSENCE is the whole
+    /// reason this door needed its own branch.
+    #[test]
+    fn the_real_subagent_start_payload_carries_no_prompt_and_one_session_id() {
+        let payload: Value = serde_json::from_str(REAL_SUBAGENT_START).expect("payload JSON");
+        let mut keys: Vec<&str> = payload
+            .as_object()
+            .expect("object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "agent_id",
+                "agent_type",
+                "cwd",
+                "hook_event_name",
+                "prompt_id",
+                "session_id",
+                "transcript_path",
+            ],
+            "the pinned host payload drifted from what was captured on Claude Code 2.1.266"
+        );
+        assert_eq!(payload["session_id"], json!(REAL_PARENT_SESSION));
+    }
+
+    /// 🔴 **THE DEFECT, ASSERTED ON THE BYTES THE HOST READS.**
+    ///
+    /// Measured against the published runner on 2026-09-10, same binary and same invocation:
+    /// `SubagentStart` produced **1 byte** and exit 0 while `UserPromptSubmit` produced 11202. A
+    /// clean exit over empty output is a silent failure, so this asserts `out_bytes > 1` — never
+    /// `is_ok()` — and then asserts the PARSED field, because a non-empty stdout the host discards
+    /// is the same outcome wearing different bytes.
+    ///
+    /// ⚠️ The host IGNORES `additionalContext` whose `hookEventName` does not match the event that
+    /// fired, so the event name is asserted as a value rather than assumed from the code path.
+    #[tokio::test]
+    #[serial_test::serial(estelle_home)]
+    async fn subagent_start_is_answered_through_the_shipped_dispatch() {
+        let _home = crate::subagent_context::TempHome::new();
+        let repo = Repo::new("fatelabs/estelle").expect("repo");
+        let root = tempfile::tempdir().expect("root");
+        let lines = run_hook_with("context", None, REAL_SUBAGENT_START, &repo, root.path())
+            .await
+            .expect("the context verb must answer a SubagentStart payload");
+
+        let stdout = hook_stdout(&lines);
+        assert!(
+            stdout.len() > 1,
+            "SubagentStart produced {} bytes — the 1-byte empty envelope IS the defect",
+            stdout.len()
+        );
+        let envelope: Value = serde_json::from_str(&lines[0]).expect("envelope JSON");
+        assert_eq!(
+            envelope["hookSpecificOutput"]["hookEventName"],
+            json!("SubagentStart"),
+            "the host drops additionalContext whose hookEventName is not the event that fired"
+        );
+        let context = envelope["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .expect("additionalContext is a string");
+        assert!(
+            !context.trim().is_empty(),
+            "an empty context is silence with extra steps"
+        );
+        // A cache miss on a fresh HOME, and it must SAY so rather than degrade to nothing: a
+        // subagent that cannot tell "here is the repo" from "I have nothing" will assert from
+        // recall, which is the failure this product exists to prevent.
+        assert!(
+            context.contains("NO INHERITED CONTEXT"),
+            "a miss must be stated out loud: {context}"
+        );
+    }
+
+    /// 🔬 THE NEGATIVE CONTROL FOR THE TEST ABOVE, AND IT IS THE MEASUREMENT THAT STARTED THIS.
+    ///
+    /// The SAME dispatch, the SAME verb, the SAME payload with ONE field changed — the event name
+    /// — reproduces the old behaviour exactly: the prompt precheck sees no `prompt`, classifies it
+    /// Silent, and the process writes ONE byte. If this ever stops being 1, the assertion above is
+    /// no longer isolating the branch; it is measuring something every payload would satisfy.
+    #[tokio::test]
+    #[serial_test::serial(estelle_home)]
+    async fn the_control_a_payload_without_the_subagent_event_still_says_nothing() {
+        let _home = crate::subagent_context::TempHome::new();
+        let repo = Repo::new("fatelabs/estelle").expect("repo");
+        let root = tempfile::tempdir().expect("root");
+        let mut payload: Value = serde_json::from_str(REAL_SUBAGENT_START).expect("payload JSON");
+        payload["hook_event_name"] = json!("UserPromptSubmit");
+        let lines = run_hook_with("context", None, &payload.to_string(), &repo, root.path())
+            .await
+            .expect("the verb still answers");
+        assert_eq!(
+            hook_stdout(&lines).len(),
+            1,
+            "the control produced output, so the test above is not isolating the SubagentStart \
+             branch: {lines:?}"
+        );
+    }
+
+    /// 🔴 **THE WIRE, END TO END: the parent pays once and the subagent inherits it.**
+    ///
+    /// This is the clause this repo keeps losing. A unit test can prove `store_grounding` and
+    /// `inherited_context` both work and say NOTHING about whether anything calls them — a
+    /// structural check proves a thing exists and can never prove it runs. So this drives the REAL
+    /// `context_recall_lines` against a REAL HTTP server for the parent's turn, then the REAL
+    /// `run_hook_with` dispatch for the subagent, and asserts the server's own words arrive inside
+    /// the subagent's envelope. Deleting either the store call or the `SubagentStart` branch must
+    /// redden THIS test.
+    #[tokio::test]
+    #[serial_test::serial(estelle_home)]
+    async fn a_subagent_inherits_the_recall_the_parent_paid_for() {
+        let _home = crate::subagent_context::TempHome::new();
+        let server = slow_search_server(Duration::from_millis(0)).await;
+        let (client, cancel) = hook_client(&server.uri());
+        let repo = Repo::new("fatelabs/estelle").expect("repo");
+        let root = tempfile::tempdir().expect("root");
+        let log = isolated_breadcrumb("inherit");
+
+        let parent_lines = context_recall_lines(
+            &client,
+            &cancel,
+            &repo,
+            "a prompt worth enriching",
+            Duration::from_secs(8),
+            Some(&log),
+            REAL_PARENT_SESSION,
+        )
+        .await;
+        assert_eq!(
+            parent_lines.len(),
+            1,
+            "the parent turn did not get its recall, so this test proves nothing about \
+             inheritance: {parent_lines:?}"
+        );
+
+        let subagent_lines =
+            run_hook_with("context", None, REAL_SUBAGENT_START, &repo, root.path())
+                .await
+                .expect("the subagent door answers");
+        let inherited = grounding_statements(&subagent_lines)
+            .first()
+            .cloned()
+            .expect("the subagent got an envelope with context in it");
+        assert!(
+            inherited.contains("the retry policy lives in serve/backend.py"),
+            "the SERVER's own recall must reach the subagent verbatim: {inherited}"
+        );
+        assert!(
+            inherited.contains(REAL_PARENT_SESSION),
+            "the certificate must name the parent it came from: {inherited}"
+        );
+        assert!(
+            inherited.contains("fatelabs/estelle"),
+            "and the repo the recall was scoped to: {inherited}"
+        );
+
+        // NEGATIVE CONTROL: a DIFFERENT parent must NOT inherit this cache. Without it, a
+        // `load_grounding` that returned the newest file on disk regardless of key would pass
+        // every assertion above.
+        let mut other: Value = serde_json::from_str(REAL_SUBAGENT_START).expect("payload JSON");
+        other["session_id"] = json!("11111111-2222-3333-4444-555555555555");
+        let stranger_lines = run_hook_with("context", None, &other.to_string(), &repo, root.path())
+            .await
+            .expect("the subagent door answers");
+        let stranger = grounding_statements(&stranger_lines)
+            .first()
+            .cloned()
+            .expect("a stranger still gets a stated absence");
+        assert!(
+            stranger.contains("NO INHERITED CONTEXT"),
+            "a different parent inherited this cache — the read is not keyed by session: {stranger}"
         );
     }
 
@@ -8350,6 +8674,7 @@ tests/test_serve.py:88: AssertionError\n\
                 "where is the retry policy set?",
                 CONTEXT_HOOK_BUDGET,
                 Some(&log),
+                "",
             )
             .await;
 
@@ -8547,23 +8872,37 @@ tests/test_serve.py:88: AssertionError\n\
             }
         }
         // Vacuity guard WITH a shape assertion: non-empty is not correctly-parsed.
+        // ⚠️ TWO HANDLERS, NOT ONE, SINCE `SubagentStart` JOINED `UserPromptSubmit` ON THIS VERB.
+        // The count is asserted rather than relaxed to `>= 1`: a door that silently stops shipping
+        // is exactly what a `>= 1` here would hide, and it is the defect this file keeps catching.
         assert_eq!(
             declared.len(),
-            1,
-            "expected exactly one `hook context` handler in the shipped manifest, found {declared:?}"
+            2,
+            "expected two `hook context` handlers (UserPromptSubmit and SubagentStart) in the \
+             shipped manifest, found {declared:?}"
         );
-        assert_eq!(
-            declared[0], CONTEXT_HOOK_HOST_BUDGET_S,
-            "the shipped manifest gives `hook context` {}s while this binary's installer writes \
-             {CONTEXT_HOOK_HOST_BUDGET_S}s — one set of customers runs the recall call under a \
-             different ceiling than the other",
-            declared[0]
-        );
-        let row = HOOK_TABLE
+        for budget in &declared {
+            assert_eq!(
+                *budget, CONTEXT_HOOK_HOST_BUDGET_S,
+                "the shipped manifest gives a `hook context` door {budget}s while this binary's \
+                 installer writes {CONTEXT_HOOK_HOST_BUDGET_S}s — one set of customers runs the \
+                 recall call under a different ceiling than the other"
+            );
+        }
+        // EVERY `context` row, not the first one found: `find` would pass over a second row that
+        // disagreed, which is the partial guard again.
+        let rows: Vec<&HookRow> = HOOK_TABLE
             .iter()
-            .find(|row| row.mode == "context")
-            .expect("the installer table declares the context verb");
-        assert_eq!(row.timeout, CONTEXT_HOOK_HOST_BUDGET_S);
+            .filter(|row| row.mode == "context")
+            .collect();
+        assert_eq!(
+            rows.len(),
+            declared.len(),
+            "the installer table and the shipped manifest disagree on how many doors run `context`"
+        );
+        for row in rows {
+            assert_eq!(row.timeout, CONTEXT_HOOK_HOST_BUDGET_S, "{} row", row.event);
+        }
         assert!(
             CONTEXT_HOOK_BUDGET.as_secs() < CONTEXT_HOOK_HOST_BUDGET_S,
             "a client deadline at or above the host's cap is killed mid-request — the same no-op \

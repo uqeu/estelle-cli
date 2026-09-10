@@ -97,6 +97,26 @@ PLUGIN_CONTRACT_SHA256_BY_VERSION = {
     # trust identity, so all nine doors become `Modified` and are DISCOVERED BUT NOT RUN until
     # the customer clears them once with `/hooks`. That is one action per customer per host.
     "0.3.3": "cb82420b8474315632e39fa83dd7d94b06ef97c76b77ead233fa6a18d4841b4b",
+    # 0.3.4 adds TWO ROWS to the plugin door and nothing else inside this contract:
+    #   SubagentStart -> `hook context`    (timeout 30, not async)
+    #   SubagentStop  -> `hook checkpoint` (timeout 30, async)
+    # plus the version itself in `estelle-plugin/.claude-plugin/plugin.json` and the marketplace
+    # entry, and one corrected sentence in the manifest description (it still claimed the runner was
+    # "pinned to a major (ADR 0015)" three releases after the runner became a dist-tag).
+    # Every existing row's command, timeout, matcher and async marker is BYTE-UNCHANGED.
+    #
+    # 🔴 WHY THE TWO ROWS. Measured 2026-09-10 against the published `@fatelabs/estelle@0`: a real
+    # `SubagentStart` payload produced ONE BYTE and exit 0, while `UserPromptSubmit` produced 11202
+    # from the same binary in the same invocation. A subagent received no repository grounding at
+    # all, and the runner reported success. `hook context` now answers the event from a cache the
+    # parent's own turn writes, with NO request and NO concurrency slot — twelve subagents each
+    # issuing their own `/search` is the recorded 429 that starves the whole account.
+    #
+    # ⚠️ CUSTOMER COST, STATED RATHER THAN HIDDEN: Codex hashes each hook's command into its trust
+    # identity, so the two NEW doors arrive untrusted and are discovered-but-not-run until the
+    # customer clears them once with `/hooks`. The nine existing rows are byte-identical and keep
+    # the trust they already have.
+    "0.3.4": "f83a38978c3facb3dd5524152badaee5fb5972609ff5553cc0f0ff156433926c",
 }
 
 #: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.
@@ -225,10 +245,16 @@ check("published plugin contains generated hooks/hooks.json", hooks_path.is_file
 if hooks_path.is_file():
     hooks = load(hooks_path)
     check("hook package is labelled GENERATED", "GENERATED" in hooks.get("description", ""))
+    # 🔴 NINE EVENTS SINCE v0.3.4, AND THE TWO NEW ONES ARE THE SUBAGENT DOORS. `Stop` fires for the
+    # main thread only, and `UserPromptSubmit` fires on the HUMAN's prompt — a subagent is spawned by
+    # the parent's Task tool and never submits one — so before those rows a subagent started with no
+    # grounding and finished checkpointing nothing, on a session where subagents did the engineering.
+    # The set is WRITTEN OUT rather than derived: a roster read off the file it is checking agrees
+    # with that file by construction and could never catch a dropped door.
     check("hook package covers every supported Claude event",
           set(hooks.get("hooks", {})) == {
               "PostToolUse", "PreCompact", "PreToolUse", "SessionEnd",
-              "SessionStart", "Stop", "UserPromptSubmit",
+              "SessionStart", "Stop", "SubagentStart", "SubagentStop", "UserPromptSubmit",
           }, str(sorted(hooks.get("hooks", {}))))
     # ⚠️ A DICT KEYED BY COMMAND SILENTLY COLLAPSES ROWS. `checkpoint` is registered on Stop,
     # PreCompact and SessionEnd with the SAME command string, so a dict turns three handlers into
@@ -241,9 +267,9 @@ if hooks_path.is_file():
         if hook.get("command")
     ]
     commands = {hook["command"]: hook for hook in handlers}
-    # NINE handlers, which is what v0.2.32 ships.  The count is asserted rather than the
+    # ELEVEN handlers since v0.3.4 (nine through v0.3.3). The count is asserted rather than the
     # membership because a replacement would keep the count and change the row.
-    check("shipping hook bundle has the nine plugin-door rows", len(handlers) == 9,
+    check("shipping hook bundle has the eleven plugin-door rows", len(handlers) == 11,
           str(len(handlers)))
     # ⚠️ A DECLARED EXEMPTION, ASSERTED AS AN ABSENCE. `shift` fires on every Read. The Rust owner
     # marks it `plugin: false` because adding it is a product decision with a release attached,

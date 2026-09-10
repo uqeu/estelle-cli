@@ -61,6 +61,8 @@ mod screens;
 mod session_server;
 mod session_view;
 mod setup_flow;
+/// The `SubagentStart` door: a subagent inherits the grounding the parent already paid for.
+mod subagent_context;
 mod sweep_estimate;
 #[cfg(test)]
 mod test_gallery;
