@@ -8365,7 +8365,10 @@ tests/test_serve.py:88: AssertionError\n\
     #[test]
     fn the_subagent_label_is_the_servers_prefix_contract() {
         let payload: HookPayload = serde_json::from_str(REAL_SUBAGENT_STOP).expect("payload");
-        assert_eq!(payload.subagent_label().as_deref(), Some("Explore a643abf0b"));
+        assert_eq!(
+            payload.subagent_label().as_deref(),
+            Some("Explore a643abf0b")
+        );
     }
 
     /// An id that would not round-trip through the prefix is refused rather than emitted into a
@@ -8383,11 +8386,19 @@ tests/test_serve.py:88: AssertionError\n\
             r#"{"hook_event_name":"SubagentStop","session_id":"s","agent_id":"a643abf0b"}"#,
         )
         .expect("payload");
-        assert_eq!(no_type.subagent_label().as_deref(), Some("a643abf0b a643abf0b"));
+        assert_eq!(
+            no_type.subagent_label().as_deref(),
+            Some("a643abf0b a643abf0b")
+        );
 
         let not_a_subagent: HookPayload =
-            serde_json::from_str(r#"{"hook_event_name":"Stop","session_id":"s"}"#).expect("payload");
-        assert_eq!(not_a_subagent.subagent_label(), None, "no agent_id, no prefix");
+            serde_json::from_str(r#"{"hook_event_name":"Stop","session_id":"s"}"#)
+                .expect("payload");
+        assert_eq!(
+            not_a_subagent.subagent_label(),
+            None,
+            "no agent_id, no prefix"
+        );
     }
 
     const REAL_SUBAGENT_START: &str = r#"{"agent_id":"a4b33c15888ed526a","agent_type":"general-purpose","cwd":"/tmp/probe","hook_event_name":"SubagentStart","prompt_id":"37dcf2a6-e005-4744-89bd-6a9a1ca2dd44","session_id":"b8efe6d6-b4f6-4901-aaa7-ba08f7bed67d","transcript_path":"/tmp/probe/parent.jsonl"}"#;
