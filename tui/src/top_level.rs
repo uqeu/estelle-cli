@@ -7997,7 +7997,17 @@ tests/test_serve.py:88: AssertionError\n\
     /// captures the real request the real client sent and asserts the KEY IS PRESENT AND FALSE.
     /// An absent key fails here, which is the whole point: absence was the defect.
     #[tokio::test]
+    #[serial_test::serial(estelle_home)]
     async fn context_hook_asks_for_recall_without_the_code_branch_it_never_reads() {
+        // 🔴 A PRIVATE `HOME` BECAUSE THIS TEST DRIVES A FUNCTION THAT WRITES ONE. `context_recall_lines`
+        // caches the recall under `~/.estelle/subagent-context`, and an empty `parent_session` is
+        // refused by `safe_session_id` — so under the SHIPPED code this test writes nothing. That is
+        // a property of the code under test, which is exactly the wrong thing for isolation to depend
+        // on: MEASURED 2026-09-10, the mutation run that made `safe_session_id` accept anything wrote
+        // `~/.estelle/subagent-context/.json` into the developer's REAL home, because the isolation
+        // lived in the subject rather than in the harness. Isolation must cover every path the run
+        // writes, whatever the subject does.
+        let _home = crate::subagent_context::TempHome::new();
         let server = wiremock::MockServer::start().await;
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/search"))
@@ -8073,7 +8083,17 @@ tests/test_serve.py:88: AssertionError\n\
     /// floor that `Client::new` enforces, so a give-up at ~300 ms cannot be reqwest's and cannot be
     /// the server's. Only the tokio bound can produce this result.
     #[tokio::test]
+    #[serial_test::serial(estelle_home)]
     async fn context_hook_budget_fires_against_a_slow_server() {
+        // 🔴 A PRIVATE `HOME` BECAUSE THIS TEST DRIVES A FUNCTION THAT WRITES ONE. `context_recall_lines`
+        // caches the recall under `~/.estelle/subagent-context`, and an empty `parent_session` is
+        // refused by `safe_session_id` — so under the SHIPPED code this test writes nothing. That is
+        // a property of the code under test, which is exactly the wrong thing for isolation to depend
+        // on: MEASURED 2026-09-10, the mutation run that made `safe_session_id` accept anything wrote
+        // `~/.estelle/subagent-context/.json` into the developer's REAL home, because the isolation
+        // lived in the subject rather than in the harness. Isolation must cover every path the run
+        // writes, whatever the subject does.
+        let _home = crate::subagent_context::TempHome::new();
         const BUDGET: Duration = Duration::from_millis(300);
         const SERVER_DELAY: Duration = Duration::from_secs(3);
 
@@ -8149,7 +8169,17 @@ tests/test_serve.py:88: AssertionError\n\
     /// past the delay — and now the recall MUST arrive. Together the two pin the bound as a
     /// decision rather than an outcome.
     #[tokio::test]
+    #[serial_test::serial(estelle_home)]
     async fn context_hook_budget_does_not_fire_against_a_fast_server() {
+        // 🔴 A PRIVATE `HOME` BECAUSE THIS TEST DRIVES A FUNCTION THAT WRITES ONE. `context_recall_lines`
+        // caches the recall under `~/.estelle/subagent-context`, and an empty `parent_session` is
+        // refused by `safe_session_id` — so under the SHIPPED code this test writes nothing. That is
+        // a property of the code under test, which is exactly the wrong thing for isolation to depend
+        // on: MEASURED 2026-09-10, the mutation run that made `safe_session_id` accept anything wrote
+        // `~/.estelle/subagent-context/.json` into the developer's REAL home, because the isolation
+        // lived in the subject rather than in the harness. Isolation must cover every path the run
+        // writes, whatever the subject does.
+        let _home = crate::subagent_context::TempHome::new();
         const BUDGET: Duration = Duration::from_secs(8);
         const SERVER_DELAY: Duration = Duration::from_secs(3);
 
@@ -8595,7 +8625,17 @@ tests/test_serve.py:88: AssertionError\n\
     /// Each one goes through the real `reqwest` client, the real `post_scoped` deserialization and
     /// the real `Error::Http` construction. NOT ONE of them may leave stdout at one byte.
     #[tokio::test]
+    #[serial_test::serial(estelle_home)]
     async fn context_hook_states_a_result_for_every_real_server_answer() {
+        // 🔴 A PRIVATE `HOME` BECAUSE THIS TEST DRIVES A FUNCTION THAT WRITES ONE. `context_recall_lines`
+        // caches the recall under `~/.estelle/subagent-context`, and an empty `parent_session` is
+        // refused by `safe_session_id` — so under the SHIPPED code this test writes nothing. That is
+        // a property of the code under test, which is exactly the wrong thing for isolation to depend
+        // on: MEASURED 2026-09-10, the mutation run that made `safe_session_id` accept anything wrote
+        // `~/.estelle/subagent-context/.json` into the developer's REAL home, because the isolation
+        // lived in the subject rather than in the harness. Isolation must cover every path the run
+        // writes, whatever the subject does.
+        let _home = crate::subagent_context::TempHome::new();
         let timings = json!({
             "stages": {"auth": 0.472, "rate_limit": 0.008, "concurrency_slot": 0.136},
             "stages_sum_s": 0.616, "elapsed_s": 0.616, "total_s": 0.616,
@@ -8772,7 +8812,12 @@ tests/test_serve.py:88: AssertionError\n\
     /// `io::Error` that can carry a local path, and this line lands in a terminal and an on-disk
     /// transcript.
     #[tokio::test]
+    #[serial_test::serial(estelle_home)]
     async fn a_machine_with_no_credential_is_told_so_rather_than_left_quiet() {
+        // A private `HOME`: this drives `context_hook_with`, which reaches the cache writer.
+        // See the note on `context_hook_budget_fires_against_a_slow_server` — isolation lives in
+        // the harness, never in a property of the subject.
+        let _home = crate::subagent_context::TempHome::new();
         let payload: HookPayload =
             serde_json::from_value(json!({"prompt": "where is the retry policy set?"}))
                 .expect("payload");
@@ -8809,7 +8854,12 @@ tests/test_serve.py:88: AssertionError\n\
     /// succeeds, must not produce the credential notice. Without this, a `context_hook_with` that
     /// emitted the notice unconditionally would satisfy it forever.
     #[tokio::test]
+    #[serial_test::serial(estelle_home)]
     async fn a_resolvable_credential_does_not_produce_the_credential_notice() {
+        // A private `HOME`: this drives `context_hook_with`, which reaches the cache writer.
+        // See the note on `context_hook_budget_fires_against_a_slow_server` — isolation lives in
+        // the harness, never in a property of the subject.
+        let _home = crate::subagent_context::TempHome::new();
         let server = wiremock::MockServer::start().await;
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/search"))
