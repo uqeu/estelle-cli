@@ -45,7 +45,7 @@ resolve it. Run it on load-bearing, contestable output; skip it on trivia.
    `run_and_repair_suite` / `parse_suite_output` (`agent/verify_suite.py`), green ONLY when the pytest summary
    line truly says so. A number backed by neither is an UNREPRODUCIBLE NUMBER — flag it.
 5. 🔴 **A RETRACTION IS NOT DONE UNTIL EVERY COPY IS GONE — grep for the DIGITS, not the sentence.** This
-   playbook itself cited a retrieval figure of **97.7%** that had been retracted as unreproducible a day
+   playbook itself cited a headline retrieval figure that had been retracted as unreproducible a day
    earlier. The retraction was applied where someone was looking (`docs/scorecard.md`, `README.md`) and
    missed the document those numbers were *sourced from* — so **21 files in shipped source went on
    asserting it, 19 of them playbooks like this one.** When you retract a number, search the whole tree for
