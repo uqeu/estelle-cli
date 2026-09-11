@@ -1,6 +1,6 @@
 {
   "name": "estelle",
-  "version": "0.3.8",
+  "version": "0.3.6",
   "description": "Estelle \u2014 code memory + the grounding gate, always on. The trust layer under your AI coding agents: it grounds every model in your real codebase and refuses to ship what isn't true.",
   "author": {
     "name": "Fate Labs",
