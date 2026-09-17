@@ -72,10 +72,21 @@ const MAX_TAIL_LINES: usize = 512;
 pub enum Phase {
     /// The request was in flight and no response head had arrived when the budget expired.
     AwaitingResponse,
-    /// A response arrived and was parsed. The server's own `timings` may accompany it.
+    /// A response arrived, was parsed, and carried a retrieval the server completed. The server's
+    /// own `timings` may accompany it.
+    ///
+    /// ⚠️ **NARROWED 2026-09-17, AND THE NARROWING IS THE POINT.** This used to mean *a response
+    /// arrived*, full stop, which made it the badge on a 200 whose retrieval had been abandoned —
+    /// 46 of 99 records in one 3.97 h window on the founder's machine read `answered` over
+    /// `counts.recall == 0`. **A 200 is a claim about the CALL COMPLETING, never about the work.**
     Answered,
     /// The transport itself failed (refusal, 429, connection error) before any parse.
     TransportFailed,
+    /// 🔴 **THE THIRD OUTCOME, AND IT WAS BEING COUNTED AS THE FIRST.** The server answered inside
+    /// budget, said so cleanly, and told us its own retrieval never finished — so no repository
+    /// memory reached the prompt. It is neither an answer nor a timeout, and folding it into
+    /// either makes the largest failure mode this hook has unmeasurable from its own log.
+    RecallExpired,
 }
 
 impl Phase {
@@ -86,6 +97,7 @@ impl Phase {
             Self::AwaitingResponse => "awaiting_response",
             Self::Answered => "answered",
             Self::TransportFailed => "transport_failed",
+            Self::RecallExpired => "recall_expired",
         }
     }
 }
@@ -102,7 +114,24 @@ pub struct Breadcrumb {
     /// The server's own `timings` object, verbatim, when one was returned. `None` on every
     /// abandoned call — see the module's stated limit.
     pub server_timings: Option<Value>,
+    /// 🔴 **WHY A NON-ANSWER HAPPENED, WHICH THIS RECORDER USED TO THROW AWAY.** Measured
+    /// 2026-09-17: the log held 4 `transport_failed` records (4.0% of 99) and **not one of
+    /// them could be attributed** — a 429, a TLS reset, a DNS failure and a 502 are the same four
+    /// bytes in this file. The hook had the classification in hand (`classify_transport_failure`)
+    /// and dropped it one line before the append.
+    ///
+    /// ⛔ **A BOUNDED, CLASSIFIED TOKEN — NEVER FREE TEXT AND NEVER THE PROMPT.** This file is
+    /// disk, it is read by agents, and its whole safety claim is that it holds no prompt content.
+    /// So the value is a fixed vocabulary (`http_429`, `dns`, `refused`, `timeout`, …), it is
+    /// capped at [`MAX_REASON_CHARS`], and the producer is a total `match` over a closed enum
+    /// rather than a formatter over an error.
+    pub reason: Option<String>,
 }
+
+/// Hard cap on [`Breadcrumb::reason`]. Power of Ten #3: the resource is bounded BEFORE it is
+/// taken. The whole vocabulary is under 16 characters, so this is slack by construction and exists
+/// to make the bound independent of what a future caller passes.
+const MAX_REASON_CHARS: usize = 64;
 
 impl Breadcrumb {
     /// The JSON line written to disk. Kept to scalars plus the server's own object so a reader
@@ -118,6 +147,14 @@ impl Breadcrumb {
             && let Some(object) = record.as_object_mut()
         {
             object.insert("server_timings".to_string(), timings.clone());
+        }
+        // Bounded at the WRITE, not at the callers: a cap a caller has to remember is a cap on the
+        // callers you remembered to instrument.
+        if let Some(reason) = &self.reason
+            && let Some(object) = record.as_object_mut()
+        {
+            let bounded: String = reason.chars().take(MAX_REASON_CHARS).collect();
+            object.insert("reason".to_string(), Value::String(bounded));
         }
         format!("{record}\n")
     }
@@ -319,7 +356,122 @@ mod tests {
             elapsed: Duration::from_millis(elapsed_ms),
             budget: Duration::from_secs(20),
             server_timings: timings,
+            reason: None,
         }
+    }
+
+    /// Every phase this recorder can write. The `_exhaustive` match makes adding a variant a
+    /// COMPILE error here rather than a silently unlisted one — a fifth phase cannot be added and
+    /// left out of the wire-spelling assertions below.
+    fn every_phase() -> Vec<Phase> {
+        fn _exhaustive(phase: &Phase) {
+            match phase {
+                Phase::AwaitingResponse => (),
+                Phase::Answered => (),
+                Phase::TransportFailed => (),
+                Phase::RecallExpired => (),
+            }
+        }
+        vec![
+            Phase::AwaitingResponse,
+            Phase::Answered,
+            Phase::TransportFailed,
+            Phase::RecallExpired,
+        ]
+    }
+
+    /// ⚖️ ONE MEANING PER NAME, ON THE WIRE. Two phases sharing a spelling would make the log
+    /// unable to separate the outcomes it exists to separate, and the collapse would be invisible
+    /// to every test that only checks one phase at a time.
+    #[test]
+    fn every_phase_has_its_own_wire_spelling() {
+        let spellings: std::collections::BTreeSet<&str> =
+            every_phase().iter().map(|phase| phase.as_str()).collect();
+        assert_eq!(
+            spellings.len(),
+            every_phase().len(),
+            "two phases collapsed onto one spelling: {spellings:?}"
+        );
+        assert!(
+            spellings.contains("recall_expired"),
+            "the 58.7% outcome must be countable from the log without reading `counts`: \
+             {spellings:?}"
+        );
+    }
+
+    /// 🔴 THE ATTRIBUTION THE LOG COULD NOT MAKE. Four `transport_failed` records in the measured
+    /// window and no way to tell a 429 from a DNS failure. This is the field that fixes it.
+    #[test]
+    fn a_non_answer_records_why() {
+        let path = temp_log("reason");
+        let mut record = crumb(Phase::TransportFailed, 5_492, None);
+        record.reason = Some("http_429".to_string());
+        append(&record, Some(&path));
+        let text = fs::read_to_string(&path).expect("log written");
+        let parsed: Value = serde_json::from_str(text.trim()).expect("one json line");
+        assert_eq!(parsed["phase"], "transport_failed");
+        assert_eq!(parsed["reason"], "http_429");
+    }
+
+    /// 🧪 THE CONTROL, AND IT IS THE ONE THAT MATTERS: absence and empty-string must not be the
+    /// same bytes. A recorder that always writes `"reason"` would make "we did not classify it"
+    /// indistinguishable from "it was classified as nothing".
+    #[test]
+    fn an_answered_call_writes_no_reason_at_all() {
+        let path = temp_log("no-reason");
+        append(&crumb(Phase::Answered, 1_415, None), Some(&path));
+        let text = fs::read_to_string(&path).expect("log written");
+        let parsed: Value = serde_json::from_str(text.trim()).expect("one json line");
+        assert!(
+            parsed.get("reason").is_none(),
+            "an absent reason must be an ABSENT key: {parsed}"
+        );
+    }
+
+    /// Power of Ten #3, asserted at the boundary that takes the resource.
+    #[test]
+    fn a_reason_is_bounded_before_it_is_written() {
+        let path = temp_log("bounded-reason");
+        let mut record = crumb(Phase::TransportFailed, 1, None);
+        record.reason = Some("x".repeat(MAX_REASON_CHARS * 4));
+        append(&record, Some(&path));
+        let text = fs::read_to_string(&path).expect("log written");
+        let parsed: Value = serde_json::from_str(text.trim()).expect("one json line");
+        assert_eq!(
+            parsed["reason"].as_str().map(str::len),
+            Some(MAX_REASON_CHARS),
+            "the cap is applied at the write, not hoped for at the callers"
+        );
+    }
+
+    /// 🔴 A `recall_expired` RECORD IS NOT AN ANSWERED ONE, AND [`last_answered`] IS WHAT READS
+    /// THAT DISTINCTION BACK. The abandonment message quotes "the last call this machine recorded
+    /// an ANSWER for" as a healthy baseline; quoting a turn that reached the model with no memory
+    /// would make that baseline a lie in the one message written to be trustworthy.
+    #[test]
+    fn a_degraded_call_is_never_quoted_as_the_last_healthy_one() {
+        let path = temp_log("degraded-baseline");
+        append(
+            &crumb(
+                Phase::Answered,
+                1_415,
+                Some(json!({"stages": {"recall": 0.2}})),
+            ),
+            Some(&path),
+        );
+        append(
+            &crumb(
+                Phase::RecallExpired,
+                11_849,
+                Some(json!({"stages": {"recall": 8.0}})),
+            ),
+            Some(&path),
+        );
+        let summary = last_answered(Some(&path)).expect("an answered record is present");
+        assert!(
+            summary.starts_with("1.4s"),
+            "the 11.8s degraded call was quoted as a healthy baseline: {summary}"
+        );
     }
 
     /// The whole point of the module: an ABANDONED run leaves a record, and it records the

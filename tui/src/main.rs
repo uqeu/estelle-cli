@@ -11,6 +11,7 @@ mod cols;
 mod commands;
 #[cfg(test)]
 mod composer_band_tests;
+mod context_degraded;
 mod copilot_login;
 /// 🎬 `estelle demo --session N` — the design book's screens reassembled into ONE continuous
 /// working session, played unattended in the real renderer.

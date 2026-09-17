@@ -863,8 +863,26 @@ enum ContextOutcome {
     /// The server answered and had memory for this prompt. The payload is the recall text.
     Grounded(String),
     /// The server answered, looked, and had nothing relevant. A MEASURED empty — the honest
-    /// "that's all there is", and the only one of the three entitled to say it.
+    /// "that's all there is", and the only one of the four entitled to say it.
     NothingToRecall,
+    /// 🔴 **THE FOURTH ARM, AND THE LARGEST FAILURE MODE THIS HOOK HAS.** The server answered
+    /// cleanly, inside budget, and told us its own retrieval never completed — so no repository
+    /// memory reached the prompt. The payload is the server's own account of it.
+    ///
+    /// **MEASURED 2026-09-17 from this hook's flight recorder, n=99 over 3.97 h: 46 calls (46.5%)
+    /// answered carrying `counts.recall == 0`, and 43 of the 92 that answered had the server's
+    /// `recall` stage land on its own 8 s deadline — 43/43 of those carried nothing.** The
+    /// abandonment the founder SEES is 4 of 99 (4.0%). This one was eleven times larger and
+    /// silent, and after the database work that landed mid-window it is still one turn in six.
+    ///
+    /// ⛔ **BOTH ARMS IT USED TO LAND IN LIE, WHICH IS WHY A FOURTH WAS NEEDED RATHER THAN A
+    /// BETTER SENTENCE IN AN EXISTING ONE.** With an empty `recall` field it became
+    /// [`Self::NothingToRecall`], whose envelope tells the model *"a measured empty result, not a
+    /// failure to reach Estelle"* — a confident false negative. With the field FILLED (what
+    /// production serves today, `estelle/serve/recall_expiry.py`) it became [`Self::Grounded`],
+    /// handing the model a disclaimer AS retrieval while the human was told nothing at all.
+    /// See `crate::context_degraded` for the evidence and the blind spot.
+    Degraded(String),
     /// No grounding was obtained. The payload is a PREDICATE saying why, in the same vocabulary
     /// [`transport_detail`] uses, so the reader is sent to the right system.
     Ungrounded(String),
@@ -896,6 +914,7 @@ fn record_timings(
     elapsed: Duration,
     budget: Duration,
     server_timings: Option<Value>,
+    reason: Option<String>,
     log: Option<&Path>,
 ) {
     hook_timings::append(
@@ -904,9 +923,51 @@ fn record_timings(
             elapsed,
             budget,
             server_timings,
+            reason,
         },
         log,
     );
+}
+
+/// The BOUNDED, CLASSIFIED token a transport failure is filed under — never the formatted
+/// sentence.
+///
+/// 🔴 IT EXISTS BECAUSE THE FLIGHT RECORDER COULD NOT ATTRIBUTE ITS OWN NON-ANSWERS. Measured
+/// 2026-09-17 on `~/.estelle/context-hook.jsonl`: 4 of 75 records were `transport_failed` and all
+/// four were indistinguishable — 5.5 s, 7.3 s, 15.4 s, 15.4 s, and nothing anywhere saying whether
+/// that was a 429, a reset or a name that did not resolve. The classification existed one line
+/// above the append and was discarded.
+///
+/// ⛔ A TOKEN, NOT THE PROSE. [`transport_detail`] is a human sentence that interpolates
+/// `DEFAULT_TIMEOUT` and reads differently as constants move; a log is a durable record and its
+/// vocabulary must be stable, greppable and free of anything a future formatter might interpolate.
+/// The `match` is total over a closed enum, so a new failure kind is a compile error here.
+fn transport_failure_reason(failure: TransportFailure) -> String {
+    match failure {
+        TransportFailure::Timeout => "timeout".to_string(),
+        TransportFailure::Refused => "refused".to_string(),
+        TransportFailure::Dns => "dns".to_string(),
+        TransportFailure::Http(status) => format!("http_{status}"),
+        TransportFailure::BadResponse => "bad_response".to_string(),
+        TransportFailure::Cancelled => "cancelled".to_string(),
+        TransportFailure::Unknown => "unknown".to_string(),
+    }
+}
+
+/// Which flight-recorder phase an outcome is filed under — ONE owner for that derived fact.
+///
+/// 🔴 IT IS DERIVED FROM THE OUTCOME RATHER THAN CHOSEN AT THE CALL SITE, because the previous
+/// code recorded `Answered` BEFORE it classified the body. So the phase was a claim about the HTTP
+/// call and the outcome was a claim about the work, and a 200 whose retrieval had been abandoned
+/// got the same badge as a 200 that carried 22 KB of memory. Deriving it here makes the log and
+/// the envelope incapable of disagreeing.
+fn phase_for(outcome: &ContextOutcome) -> hook_timings::Phase {
+    match outcome {
+        ContextOutcome::Degraded(_) => hook_timings::Phase::RecallExpired,
+        ContextOutcome::Grounded(_)
+        | ContextOutcome::NothingToRecall
+        | ContextOutcome::Ungrounded(_) => hook_timings::Phase::Answered,
+    }
 }
 
 fn context_budget_detail(budget: Duration, elapsed: Duration, log: Option<&Path>) -> String {
@@ -989,6 +1050,15 @@ fn context_lines(outcome: ContextOutcome) -> Vec<String> {
             "UserPromptSubmit",
         )],
         ContextOutcome::Ungrounded(detail) => ungrounded_lines(&detail),
+        // 🔴 NOT SILENT TO THE HUMAN. The repo's rule is that a capped read means "cannot answer",
+        // never "that's all there is" — and a degraded grounding the human cannot see is exactly
+        // the silent version of the lie this arm exists to end. It is ONE short line, because this
+        // fires often while the recall arm is contended and a paragraph gets muted.
+        ContextOutcome::Degraded(server_account) => vec![hook_message(
+            Some(crate::context_degraded::DEGRADED_HUMAN_LINE.to_string()),
+            Some(crate::context_degraded::degraded_context(&server_account)),
+            "UserPromptSubmit",
+        )],
     }
 }
 
@@ -1017,6 +1087,7 @@ async fn context_recall(
                 elapsed,
                 budget,
                 None,
+                Some("client_budget".to_string()),
                 log,
             );
             return ContextOutcome::Ungrounded(context_budget_detail(budget, elapsed, log));
@@ -1028,14 +1099,19 @@ async fn context_recall(
         // `too many concurrent requests` in 0.616 s, hook stdout **1 byte**, exit **0**. Every
         // prompt that afternoon was ungrounded and nothing anywhere said so.
         Ok(Err(error)) => {
+            // 🔑 CLASSIFIED ONCE, READ TWICE — the log and the sentence cannot disagree about what
+            // failed. `transport_failure_detail(&error)` is `transport_detail(classify(&error))`,
+            // so this is the same value it was, now also recorded.
+            let failure = classify_transport_failure(&error);
             record_timings(
                 hook_timings::Phase::TransportFailed,
                 started.elapsed(),
                 budget,
                 None,
+                Some(transport_failure_reason(failure)),
                 log,
             );
-            return ContextOutcome::Ungrounded(transport_failure_detail(&error));
+            return ContextOutcome::Ungrounded(transport_detail(failure));
         }
         Ok(Ok(result)) => result,
     };
@@ -1049,14 +1125,35 @@ async fn context_recall(
     // recall.dense · recall.sparse · recall.rerank_provider · recall.retrieve_context, plus
     // elapsed_s / unattributed_s). Recording it here is what makes the NEXT abandonment — which
     // by definition arrives with no timings of its own — readable next to a real profile.
+    // 🔴 CLASSIFY FIRST, THEN RECORD — THE OPPOSITE ORDER WAS THE DEFECT.
+    // This used to append `Phase::Answered` here, ABOVE the match, so the recorded phase was a
+    // claim about the HTTP call while the envelope was a claim about the work. A 200 whose
+    // retrieval had been abandoned therefore filed itself under `answered`, and the largest
+    // failure mode this hook has was unmeasurable from the log it writes. `phase_for` now derives
+    // the badge from the outcome, so the two cannot disagree.
+    let outcome = classify_context_answer(&result);
     record_timings(
-        hook_timings::Phase::Answered,
+        phase_for(&outcome),
         started.elapsed(),
         budget,
         result.get("timings").cloned(),
+        None,
         log,
     );
+    outcome
+}
+
+/// A parsed 200 → what it actually achieved. Pure, so the classification is assertable against the
+/// real server bodies without a socket.
+fn classify_context_answer(result: &Value) -> ContextOutcome {
+    // ⚖️ ABSENCE AND ZERO ARE NOT THE SAME WIRE BYTES (see the note above the call site).
     match result.get("recall").and_then(Value::as_str).map(str::trim) {
+        // 🔑 THE EXPIRY TEST COMES FIRST, AND IT HAS TO. The server signals an abandoned retrieval
+        // by FILLING this field with a refusal, so a non-empty test reached first would classify
+        // every expiry as `Grounded` — which is precisely what shipped.
+        Some(recall) if crate::context_degraded::recall_did_not_complete(result, recall) => {
+            ContextOutcome::Degraded(recall.to_string())
+        }
         Some(recall) if !recall.is_empty() => ContextOutcome::Grounded(recall.to_string()),
         Some(_) => ContextOutcome::NothingToRecall,
         None => ContextOutcome::Ungrounded(NO_RECALL_FIELD_DETAIL.to_string()),
@@ -1093,9 +1190,12 @@ async fn context_recall_lines(
     // hook has exactly ONE, so a single write site is TOTAL here rather than nearly-total — the
     // day a second durable source is added it must write here too, or this becomes the partial
     // guard: correct on the fraction it covers, silent about the rest.
-    // ⚠️ `NothingToRecall` and `Ungrounded` are deliberately NOT stored. They describe a MOMENT
-    // (the server had nothing; the deadline expired), and inheriting one an hour later would dress
-    // a stale status line as repository grounding.
+    // ⚠️ `NothingToRecall`, `Ungrounded` and `Degraded` are deliberately NOT stored. They describe
+    // a MOMENT (the server had nothing; the deadline expired; retrieval was abandoned), and
+    // inheriting one an hour later would dress a stale status line as repository grounding.
+    // ⛔ `Degraded` matters most here: its payload is a REFUSAL SENTENCE, and caching that would
+    // hand every subagent of the turn a disclaimer labelled "inherited grounding" — the same
+    // disclaimer-as-retrieval defect this lane exists to remove, propagated N times over.
     if let ContextOutcome::Grounded(recall) = &outcome {
         // Best effort by construction: a failed cache write must never cost the human the context
         // they paid for. The consequence of a miss is visible where it matters — the subagent is
@@ -8670,11 +8770,13 @@ tests/test_serve.py:88: AssertionError\n\
                 ContextOutcome::Grounded(_) => (),
                 ContextOutcome::NothingToRecall => (),
                 ContextOutcome::Ungrounded(_) => (),
+                ContextOutcome::Degraded(_) => (),
             }
         }
         vec![
             ContextOutcome::Grounded("the retry policy lives in serve/backend.py".to_string()),
             ContextOutcome::NothingToRecall,
+            ContextOutcome::Degraded(expired_recall_sentence()),
             ContextOutcome::Ungrounded(context_budget_detail(
                 CONTEXT_HOOK_BUDGET,
                 Duration::from_millis(19_400),
@@ -8738,7 +8840,187 @@ tests/test_serve.py:88: AssertionError\n\
         }
     }
 
-    /// The other half of the pair: the two outcomes that are ALLOWED to be quiet to the human must
+    /// The server's own expiry body, read out of `estelle/serve/recall_expiry.py`
+    /// (`recall_expired_sentence`) rather than invented. A double friendlier than production
+    /// certifies code production rejects — and this one has to match production's leading bytes
+    /// exactly, because a prefix test is one of the two things that classify it.
+    fn expired_recall_sentence() -> String {
+        format!(
+            "{}Estelle's semantic recall for uqeu/estelle did not finish inside its 8s budget and \
+             returned NO content. Nothing was retrieved on this turn, and that is a fact about the \
+             RETRIEVAL, never about the repository — treat this as MISSING grounding, not as a \
+             search that found nothing.",
+            crate::context_degraded::RECALL_EXPIRED_PREFIX
+        )
+    }
+
+    /// 🔴🔴 **THE PAIR THAT CANNOT BOTH BE TRUE, SECOND EDITION.**
+    ///
+    /// > *"the server told us its retrieval did not complete"* and *"the turn was reported as
+    /// > grounded, or as a measured empty"* must be unreachable together.
+    ///
+    /// Stated over the OUTCOME rather than over a cause, for the same reason
+    /// `a_searched_prompt_never_exits_quiet_and_ungrounded` is: a test written as "an 8 s timeout
+    /// must warn" catches an 8 s timeout and nothing else, and the server already has a SECOND
+    /// mechanism that produces this shape (`SPARSE_ARM_DEADLINE_S` abandoning one pool while the
+    /// other returns empty).
+    #[test]
+    fn an_expired_recall_is_never_grounded_and_never_a_measured_empty() {
+        let sentence = expired_recall_sentence();
+        let bodies = vec![
+            // What production serves TODAY: the field filled AND the flag set.
+            json!({"recall": sentence, "degraded": true, "recall_expired": true,
+                   "repo": "uqeu/estelle"}),
+            // A server rolled back past the structured field: the sentence alone.
+            json!({"recall": sentence, "repo": "uqeu/estelle"}),
+            // A server that sets the flag without leading the body: the flag alone.
+            json!({"recall": "some stale lead-in text", "recall_expired": true}),
+        ];
+        for body in bodies {
+            let outcome = classify_context_answer(&body);
+            assert!(
+                matches!(outcome, ContextOutcome::Degraded(_)),
+                "an abandoned retrieval was classified {outcome:?} — the two arms it used to land \
+                 in both make a claim the server did not make"
+            );
+            let lines = context_lines(outcome);
+            let statements = grounding_statements(&lines);
+            assert_eq!(statements.len(), 1, "{statements:?}");
+            assert!(
+                !statements[0].contains("measured empty result"),
+                "a retrieval that gave up measured NOTHING; calling it a measured empty is a \
+                 confident false negative: {statements:?}"
+            );
+            assert!(
+                statements[0].contains("MISSING grounding"),
+                "the clause that changes what may be concluded has to reach the model: \
+                 {statements:?}"
+            );
+        }
+    }
+
+    /// 🧪 THE CONTROL FOR THE TEST ABOVE. Without it the classifier could return `Degraded`
+    /// unconditionally and every assertion above would still pass.
+    #[test]
+    fn a_completed_recall_is_still_grounded() {
+        let body = json!({"recall": "the retry policy lives in serve/backend.py",
+                          "repo": "uqeu/estelle"});
+        assert!(
+            matches!(classify_context_answer(&body), ContextOutcome::Grounded(_)),
+            "the new arm must not swallow healthy groundings"
+        );
+        assert!(
+            matches!(
+                classify_context_answer(&json!({"recall": ""})),
+                ContextOutcome::NothingToRecall
+            ),
+            "a MEASURED empty is still entitled to say so"
+        );
+        assert!(
+            matches!(
+                classify_context_answer(&json!({"scope_ask": true})),
+                ContextOutcome::Ungrounded(_)
+            ),
+            "an absent recall field is still a shape this hook does not understand"
+        );
+    }
+
+    /// 🔴 **A DEGRADED GROUNDING MUST SAY IT IS DEGRADED — TO THE HUMAN, NOT ONLY TO THE MODEL.**
+    /// The measured defect was silent: 44 of 75 turns reached the model with no repository memory
+    /// and the founder saw nothing on any of them. The model line stops a false certificate; the
+    /// human line is what stops an afternoon being lost to a silently degraded session.
+    #[test]
+    fn a_degraded_grounding_announces_itself_to_the_human() {
+        let lines = context_lines(ContextOutcome::Degraded(expired_recall_sentence()));
+        let line = human_line(&lines).expect("a degraded turn is visible to the human");
+        assert!(
+            line.contains("DEGRADED"),
+            "the human line must name what happened: {line}"
+        );
+        // One short line: this fires on a large share of prompts while the recall arm is
+        // contended, and a notice that costs a paragraph on the hot path is one somebody mutes.
+        assert!(
+            line.chars().count() < 200,
+            "the notice is {} chars — long enough to get muted",
+            line.chars().count()
+        );
+    }
+
+    /// ⚖️ THE BYTES MUST DIFFER FROM BOTH ARMS IT USED TO COLLAPSE INTO, because that collapse is
+    /// the whole defect and a shared sentence would re-create it one refactor later.
+    #[test]
+    fn a_degraded_turn_reads_as_neither_grounded_nor_empty() {
+        let degraded = hook_stdout(&context_lines(ContextOutcome::Degraded(
+            expired_recall_sentence(),
+        )));
+        let grounded = hook_stdout(&context_lines(ContextOutcome::Grounded(
+            expired_recall_sentence(),
+        )));
+        let empty = hook_stdout(&context_lines(ContextOutcome::NothingToRecall));
+        assert_ne!(
+            degraded, grounded,
+            "the arm production actually took (`Grounded` over the refusal sentence) must not \
+             produce the same bytes as the honest one"
+        );
+        assert_ne!(degraded, empty);
+    }
+
+    /// 🔴 **THE LOG AND THE ENVELOPE MUST AGREE.** `phase_for` is the one owner of that derived
+    /// fact; a `Degraded` outcome filed under `answered` would leave the 58.7% invisible in the
+    /// only durable record this hook writes.
+    #[test]
+    fn the_flight_recorder_phase_is_derived_from_the_outcome() {
+        assert_eq!(
+            phase_for(&ContextOutcome::Degraded(expired_recall_sentence())).as_str(),
+            "recall_expired"
+        );
+        for quiet in [
+            ContextOutcome::Grounded("recall".to_string()),
+            ContextOutcome::NothingToRecall,
+            ContextOutcome::Ungrounded("stopped".to_string()),
+        ] {
+            assert_eq!(
+                phase_for(&quiet).as_str(),
+                "answered",
+                "{quiet:?} is a call that answered"
+            );
+        }
+    }
+
+    /// 🔑 THE REASON TOKENS ARE A CLOSED, BOUNDED VOCABULARY — never the human sentence, which
+    /// interpolates a constant and lands in a durable on-disk record read by agents.
+    #[test]
+    fn a_transport_failure_is_filed_under_a_classified_token() {
+        let cases = [
+            (TransportFailure::Http(429), "http_429"),
+            (TransportFailure::Dns, "dns"),
+            (TransportFailure::Refused, "refused"),
+            (TransportFailure::Timeout, "timeout"),
+            (TransportFailure::BadResponse, "bad_response"),
+            (TransportFailure::Cancelled, "cancelled"),
+            (TransportFailure::Unknown, "unknown"),
+        ];
+        let mut seen = BTreeSet::new();
+        for (failure, expected) in cases {
+            let reason = transport_failure_reason(failure);
+            assert_eq!(reason, expected, "{failure:?}");
+            assert!(
+                reason
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+                "a log token must be greppable and free of anything a formatter interpolates: \
+                 {reason}"
+            );
+            assert!(seen.insert(reason.clone()), "two failures share {reason}");
+        }
+        assert_eq!(
+            seen.len(),
+            cases.len(),
+            "one meaning per name, in the durable record too"
+        );
+    }
+
+    /// The other half of the pair: the outcomes that are ALLOWED to be quiet to the human must
     /// stay quiet, or the notice becomes noise on the hot path of every prompt and gets muted.
     #[test]
     fn only_a_failure_to_ground_speaks_to_the_human() {
@@ -8967,6 +9249,99 @@ tests/test_serve.py:88: AssertionError\n\
         assert!(
             elapsed < CONTEXT_HOOK_BUDGET,
             "the 429 arrived before the budget; {elapsed:?} means the deadline fired instead"
+        );
+    }
+
+    /// 🔬 **THE WHOLE PATH, DRIVEN: REAL SOCKET → REAL `reqwest` → REAL CLASSIFIER → REAL
+    /// BREADCRUMB.** A structural check can prove the fourth arm EXISTS and can never prove the
+    /// code REACHES it — so this stands up an HTTP server that returns the envelope production
+    /// serves on an expired recall, and asserts on the INNERMOST observables: what the model was
+    /// handed, what the human was shown, and what the durable log says the turn was.
+    ///
+    /// ⚠️ It also asserts the SUBAGENT CACHE stayed empty, because `context_recall_lines` writes on
+    /// one arm and a fourth outcome is exactly the kind of thing that gets added to the enum and
+    /// forgotten at the write site.
+    #[tokio::test]
+    #[serial_test::serial(estelle_home)]
+    async fn an_abandoned_retrieval_is_announced_and_recorded_as_its_own_outcome() {
+        let _home = crate::subagent_context::TempHome::new();
+        let sentence = expired_recall_sentence();
+        let timings = json!({
+            "stages": {"auth": 0.025, "rate_limit": 0.241, "recall": 8.0,
+                       "recall.dense": 3.001, "recall.sparse": 3.0,
+                       "recall.retrieve_context": 6.236},
+            "counts": {"recall": 0, "recall.cards": 10},
+            "stages_sum_s": 20.964, "elapsed_s": 8.37, "total_s": 8.37,
+            "attributed_s": 8.352, "unattributed_s": 0.018
+        });
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/search"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({
+                "recall": sentence,
+                "degraded": true,
+                "recall_expired": true,
+                "repo": "uqeu/estelle",
+                "scope": "repo:uqeu/estelle",
+                "timings": timings,
+            })))
+            .mount(&server)
+            .await;
+        let (client, cancel) = hook_client(&server.uri());
+        let repo = Repo::new("uqeu/estelle").expect("repo");
+        let log = isolated_breadcrumb("expired-recall");
+
+        let lines = context_recall_lines(
+            &client,
+            &cancel,
+            &repo,
+            "where is the retry policy set?",
+            CONTEXT_HOOK_BUDGET,
+            Some(&log),
+            "hook-lane-session",
+        )
+        .await;
+
+        let statements = grounding_statements(&lines);
+        assert_eq!(statements.len(), 1, "{statements:?}");
+        assert!(
+            statements[0].contains("MISSING grounding"),
+            "the model must be told this is missing grounding: {statements:?}"
+        );
+        assert!(
+            !statements[0].contains("measured empty result"),
+            "the arm that lies about a measured empty must be unreachable from here: {statements:?}"
+        );
+        assert!(
+            human_line(&lines).is_some_and(|line| line.contains("DEGRADED")),
+            "the human saw nothing on 44 of 75 measured turns; that is what this fixes"
+        );
+
+        let recorded = std::fs::read_to_string(&log).expect("a breadcrumb was written");
+        let record: Value =
+            serde_json::from_str(recorded.trim()).expect("exactly one breadcrumb line");
+        assert_eq!(
+            record["phase"], "recall_expired",
+            "filed under `answered`, this outcome is invisible in the only durable record the \
+             hook writes: {record}"
+        );
+        assert_eq!(
+            record["server_timings"]["counts"]["recall"], 0,
+            "the server's own zero-character count rides along: {record}"
+        );
+
+        // `TempHome` is the owner of `HOME` for the duration of this test, so the cache directory
+        // is read back through the same variable the writer resolves it from — never a path this
+        // test computed independently, which would be a second owner of the location.
+        let cached = PathBuf::from(std::env::var_os("HOME").expect("TempHome set HOME"))
+            .join(".estelle")
+            .join("subagent-context");
+        let stored = std::fs::read_dir(&cached)
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+        assert_eq!(
+            stored, 0,
+            "a refusal sentence must never be cached and re-served to subagents as grounding"
         );
     }
 
