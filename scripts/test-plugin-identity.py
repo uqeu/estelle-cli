@@ -133,6 +133,24 @@ PLUGIN_CONTRACT_SHA256_BY_VERSION = {
     # of the three subagent ones, so nothing ever read it. Measured on the founder's machine
     # 2026-09-10: 3,086 subagent transcripts on disk, 0 of 254 session rows naming one.
     "0.3.5": "8321df873b215bcd7e6478cd3b0507150b60e4db0ad931c237353a1778bfd2db",
+    # 0.3.6 is the first release since 0.3.5 and it is NOT a version bump: 31 files moved,
+    # 1,176 insertions. Nineteen NEW `estelle-plugin/skills/*/SKILL.md` files ship, plus the version
+    # string in `.claude-plugin/marketplace.json` and `estelle-plugin/.claude-plugin/plugin.json`.
+    #
+    # ⚠️ THE CLAUSE THAT COSTS CUSTOMERS SOMETHING IS THE ONE THAT DID NOT MOVE. `hooks.json` is
+    # BYTE-UNCHANGED — verified with `git diff v0.3.5..HEAD -- estelle-plugin/hooks/hooks.json`
+    # returning empty, not inferred from the file count. So no door arrives untrusted and nobody
+    # re-clears `/hooks` on upgrade. `.mcp.json` and `README.md` are likewise absent from the diff.
+    #
+    # WHY THIS SAT UNPUBLISHED. Nothing was broken and nothing was billed: this guard refuses any
+    # release whose digest is unregistered, and registering one is a deliberate human act that
+    # nobody performed. 0.3.6 has been ready and refused since. The npm `latest` tag stayed at
+    # 0.3.5 the whole time, so the fourth-arm grounding work never reached a single machine.
+    #
+    # DIGEST PROVENANCE, because copying a hash out of a CI log would defeat the point: computed
+    # locally from a detached worktree at origin/main by running this same script, and it matched
+    # the value the failing CI run printed — 34 files hashed, both times.
+    "0.3.6": "017747ba7efa40ac34a2dce723e774f11b52b540fac1996471bb173412d47903",
 }
 
 #: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.
