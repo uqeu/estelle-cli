@@ -29,9 +29,26 @@ PLUGIN = ROOT / "estelle-plugin"
 #: construction and could never catch a rename.
 PLUGIN_NAME = "estelle"
 MARKETPLACE_NAME = "fatelabs"
-MCP_SERVER_NAME = "estelle"
 MCP_URL = "https://api.fatelabs.ca/mcp"
 REPOSITORY = "https://github.com/uqeu/estelle-cli"
+
+#: 🔴 THE SERVER LEFT THE PLUGIN IN 0.3.7, AND THE NAME IS NOW SOMETHING WE WRITE, NOT DERIVE.
+#:
+#: Through 0.3.6 the bundle shipped `estelle-plugin/.mcp.json`, so the display name was derived:
+#: `plugin:<plugin>:<server>` = `plugin:estelle:estelle`. MEASURED 2026-09-17 in an isolated HOME,
+#: four arms, one field different each time, `claude mcp list` read after each:
+#:     A  no user-scope entry                 -> plugin:estelle:estelle present ("! Needs authentication")
+#:     B  user-scope `Estelle`, SAME url      -> plugin row GONE
+#:     C  user-scope `EstelleUserScope`, SAME -> plugin row GONE      <- the arm that proves it
+#:     D  user-scope `Estelle`, OTHER url     -> BOTH rows present
+#: The dedup key is the URL, not the name. So a second entry at one URL was never a second server;
+#: it was a coin flip, and `claude mcp list` and a live session resolved it in OPPOSITE directions.
+#: The plugin's copy also could not carry a credential (removed in 2ee1454c4 — a GUI installer runs
+#: no shell and sent `${...}` as a literal token), so it fell back to its OWN OAuth session: the
+#: second identity behind the 2026-09-07 split, 227 sessions on one account and 4 visible on another.
+USER_SCOPE_MCP_NAME = "Estelle"
+AGENT_TOOL_PREFIX = f"mcp__{USER_SCOPE_MCP_NAME}__"
+RETIRED_PLUGIN_MCP_NAME = "plugin:estelle:estelle"
 
 #: The plugin door's runner, WRITTEN OUT so this guard is a second opinion rather than an echo of
 #: `PLUGIN_HOOK_RUNNER` in `tui/src/top_level.rs`. It was `npx -y @fatelabs/estelle@0` until
@@ -151,6 +168,40 @@ PLUGIN_CONTRACT_SHA256_BY_VERSION = {
     # locally from a detached worktree at origin/main by running this same script, and it matched
     # the value the failing CI run printed — 34 files hashed, both times.
     "0.3.6": "017747ba7efa40ac34a2dce723e774f11b52b540fac1996471bb173412d47903",
+    # 0.3.7 DELETES `estelle-plugin/.mcp.json` and repoints the four agents. 33 files hash here,
+    # down from 34 — the file count itself is the change. Exactly what moved:
+    #   - `estelle-plugin/.mcp.json`                 DELETED (the whole 8-line server entry)
+    #   - `estelle-plugin/agents/*.md`               4 files, `tools:` only:
+    #                                                `mcp__plugin_estelle_estelle__*` -> `mcp__Estelle__*`
+    #   - `estelle-plugin/README.md`                 the three install doors, the identity tables,
+    #                                                and a new section carrying the four-arm measurement
+    #   - the version string in `.claude-plugin/marketplace.json` and
+    #     `estelle-plugin/.claude-plugin/plugin.json`
+    #
+    # ✅ `estelle-plugin/hooks/hooks.json` IS BYTE-UNCHANGED, so NO customer re-approves their hooks
+    # and no door arrives untrusted. VERIFIED, not inferred from the file count: `git diff <base> --
+    # estelle-plugin/hooks/hooks.json` returned empty against BOTH `v0.3.5` (6adcbae38 — the release
+    # customers actually have) and `origin/main` (e3330f737). ⚠️ `v0.3.6` IS NOT TAGGED ON THE REMOTE
+    # — `git ls-remote --tags origin 'v0.3.*'` stops at v0.3.5 — so a diff against `v0.3.6` resolves
+    # against nothing and returns the reassuring answer for the wrong reason. That is the same
+    # vacuity that fooled the v0.3.5 pin above; it was caught here by resolving the ref FIRST.
+    # The comparison was then proven able to go red: appending one newline to hooks.json made the
+    # same diff report `1 file changed, 1 insertion(+)`, and the file was restored from origin/main.
+    #
+    # 🔴 WHY THE SERVER LEFT THE BUNDLE — the short version; the four arms are in the constants above
+    # and in the README. A second MCP entry at the SAME URL is not a second server: Claude Code dedups
+    # on the URL, so any customer who had ever run `estelle init` or `claude mcp add` already had the
+    # plugin's copy silently erased. Worse, the two consumers disagreed about which survived — a live
+    # session served `mcp__plugin_estelle_estelle__*` while `claude mcp list` on the same config showed
+    # only the user-scope `Estelle`, and a fresh `claude -p` answered `mcp__Estelle__*`. The four
+    # shipped agents were written against the losing name, so `estelle-grounder` was silently left
+    # with `Read, Grep, Glob` and no way to ground anything. Nothing went red, because nothing checked.
+    # This version adds the clause that does.
+    #
+    # DIGEST PROVENANCE: computed in this working tree by exec'ing this file's own
+    # `plugin_contract_digest()` and printing its return value — never copied out of a CI log, and
+    # never re-implemented, so the pinned value cannot disagree with the function that checks it.
+    "0.3.7": "7f05dbdb1a0da885cdc63ca6752455e73f8392ebd9475125b1017b26a2f8f866",
 }
 
 #: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.
@@ -167,7 +218,7 @@ PLUGIN_CONTRACT_SHA256_BY_VERSION = {
 #: nowhere at all. Only a real install could tell these apart, which is why a pin written from an
 #: ambiguous example held a false value until someone ran it.
 INSTALL_ID = f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"
-MCP_NAME = f"plugin:{PLUGIN_NAME}:{MCP_SERVER_NAME}"
+MCP_NAME = USER_SCOPE_MCP_NAME
 
 failures: list[str] = []
 
@@ -209,7 +260,6 @@ def plugin_contract_digest() -> tuple[str, list[str]]:
 
 manifest = load(PLUGIN / ".claude-plugin" / "plugin.json")
 marketplace = load(ROOT / ".claude-plugin" / "marketplace.json")
-mcp = load(PLUGIN / ".mcp.json")
 shim = load(ROOT / "npm-shim" / "package.json")
 readme = (PLUGIN / "README.md").read_text(encoding="utf-8")
 hooks_path = PLUGIN / "hooks" / "hooks.json"
@@ -237,11 +287,16 @@ check("plugin name is the pinned skill namespace",
 check("marketplace name is pinned",
       marketplace["name"] == MARKETPLACE_NAME, f"{marketplace['name']!r} != {MARKETPLACE_NAME!r}")
 check("README states the install id", INSTALL_ID in readme)
-check("README states the MCP name", MCP_NAME in readme)
+# ⚠️ A BARE "Estelle" IS IN EVERY OTHER SENTENCE OF THIS README, so asserting it would be vacuous —
+# green over a claim nobody made. Assert the SHAPE a reader would have to copy, which is falsifiable.
+check("README states the user-scope entry a customer must create",
+      f"claude mcp add --scope user --transport http {USER_SCOPE_MCP_NAME} {MCP_URL}" in readme)
+check("README still explains the retired plugin-derived name rather than quietly dropping it",
+      RETIRED_PLUGIN_MCP_NAME in readme)
 # The README is where the correction is EXPLAINED, so it must be allowed to quote the false string.
 # What must never carry it is a file that DEFINES identity, and the README must keep the correction
 # rather than quietly dropping it and leaving the old claim to creep back.
-_identity_files = json.dumps(manifest) + json.dumps(marketplace) + json.dumps(mcp)
+_identity_files = json.dumps(manifest) + json.dumps(marketplace)
 check("no identity file carries the falsified plugin:fatelabs:estelle",
       "plugin:fatelabs:estelle" not in _identity_files)
 # Whitespace-normalised: the phrase legitimately wraps across lines in Markdown, and a check that
@@ -349,24 +404,58 @@ if hooks_path.is_file():
               and "--" in tokens and "--ignore-existing" not in tokens,
               f"{command!r} (version part {version!r})")
 
-# ── the server entry is the HOSTED one, and carries no credential ─────────────
-servers = mcp["mcpServers"]
-check("one server, with the pinned name", list(servers) == [MCP_SERVER_NAME], str(list(servers)))
-# Read it back defensively: a renamed key must produce a NAMED clause failure, not a KeyError that
-# aborts the run before the remaining clauses are ever evaluated. A guard that crashes reports
-# "something broke"; a guard that fails reports WHICH promise broke.
-entry = servers.get(MCP_SERVER_NAME) or {}
-check("server is remote http", entry.get("type") == "http", str(entry.get("type")))
-check("server url is the hosted endpoint", entry.get("url") == MCP_URL, str(entry.get("url")))
-# Public main removed `Authorization: Bearer ${ESTELLE_API_KEY}` in 2ee1454c4:
-# Claude's GUI installer does not run a shell, so it sent the placeholder as a
-# literal credential and broke OAuth onboarding. The guard must pin the fixed
-# credential-free door, not demand the defect that the manifest removed.
-check("the door carries NO credential — a ${VAR} a GUI cannot expand is worse than none",
-      "headers" not in entry, str(sorted(entry)))
-check("nothing unexplained rides along", set(entry) == {"type", "url"}, str(set(entry)))
+# ── the plugin ships NO MCP server, and the agents are written against the one that IS ───────
+#
+# 🔴 THE CLAUSE THAT DID NOT EXIST IS THE ONE THAT COST US. Through 0.3.6 this section pinned the
+# shipped server's type, url and credential-free-ness — three clauses about a file, and NOT ONE
+# about the four agents whose `tools:` lists are the only consumer of that server's NAME. When the
+# user-scope entry shadowed the plugin's copy, `mcp__plugin_estelle_estelle__*` resolved to nothing
+# and `estelle-grounder` — the agent whose entire job is refusing an ungrounded claim — was left
+# holding `Read, Grep, Glob`. It does not error. It just stops being able to check, and every guard
+# here stayed green, because every guard here was pointed at the file rather than at the contract.
+check("the plugin ships NO .mcp.json — one URL, one owner, and it is user scope",
+      not (PLUGIN / ".mcp.json").exists())
+_plugin_json_blobs = {
+    path.relative_to(ROOT).as_posix(): path.read_text(encoding="utf-8")
+    for path in sorted(PLUGIN.rglob("*.json"))
+}
+check("no plugin JSON re-declares an mcpServers block by another filename",
+      not [name for name, blob in _plugin_json_blobs.items() if "mcpServers" in blob],
+      str([name for name, blob in _plugin_json_blobs.items() if "mcpServers" in blob]))
+
+# 🔴 EVERY `mcp__` TOKEN IN EVERY SHIPPED AGENT MUST NAME THE PINNED SERVER.
+# Written as "enumerate what ships, then assert each one" rather than "check the four we remember":
+# an agent added later with the wrong prefix must fail this, not slip past a hard-coded list.
+_agent_files = sorted((PLUGIN / "agents").glob("*.md"))
+check("the plugin ships its agents", len(_agent_files) == 4, f"{len(_agent_files)} agent file(s)")
+# Non-greedy on purpose: `mcp__supabase_write__list` must yield `supabase_write`, not swallow the
+# tool half. `__` is the separator, so the first one ends the server name.
+_wrong_server = sorted({
+    f"{path.name}:{server}"
+    for path in _agent_files
+    for server in re.findall(r"mcp__(.+?)__", path.read_text(encoding="utf-8"))
+    if server != USER_SCOPE_MCP_NAME
+})
+check("every agent tool reference names the pinned server", not _wrong_server, str(_wrong_server))
+check("the agents actually reference the server at all — an empty sweep is not a pass",
+      any(AGENT_TOOL_PREFIX in path.read_text(encoding="utf-8") for path in _agent_files))
+
+# 🔴 ONE OWNER: the CLI writes the key the agents read. Two files, one fact, checked against a
+# string neither of them derives from the other.
+_top_level = (ROOT / "tui" / "src" / "top_level.rs").read_text(encoding="utf-8")
+check("the CLI registers the SAME server name the agents are written against",
+      f'const CLAUDE_CODE_MCP_NAME: &str = "{USER_SCOPE_MCP_NAME}";' in _top_level)
+# A resolved token here would re-open the 2026-09-07 identity split: the hooks read
+# $ESTELLE_API_KEY, so the MCP header must reference that variable rather than a copy of its value.
+check("the CLI binds Authorization to the variable the hooks read, never a resolved token",
+      'const CLAUDE_CODE_AUTH_HEADER: &str = "Authorization: Bearer ${ESTELLE_API_KEY}";'
+      in _top_level)
+check("the CLI still points at the hosted endpoint",
+      f'const ESTELLE_MCP_URL: &str = "{MCP_URL}";' in _top_level)
+
 check("no live key value is committed",
-      "estelle_live_" not in json.dumps(mcp) and "estelle_live_" not in json.dumps(manifest))
+      "estelle_live_" not in json.dumps(manifest)
+      and not any("estelle_live_" in blob for blob in _plugin_json_blobs.values()))
 
 # ── ONE OWNER PER DERIVED FACT: four copies of the version must agree ─────────
 for label, value in (

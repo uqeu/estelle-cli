@@ -4943,10 +4943,92 @@ fn memory_request(
     }
 }
 
+/// ONE OWNER. Three call sites used to spell this literal separately.
+const ESTELLE_MCP_URL: &str = "https://api.fatelabs.ca/mcp";
+
+/// 🔴 THE NAME IS PINNED BECAUSE FOUR SHIPPED AGENTS ARE WRITTEN AGAINST IT.
+///
+/// `estelle-plugin/agents/*.md` list `tools: … mcp__Estelle__verify, …`, and Claude Code derives a
+/// tool's prefix from the SERVER KEY. Write the entry under any other key and those four agents
+/// silently lose every Estelle tool — they do not error, they just stop being able to check.
+/// `scripts/test-plugin-identity.py` asserts the agents and this constant agree.
+const CLAUDE_CODE_CLIENT: &str = "claude-code";
+const CLAUDE_CODE_MCP_NAME: &str = "Estelle";
+
+/// 🔴 AN ENV REFERENCE, NEVER A RESOLVED TOKEN — THE HOOKS READ THIS SAME VARIABLE.
+///
+/// On 2026-09-07 the hooks authenticated from `$ESTELLE_API_KEY` while a credential-less MCP entry
+/// fell back to its OWN OAuth session. Nothing asserted the two were the same person and they were
+/// not: hooks wrote 227 sessions to one account while every read tool queried another and saw 4.
+/// Binding the header to the variable makes that drift unrepresentable. Claude Code expands `${VAR}`
+/// at connect time (measured 2026-09-17: an unset variable warns `Missing environment variables:
+/// ESTELLE_API_KEY` rather than sending the literal), so the placeholder must reach the config
+/// UNEXPANDED. We pass it as one argv element, so no shell can expand it on the way.
+const CLAUDE_CODE_AUTH_HEADER: &str = "Authorization: Bearer ${ESTELLE_API_KEY}";
+
+fn claude_code_config_path() -> Option<PathBuf> {
+    dirs::home_dir().map(|home| home.join(".claude.json"))
+}
+
+/// 🔴 CLAUDE CODE'S CONFIG IS WRITTEN BY CLAUDE CODE, NOT BY US.
+///
+/// Every other target here is a small dedicated MCP file. `~/.claude.json` is Claude Code's entire
+/// state — projects, history, per-project settings — and the app rewrites it while it runs. A
+/// read-modify-write from this process would silently drop whatever the app wrote in between, so
+/// this shells out to the owner's own writer instead. If `claude` is not on PATH we print the
+/// command rather than guessing at the file, which is strictly the behaviour this target had before.
+fn write_claude_code_config(dry_run: bool) -> Result<String, String> {
+    let printable = format!(
+        "claude mcp add -s user -t http {CLAUDE_CODE_MCP_NAME} {ESTELLE_MCP_URL} -H '{CLAUDE_CODE_AUTH_HEADER}'"
+    );
+    if dry_run {
+        return Ok(format!(
+            "{CLAUDE_CODE_CLIENT}: would run `{printable}`; nothing changed"
+        ));
+    }
+    let output = std::process::Command::new("claude")
+        .args([
+            "mcp",
+            "add",
+            "-s",
+            "user",
+            "-t",
+            "http",
+            CLAUDE_CODE_MCP_NAME,
+            ESTELLE_MCP_URL,
+            "-H",
+            CLAUDE_CODE_AUTH_HEADER,
+        ])
+        .output()
+        .map_err(|error| {
+            format!("{CLAUDE_CODE_CLIENT}: could not run `claude` ({error}). Run this yourself: {printable}")
+        })?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(format!(
+            "{CLAUDE_CODE_CLIENT}: `claude mcp add` failed: {detail}. Run this yourself: {printable}"
+        ));
+    }
+    Ok(format!(
+        "{CLAUDE_CODE_CLIENT}: registered MCP server {CLAUDE_CODE_MCP_NAME} at user scope"
+    ))
+}
+
+fn remove_claude_code_config() -> Option<String> {
+    let output = std::process::Command::new("claude")
+        .args(["mcp", "remove", "-s", "user", CLAUDE_CODE_MCP_NAME])
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| format!("{CLAUDE_CODE_CLIENT}: removed MCP server {CLAUDE_CODE_MCP_NAME}"))
+}
+
 fn connect_lines(client: &str) -> Vec<String> {
     vec![
         format!("Connect {client} to Estelle without printing a stored credential."),
-        "Use the client's HTTP MCP configuration with https://api.fatelabs.ca/mcp.".to_string(),
+        format!("Use the client's HTTP MCP configuration with {ESTELLE_MCP_URL}."),
         "Set Authorization to Bearer <YOUR_ESTELLE_KEY> in that client's secure configuration."
             .to_string(),
     ]
@@ -4998,16 +5080,28 @@ async fn init(
     only: Option<&str>,
     dry_run: bool,
 ) -> Result<Vec<String>, String> {
-    if let Some(client @ ("claude-desktop" | "continue" | "claude-code")) = only {
+    if let Some(client @ ("claude-desktop" | "continue")) = only {
         return Ok(connect_lines(client));
     }
+    // ⚠️ `claude-code` USED TO SIT IN THE ARM ABOVE AND ONLY PRINT INSTRUCTIONS. Until 0.3.7 the
+    // plugin's own `.mcp.json` covered it, so `estelle init` never had to; removing that server
+    // made this target the only automatic door Claude Code has.
+    let claude_code = match only {
+        Some(CLAUDE_CODE_CLIENT) => true,
+        Some(_) => false,
+        None => claude_code_config_path().is_some_and(|path| path.exists()),
+    };
     let configs = editor_configs(root);
     let selected = if let Some(only) = only {
-        let config = configs
-            .into_iter()
-            .find(|config| config.name == only)
-            .ok_or_else(|| format!("unknown client {only}"))?;
-        vec![config]
+        if only == CLAUDE_CODE_CLIENT {
+            Vec::new()
+        } else {
+            let config = configs
+                .into_iter()
+                .find(|config| config.name == only)
+                .ok_or_else(|| format!("unknown client {only}"))?;
+            vec![config]
+        }
     } else {
         configs
             .into_iter()
@@ -5015,12 +5109,19 @@ async fn init(
             .collect()
     };
     let mut lines = Vec::new();
-    if selected.is_empty() {
-        lines.extend([
-            "No supported editor was detected; nothing was written.".to_string(),
-            "Run estelle init --client cursor|cline|windsurf|jetbrains|vscode.".to_string(),
-        ]);
-    } else {
+    if claude_code {
+        match write_claude_code_config(dry_run) {
+            Ok(line) => lines.push(line),
+            // ⚠️ AN AUTO-SELECTED TARGET MUST NOT FAIL THE WHOLE COMMAND. With no `--client` this
+            // target is chosen because `~/.claude.json` happens to exist; a missing `claude` binary
+            // there must not stop Cursor and the rest from being written. Every error string here
+            // already carries the command to run by hand, so reporting it IS the remedy. An
+            // EXPLICIT `--client claude-code` still fails closed — the user asked for that one.
+            Err(error) if only.is_none() => lines.push(error),
+            Err(error) => return Err(error),
+        }
+    }
+    if !selected.is_empty() {
         let bearer = api.api_key.bearer_header_value();
         let key = bearer
             .strip_prefix("Bearer ")
@@ -5041,6 +5142,13 @@ async fn init(
                 )
             });
         }
+    }
+    if lines.is_empty() {
+        lines.extend([
+            "No supported editor was detected; nothing was written.".to_string(),
+            "Run estelle init --client claude-code|cursor|cline|windsurf|jetbrains|vscode."
+                .to_string(),
+        ]);
     }
     if dry_run {
         lines.extend(brief_existing(root, true)?);
@@ -5215,7 +5323,7 @@ fn write_editor_config(path: &Path, top_key: &str, key: &str, dry_run: bool) -> 
         "estelle".to_string(),
         json!({
             "type": "http",
-            "url": "https://api.fatelabs.ca/mcp",
+            "url": ESTELLE_MCP_URL,
             "headers": {"Authorization": format!("Bearer {key}")}
         }),
     );
@@ -5233,6 +5341,9 @@ fn write_editor_config(path: &Path, top_key: &str, key: &str, dry_run: bool) -> 
 
 fn remove_editor_configs(root: &Path) -> Result<Vec<String>, String> {
     let mut lines = Vec::new();
+    // Best-effort and deliberately silent on failure: `claude` may not be installed, and an
+    // absent entry is the state this function is trying to reach anyway.
+    lines.extend(remove_claude_code_config());
     for config in editor_configs(root) {
         if !config.path.exists() {
             continue;
@@ -5546,6 +5657,46 @@ fn split_flag(values: &[String], flag: &str) -> (Vec<String>, Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 🔴 THE PLACEHOLDER MUST SURVIVE THE WHOLE JOURNEY TO THE CONFIG FILE.
+    ///
+    /// If `${ESTELLE_API_KEY}` is ever expanded on the way — by a shell, by a `format!` against a
+    /// resolved key, by anything — the MCP header stops being a reference to the variable the hooks
+    /// read and becomes a COPY of a token, which is the 2026-09-07 identity split again (hooks on
+    /// one account, every read tool on another). Asserting the dry-run line is how we hold that
+    /// without writing to anyone's config: it is the same constant the argv is built from.
+    #[test]
+    fn claude_code_registration_passes_an_env_reference_not_a_resolved_token() {
+        let line = write_claude_code_config(/*dry_run*/ true).expect("dry run cannot fail");
+        assert!(
+            line.contains("${ESTELLE_API_KEY}"),
+            "the header must reach the config unexpanded: {line}"
+        );
+        assert!(
+            line.contains("mcp add -s user -t http Estelle https://api.fatelabs.ca/mcp"),
+            "user scope and the pinned server name are both load-bearing: {line}"
+        );
+        assert!(
+            line.contains("nothing changed"),
+            "a dry run must say it changed nothing: {line}"
+        );
+        // A resolved key is 61 characters and starts `estelle_live_`; a reference is neither.
+        assert!(
+            !line.contains("estelle_live_"),
+            "a live key must never appear in this command: {line}"
+        );
+    }
+
+    /// The server name the CLI writes IS the prefix the four shipped agents call. If this constant
+    /// drifts, `estelle-plugin/agents/*.md` silently lose every Estelle tool without erroring.
+    #[test]
+    fn the_registered_server_name_is_the_prefix_the_shipped_agents_use() {
+        assert_eq!(CLAUDE_CODE_MCP_NAME, "Estelle");
+        assert_eq!(
+            format!("mcp__{CLAUDE_CODE_MCP_NAME}__verify"),
+            "mcp__Estelle__verify"
+        );
+    }
     use clap::Parser;
 
     #[tokio::test]
