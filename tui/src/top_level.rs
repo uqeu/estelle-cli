@@ -9337,7 +9337,7 @@ tests/test_serve.py:88: AssertionError\n\
             .join(".estelle")
             .join("subagent-context");
         let stored = std::fs::read_dir(&cached)
-            .map(|entries| entries.count())
+            .map(std::iter::Iterator::count)
             .unwrap_or(0);
         assert_eq!(
             stored, 0,

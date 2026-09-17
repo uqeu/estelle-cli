@@ -364,7 +364,7 @@ mod tests {
     /// COMPILE error here rather than a silently unlisted one — a fifth phase cannot be added and
     /// left out of the wire-spelling assertions below.
     fn every_phase() -> Vec<Phase> {
-        fn _exhaustive(phase: &Phase) {
+        fn _exhaustive(phase: Phase) {
             match phase {
                 Phase::AwaitingResponse => (),
                 Phase::Answered => (),
