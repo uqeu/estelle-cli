@@ -869,11 +869,11 @@ enum ContextOutcome {
     /// cleanly, inside budget, and told us its own retrieval never completed — so no repository
     /// memory reached the prompt. The payload is the server's own account of it.
     ///
-    /// **MEASURED 2026-09-17 from this hook's flight recorder, n=99 over 3.97 h: 46 calls (46.5%)
-    /// answered carrying `counts.recall == 0`, and 43 of the 92 that answered had the server's
+    /// **MEASURED 2026-09-17 from this hook's flight recorder, n=95 over 3.97 h: 45 calls (47.4%)
+    /// answered carrying `counts.recall == 0`, and 43 of the 87 that answered had the server's
     /// `recall` stage land on its own 8 s deadline — 43/43 of those carried nothing.** The
-    /// abandonment the founder SEES is 4 of 99 (4.0%). This one was eleven times larger and
-    /// silent, and after the database work that landed mid-window it is still one turn in six.
+    /// abandonment the founder SEES is 4 of 95 (4.2%). This one was eleven times larger and
+    /// silent, and after the database work that landed mid-window it is still one turn in seven.
     ///
     /// ⛔ **BOTH ARMS IT USED TO LAND IN LIE, WHICH IS WHY A FOURTH WAS NEEDED RATHER THAN A
     /// BETTER SENTENCE IN AN EXISTING ONE.** With an empty `recall` field it became

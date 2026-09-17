@@ -77,7 +77,7 @@ pub enum Phase {
     ///
     /// ⚠️ **NARROWED 2026-09-17, AND THE NARROWING IS THE POINT.** This used to mean *a response
     /// arrived*, full stop, which made it the badge on a 200 whose retrieval had been abandoned —
-    /// 46 of 99 records in one 3.97 h window on the founder's machine read `answered` over
+    /// 45 of 95 records in one 3.97 h window on the founder's machine read `answered` over
     /// `counts.recall == 0`. **A 200 is a claim about the CALL COMPLETING, never about the work.**
     Answered,
     /// The transport itself failed (refusal, 429, connection error) before any parse.
@@ -115,7 +115,7 @@ pub struct Breadcrumb {
     /// abandoned call — see the module's stated limit.
     pub server_timings: Option<Value>,
     /// 🔴 **WHY A NON-ANSWER HAPPENED, WHICH THIS RECORDER USED TO THROW AWAY.** Measured
-    /// 2026-09-17: the log held 4 `transport_failed` records (4.0% of 99) and **not one of
+    /// 2026-09-17: the log held 4 `transport_failed` records (4.2% of 95) and **not one of
     /// them could be attributed** — a 429, a TLS reset, a DNS failure and a 502 are the same four
     /// bytes in this file. The hook had the classification in hand (`classify_transport_failure`)
     /// and dropped it one line before the append.

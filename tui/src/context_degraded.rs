@@ -1,18 +1,19 @@
 //! A recall arm that did not FINISH is not a repository that holds nothing.
 //!
 //! 🔴 **MEASURED 2026-09-17 ON THE FOUNDER'S OWN MACHINE, FROM THIS HOOK'S OWN FLIGHT RECORDER.**
-//! `~/.estelle/context-hook.jsonl` plus its rotation, n=99 real `UserPromptSubmit` groundings over
-//! 3.97 h (02:16→06:14), reproduced by `bench/retrieval-relevance-20260910/hook_latency.py` in the
-//! server repo:
+//! `~/.estelle/context-hook.jsonl` plus its rotation, n=95 real `UserPromptSubmit` groundings over
+//! 3.97 h (02:16:10→06:14:13) — **the three probes this lane issued itself are excluded**, because a
+//! measurement that counts the measurer's own traffic is not a measurement of the founder's session.
+//! Reproduced by `bench/retrieval-relevance-20260910/hook_latency.py` in the server repo.
 //!
 //! | outcome | n | share |
 //! |---|---|---|
-//! | answered **carrying repository memory** | 45 | 45.5% |
-//! | answered **carrying NOTHING** (`counts.recall == 0`) | **46** | **46.5%** |
-//! | `transport_failed` | 4 | 4.0% |
-//! | `awaiting_response` (our 20 s deadline) | 4 | 4.0% |
+//! | answered **carrying repository memory** | 42 | 44.2% |
+//! | answered **carrying NOTHING** (`counts.recall == 0`) | **45** | **47.4%** |
+//! | `transport_failed` | 4 | 4.2% |
+//! | `awaiting_response` (our 20 s deadline) | 4 | 4.2% |
 //!
-//! **43 of the 92 answered calls had the server's `recall` stage land on 7.9–8.1 s — its own
+//! **43 of the 87 answered calls had the server's `recall` stage land on 7.9–8.1 s — its own
 //! `RECALL_DEADLINE_S` — and ALL 43 of those carried `counts.recall == 0`. 43/43.** The failure the
 //! founder SEES is the 20 s abandonment, and it is 4% of calls. The failure he does not see was
 //! eleven times larger.
@@ -20,8 +21,8 @@
 //! ⚠️ **AND THE SERVER MOVED UNDER THE MEASUREMENT, WHICH IS WHY BOTH HALVES ARE QUOTED.** Database
 //! work landed mid-window; splitting at the last of the flat-8 s run (a point INFERRED from the
 //! data, not from a deploy record) gives **before, n=59: 22.0% carried memory, 67.8% carried
-//! nothing, p50 11,859 ms** and **after, n=40 with this lane's own probes excluded: 80.0% carried
-//! memory, 15.0% carried nothing, p50 3,513 ms**. So the cause is largely fixed on the server and
+//! nothing, p50 11,859 ms** and **after, n=36: 80.6% carried memory, 13.9% carried nothing,
+//! p50 3,212 ms**. So the cause is largely fixed on the server and
 //! **one turn in six is still silently ungrounded** — which is exactly the population this arm
 //! exists to stop lying about. n=40 is small and the log is live; the direction of the remaining
 //! error is not known.
