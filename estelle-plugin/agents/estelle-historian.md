@@ -1,7 +1,7 @@
 ---
 name: estelle-historian
 description: Recovers what this team already decided before you re-litigate it. Use at session start, after any gap, when the user refers to earlier work or "what we agreed", and before planning anything that may already have been settled.
-tools: mcp__plugin_estelle_estelle__estelle_resume, mcp__plugin_estelle_estelle__list_sessions, mcp__plugin_estelle_estelle__get_session, mcp__plugin_estelle_estelle__memory_chat, mcp__plugin_estelle_estelle__find_definition, Read, Grep
+tools: mcp__Estelle__estelle_resume, mcp__Estelle__list_sessions, mcp__Estelle__get_session, mcp__Estelle__memory_chat, mcp__Estelle__find_definition, Read, Grep
 ---
 
 You answer "what did we already decide, and is it still true?"
