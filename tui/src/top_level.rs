@@ -587,7 +587,8 @@ async fn run_hook_with(
     // table so a declared mode can never error "unknown mode" at runtime.
     let result = match mode {
         "ground" => ground_hook(&payload, repo, root).await,
-        "guard" => Ok(guard_hook(&payload)),
+        "guard" => Ok(guard_hook(&payload, repo, root)),
+        "pull" => Ok(pull_hook(&payload, repo, root)),
         "shift" => Ok(file_shift_hook(&payload, repo, root).await),
         "sync" => sync_hook(&payload, repo, root).await,
         "distil" => Ok(distil_hook(&payload)),
@@ -607,7 +608,7 @@ fn hook_event_label(mode: &str, expected: Option<&str>, payload: Option<&str>) -
         .filter(|event| !event.trim().is_empty())
         .or_else(|| payload.filter(|event| !event.trim().is_empty()))
         .unwrap_or(match mode {
-            "ground" | "guard" => "PreToolUse",
+            "ground" | "guard" | "pull" => "PreToolUse",
             "shift" | "sync" | "distil" => "PostToolUse",
             "welcome" => "SessionStart",
             // Both verbs answer more than one event. The label is only ever the FALLBACK — the
@@ -626,7 +627,7 @@ fn hook_execution_need(mode: &str) -> &'static str {
         "checkpoint" => "a readable transcript and writable local session state",
         "welcome" => "readable local session state and repository history",
         "shift" => "a reachable local Estelle session server",
-        "guard" | "distil" => "a valid host hook payload",
+        "guard" | "distil" | "pull" => "a valid host hook payload",
         _ => "an installed Estelle hook mode",
     }
 }
@@ -637,26 +638,151 @@ fn hook_failure(event: &str, mode: &str, branch: &str, needed: &str, detail: &st
     )
 }
 
-/// PreToolUse on Bash: warn on the classic destructive commands. Advisory, never blocking —
-/// a false-positive hard-block is its own damage.
-fn guard_hook(payload: &HookPayload) -> Vec<String> {
+/// PreToolUse on Bash: warn on the classic destructive commands, and — separately — redirect a
+/// SEARCH-shaped command toward the graph. Advisory, never blocking — a false-positive hard-block
+/// is its own damage.
+///
+/// 🔑 **THE SEARCH HALF RIDES THIS DOOR RATHER THAN REGISTERING ITS OWN.** A second `PreToolUse`
+/// matcher on `Bash` would spawn a second process on EVERY shell command in the session, which is
+/// a real cost paid on every `cargo test` and `git status` to serve the minority of commands that
+/// are searches. One door, one process, and the predicate that decides is
+/// [`crate::hook_pull::search_intent`] — the same function the `Read|Grep|Glob` door calls, so the
+/// two can never drift.
+fn guard_hook(payload: &HookPayload, repo: &Repo, root: &Path) -> Vec<String> {
     let command = payload
         .tool_input
         .get("command")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let Some(reason) = crate::hook_guard::dangerous_command(command) else {
+    let mut lines = Vec::new();
+    if let Some(reason) = crate::hook_guard::dangerous_command(command) {
+        lines.push(hook_message(
+            Some(format!(
+                "⛔ Estelle: {reason} — read the command again before running it."
+            )),
+            Some(format!(
+                "Estelle's Bash guard flagged the command as {reason}. Confirm the target is intended; advisory, not a block."
+            )),
+            "PreToolUse",
+        ));
+    }
+    lines.extend(pull_hook(payload, repo, root));
+    lines
+}
+
+/// PreToolUse on `Read|Grep|Glob` (and, through [`guard_hook`], on a search-shaped `Bash`) —
+/// **FORCED PULL**. See [`crate::hook_pull`] for why this event and not `UserPromptSubmit`.
+///
+/// Everything expensive is behind a gate that a non-search turn never opens: the tool name is
+/// checked first, and the one bounded tree walk is measured at most once per session and cached.
+fn pull_hook(payload: &HookPayload, repo: &Repo, root: &Path) -> Vec<String> {
+    let Some(intent) = crate::hook_pull::search_intent(&payload.tool_name, &payload.tool_input)
+    else {
         return Vec::new();
     };
-    vec![hook_message(
-        Some(format!(
-            "⛔ Estelle: {reason} — read the command again before running it."
-        )),
-        Some(format!(
-            "Estelle's Bash guard flagged the command as {reason}. Confirm the target is intended; advisory, not a block."
-        )),
-        "PreToolUse",
-    )]
+    // A repo we cannot name is a repo we cannot promise an index for. `Repo::is_unresolved` is the
+    // one owner of that question (`repo.rs:34`) — comparing against the placeholder string here
+    // would be the second owner, and one of two owners is always the one that is wrong.
+    if repo.is_unresolved() {
+        return Vec::new();
+    }
+    // No session id means nowhere to record that we already spoke, and a redirect we cannot bound
+    // is a redirect on every read. `file_shift_hook` already treats an absent session this way.
+    let session = payload.session_id.trim();
+    if session.is_empty() {
+        return Vec::new();
+    }
+    // 🔴 EVERY SHAPE THAT NAMED A SCOPE IS CHECKED, NOT JUST `Read`. The first version bounded only
+    // the file-read shape, so `Grep{path:"/etc"}` and `sudo grep -rn x /etc` each collected a
+    // redirect claiming Estelle's graph could answer them — it holds nothing outside the repository.
+    // A shape that named NO scope searches the cwd, which is the root this hook was handed, so it
+    // passes. Found by a rival reviewer on the PR.
+    if let Some(scope) = intent.scope.as_deref()
+        && !crate::hook_pull::in_indexed_tree(scope, root)
+    {
+        return Vec::new();
+    }
+
+    let now = crate::hook_pull::unix_now();
+    let mut state = crate::hook_pull::load_state(None, session, now);
+    let measured = state.fresh.is_none();
+    let fresh = match state.fresh {
+        Some(known) => known,
+        None => {
+            let answer = index_is_current_for(repo, root);
+            state.fresh = Some(answer);
+            answer
+        }
+    };
+    let verdict = crate::hook_pull::decide(
+        intent.kind,
+        &state,
+        fresh,
+        crate::hook_pull::strict_enabled(),
+    );
+    // 🔴 THE REFUSAL IS CLAIMED ATOMICALLY, NOT DECIDED FROM A FILE WE JUST READ. `state.blocked`
+    // is a read-modify-write and hooks run concurrently: two parallel `Read` calls could both see
+    // `blocked: false` and both deny, turning one refusal into N. `claim_block` is an `O_EXCL`
+    // create, so exactly one process can win it; a loser degrades to a nudge exactly as an
+    // unpersisted block does. The JSON flag stays as the cheap pre-filter that keeps later calls
+    // off the filesystem. Found by a rival reviewer on the PR.
+    let verdict = match verdict {
+        crate::hook_pull::PullVerdict::Block if !crate::hook_pull::claim_block(None, session) => {
+            crate::hook_pull::PullVerdict::Nudge
+        }
+        other => other,
+    };
+    let persisted =
+        crate::hook_pull::commit(verdict, intent.kind, &mut state, None, session, measured);
+    pull_lines(verdict, persisted, &intent, repo)
+}
+
+/// The rendering half, split out so every branch is provable without a home directory, a clock or
+/// a repository on disk.
+fn pull_lines(
+    verdict: crate::hook_pull::PullVerdict,
+    persisted: crate::hook_pull::Persisted,
+    intent: &crate::hook_pull::SearchIntent,
+    repo: &Repo,
+) -> Vec<String> {
+    use crate::hook_pull::Persisted;
+    use crate::hook_pull::PullVerdict;
+
+    match verdict {
+        PullVerdict::Silent => Vec::new(),
+        PullVerdict::Stale => {
+            let line = crate::hook_pull::stale_line(repo.as_str());
+            vec![hook_message(Some(line.clone()), Some(line), "PreToolUse")]
+        }
+        PullVerdict::Nudge => vec![hook_message(
+            Some(crate::hook_pull::system_line(intent.kind)),
+            Some(crate::hook_pull::redirect(
+                intent.kind,
+                &intent.needle,
+                repo.as_str(),
+            )),
+            "PreToolUse",
+        )],
+        // 🔴 A REFUSAL IS ONLY ALLOWED TO EXIST IF THE FACT THAT IT HAPPENED REACHED THE DISK.
+        // Otherwise the next read reads a state that still says "never blocked" and is refused
+        // again — the redirect loop this whole design is built to make impossible.
+        PullVerdict::Block => {
+            let reason = crate::hook_pull::redirect(intent.kind, &intent.needle, repo.as_str());
+            match persisted {
+                Persisted::Yes => vec![hook_envelope(
+                    Some(crate::hook_pull::system_line(intent.kind)),
+                    Some(reason.clone()),
+                    "PreToolUse",
+                    Some(&reason),
+                )],
+                Persisted::No => vec![hook_message(
+                    Some(crate::hook_pull::system_line(intent.kind)),
+                    Some(reason),
+                    "PreToolUse",
+                )],
+            }
+        }
+    }
 }
 
 /// PostToolUse on Bash: replace a verbose result with a curated one BEFORE it enters the
@@ -2701,6 +2827,17 @@ struct HookRow {
     /// SHA-256 cache contract (`scripts/test-plugin-identity.py`), and adding a hook that fires
     /// on every `Read` is a product decision with a release attached, not a drift fix. It is
     /// written down here so the guard can enforce the absence instead of being blind to it.
+    ///
+    /// ⚠️ **`pull` IS EXEMPT FOR THE SAME SENTENCE, AND THAT IS NOT A COINCIDENCE.** FORCED PULL
+    /// (`PreToolUse Read|Grep|Glob`) is the other hook that fires on every `Read`, so the clause
+    /// above applies to it word for word: shipping it through the plugin door moves
+    /// `estelle-plugin/hooks/hooks.json`, which moves this contract's digest, which requires
+    /// **0.3.7 -> 0.3.8** across all four version writers plus a NEW entry in
+    /// `PLUGIN_CONTRACT_SHA256_BY_VERSION` — never a rewrite of 0.3.7's, which customers already
+    /// hold as a cache key — and every plugin-door customer re-approves their hooks on upgrade.
+    /// So `pull` ships TODAY through the two `install-hooks` doors and NOT through the bundle.
+    /// Flipping this to `true` is one edit here, one line in
+    /// `both_doors_give_every_shared_hook_the_same_budget`, and one release.
     #[cfg_attr(not(test), allow(dead_code))]
     plugin: bool,
     /// Plugin door only. The manifest marks BOTH long-running writers async; the Claude
@@ -2740,6 +2877,33 @@ const HOOK_TABLE: &[HookRow] = &[
         timeout: 10,
         claude_async: false,
         plugin: true,
+        plugin_async: false,
+    },
+    // FORCED PULL. Pure-local in every branch — no socket, no credential — so the budget only has
+    // to cover process start plus, at most once per session, `ground_block`'s 2 s-capped freshness
+    // walk. 5 s is the same budget the other local doors carry (`shift`, `welcome`) and leaves
+    // >2x headroom over the worst case this hook can construct.
+    HookRow {
+        event: "PreToolUse",
+        matcher: Some("Read|Grep|Glob"),
+        mode: "pull",
+        timeout: 5,
+        claude_async: false,
+        // 🔴 `plugin: false` — A DECLARED EXEMPTION, AND THE SAME ONE `shift` ALREADY CARRIES FOR
+        // THE SAME REASON. `HookRow::plugin`'s own docstring settles it: the shipped manifest sits
+        // inside a per-version SHA-256 cache contract (`scripts/test-plugin-identity.py`), and
+        // "adding a hook that fires on every `Read` is a product decision with a release attached,
+        // not a drift fix". `shift` is `PostToolUse Read|Write|Edit` and is exempt for exactly that
+        // sentence; this row is `PreToolUse Read|Grep|Glob` and is no different.
+        //
+        // So FORCED PULL ships TODAY through the two `install-hooks` doors (Claude settings, Codex
+        // hooks) and NOT through the plugin bundle. Turning the plugin door on is one edit —
+        // `plugin: true` — plus the release it implies: the manifest bytes move, so the version
+        // must go 0.3.7 -> 0.3.8 across all four writers and a NEW digest must be registered in
+        // `PLUGIN_CONTRACT_SHA256_BY_VERSION` (never by rewriting 0.3.7's, which customers hold as
+        // a cache key), and every plugin-door customer re-approves their hooks on upgrade. That is
+        // stated here so the absence is enforced by the guard rather than invisible to it.
+        plugin: false,
         plugin_async: false,
     },
     HookRow {
@@ -7219,9 +7383,10 @@ tests/test_serve.py:88: AssertionError\n\
         assert_eq!(installed["permissions"], original["permissions"]);
         assert_eq!(installed["env"], original["env"]);
         // One customer group plus the Estelle rows the table declares for that event.
+        // PreToolUse carries THREE: `ground` (Write|Edit), `guard` (Bash), `pull` (Read|Grep|Glob).
         assert_eq!(
             installed["hooks"]["PreToolUse"].as_array().map(Vec::len),
-            Some(3)
+            Some(4)
         );
         assert_eq!(
             installed["hooks"]["PostToolUse"].as_array().map(Vec::len),
@@ -7323,7 +7488,7 @@ tests/test_serve.py:88: AssertionError\n\
         let parsed: codex_config::HooksFile =
             serde_json::from_value(value).expect("Codex hooks schema");
 
-        assert_eq!(parsed.hooks.pre_tool_use.len(), 2);
+        assert_eq!(parsed.hooks.pre_tool_use.len(), 3);
         assert_eq!(parsed.hooks.post_tool_use.len(), 3);
         assert_eq!(parsed.hooks.stop.len(), 1);
         assert_eq!(parsed.hooks.pre_compact.len(), 1);
@@ -7335,7 +7500,7 @@ tests/test_serve.py:88: AssertionError\n\
         // and lose the door — a count alone cannot tell those apart.
         assert_eq!(parsed.hooks.subagent_start.len(), 1);
         assert_eq!(parsed.hooks.subagent_stop.len(), 1);
-        assert_eq!(parsed.hooks.handler_count(), 12);
+        assert_eq!(parsed.hooks.handler_count(), 13);
         for (_event, groups) in parsed.hooks.into_matcher_groups() {
             for group in &groups {
                 for handler in &group.hooks {
@@ -7364,9 +7529,10 @@ tests/test_serve.py:88: AssertionError\n\
         // compared the two doors. `the_plugin_manifest_is_generated_from_the_one_hook_table` is
         // the comparison that was missing; these literals are the second, independent statement
         // of the same contract, and they are meant to be edited deliberately, together.
-        let expected: [(&str, Option<&str>, &str, u64); 12] = [
+        let expected: [(&str, Option<&str>, &str, u64); 13] = [
             ("PreToolUse", Some("Write|Edit"), "ground", 30),
             ("PreToolUse", Some("Bash"), "guard", 10),
+            ("PreToolUse", Some("Read|Grep|Glob"), "pull", 5),
             ("PostToolUse", Some("Read|Write|Edit"), "shift", 5),
             ("PostToolUse", Some("Write|Edit"), "sync", 30),
             ("PostToolUse", Some("Bash"), "distil", 10),
@@ -7443,9 +7609,10 @@ tests/test_serve.py:88: AssertionError\n\
         merge_estelle_hooks(&mut value, HookHost::Codex, "estelle").expect("hook declaration");
         let hooks = &value["hooks"];
 
-        let expected: [(&str, Option<&str>, &str, u64); 12] = [
+        let expected: [(&str, Option<&str>, &str, u64); 13] = [
             ("PreToolUse", Some("Write|Edit"), "ground", 30),
             ("PreToolUse", Some("Bash"), "guard", 10),
+            ("PreToolUse", Some("Read|Grep|Glob"), "pull", 5),
             ("PostToolUse", Some("Read|Write|Edit"), "shift", 5),
             ("PostToolUse", Some("Write|Edit"), "sync", 30),
             ("PostToolUse", Some("Bash"), "distil", 10),
@@ -7716,7 +7883,7 @@ tests/test_serve.py:88: AssertionError\n\
         }
         assert_eq!(
             exempt,
-            vec!["shift"],
+            vec!["pull", "shift"],
             "the plugin door's exemptions are enumerated, not inferred — a new one needs a \
              written reason on HookRow::plugin before it lands here"
         );
@@ -7822,6 +7989,178 @@ tests/test_serve.py:88: AssertionError\n\
             assert!(!remove_estelle_hooks(&mut again).expect("second uninstall"));
             assert_eq!(again, uninstalled);
         }
+    }
+
+    // ── FORCED PULL ─────────────────────────────────────────────────────────────────────────
+
+    /// The four SHORT-CIRCUITS that must reach no disk, no clock and no decision. Each is a
+    /// separate reason, and collapsing any two of them would hide the one that stopped being true.
+    #[tokio::test]
+    async fn forced_pull_stays_silent_on_every_shape_it_cannot_answer() {
+        let root = tempfile::tempdir().expect("root");
+        std::fs::write(root.path().join("api.py"), "x").expect("write");
+        let outside = tempfile::tempdir().expect("outside");
+        std::fs::write(outside.path().join("other.py"), "x").expect("write");
+        let named = Repo::new("acme/widgets").expect("repo");
+        let session = "0199e2b0-1c2d-7a3e-8f40-5b6c7d8e9f00";
+
+        let cases: [(&str, Value, &Repo, &str); 5] = [
+            // Not a search at all.
+            (
+                "a Write is not a search",
+                json!({"session_id": session, "tool_name": "Write",
+                       "tool_input": {"file_path": "api.py", "content": "x"}}),
+                &named,
+                "",
+            ),
+            // A repo we cannot name is a repo we cannot promise an index for.
+            (
+                "an unresolved repo promises nothing",
+                json!({"session_id": session, "tool_name": "Grep",
+                       "tool_input": {"pattern": "ground"}}),
+                &Repo::default(),
+                "",
+            ),
+            // No session id: nowhere to record that we already spoke.
+            (
+                "no session id, so the firing cannot be bounded",
+                json!({"tool_name": "Grep", "tool_input": {"pattern": "ground"}}),
+                &named,
+                "",
+            ),
+            // A file in another tree is not in this repo's graph.
+            (
+                "a Read outside the repository",
+                json!({"session_id": session, "tool_name": "Read", "tool_input": {}}),
+                &named,
+                "outside",
+            ),
+            // A shell command that is not a search.
+            (
+                "git status is not a search",
+                json!({"session_id": session, "tool_name": "Bash",
+                       "tool_input": {"command": "git status --short"}}),
+                &named,
+                "",
+            ),
+        ];
+
+        for (label, mut payload, repo, outside_marker) in cases {
+            if outside_marker == "outside" {
+                payload["tool_input"] = json!({
+                    "file_path": outside.path().join("other.py").to_string_lossy(),
+                });
+            }
+            payload["hook_event_name"] = json!("PreToolUse");
+            let mode = if payload["tool_name"] == json!("Bash") {
+                "guard"
+            } else {
+                "pull"
+            };
+            let lines = run_hook_with(
+                mode,
+                Some("PreToolUse"),
+                &payload.to_string(),
+                repo,
+                root.path(),
+            )
+            .await
+            .expect("hook must not fail");
+            assert!(lines.is_empty(), "{label}: expected silence, got {lines:?}");
+        }
+    }
+
+    /// The rendered bytes, per verdict. Pure, so every branch is provable without a home
+    /// directory — and the DENY is asserted as a field rather than as prose, because a refusal
+    /// that degrades into a pass is exactly the defect the hook envelope exists to remove.
+    #[test]
+    fn forced_pull_renders_a_deny_only_when_the_block_was_remembered() {
+        use crate::hook_pull::Persisted;
+        use crate::hook_pull::PullVerdict;
+        use crate::hook_pull::SearchIntent;
+        use crate::hook_pull::SearchKind;
+
+        let repo = Repo::new("acme/widgets").expect("repo");
+        let intent = SearchIntent {
+            kind: SearchKind::Content,
+            needle: "resolve_grounding_scope".to_string(),
+            scope: None,
+        };
+
+        assert!(
+            pull_lines(PullVerdict::Silent, Persisted::Yes, &intent, &repo).is_empty(),
+            "silence is silence"
+        );
+
+        let nudge = pull_lines(PullVerdict::Nudge, Persisted::Yes, &intent, &repo);
+        let nudge: Value = serde_json::from_str(&nudge[0]).expect("envelope JSON");
+        assert_eq!(
+            nudge["hookSpecificOutput"]["hookEventName"],
+            json!("PreToolUse")
+        );
+        assert!(
+            nudge["hookSpecificOutput"]["permissionDecision"].is_null(),
+            "the default mode NEVER blocks a read"
+        );
+        assert!(
+            nudge["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .is_some_and(|text| text.contains("estelle_grep")),
+            "a content search routes to estelle_grep"
+        );
+
+        let blocked = pull_lines(PullVerdict::Block, Persisted::Yes, &intent, &repo);
+        let blocked: Value = serde_json::from_str(&blocked[0]).expect("envelope JSON");
+        assert_eq!(
+            blocked["hookSpecificOutput"]["permissionDecision"],
+            json!("deny")
+        );
+        assert!(
+            blocked["hookSpecificOutput"]["permissionDecisionReason"]
+                .as_str()
+                .is_some_and(|reason| !reason.trim().is_empty()),
+            "a deny with an empty reason is an INVALID envelope and the host runs the tool"
+        );
+
+        // 🔴 THE ANTI-LOOP AT THE RENDERING LAYER: a block we could not remember is downgraded to
+        // a nudge, because the alternative is refusing the same read on every retry forever.
+        let forgotten = pull_lines(PullVerdict::Block, Persisted::No, &intent, &repo);
+        let forgotten: Value = serde_json::from_str(&forgotten[0]).expect("envelope JSON");
+        assert!(
+            forgotten["hookSpecificOutput"]["permissionDecision"].is_null(),
+            "a block that could not be persisted must not be emitted"
+        );
+
+        let stale = pull_lines(PullVerdict::Stale, Persisted::Yes, &intent, &repo);
+        let stale: Value = serde_json::from_str(&stale[0]).expect("envelope JSON");
+        let stale_text = stale["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .expect("stale context");
+        assert!(
+            stale_text.contains("behind"),
+            "it must say what it cannot do"
+        );
+        assert!(
+            !stale_text.contains("estelle_grep"),
+            "a stale index must redirect NOWHERE"
+        );
+    }
+
+    /// The `Bash` door carries BOTH halves and they are independent: a dangerous search emits the
+    /// danger warning, and a dangerous non-search emits only that.
+    #[test]
+    fn the_bash_door_keeps_the_danger_guard_and_the_search_redirect_apart() {
+        // A search-shaped command that is ALSO dangerous must still be flagged as dangerous.
+        assert_eq!(
+            crate::hook_guard::dangerous_command("find . -name '*.pyc' -delete"),
+            Some("a find that deletes what it matches")
+        );
+        assert!(
+            crate::hook_pull::shell_search("find . -name '*.pyc' -delete").is_some(),
+            "and it is still a filename search"
+        );
+        // And the ordinary destructive command is not a search.
+        assert!(crate::hook_pull::shell_search("rm -rf /tmp/build").is_none());
     }
 
     #[tokio::test]
@@ -8129,7 +8468,11 @@ tests/test_serve.py:88: AssertionError\n\
             "tool_input": {"command": "rm -rf /"},
         }))
         .expect("payload");
-        let lines = guard_hook(&payload);
+        // No session id, so the FORCED PULL half of this door is silent and the danger warning is
+        // the only line — which is exactly what makes this an assertion about the danger clause.
+        let guard_repo = Repo::new("acme/widgets").expect("repo");
+        let guard_root = tempfile::tempdir().expect("root");
+        let lines = guard_hook(&payload, &guard_repo, guard_root.path());
         assert_eq!(lines.len(), 1);
         let envelope: Value = serde_json::from_str(&lines[0]).expect("envelope JSON");
         assert!(
@@ -8147,7 +8490,7 @@ tests/test_serve.py:88: AssertionError\n\
             "tool_input": {"command": "ls -la"},
         }))
         .expect("payload");
-        assert!(guard_hook(&quiet).is_empty());
+        assert!(guard_hook(&quiet, &guard_repo, guard_root.path()).is_empty());
     }
 
     #[test]
