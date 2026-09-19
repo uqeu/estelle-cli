@@ -2889,21 +2889,24 @@ const HOOK_TABLE: &[HookRow] = &[
         mode: "pull",
         timeout: 5,
         claude_async: false,
-        // 🔴 `plugin: false` — A DECLARED EXEMPTION, AND THE SAME ONE `shift` ALREADY CARRIES FOR
-        // THE SAME REASON. `HookRow::plugin`'s own docstring settles it: the shipped manifest sits
-        // inside a per-version SHA-256 cache contract (`scripts/test-plugin-identity.py`), and
-        // "adding a hook that fires on every `Read` is a product decision with a release attached,
-        // not a drift fix". `shift` is `PostToolUse Read|Write|Edit` and is exempt for exactly that
-        // sentence; this row is `PreToolUse Read|Grep|Glob` and is no different.
+        // 🔴 `plugin: true` — THE PRODUCT DECISION WAS TAKEN, AND THIS IS THE RELEASE IT IMPLIES.
+        // `HookRow::plugin`'s docstring is why this needed a release rather than a drift fix:
+        // "adding a hook that fires on every `Read` is a product decision with a release attached".
+        // The founder took it on 2026-09-19, on a measured reason rather than an argued one — with
+        // no `PreToolUse` on `Read|Grep|Glob`, NOTHING redirects a raw file read to the graph, so
+        // the code graph was reached only when the model happened to elect it: 2.4% of turns. The
+        // other 97.6% it grepped the filesystem like any other agent, and the product sat unused
+        // behind a door nobody knocked on.
         //
-        // So FORCED PULL ships TODAY through the two `install-hooks` doors (Claude settings, Codex
-        // hooks) and NOT through the plugin bundle. Turning the plugin door on is one edit —
-        // `plugin: true` — plus the release it implies: the manifest bytes move, so the version
-        // must go 0.3.7 -> 0.3.8 across all four writers and a NEW digest must be registered in
-        // `PLUGIN_CONTRACT_SHA256_BY_VERSION` (never by rewriting 0.3.7's, which customers hold as
-        // a cache key), and every plugin-door customer re-approves their hooks on upgrade. That is
-        // stated here so the absence is enforced by the guard rather than invisible to it.
-        plugin: false,
+        // The release this row costs is paid in the same commit: the manifest bytes move, so the
+        // version goes 0.3.7 -> 0.3.8 across all four writers and a NEW digest is registered in
+        // `PLUGIN_CONTRACT_SHA256_BY_VERSION` — never by rewriting 0.3.7's, which customers hold
+        // as a cache key. Every plugin-door customer re-approves their hooks on upgrade; that is
+        // the correct price of a hook on `Read`, and it is right that they are asked.
+        //
+        // ⚠️ `shift` REMAINS EXEMPT AND IS NOW THE ONLY ONE. Its row carries its own reason; this
+        // row's promotion must never be read as covering it.
+        plugin: true,
         plugin_async: false,
     },
     HookRow {
@@ -7883,9 +7886,10 @@ tests/test_serve.py:88: AssertionError\n\
         }
         assert_eq!(
             exempt,
-            vec!["pull", "shift"],
+            vec!["shift"],
             "the plugin door's exemptions are enumerated, not inferred — a new one needs a \
-             written reason on HookRow::plugin before it lands here"
+             written reason on HookRow::plugin before it lands here. `pull` was promoted to the \
+             plugin door in 0.3.8 and left this list; `shift` is now the only exemption."
         );
         assert_eq!(
             shipped.len(),
