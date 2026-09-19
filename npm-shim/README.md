@@ -121,21 +121,40 @@ returns a merge verdict you can fail a build on.
 all, so on that path "not checked" and "clean" look the same. Use `estelle gate` on the diff if you need
 a verdict for another language, and read the language scope under "What is measured" below.
 
-**Reach an assistant that has no hook runtime.**
+**Reach the assistants that have no hook runtime — 24 of them.**
 
 ```sh
-estelle install --list                  # every host, and the exact path each one is reached at
-estelle install --host cursor --project # write the standing rule into .cursor/rules/estelle.mdc
-estelle uninstall                       # take it back out of every host, everywhere
+estelle install --list      # every host, and the exact path each one is reached at
+estelle install --user      # install into every assistant this machine actually runs
+estelle install --host cursor --project   # or name one, and write it into this repo
+estelle uninstall           # take it back out of every host, both scopes, in one command
 ```
 
 Hooks are one of two mechanisms and they are not interchangeable. Claude Code and Codex run a
-command before a tool call; Cursor, Copilot, Windsurf, Cline, Roo, Junie, Goose, Qwen and anything
-that honours `AGENTS.md` read a persistent instruction file instead, and a hook reaches none of
-them. `--project` writes into the repository, `--user` into your home directory, and naming neither
-does both. Every write backs the original up first and refuses a file it cannot parse; `uninstall`
-removes Estelle's managed block and nothing else, and deletes only a file that held nothing but
-that block.
+command before a tool call; Cursor, Copilot, Windsurf, Cline, Junie, Goose, Qwen, Kiro, Devin,
+Factory Droid, Amp, opencode, Kimi Code, Kilo, Trae, Antigravity and anything that honours
+`AGENTS.md` read a persistent instruction file instead, and a hook reaches none of them.
+
+**`--user` is the one that matters.** An instruction file lives inside a repository, so it reaches
+nobody until that repository is opened. A user-profile install is loaded by the host itself on
+every session, before you have chosen a project, and costs nothing per turn. With no `--host` it
+installs only into assistants whose own config directory exists on this machine, so it reaches
+what you use and nothing else. Claude Code and Goose also get a `SKILL.md` in their native skill
+directory.
+
+`--project` writes into the repository instead; naming neither does both. Every path here was read
+out of that host's own documentation — hosts whose path could not be established are deliberately
+absent rather than guessed at, and named in `tui/src/host_table.rs`.
+
+Writes are additive and idempotent: your file keeps every byte it had, Estelle's block goes in
+delimited markers, the original is copied to `.bak` first, and a file that cannot be parsed is
+refused rather than overwritten. Running it twice changes nothing.
+
+`uninstall` removes that block and nothing else. A file that held only Estelle's bytes is deleted
+outright with no `.bak` — there is nothing of yours in it — and the directories the install
+created go with it. ⚠️ That last part removes any directory left EMPTY, which it cannot
+distinguish from an empty one you made yourself; `remove_dir` refuses anything with content in it,
+so nothing you have written is ever at risk.
 
 **Serve any other harness.**
 
@@ -144,7 +163,7 @@ estelle mcp-server            # Estelle's tools over MCP, for any agent
 estelle acp                   # Agent Client Protocol, over stdio
 ```
 
-`estelle --help` lists all twenty-six commands. A few worth knowing early:
+`estelle --help` lists every command. A few worth knowing early:
 
 | | |
 |---|---|
