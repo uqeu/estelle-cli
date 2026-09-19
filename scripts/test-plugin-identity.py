@@ -225,6 +225,25 @@ PLUGIN_CONTRACT_SHA256_BY_VERSION = {
     # DIGEST PROVENANCE: emitted by this file's own guard against this working tree (34 files
     # hashed), never copied out of a CI log and never re-implemented.
     "0.3.8": "dfdf38b72a305982cebc5007cfb3007ce5f6f138a83ab6058b523e5a99f549e2",
+    # 0.3.9 ships ONE changed file: `estelle-plugin/skills/estelle/SKILL.md`, 11,912 -> 10,019 bytes.
+    # `estelle-plugin/hooks/hooks.json` is BYTE-UNCHANGED, so unlike 0.3.8 no customer re-approves a hook.
+    #
+    # WHY THE SKILL SHRANK BY 16% AND GOT BETTER: six frontier labs reviewed the 0.3.8 copy and were
+    # unanimous on three faults. (1) "Pull the memory" sat 12th of 13 — xAI: "if it isn't action #1 after
+    # the gate, it does not happen", and we had measured exactly that (73 saved records unread for hours
+    # while the model searched the filesystem). It is now section 2. (2) Two tables were one mapping twice;
+    # moonshot found the literal duplicate. Now one. (3) Refusals sat four sections from the tool table
+    # that produces them — a refusal IS tool output. Now adjacent. The 46-tool argument index was cut
+    # entirely: it duplicated the MCP schema this session already carries, and xAI's point stands, that
+    # duplicating it is how a model gets a signature wrong the day the schema moves.
+    #
+    # Plus three additions measured this session: read-cheap-before-deep; "not recalled" is not "not
+    # there" (cards carry a `valid_until` and expired ones are withheld); and `skill_find`'s real
+    # invocation, because its own refusal names a top-level `repo` parameter that does not exist.
+    #
+    # DIGEST PROVENANCE: emitted by this file's own guard against this working tree (34 files hashed),
+    # never copied out of a CI log and never re-implemented.
+    "0.3.9": "feeb5e4053696a9806e5164be96eeef9ae336c65e4b671c7318d5213e2548375",
 }
 
 #: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.
