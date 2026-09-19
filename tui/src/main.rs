@@ -44,6 +44,7 @@ mod hook_distil;
 mod hook_guard;
 mod hook_pull;
 mod hook_timings;
+mod host_install;
 mod keys_view;
 mod leaked;
 mod live_renderer;
@@ -512,6 +513,44 @@ enum Command {
     InstallHooks,
     /// Remove Estelle's harness hooks (P4).
     UninstallHooks,
+    /// Install Estelle's standing rule into a coding assistant's instruction file.
+    ///
+    /// Naming a host CREATES its file; naming none refreshes only the files that already exist,
+    /// so an upgrade never scatters instruction files into a repository nobody asked us to
+    /// write to. `--list` prints every host and the path each one is reached at.
+    Install {
+        /// Host to install into; repeat for several. Omit to refresh what already exists.
+        #[arg(long = "host", value_name = "HOST")]
+        hosts: Vec<String>,
+        /// Only the repository copy.
+        #[arg(long, conflicts_with = "user")]
+        project: bool,
+        /// Only the home-directory copy.
+        #[arg(long)]
+        user: bool,
+        /// Print every supported host and its paths; write nothing.
+        #[arg(long)]
+        list: bool,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Remove Estelle's standing rule from every coding assistant it was installed into.
+    ///
+    /// Clears every host at once unless one is named. A tool that writes into a customer's
+    /// configuration and can only be removed from the host they remember is not removable.
+    Uninstall {
+        /// Host to remove from; repeat for several. Omit to clear every host.
+        #[arg(long = "host", value_name = "HOST")]
+        hosts: Vec<String>,
+        /// Only the repository copy.
+        #[arg(long, conflicts_with = "user")]
+        project: bool,
+        /// Only the home-directory copy.
+        #[arg(long)]
+        user: bool,
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Serve Estelle as an Agent Client Protocol agent over stdio.
     Acp,
     /// Connect to an external MCP server over stdio.

@@ -78,6 +78,8 @@ fn contract(command: &Command) -> Contract {
         | Command::Hook { .. }
         | Command::InstallHooks
         | Command::UninstallHooks
+        | Command::Install { .. }
+        | Command::Uninstall { .. }
         | Command::Acp
         | Command::Mcp { .. }
         | Command::McpServer
@@ -128,6 +130,37 @@ pub(crate) async fn run(command: Command, repo: Repo, root: &Path) -> Result<Vec
         }
         Command::InstallHooks => install_hooks(),
         Command::UninstallHooks => uninstall_hooks(),
+        Command::Install {
+            hosts,
+            project,
+            user,
+            list,
+            dry_run,
+        } => {
+            if list {
+                Ok(crate::host_install::listing())
+            } else {
+                crate::host_install::install(
+                    root,
+                    crate::host_install::current_home().as_deref(),
+                    &hosts,
+                    host_scope(project, user),
+                    dry_run,
+                )
+            }
+        }
+        Command::Uninstall {
+            hosts,
+            project,
+            user,
+            dry_run,
+        } => crate::host_install::uninstall(
+            root,
+            crate::host_install::current_home().as_deref(),
+            &hosts,
+            host_scope(project, user),
+            dry_run,
+        ),
         Command::Acp => Err("ACP is handled by the protocol runtime".to_string()),
         Command::Mcp { .. } | Command::McpServer => {
             Err("MCP is handled by the protocol runtime".to_string())
@@ -3558,6 +3591,8 @@ async fn run_authenticated(
         | Command::Hook { .. }
         | Command::InstallHooks
         | Command::UninstallHooks
+        | Command::Install { .. }
+        | Command::Uninstall { .. }
         | Command::Acp
         | Command::Mcp { .. }
         | Command::McpServer
@@ -3565,6 +3600,17 @@ async fn run_authenticated(
         | Command::Demo { .. }
         | Command::Upgrade { .. }
         | Command::Version => Err("local command reached the remote dispatcher".to_string()),
+    }
+}
+
+/// `--project` and `--user` are two names for one fact — which scope to touch — and `None` means
+/// BOTH. Clap already refuses the pair, so the impossible combination cannot reach here; this
+/// exists so the "neither flag" case has exactly one reading instead of one per call site.
+fn host_scope(project: bool, user: bool) -> Option<crate::host_install::Scope> {
+    match (project, user) {
+        (true, _) => Some(crate::host_install::Scope::Project),
+        (_, true) => Some(crate::host_install::Scope::User),
+        (false, false) => None,
     }
 }
 
