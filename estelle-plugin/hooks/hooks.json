@@ -23,6 +23,17 @@
             "statusMessage": "Estelle hook guard"
           }
         ]
+      },
+      {
+        "matcher": "Read|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y --package=@fatelabs/estelle@latest -- estelle hook pull",
+            "timeout": 5,
+            "statusMessage": "Estelle hook pull"
+          }
+        ]
       }
     ],
     "PostToolUse": [

@@ -202,6 +202,29 @@ PLUGIN_CONTRACT_SHA256_BY_VERSION = {
     # `plugin_contract_digest()` and printing its return value — never copied out of a CI log, and
     # never re-implemented, so the pinned value cannot disagree with the function that checks it.
     "0.3.7": "7f05dbdb1a0da885cdc63ca6752455e73f8392ebd9475125b1017b26a2f8f866",
+    # 0.3.8 promotes FORCED PULL to the plugin door. `estelle-plugin/hooks/hooks.json` gains ONE
+    # handler — `PreToolUse` / `Read|Grep|Glob` / `pull` / 5 s — regenerated from `HOOK_TABLE` by
+    # `the_plugin_manifest_is_generated_from_the_one_hook_table`, never hand-edited. The other
+    # bytes that moved are the version itself in `estelle-plugin/.claude-plugin/plugin.json` and
+    # `.claude-plugin/marketplace.json`, both inside this contract.
+    #
+    # WHY THE BYTES WERE ALLOWED TO MOVE: a hook on every `Read` is a product decision with a
+    # release attached (`HookRow::plugin`), and the founder took it on 2026-09-19 on a measured
+    # reason — with no `PreToolUse` on `Read|Grep|Glob`, nothing redirected a raw file read to the
+    # graph, so the graph was reached on 2.4% of turns and the other 97.6% grepped the filesystem.
+    # Every plugin-door customer re-approves their hooks on this upgrade; that is the correct price.
+    #
+    # 0.3.8 ALSO ADDS `estelle-plugin/skills/estelle/SKILL.md` — the 34th file. Measured
+    # 2026-09-19: all 25 shipped skills were NARROW playbooks ("Use when the task involves: bug,
+    # debug, diagnose…") and not one claimed a plain question about a codebase, so asking "where is
+    # X defined" fired nothing and the model fell back to Grep. The rival this was measured against
+    # ships ONE skill whose description claims every codebase question, which is the whole of why
+    # it gets called and we did not. This skill carries the tool signatures read off the live
+    # `tools/list` schema rather than recalled, because a sweep that guessed got 10 of 46 wrong.
+    #
+    # DIGEST PROVENANCE: emitted by this file's own guard against this working tree (34 files
+    # hashed), never copied out of a CI log and never re-implemented.
+    "0.3.8": "dfdf38b72a305982cebc5007cfb3007ce5f6f138a83ab6058b523e5a99f549e2",
 }
 
 #: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.
@@ -356,9 +379,12 @@ if hooks_path.is_file():
         if hook.get("command")
     ]
     commands = {hook["command"]: hook for hook in handlers}
-    # ELEVEN handlers since v0.3.4 (nine through v0.3.3). The count is asserted rather than the
-    # membership because a replacement would keep the count and change the row.
-    check("shipping hook bundle has the eleven plugin-door rows", len(handlers) == 11,
+    # TWELVE handlers since v0.3.8 (eleven from v0.3.4, nine through v0.3.3). The count is asserted
+    # rather than the membership because a replacement would keep the count and change the row.
+    # ⚠️ THE NUMBER IS IN THE CLAUSE'S NAME ON PURPOSE, AND THE NAME MOVES WITH IT. A clause called
+    # "the eleven rows" that asserts twelve is a claim no reader can falsify by reading it — this
+    # repo has paid for that shape before. v0.3.8 added `PreToolUse` / `Read|Grep|Glob` / `pull`.
+    check("shipping hook bundle has the twelve plugin-door rows", len(handlers) == 12,
           str(len(handlers)))
     # ⚠️ A DECLARED EXEMPTION, ASSERTED AS AN ABSENCE. `shift` fires on every Read. The Rust owner
     # marks it `plugin: false` because adding it is a product decision with a release attached,
