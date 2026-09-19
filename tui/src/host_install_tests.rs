@@ -5,6 +5,7 @@
 
 use super::*;
 use std::fs;
+use std::path::PathBuf;
 
 /// Every row must name at least one real path, or it is a host we advertise and cannot reach.
 #[test]
@@ -374,7 +375,14 @@ fn a_global_instruction_file_survives_install_reinstall_and_uninstall_byte_for_b
     );
 }
 
-/// The skill directory is named after us, so leaving it behind is our litter.
+/// Uninstall must take back the directories as well as the files.
+///
+/// When Estelle created every directory in the chain — which is what a clean home means — all of
+/// them go. This was asserted the other way round at first ("`~/.claude/skills` is not ours to
+/// delete"), and that assertion was simply wrong: in this scenario we made it, nothing of the
+/// host's or the customer's is in it, and leaving it is litter. The protection is not a list of
+/// directories we promise not to touch, it is that `remove_dir` refuses anything non-empty —
+/// see `pruning_stops_at_a_directory_the_customer_also_uses`.
 #[test]
 fn uninstall_takes_the_skill_directory_with_it() {
     let home = tempfile::tempdir().expect("home");
@@ -397,13 +405,51 @@ fn uninstall_takes_the_skill_directory_with_it() {
         false,
     )
     .expect("uninstall");
+    let leftovers: Vec<String> = walk(home.path())
+        .into_iter()
+        .map(|path| {
+            path.strip_prefix(home.path())
+                .expect("under home")
+                .display()
+                .to_string()
+        })
+        .collect();
     assert!(
-        !home.path().join(".claude/skills/estelle").exists(),
-        "the skill directory must not survive uninstall"
+        leftovers.is_empty(),
+        "uninstall left these in the home directory: {leftovers:?}"
     );
+}
+
+/// The same, on a home where the HOST's own files sit beside ours: its directory stays.
+#[test]
+fn a_hosts_own_directory_survives_uninstall_when_it_holds_the_hosts_files() {
+    let home = tempfile::tempdir().expect("home");
+    let root = tempfile::tempdir().expect("root");
+    fs::create_dir_all(home.path().join(".claude")).expect("claude dir");
+    let theirs = home.path().join(".claude/settings.json");
+    fs::write(&theirs, "{}\n").expect("host file");
+    let args = ["claude".to_string()];
+    install(
+        root.path(),
+        Some(home.path()),
+        &args,
+        Some(Scope::User),
+        false,
+    )
+    .expect("install");
+    uninstall(
+        root.path(),
+        Some(home.path()),
+        &args,
+        Some(Scope::User),
+        false,
+    )
+    .expect("uninstall");
+    assert!(theirs.is_file(), "the host's own settings must survive");
+    assert!(home.path().join(".claude").is_dir());
     assert!(
-        home.path().join(".claude/skills").is_dir(),
-        "the host's own skills directory is not ours to delete"
+        !home.path().join(".claude/skills").exists(),
+        "the skills tree we created, and only we used, still goes"
     );
 }
 
@@ -464,6 +510,73 @@ fn an_unnamed_user_install_reaches_a_detected_host_and_skips_an_absent_one() {
         !home.path().join(".codex/AGENTS.md").exists(),
         "a host this machine does not run must not have files created for it"
     );
+}
+
+/// An uninstall that deletes the file and leaves the folder has not uninstalled.
+///
+/// Install calls `create_dir_all`, so `.cursor/rules/`, `.github/`, `.kiro/steering/` and the rest
+/// are directories WE made. Measured 2026-09-19 before this was wired: a full install followed by
+/// a full uninstall left eleven empty directories in the repository.
+#[test]
+fn uninstall_leaves_no_empty_directory_the_install_created() {
+    let root = tempfile::tempdir().expect("root");
+    let every: Vec<String> = HOSTS.iter().map(|host| host.name.to_string()).collect();
+    install(root.path(), None, &every, Some(Scope::Project), false).expect("install");
+    uninstall(root.path(), None, &[], Some(Scope::Project), false).expect("uninstall");
+    let leftovers: Vec<String> = walk(root.path())
+        .into_iter()
+        .map(|path| {
+            path.strip_prefix(root.path())
+                .expect("under root")
+                .display()
+                .to_string()
+        })
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "uninstall left these behind: {leftovers:?}"
+    );
+}
+
+/// A directory holding anything of the customer's survives, content and all.
+#[test]
+fn pruning_stops_at_a_directory_the_customer_also_uses() {
+    let root = tempfile::tempdir().expect("root");
+    install(
+        root.path(),
+        None,
+        &["copilot".to_string()],
+        Some(Scope::Project),
+        false,
+    )
+    .expect("install");
+    let theirs = root.path().join(".github/workflows.yml");
+    fs::write(&theirs, "on: push\n").expect("customer file");
+    uninstall(root.path(), None, &[], Some(Scope::Project), false).expect("uninstall");
+    assert!(theirs.is_file(), "a customer file in .github must survive");
+    assert!(root.path().join(".github").is_dir());
+}
+
+/// Everything still under `root`, files and directories both.
+fn walk(root: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    // Bounded: a table row is at most MAX_PRUNE_DEPTH deep, and a runaway here would hang the
+    // suite rather than fail it.
+    for _ in 0..64 {
+        let Some(directory) = stack.pop() else { break };
+        let Ok(entries) = fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path.clone());
+            }
+            found.push(path);
+        }
+    }
+    found
 }
 
 /// **A bare install must not be able to make a host look present.**

@@ -360,11 +360,18 @@ pub(crate) fn uninstall_one(
     let mut lines = Vec::new();
     if let Some(path) = resolve_for(host, scope, root, home)? {
         let outcome = agent_brief::remove_at(&path, host.preamble, dry_run)?;
+        let emptied = matches!(
+            outcome,
+            agent_brief::RemoveOutcome::Removed { deleted: true, .. }
+        );
         lines.push(format!(
             "{}: {}",
             host.label,
             agent_brief::remove_line(outcome)
         ));
+        if emptied {
+            prune_empty_dirs(&path, scope_root(scope, root, home)?);
+        }
     }
     if scope == Scope::Project {
         for legacy in host.legacy {
@@ -388,15 +395,59 @@ pub(crate) fn uninstall_one(
             host.label,
             agent_brief::remove_line(outcome)
         ));
-        // A skill is a DIRECTORY named after us, so deleting only the file leaves an empty
-        // `estelle/` behind — our litter, invisible to the customer who asked us to leave.
-        // `remove_dir` refuses a non-empty directory, so a customer who put something of their
-        // own beside our SKILL.md keeps it and keeps the folder.
-        if emptied && let Some(parent) = path.parent() {
-            let _ = std::fs::remove_dir(parent);
+        if emptied {
+            prune_empty_dirs(&path, scope_root(scope, root, home)?);
         }
     }
     Ok(lines)
+}
+
+/// The deepest chain of directories any row in the table can create, plus headroom.
+///
+/// `.claude/skills/estelle/SKILL.md` is three directories below its root, which is the deepest
+/// row today. A named bound rather than a `while` on a parent chain, because a loop walking
+/// upwards toward a root it compares by prefix is exactly the loop that runs away when the
+/// prefix test is wrong.
+const MAX_PRUNE_DEPTH: usize = 4;
+
+/// The root that a scope's paths hang below, and that pruning must never climb past.
+fn scope_root<'a>(
+    scope: Scope,
+    root: &'a Path,
+    home: Option<&'a Path>,
+) -> Result<&'a Path, String> {
+    Ok(match scope {
+        Scope::Project => root,
+        Scope::User => need_home(home)?,
+    })
+}
+
+/// Remove the directories an install created, once nothing is left in them.
+///
+/// Install calls `create_dir_all`, so `.cursor/rules/`, `.github/` and `.kiro/steering/` are
+/// OURS — and an uninstall that deleted the file and left the folder would be leaving litter in a
+/// customer's repository after they asked us to go. Measured 2026-09-19: a full install then a
+/// full uninstall left eleven empty directories behind.
+///
+/// Three things keep this from over-reaching. `remove_dir` refuses a directory that still holds
+/// anything, so a folder with any content of the customer's survives untouched. The walk stops at
+/// `root`, so it can never climb out of the repository or the home directory. And it is bounded by
+/// [`MAX_PRUNE_DEPTH`] rather than by the loop noticing it has arrived.
+///
+/// Every failure is ignored on purpose: a directory that will not go is a directory that had
+/// something in it, which is the answer we wanted.
+fn prune_empty_dirs(file: &Path, root: &Path) {
+    let mut current = file.parent();
+    for _ in 0..MAX_PRUNE_DEPTH {
+        let Some(directory) = current else { break };
+        if directory == root || !directory.starts_with(root) {
+            break;
+        }
+        if std::fs::remove_dir(directory).is_err() {
+            break;
+        }
+        current = directory.parent();
+    }
 }
 
 /// Every scope a sweep visits. Named rather than inlined so a caller cannot visit one and believe
