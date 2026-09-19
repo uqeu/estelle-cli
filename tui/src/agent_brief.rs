@@ -84,6 +84,95 @@ pub(crate) fn render_footer() -> String {
     format!("{TAIL_BEGIN}\n{FOOTER}\n{TAIL_END}")
 }
 
+/// The provenance line a file Estelle CREATED carries, and one it only appended to never does.
+///
+/// **Two facts, one owner, and neither is recoverable after the fact.** That every byte of this
+/// file is ours to delete — content equality cannot decide that, because a customer's
+/// `.cursor/rules/estelle.mdc` holding nothing but the four frontmatter lines Estelle also
+/// configures as that host's preamble is byte-identical to a file we made, and uninstall deleted
+/// it with no backup. And how many directories above it the install had to make —
+/// `create_dir_all` records no ownership, so pruning upward until `remove_dir` refused would take
+/// a `~/.claude` that was there before we arrived, which is also the marker host detection reads.
+///
+/// It lives INSIDE the managed block, so an uninstall removes it with everything else rather than
+/// leaving a comment behind in a file it is handing back.
+const CREATED_PREFIX: &str = "<!-- estelle: created this file, plus ";
+const CREATED_SUFFIX: &str = " directories above it — `estelle uninstall` removes them -->";
+
+/// The deepest chain of directories one managed file may sit under.
+///
+/// One owner for the two loops that must agree: the count [`write_at`] takes before
+/// `create_dir_all` runs, and the prune `host_install` runs from that count. The host table is
+/// asserted against it by `no_host_row_is_deeper_than_the_prune_bound`, because a bound whose
+/// invariant is stated only in prose is a clause with no line enforcing it.
+pub(crate) const MAX_MANAGED_DEPTH: usize = 4;
+
+fn created_marker(directories: usize) -> String {
+    format!("{CREATED_PREFIX}{directories}{CREATED_SUFFIX}")
+}
+
+fn render_created_block(directories: usize) -> String {
+    format!("{BEGIN}\n{}\n{BODY}\n{END}", created_marker(directories))
+}
+
+/// How many directories the install made above a file it created, or `None` when this text is not
+/// a file Estelle created.
+///
+/// `None` is the safe answer at both call sites — not ours to delete, and nothing above it to
+/// prune — so a marker that is absent, malformed or unparseable all resolve the same way.
+pub(crate) fn created_directories(existing: &str) -> Option<usize> {
+    let start = existing.find(CREATED_PREFIX)? + CREATED_PREFIX.len();
+    let rest = &existing[start..];
+    let end = rest.find(CREATED_SUFFIX)?;
+    let directories: usize = rest[..end].parse().ok()?;
+    // A count past the bound is a file we did not write the way we write files. Read it LOW
+    // rather than trusting it: an undercount leaves an empty directory behind, an overcount
+    // deletes a customer's.
+    (directories <= MAX_MANAGED_DEPTH).then_some(directories)
+}
+
+/// The managed block in the shape THIS file already carries.
+///
+/// A refresh must not rewrite a created file's block with the plain form: that would erase the
+/// one fact uninstall needs, and it would erase it on the ordinary path — the second install.
+fn block_for(existing: &str) -> String {
+    match created_directories(existing) {
+        Some(directories) => render_created_block(directories),
+        None => render_block(),
+    }
+}
+
+/// Everything a file Estelle is CREATING gets: the host's format bytes, then the managed regions
+/// carrying the provenance the uninstall will read back out.
+fn render_new_file(preamble: Option<&str>, directories: usize) -> String {
+    let block = render_created_block(directories);
+    let footer = render_footer();
+    match preamble {
+        Some(preamble) => format!("{preamble}\n{block}\n\n{footer}\n"),
+        None => format!("{block}\n\n{footer}\n"),
+    }
+}
+
+/// How many directories above `path` do not exist yet — the ones `create_dir_all` is about to
+/// make, counted BEFORE it makes them because afterwards nothing on disk says who made them.
+///
+/// Bounded by [`MAX_MANAGED_DEPTH`]: a walk upward toward a root is exactly the loop that runs
+/// away when its stop condition is wrong, and reaching the bound reads as "that many", which
+/// under-prunes rather than over-prunes.
+fn absent_ancestors(path: &Path) -> usize {
+    let mut directories = 0;
+    let mut current = path.parent();
+    for _ in 0..MAX_MANAGED_DEPTH {
+        let Some(directory) = current else { break };
+        if directory.as_os_str().is_empty() || directory.exists() {
+            break;
+        }
+        directories += 1;
+        current = directory.parent();
+    }
+    directories
+}
+
 fn replace_region(
     text: &str,
     begin: &str,
@@ -110,11 +199,11 @@ fn replace_region(
 }
 
 pub(crate) fn apply(existing: Option<&str>) -> Result<String, String> {
-    let block = render_block();
     let footer = render_footer();
     let Some(existing) = existing else {
-        return Ok(format!("{block}\n\n{footer}\n"));
+        return Ok(format!("{}\n\n{footer}\n", render_block()));
     };
+    let block = block_for(existing);
 
     let mut output = match replace_region(existing, BEGIN, END, &block)? {
         Some(replaced) => replaced,
@@ -131,7 +220,7 @@ pub(crate) fn apply(existing: Option<&str>) -> Result<String, String> {
 }
 
 pub(crate) fn is_current(existing: &str) -> bool {
-    existing.contains(&render_block()) && existing.contains(&render_footer())
+    existing.contains(&block_for(existing)) && existing.contains(&render_footer())
 }
 
 /// How many newlines `apply` may have written as a separator around a managed region. `apply`
@@ -171,6 +260,41 @@ fn cut_region(text: &str, begin: &str, end: &str) -> Result<Option<String>, Stri
     Ok(Some(format!("{}{}", &text[..head], &text[tail..])))
 }
 
+/// Delete EVERY well-formed managed region of one kind, not merely the first.
+///
+/// The head marker tells the customer the block is safe to MOVE, so a file that has been edited,
+/// merged or copied from a template can hold two well-formed copies. [`cut_region`] removes one
+/// pair and returns, and the uninstall then reported success over a second block still
+/// instructing the model — a "removed" that removes one of two.
+///
+/// **Removing every region rather than refusing the file is the deliberate choice.** A refusal
+/// would leave an ACTIVE Estelle block in a customer's file after they asked us to go, with no
+/// way out but hand-editing; the marker's own contract is that Estelle owns the bytes between
+/// the pair, and that contract does not become weaker when there are two of them. A HALF-OPEN
+/// region is still refused, because there the bytes we would eat are not bounded by anything.
+///
+/// The bound is read off the text before the loop starts: a file with `n` opening markers needs
+/// at most `n` cuts, each cut removes the first one, and the extra pass is what proves none is
+/// left rather than assuming it.
+fn cut_every_region(text: &str, begin: &str, end: &str) -> Result<Option<String>, String> {
+    let bound = text.matches(begin).count();
+    let mut cut: Option<String> = None;
+    for _ in 0..=bound {
+        let source = cut.as_deref().unwrap_or(text);
+        match cut_region(source, begin, end)? {
+            Some(next) => cut = Some(next),
+            None => return Ok(cut),
+        }
+    }
+    // Unreachable: every cut removes the first `begin`, so the count strictly decreases and the
+    // pass after the last one finds nothing. Stated as a refusal rather than a comment because
+    // an assertion that can never fire is decoration, and a silent wrong answer here deletes
+    // customer bytes.
+    Err(format!(
+        "refusing to keep cutting {begin}: {bound} managed regions did not resolve"
+    ))
+}
+
 /// Every byte of `existing` that Estelle did not write, or `None` when Estelle wrote none of it.
 ///
 /// This is the inverse `write` never had. A tool that writes into a customer's instruction file
@@ -178,8 +302,8 @@ fn cut_region(text: &str, begin: &str, end: &str) -> Result<Option<String>, Stri
 /// removal path at all — `remove_editor_configs` clears MCP entries and `uninstall_hooks` clears
 /// hook settings, and neither one has ever touched a managed block.
 pub(crate) fn strip(existing: &str) -> Result<Option<String>, String> {
-    let head = cut_region(existing, BEGIN, END)?;
-    let footer = cut_region(head.as_deref().unwrap_or(existing), TAIL_BEGIN, TAIL_END)?;
+    let head = cut_every_region(existing, BEGIN, END)?;
+    let footer = cut_every_region(head.as_deref().unwrap_or(existing), TAIL_BEGIN, TAIL_END)?;
     Ok(match (head, footer) {
         (_, Some(stripped)) => Some(stripped),
         (Some(stripped), None) => Some(stripped),
@@ -192,7 +316,13 @@ pub(crate) enum RemoveOutcome {
     Absent(PathBuf),
     NotInstalled(PathBuf),
     WouldRemove(PathBuf),
-    Removed { path: PathBuf, deleted: bool },
+    Removed {
+        path: PathBuf,
+        deleted: bool,
+        /// How many directories above this file the install created, and pruning may take back.
+        /// `0` whenever the file was not deleted, or was not one Estelle created.
+        directories: usize,
+    },
 }
 
 /// Take the managed block out of one already-resolved path. Sibling of [`write_at`]: one owner
@@ -228,6 +358,8 @@ pub(crate) fn remove_at(
     }
     let existing = fs::read_to_string(&path)
         .map_err(|error| format!("refusing to rewrite unreadable {}: {error}", path.display()))?;
+    // Read BEFORE `strip`, which removes the managed block the marker lives inside.
+    let created = created_directories(&existing);
     let Some(stripped) = strip(&existing)? else {
         return Ok(RemoveOutcome::NotInstalled(path));
     };
@@ -235,8 +367,17 @@ pub(crate) fn remove_at(
         return Ok(RemoveOutcome::WouldRemove(path));
     }
     let remainder = stripped.trim();
-    let deleted =
-        remainder.is_empty() || preamble.is_some_and(|preamble| remainder == preamble.trim());
+    // **PROVENANCE, not content equality.** The preamble is format bytes ESTELLE writes, and it
+    // is written OUTSIDE the managed markers, so at uninstall time a customer's identical
+    // frontmatter and ours are the same bytes. Only a file carrying our creation marker may be
+    // deleted on the strength of its remainder matching that preamble.
+    //
+    // ⚠️ An EMPTY remainder still deletes, marker or not: nothing of anyone's is left, and that
+    // is also the only path that reaches a file created before this marker existed. The limit,
+    // stated out loud: a customer who deliberately keeps a zero-byte instruction file loses it.
+    let deleted = remainder.is_empty()
+        || (created.is_some() && preamble.is_some_and(|preamble| remainder == preamble.trim()));
+    let directories = if deleted { created.unwrap_or(0) } else { 0 };
     if deleted {
         // No backup: what is being deleted is bytes ESTELLE wrote, and nothing else — that is
         // exactly what `deleted` means. A `.bak` here would leave a copy of our own content in
@@ -249,7 +390,11 @@ pub(crate) fn remove_at(
         fs::copy(&path, backup_path(&path)).map_err(|error| error.to_string())?;
         fs::write(&path, stripped).map_err(|error| error.to_string())?;
     }
-    Ok(RemoveOutcome::Removed { path, deleted })
+    Ok(RemoveOutcome::Removed {
+        path,
+        deleted,
+        directories,
+    })
 }
 
 pub(crate) fn remove_line(outcome: RemoveOutcome) -> String {
@@ -264,7 +409,7 @@ pub(crate) fn remove_line(outcome: RemoveOutcome) -> String {
                 path.display()
             )
         }
-        RemoveOutcome::Removed { path, deleted } => {
+        RemoveOutcome::Removed { path, deleted, .. } => {
             if deleted {
                 format!(
                     "{}: held only Estelle's bytes, so the file was deleted and no backup was kept",
@@ -389,12 +534,13 @@ pub(crate) fn write_at(
     if existing.as_deref().is_some_and(is_current) {
         return Ok(WriteOutcome::Unchanged(path));
     }
-    let rendered = match (preamble, existing.as_deref()) {
+    let rendered = match existing.as_deref() {
         // Only a file we are CREATING gets the preamble. Prepending frontmatter to a file the
         // customer already wrote would move their first line out of position, and a second run
-        // would stack a second copy of it.
-        (Some(preamble), None) => format!("{preamble}\n{}", apply(None)?),
-        (_, existing) => apply(existing)?,
+        // would stack a second copy of it. A creation also records its own provenance, counted
+        // before `create_dir_all` runs below.
+        None => render_new_file(preamble, absent_ancestors(&path)),
+        Some(existing) => apply(Some(existing))?,
     };
     if dry_run {
         return Ok(WriteOutcome::WouldWrite(path));
@@ -632,5 +778,78 @@ mod tests {
         ] {
             assert!(block.contains(tool), "missing {tool}");
         }
+    }
+    /// **Uninstall must leave no ACTIVE block behind, not merely remove one.**
+    ///
+    /// The head marker says the block is safe to MOVE, so a customer editing the file, a merge,
+    /// or a copied template can leave two well-formed copies in one file. `cut_region` removes
+    /// the first pair and returns; uninstall then reported success over a second block still
+    /// instructing the model. A "removed" that removes one of two is the outer-layer-reports-
+    /// success shape: the call completed, and the thing it exists to do did not finish.
+    #[test]
+    fn every_managed_block_goes_even_when_one_was_duplicated() {
+        let customer = "# Customer\n";
+        let installed = apply(Some(customer)).expect("install");
+        let doubled = format!("{installed}\n{}\n\n{}\n", render_block(), render_footer());
+        assert_eq!(
+            doubled.matches(BEGIN).count(),
+            2,
+            "the fixture must be ambiguous"
+        );
+        let stripped = strip(&doubled).expect("uninstall").expect("installed");
+        for marker in [BEGIN, END, TAIL_BEGIN, TAIL_END] {
+            assert!(
+                !stripped.contains(marker),
+                "uninstall reported success over a surviving managed region: {marker}"
+            );
+        }
+        assert_eq!(
+            strip(&stripped).expect("second uninstall"),
+            None,
+            "a file with no block must report nothing to remove"
+        );
+    }
+
+    /// Deleting the file is a claim about PROVENANCE, and content equality cannot make it.
+    ///
+    /// The customer's `.mdc` rule held nothing but the four frontmatter lines Estelle also
+    /// configures as that host's preamble. Install kept those bytes; uninstall compared the
+    /// remainder against the preamble, decided the file was entirely ours, and removed it with
+    /// no backup.
+    #[test]
+    fn a_file_we_did_not_create_keeps_its_bytes_when_only_the_preamble_remains() {
+        let root = tempfile::tempdir().expect("root");
+        let path = root.path().join("estelle.mdc");
+        let preamble = "---\nalwaysApply: true\n---\n";
+        fs::write(&path, preamble).expect("the customer's own file");
+        write_at(&path, Some(preamble), false, false).expect("install");
+        assert!(matches!(
+            remove_at(&path, Some(preamble), false).expect("remove"),
+            RemoveOutcome::Removed { deleted: false, .. }
+        ));
+        assert_eq!(
+            fs::read_to_string(&path).expect("kept bytes"),
+            preamble,
+            "the customer's bytes must come back exactly"
+        );
+    }
+
+    /// ...and the control that stops the fix from becoming "never delete anything": a file we
+    /// DID create, with the same preamble, still goes.
+    #[test]
+    fn a_file_we_created_with_a_preamble_is_still_deleted_by_uninstall() {
+        let root = tempfile::tempdir().expect("root");
+        let path = root.path().join("estelle.mdc");
+        let preamble = "---\nalwaysApply: true\n---\n";
+        write_at(&path, Some(preamble), true, false).expect("create");
+        assert!(matches!(
+            remove_at(&path, Some(preamble), false).expect("remove"),
+            RemoveOutcome::Removed { deleted: true, .. }
+        ));
+        assert!(
+            !path.exists(),
+            "a file that is entirely ours must not survive"
+        );
+        assert!(!path.with_extension("mdc.bak").exists());
     }
 }

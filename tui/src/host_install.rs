@@ -350,28 +350,30 @@ fn skill_path(
 /// The legacy sweep is the half that matters: a block written into `.cursorrules` by `brief` and
 /// left there by an uninstall that only knew about `.cursor/rules/estelle.mdc` is a file we put in
 /// a customer's repository and cannot take out.
+/// Returns the report lines and the directories this row's removals earned the right to take —
+/// see [`prune_targets`] for why the pruning itself is deferred to the end of the run.
 pub(crate) fn uninstall_one(
     host: &Host,
     scope: Scope,
     root: &Path,
     home: Option<&Path>,
     dry_run: bool,
-) -> Result<Vec<String>, String> {
+) -> Result<(Vec<String>, Vec<PathBuf>), String> {
     let mut lines = Vec::new();
+    let mut targets = Vec::new();
     if let Some(path) = resolve_for(host, scope, root, home)? {
         let outcome = agent_brief::remove_at(&path, host.preamble, dry_run)?;
-        let emptied = matches!(
-            outcome,
-            agent_brief::RemoveOutcome::Removed { deleted: true, .. }
-        );
+        let created = created_directories(&outcome);
         lines.push(format!(
             "{}: {}",
             host.label,
             agent_brief::remove_line(outcome)
         ));
-        if emptied {
-            prune_empty_dirs(&path, scope_root(scope, root, home)?);
-        }
+        targets.extend(prune_targets(
+            &path,
+            scope_root(scope, root, home)?,
+            created,
+        ));
     }
     if scope == Scope::Project {
         for legacy in host.legacy {
@@ -386,29 +388,44 @@ pub(crate) fn uninstall_one(
     }
     if let Some(path) = skill_path(host, scope, root, home)? {
         let outcome = agent_brief::remove_at(&path, Some(SKILL_FRONTMATTER), dry_run)?;
-        let emptied = matches!(
-            outcome,
-            agent_brief::RemoveOutcome::Removed { deleted: true, .. }
-        );
+        let created = created_directories(&outcome);
         lines.push(format!(
             "{} skill: {}",
             host.label,
             agent_brief::remove_line(outcome)
         ));
-        if emptied {
-            prune_empty_dirs(&path, scope_root(scope, root, home)?);
-        }
+        targets.extend(prune_targets(
+            &path,
+            scope_root(scope, root, home)?,
+            created,
+        ));
     }
-    Ok(lines)
+    Ok((lines, targets))
 }
 
-/// The deepest chain of directories any row in the table can create, plus headroom.
+/// The deepest chain of directories any row in the table may create.
 ///
-/// `.claude/skills/estelle/SKILL.md` is three directories below its root, which is the deepest
-/// row today. A named bound rather than a `while` on a parent chain, because a loop walking
-/// upwards toward a root it compares by prefix is exactly the loop that runs away when the
-/// prefix test is wrong.
-const MAX_PRUNE_DEPTH: usize = 4;
+/// A named bound rather than a `while` on a parent chain, because a loop walking upwards toward
+/// a root it compares by prefix is exactly the loop that runs away when the prefix test is
+/// wrong. It is [`agent_brief::MAX_MANAGED_DEPTH`] rather than its own number so the count the
+/// install RECORDS and the prune that SPENDS it cannot drift apart, and the table is asserted
+/// against it by `no_host_row_is_deeper_than_the_prune_bound` — until 2026-09-19 the invariant
+/// lived in this docstring alone ("the deepest row today"), which is a clause with no line
+/// enforcing it.
+const MAX_PRUNE_DEPTH: usize = agent_brief::MAX_MANAGED_DEPTH;
+
+/// How many directories this removal may take back with the file: what the INSTALL recorded, and
+/// only when the file was wholly ours and actually went.
+fn created_directories(outcome: &agent_brief::RemoveOutcome) -> usize {
+    match outcome {
+        agent_brief::RemoveOutcome::Removed {
+            deleted: true,
+            directories,
+            ..
+        } => *directories,
+        _ => 0,
+    }
+}
 
 /// The root that a scope's paths hang below, and that pruning must never climb past.
 fn scope_root<'a>(
@@ -429,24 +446,59 @@ fn scope_root<'a>(
 /// customer's repository after they asked us to go. Measured 2026-09-19: a full install then a
 /// full uninstall left eleven empty directories behind.
 ///
-/// Three things keep this from over-reaching. `remove_dir` refuses a directory that still holds
-/// anything, so a folder with any content of the customer's survives untouched. The walk stops at
-/// `root`, so it can never climb out of the repository or the home directory. And it is bounded by
-/// [`MAX_PRUNE_DEPTH`] rather than by the loop noticing it has arrived.
+/// Which directories one removal earned the right to take back, without taking any of them yet.
 ///
-/// Every failure is ignored on purpose: a directory that will not go is a directory that had
-/// something in it, which is the answer we wanted.
-fn prune_empty_dirs(file: &Path, root: &Path) {
+/// **`directories` is the count the INSTALL took, and it is what keeps this honest.**
+/// `create_dir_all` records no ownership, so "empty and below the root" would have removed a
+/// `~/.claude` or `~/.codex` that existed before we arrived — changing a customer's filesystem
+/// and deleting the very marker [`detected`] reads to decide whether that host is installed.
+/// [`agent_brief::write_at`] counts the absent ancestors before it makes them and writes the
+/// number into the file's own managed block, so the uninstall spends exactly what the install
+/// created and a `0` prunes nothing at all.
+///
+/// Three more things keep this from over-reaching. `remove_dir` refuses a directory that still
+/// holds anything, so a folder with any content of the customer's survives untouched. The walk
+/// stops at `root`, so it can never climb out of the repository or the home directory. And it is
+/// bounded by [`MAX_PRUNE_DEPTH`] as well as by the count, rather than by the loop noticing it
+/// has arrived.
+///
+/// Nothing is removed here, only named: the run collects every row's targets and spends them
+/// once, in [`prune_empty_dirs`].
+fn prune_targets(file: &Path, root: &Path, directories: usize) -> Vec<PathBuf> {
+    let mut targets = Vec::new();
     let mut current = file.parent();
-    for _ in 0..MAX_PRUNE_DEPTH {
+    for _ in 0..directories.min(MAX_PRUNE_DEPTH) {
         let Some(directory) = current else { break };
         if directory == root || !directory.starts_with(root) {
             break;
         }
-        if std::fs::remove_dir(directory).is_err() {
-            break;
-        }
+        targets.push(directory.to_path_buf());
         current = directory.parent();
+    }
+    targets
+}
+
+/// Remove every directory the install created, deepest path first, once every file has gone.
+///
+/// **Deferring this to the end of the run is not tidiness, it is the difference between working
+/// and not.** Two rows of ONE host share `~/.claude` (`CLAUDE.md` and `skills/estelle/SKILL.md`),
+/// and two DIFFERENT hosts share `.agents` (Antigravity's `rules/` and Goose's `skills/`).
+/// Pruning each chain as its file went asked `remove_dir` for a directory the next removal had
+/// not emptied yet; it failed, the walk stopped, and an empty `.claude` or `.agents` was left in
+/// the customer's home — which is the leftover this whole function exists to prevent. Sorting
+/// deepest-first and running the set once makes the result independent of the order the table
+/// happens to be in.
+///
+/// Every failure is ignored on purpose, and no failure ends the loop: a directory that will not
+/// go is a directory that had something in it, which is the answer we wanted, and it says
+/// nothing about the sibling directory later in the list. The loop is bounded by the list, which
+/// is bounded by one [`prune_targets`] walk of at most [`MAX_PRUNE_DEPTH`] per removed file.
+fn prune_empty_dirs(mut targets: Vec<PathBuf>) {
+    targets.sort();
+    targets.dedup();
+    targets.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    for directory in targets {
+        let _ = std::fs::remove_dir(directory);
     }
 }
 
@@ -479,6 +531,12 @@ pub(crate) fn install(
     let named_explicitly = !named.is_empty();
     let mut lines = Vec::new();
     for host in selected {
+        // A host the customer NAMED earns a verdict about itself, whatever happened. Without
+        // this, a `--host` Estelle cannot reach is answered with the generic "no coding
+        // assistant was detected" — a true sentence about the machine and a wrong answer to the
+        // question asked. It is the outer-layer-reports-success shape on an installer: the
+        // command completed, so it reads as a success, while the named host was never touched.
+        let mut reached = false;
         for pass in scopes(scope) {
             // No home means no user scope. An explicit `--user` gets a refusal that names the
             // reason; an unnamed sweep quietly does the project half, because failing a whole
@@ -503,11 +561,29 @@ pub(crate) fn install(
             //   an install, it is a mess.
             let create = named_explicitly || (*pass == Scope::User && detected(host, home)?);
             for line in install_one(host, *pass, root, home, create, dry_run)? {
-                if line.contains("absent; nothing written") {
+                // "absent; nothing written" is the expected, quiet answer for an UNNAMED sweep,
+                // which deliberately refreshes rather than scatters — printing it for two dozen
+                // hosts would bury the one real write. For a host the customer NAMED it is the
+                // opposite: they asked us to reach it, and swallowing the line reports their
+                // install as a success.
+                if !named_explicitly && line.contains("absent; nothing written") {
                     continue;
                 }
+                reached = true;
                 lines.push(format!("[{}] {line}", pass.label()));
             }
+        }
+        if named_explicitly && !reached {
+            let asked = scopes(scope)
+                .iter()
+                .map(|pass| pass.label())
+                .collect::<Vec<_>>()
+                .join(" or ");
+            lines.push(format!(
+                "{}: nothing was written at {asked} scope — Estelle has no path that reaches \
+                 this host there. `estelle install --list` shows which scope each host reads.",
+                host.label
+            ));
         }
     }
     if lines.is_empty() {
@@ -545,6 +621,7 @@ pub(crate) fn uninstall(
 ) -> Result<Vec<String>, String> {
     let selected = select(named)?;
     let mut lines = Vec::new();
+    let mut targets = Vec::new();
     let mut changed = false;
     for host in selected {
         for pass in scopes(scope) {
@@ -557,7 +634,9 @@ pub(crate) fn uninstall(
                 }
                 continue;
             }
-            for line in uninstall_one(host, *pass, root, home, dry_run)? {
+            let (reported, prunable) = uninstall_one(host, *pass, root, home, dry_run)?;
+            targets.extend(prunable);
+            for line in reported {
                 // Only a host we actually touched earns a line; otherwise the report is a wall of
                 // "absent" and the one real removal is invisible in it.
                 if line.contains("absent") || line.contains("no Estelle block") {
@@ -568,6 +647,7 @@ pub(crate) fn uninstall(
             }
         }
     }
+    prune_empty_dirs(targets);
     if !changed {
         lines.push("No Estelle instruction block was installed; nothing changed.".to_string());
     }

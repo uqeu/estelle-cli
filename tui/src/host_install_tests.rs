@@ -647,3 +647,138 @@ fn scopes_visits_both_halves_when_none_is_named() {
     assert_eq!(scopes(None).len(), 2);
     assert_eq!(scopes(Some(Scope::User)), &[Scope::User]);
 }
+
+/// **A file the customer wrote must survive uninstall, even when its bytes look like ours.**
+///
+/// Cursor's `.mdc` frontmatter is four lines long and Estelle configures the exact same four
+/// lines as this host's preamble, so a customer whose rule file held nothing else was
+/// indistinguishable from a file Estelle created — to a check comparing CONTENT. Install
+/// correctly preserved those bytes and appended the managed block; uninstall then read the
+/// remainder, found it equal to the configured preamble, and deleted the whole file with no
+/// backup. The same shape reaches `SKILL.md`, `.kiro/steering/estelle.md` and
+/// `.devin/rules/estelle.md`, which are the other three rows with a preamble.
+#[test]
+fn a_customer_file_holding_only_our_frontmatter_is_not_deleted_by_uninstall() {
+    let root = tempfile::tempdir().expect("root");
+    let rule = root.path().join(".cursor/rules/estelle.mdc");
+    fs::create_dir_all(rule.parent().expect("rule parent")).expect("rule directory");
+    fs::write(&rule, CURSOR_MDC_FRONTMATTER).expect("the customer's own rule file");
+    let args = ["cursor".to_string()];
+    install(root.path(), None, &args, Some(Scope::Project), false).expect("install");
+    uninstall(root.path(), None, &args, Some(Scope::Project), false).expect("uninstall");
+    assert!(
+        rule.is_file(),
+        "uninstall deleted a file the customer wrote, because its bytes matched our preamble"
+    );
+    assert_eq!(
+        fs::read_to_string(&rule).expect("kept bytes"),
+        CURSOR_MDC_FRONTMATTER,
+        "uninstall must return the customer's file byte-for-byte"
+    );
+}
+
+/// **A directory that was here before we arrived is not ours to remove.**
+///
+/// `create_dir_all` records no ownership, so an uninstall that pruned upward until `remove_dir`
+/// refused would take a `~/.claude` the customer already had — and that directory is exactly the
+/// marker [`detected`] reads to decide whether this host is installed at all, so removing it
+/// also silently disables the next unnamed install.
+#[test]
+fn a_directory_that_existed_before_the_install_survives_the_uninstall() {
+    let home = tempfile::tempdir().expect("home");
+    let root = tempfile::tempdir().expect("root");
+    fs::create_dir_all(home.path().join(".claude")).expect("the customer's own .claude");
+    let args = ["claude".to_string()];
+    install(
+        root.path(),
+        Some(home.path()),
+        &args,
+        Some(Scope::User),
+        false,
+    )
+    .expect("install");
+    uninstall(
+        root.path(),
+        Some(home.path()),
+        &args,
+        Some(Scope::User),
+        false,
+    )
+    .expect("uninstall");
+    assert!(
+        home.path().join(".claude").is_dir(),
+        "a directory that existed before the install must still be here after the uninstall"
+    );
+    assert!(
+        !home.path().join(".claude/skills").exists(),
+        "the tree we did create still goes"
+    );
+}
+
+/// The bound, asserted against the thing it bounds.
+///
+/// [`MAX_PRUNE_DEPTH`] stated its invariant in a docstring — `.claude/skills/estelle/SKILL.md`
+/// "is the deepest row today" — and nothing compared it against the table. A clause with no line
+/// enforcing it is a silent exemption, and this one rots the day somebody adds a deeper row:
+/// the install creates every level and the uninstall stops short, leaving an empty directory in
+/// a customer's home with no test going red.
+#[test]
+fn no_host_row_is_deeper_than_the_prune_bound() {
+    for host in HOSTS {
+        for path in host
+            .project
+            .into_iter()
+            .chain(host.user)
+            .chain(host.skill)
+            .chain(host.legacy.iter().copied())
+        {
+            let depth = Path::new(path).components().count() - 1;
+            assert!(
+                depth <= MAX_PRUNE_DEPTH,
+                "{} installs {path}, which is {depth} directories deep and past \
+                 MAX_PRUNE_DEPTH ({MAX_PRUNE_DEPTH}); raise the bound in the commit that adds \
+                 the row, or the uninstall leaves a directory behind",
+                host.name
+            );
+        }
+    }
+}
+
+/// **A host the customer NAMED is always reported on, even when nothing was written.**
+///
+/// `--host` is the customer telling us which assistant they use. Answering it with the generic
+/// "No coding assistant was detected" — or with silence, because the only line was filtered as
+/// an uninteresting `absent; nothing written` — reports an install that did not happen. This is
+/// the outer-layer-reports-success shape on an installer: the command completed, so it reads as
+/// a success, while the named host was never reached.
+#[test]
+fn a_named_host_is_reported_on_at_every_scope_even_when_nothing_is_written() {
+    for host in HOSTS {
+        for pass in EVERY_SCOPE {
+            let home = tempfile::tempdir().expect("home");
+            let root = tempfile::tempdir().expect("root");
+            let lines = install(
+                root.path(),
+                Some(home.path()),
+                &[host.name.to_string()],
+                Some(*pass),
+                false,
+            )
+            .expect("install");
+            assert!(
+                lines.iter().any(|line| line.contains(host.label)),
+                "{} at {} scope produced no line naming it: {lines:?}",
+                host.name,
+                pass.label()
+            );
+            assert!(
+                !lines
+                    .iter()
+                    .any(|line| line.contains("No coding assistant was detected")),
+                "{} was NAMED at {} scope and answered with the no-host message: {lines:?}",
+                host.name,
+                pass.label()
+            );
+        }
+    }
+}
