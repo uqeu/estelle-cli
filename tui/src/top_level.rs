@@ -2186,6 +2186,16 @@ async fn ground_hook(
     // every TypeScript, Go and Rust write got exit 0 and empty stdout. The analysis really does
     // only understand Python, so the fix is to SAY that, not to pretend otherwise.
     if let ground_block::GroundScope::Abstain(detail) = ground_block::ground_scope(&path, &code) {
+        // 🔴 THE NO-PATH ABSTENTION IS THE ONE A READER CANNOT ACT ON, so it carries what the host
+        // actually sent. Every other abstention already names its own cause (the extension, the
+        // empty body); this one said only that a path was missing, which is why Codex's whole
+        // grounding gap read as ordinary output for as long as it did. Key names only — never a
+        // value, so no file content and no credential can leave through this sentence.
+        let detail = if path.trim().is_empty() {
+            format!("{detail} ({})", diagnose_missing_path(payload))
+        } else {
+            detail
+        };
         let (name, path) = display_names(&path);
         let verdict = GroundVerdict {
             kind: GroundKind::Unverified,
@@ -2438,20 +2448,97 @@ async fn sync_hook(payload: &HookPayload, repo: &Repo, root: &Path) -> Result<Ve
     }
 }
 
+/// Keys a host may name the edited file under, in the order we try them.
+///
+/// 🔴 **THIS READ `file_path` AND NOTHING ELSE, AND THAT MADE THE GATE INERT ON A WHOLE HOST.**
+/// `file_path` is Claude Code's spelling. Measured on Codex 0.154.0 (2026-09-21): the `ground`
+/// hook fired on a real edit, found no `file_path`, and `ground_scope` took its empty-path arm —
+/// *"the host payload carried no file path, so there was nothing to locate or check"* — checking
+/// **zero symbols and allowing the edit**. The hook RAN, so nothing looked broken; it just never
+/// examined anything. That is the outer-layer-reports-success shape, in the one place whose whole
+/// job is refusing an ungrounded edit.
+const EDIT_PATH_KEYS: &[&str] = &["file_path", "notebook_path", "path", "filePath"];
+
+/// Keys a host may name the new file contents under.
+const EDIT_CODE_KEYS: &[&str] = &["content", "new_string", "text", "contents"];
+
+/// `*** Update File: <path>` / `*** Add File: <path>` — the header lines of an apply-patch body.
+const PATCH_FILE_MARKERS: &[&str] = &["*** Update File:", "*** Add File:", "*** Move to:"];
+
+/// The first value in `tool_input` under any of `keys`, trimmed, or `None` when none is a
+/// non-empty string. ⛔ A present-but-empty key is treated as ABSENT: a host that sends
+/// `{"file_path": ""}` has told us nothing, and reading `""` as a path is how an empty string
+/// reaches a locator that then reports "not found" about a file nobody named.
+fn first_string(input: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .filter_map(|key| input.get(*key).and_then(Value::as_str))
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+/// The path named by an apply-patch body, or `None`.
+///
+/// Codex edits through `apply_patch`, whose payload carries the patch TEXT rather than a path
+/// field — so no key lookup can find the file and the path has to be read out of the body. Bounded
+/// (rule 3): only the first `MAX_PATCH_HEADER_LINES` lines are scanned, because the header sits at
+/// the top and a multi-megabyte patch must not become a full-body scan.
+///
+/// ⚠️ **UNVERIFIED AGAINST A LIVE CODEX PAYLOAD.** The marker strings come from the apply-patch
+/// format, not from a captured Codex `tool_input`. If they are wrong this returns `None` and the
+/// gate abstains exactly as it does today — the failure mode is unchanged, never a WRONG path. The
+/// settling measurement is one real Codex edit with the payload logged; until then
+/// `diagnose_missing_path` is what makes the gap visible instead of silent.
+fn patch_body_path(input: &Value) -> Option<String> {
+    const MAX_PATCH_HEADER_LINES: usize = 64;
+    let body = first_string(input, &["input", "patch", "diff", "arguments"])?;
+    body.lines()
+        .take(MAX_PATCH_HEADER_LINES)
+        .find_map(|line| {
+            let line = line.trim();
+            PATCH_FILE_MARKERS.iter().find_map(|marker| {
+                line.strip_prefix(marker)
+                    .map(str::trim)
+                    .filter(|path| !path.is_empty())
+                    .map(str::to_string)
+            })
+        })
+}
+
+/// What the host DID send, for an abstention that a reader can act on.
+///
+/// 🔴 **AN UNACTIONABLE REFUSAL IS THE DEFECT ONE LAYER OUT.** *"The host payload carried no file
+/// path"* is true and tells nobody which host, which tool, or what it sent instead — so the gap sat
+/// open. Naming the tool and the keys present turns one silent abstention into the bug report that
+/// closes it, and costs nothing: these are KEY NAMES, never values, so no file content and no
+/// secret can ride out through this string.
+fn diagnose_missing_path(payload: &HookPayload) -> String {
+    let mut keys: Vec<&str> = payload
+        .tool_input
+        .as_object()
+        .map(|object| object.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    keys.sort_unstable();
+    let tool = if payload.tool_name.trim().is_empty() {
+        "an unnamed tool".to_string()
+    } else {
+        format!("`{}`", payload.tool_name.trim())
+    };
+    if keys.is_empty() {
+        return format!("{tool} sent a tool_input with no fields at all");
+    }
+    format!("{tool} sent only [{}]", keys.join(", "))
+}
+
+/// `(path, code)` for the edit this hook fired on — across hosts, not just Claude Code.
+///
+/// Returns an EMPTY path only when no strategy found one; `ground_scope` turns that into a named
+/// abstention rather than a pass, which is the behaviour that must not change.
 fn edited_file(payload: &HookPayload) -> (String, String) {
-    let path = payload
-        .tool_input
-        .get("file_path")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    let code = payload
-        .tool_input
-        .get("content")
-        .or_else(|| payload.tool_input.get("new_string"))
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
+    let path = first_string(&payload.tool_input, EDIT_PATH_KEYS)
+        .or_else(|| patch_body_path(&payload.tool_input))
+        .unwrap_or_default();
+    let code = first_string(&payload.tool_input, EDIT_CODE_KEYS).unwrap_or_default();
     (path, code)
 }
 
@@ -5869,6 +5956,145 @@ fn split_flag(values: &[String], flag: &str) -> (Vec<String>, Option<String>) {
 
 #[cfg(test)]
 mod tests {
+
+    /// `edited_file` + `diagnose_missing_path` — the gate was inert on a whole host because the
+    /// path lookup knew one spelling.
+    ///
+    /// Each case names the HOST SHAPE it stands for, because the bug was never "a key was
+    /// missing" in the abstract — it was that Claude Code's `file_path` was the only spelling any
+    /// of these paths could arrive under, so an edit from anywhere else checked zero symbols and
+    /// was allowed through.
+    mod edits_from_any_host {
+        use super::*;
+
+        fn payload(tool_name: &str, tool_input: Value) -> HookPayload {
+            HookPayload {
+                tool_input,
+                tool_name: tool_name.to_string(),
+                tool_response: Value::Null,
+                prompt: String::new(),
+                session_id: "s".to_string(),
+                transcript_path: None,
+                cwd: String::new(),
+                hook_event_name: "PreToolUse".to_string(),
+                agent_transcript_path: None,
+                agent_id: String::new(),
+                agent_type: String::new(),
+            }
+        }
+
+        #[test]
+        fn claude_codes_own_shape_still_works() {
+            let (path, code) = edited_file(&payload(
+                "Write",
+                json!({"file_path": "src/a.py", "content": "def go(): pass"}),
+            ));
+            assert_eq!(path, "src/a.py");
+            assert_eq!(code, "def go(): pass");
+        }
+
+        #[test]
+        fn an_edit_carries_new_string_rather_than_content() {
+            let (path, code) = edited_file(&payload(
+                "Edit",
+                json!({"file_path": "src/b.py", "new_string": "x = 1"}),
+            ));
+            assert_eq!(path, "src/b.py");
+            assert_eq!(code, "x = 1");
+        }
+
+        #[test]
+        fn a_notebook_path_is_a_path() {
+            let (path, _) = edited_file(&payload("NotebookEdit", json!({"notebook_path": "n.py"})));
+            assert_eq!(path, "n.py");
+        }
+
+        #[test]
+        fn a_host_that_spells_it_path_is_understood() {
+            let (path, _) = edited_file(&payload("write_file", json!({"path": "src/c.py"})));
+            assert_eq!(path, "src/c.py");
+        }
+
+        /// The Codex case. ⚠️ The MARKERS are unverified against a live payload (see
+        /// `patch_body_path`); what this pins is that a patch body is SEARCHED at all, which it
+        /// was not before.
+        #[test]
+        fn an_apply_patch_body_yields_the_file_it_edits() {
+            let (path, _) = edited_file(&payload(
+                "apply_patch",
+                json!({"input": "*** Begin Patch\n*** Update File: src/d.py\n@@\n-a\n+b\n*** End Patch"}),
+            ));
+            assert_eq!(path, "src/d.py");
+        }
+
+        #[test]
+        fn an_added_file_is_found_too() {
+            let (path, _) = edited_file(&payload(
+                "apply_patch",
+                json!({"patch": "*** Begin Patch\n*** Add File: src/e.py\n+print(1)\n*** End Patch"}),
+            ));
+            assert_eq!(path, "src/e.py");
+        }
+
+        /// Rule 3: the header scan is bounded, and the bound is the behaviour. A marker below the
+        /// cap is NOT found — stated as a limit rather than left as a surprise.
+        #[test]
+        fn a_marker_past_the_header_bound_is_not_searched_for() {
+            let body = format!("*** Begin Patch\n{}*** Update File: late.py\n", "+x\n".repeat(80));
+            let (path, _) = edited_file(&payload("apply_patch", json!({"input": body})));
+            assert!(path.is_empty(), "expected the bound to hold, got {path:?}");
+        }
+
+        /// A present-but-empty key must read as ABSENT.
+        ///
+        /// 🔴 **THE OBVIOUS SPELLING OF THIS TEST COULD NOT FAIL.** Asserting only that
+        /// `{"file_path": "   "}` yields an empty path passes with or without the emptiness
+        /// filter, because `trim` runs FIRST — mutating `!value.is_empty()` to `true` left it
+        /// green (measured: mutant M3 survived). The clause's real effect is that `Some("")`
+        /// would SHORT-CIRCUIT the `.or_else()` and suppress the patch-body fallback, so the
+        /// case that distinguishes them is an empty key sitting BESIDE a usable body.
+        #[test]
+        fn an_empty_file_path_is_absent_not_a_file_named_nothing() {
+            let (path, _) = edited_file(&payload("Write", json!({"file_path": "   "})));
+            assert!(path.is_empty(), "a blank path is not a file named nothing");
+
+            let (path, _) = edited_file(&payload(
+                "apply_patch",
+                json!({
+                    "file_path": "",
+                    "input": "*** Begin Patch\n*** Update File: src/real.py\n+x\n*** End Patch",
+                }),
+            ));
+            assert_eq!(
+                path, "src/real.py",
+                "an empty key must not shadow a path the body does carry"
+            );
+        }
+
+        /// The diagnosis is what turned this from silent to reportable. It must name the tool and
+        /// the keys — and must NOT be able to carry a value out.
+        #[test]
+        fn the_diagnosis_names_the_tool_and_the_keys_it_received() {
+            let said = diagnose_missing_path(&payload(
+                "apply_patch",
+                json!({"unexpected_key": "/etc/passwd", "another": 1}),
+            ));
+            assert!(said.contains("apply_patch"), "{said}");
+            assert!(said.contains("unexpected_key"), "{said}");
+            assert!(said.contains("another"), "{said}");
+            assert!(
+                !said.contains("/etc/passwd"),
+                "the diagnosis leaked a VALUE, not just a key name: {said}"
+            );
+        }
+
+        #[test]
+        fn a_payload_with_no_fields_at_all_says_so() {
+            let said = diagnose_missing_path(&payload("Write", json!({})));
+            assert!(said.contains("no fields at all"), "{said}");
+        }
+    }
+
     use super::*;
 
     /// 🔴 THE PLACEHOLDER MUST SURVIVE THE WHOLE JOURNEY TO THE CONFIG FILE.
