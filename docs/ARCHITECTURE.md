@@ -65,7 +65,7 @@ that a public-artifact fact; this machine has no ChatGPT-plan credential, so no 
 | Credential onboarding | `tui/src/provider_catalog.rs`, `tui/src/provider_store.rs`, `tui/src/main.rs`, `tui/src/login.rs`, `tui/src/claude_import.rs`, `tui/src/copilot_login.rs`, `tui/src/local_provider.rs`, `tui/src/provider_keys.rs`, `tui/src/doctor.rs` | One provider-data catalogue drives first-run/shell/slash routing, masked input, shared private local-store transactions, presence-only diagnostics, and separate logout radii |
 | ACP adapter | `estelle-acp/` | Editor session protocol backed by the user's selected model credentials |
 | MCP adapter | `estelle-mcp/` | MCP-facing Estelle catalogue; client-provided MCP servers are deliberately rejected |
-| Always-on hooks | `tui/src/top_level.rs`, generated host configuration | One Rust owner generates Claude Code and Codex hook tables; PostToolUse read/edit activity feeds file-shift tracking while Python/Rust decisions remain contract-pinned |
+| Policy-controlled hooks | `tui/src/top_level.rs`, generated host configuration | One Rust owner generates Claude Code and Codex hook tables; PostToolUse read/edit activity feeds file-shift tracking while Python/Rust decisions remain contract-pinned |
 | Public distribution | `.github/workflows/release.yml`, `install.sh`, `npm-shim/` | Explicit SemVer candidate to four native archives, then an exact-SHA immutable tag, checksums, provenance, GitHub Release, npm retirement shim, and independent registry artifact read-back |
 
 ## Server-owned sessions

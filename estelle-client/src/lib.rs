@@ -184,6 +184,7 @@ pub struct Client {
     base_url: Url,
     api_key: ApiKey,
     receipt_path: Option<Arc<PathBuf>>,
+    shed_retries: bool,
 }
 
 impl Client {
@@ -216,7 +217,15 @@ impl Client {
             base_url,
             api_key,
             receipt_path,
+            shed_retries: true,
         })
+    }
+
+    /// Short synchronous hooks must surface capacity failures immediately rather
+    /// than sleeping through the host deadline. Other client callers keep retries.
+    pub fn without_shed_retries(mut self) -> Self {
+        self.shed_retries = false;
+        self
     }
 
     pub fn with_receipt_path(mut self, path: PathBuf) -> Self {
@@ -691,6 +700,9 @@ impl Client {
                 () = cancel.cancelled() => return Err(Error::Cancelled),
                 response = pending.send() => response?,
             };
+            if !self.shed_retries {
+                return Ok(response);
+            }
             let advertised = response
                 .headers()
                 .get(reqwest::header::RETRY_AFTER)

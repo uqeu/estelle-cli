@@ -1,0 +1,332 @@
+{
+  "source_repository": "uqeu/estelle",
+  "source_revision": "cd04b2c4f533c097ee91c55c68c55b9c3da3db44",
+  "description": "Synthetic fixtures executed through existing handle_gate with in-memory swept code. Outbound network denied; no live project or provider calls. Only admission-relevant response fields retained.",
+  "cases": {
+    "valid": {
+      "request": {
+        "diff": "diff --git a/src/estelle/serve/durable_jobs.py b/src/estelle/serve/durable_jobs.py\n--- a/src/estelle/serve/durable_jobs.py\n+++ b/src/estelle/serve/durable_jobs.py\n@@ -4,3 +4,6 @@\n \n     def lease(self, job_id):\n         return job_id\n+\n+def _use():\n+    return DurableJobWorkers(3).lease(\"j1\")\n",
+        "repo": "uqeu/estelle",
+        "head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "require_verified": true,
+        "sources": {
+          "src/estelle/serve/durable_jobs.py": "class DurableJobWorkers:\n    def __init__(self, count):\n        self.count = count\n\n    def lease(self, job_id):\n        return job_id\n\ndef _use():\n    return DurableJobWorkers(3).lease(\"j1\")\n"
+        },
+        "working_tree": {
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "changed": [
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "sources": {
+            "src/estelle/serve/durable_jobs.py": "class DurableJobWorkers:\n    def __init__(self, count):\n        self.count = count\n\n    def lease(self, job_id):\n        return job_id\n\ndef _use():\n    return DurableJobWorkers(3).lease(\"j1\")\n"
+          }
+        }
+      },
+      "response": {
+        "merge": true,
+        "verdict": "clean",
+        "blockers": [],
+        "counts": {
+          "blockers": 0,
+          "warnings": 0,
+          "api_checks": 2,
+          "api_verdicts": 2,
+          "evidence": 1,
+          "symbols_seen": 2,
+          "grounded_by_diff": 0,
+          "hallucinations": 0,
+          "tests_run": 0,
+          "test_regressions": 0,
+          "ruleset": 0
+        },
+        "coverage": {
+          "paths": [
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "inert": [],
+          "out_of_domain": [],
+          "needs_verdict": [
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "state": "undetermined",
+          "note": "1 of 1 changed file(s) call something this gate checks: src/estelle/serve/durable_jobs.py"
+        },
+        "verified": true,
+        "outcome": "verified",
+        "currency": {
+          "checked": false,
+          "repo": "uqeu/estelle",
+          "indexed_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "known": true,
+          "current_head": "",
+          "status": null,
+          "stale": false,
+          "actionable": false,
+          "unknown_because": "",
+          "note": "indexed at e08a9aeb12db; graph currency was not checked on this request \u2014 this is NOT a claim that the graph is up to date",
+          "asked_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "agrees": true,
+          "certifiable": true,
+          "refutes_absence": true
+        },
+        "working_tree": {
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "files": 1,
+          "declared": 1,
+          "undelivered": [],
+          "dropped": [],
+          "complete": true
+        },
+        "repo": "uqeu/estelle",
+        "scope": "repo:uqeu/estelle",
+        "state": "verified-clean"
+      }
+    },
+    "new_definition": {
+      "request": {
+        "diff": "diff --git a/src/estelle/serve/durable_jobs.py b/src/estelle/serve/durable_jobs.py\n--- a/src/estelle/serve/durable_jobs.py\n+++ b/src/estelle/serve/durable_jobs.py\n@@ -4,3 +4,6 @@\n \n     def lease(self, job_id):\n         return job_id\n+\n+def standalone():\n+    return 2\n",
+        "repo": "uqeu/estelle",
+        "head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "require_verified": true,
+        "sources": {
+          "src/estelle/serve/durable_jobs.py": "class DurableJobWorkers:\n    def __init__(self, count):\n        self.count = count\n\n    def lease(self, job_id):\n        return job_id\n\ndef standalone():\n    return 2\n"
+        },
+        "working_tree": {
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "changed": [
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "sources": {
+            "src/estelle/serve/durable_jobs.py": "class DurableJobWorkers:\n    def __init__(self, count):\n        self.count = count\n\n    def lease(self, job_id):\n        return job_id\n\ndef standalone():\n    return 2\n"
+          }
+        }
+      },
+      "response": {
+        "merge": true,
+        "verdict": "clean",
+        "blockers": [],
+        "counts": {
+          "blockers": 0,
+          "warnings": 0,
+          "api_checks": 0,
+          "api_verdicts": 0,
+          "evidence": 1,
+          "symbols_seen": 0,
+          "grounded_by_diff": 0,
+          "hallucinations": 0,
+          "tests_run": 0,
+          "test_regressions": 0,
+          "ruleset": 0
+        },
+        "coverage": {
+          "paths": [
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "inert": [],
+          "out_of_domain": [
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "needs_verdict": [],
+          "state": "clean",
+          "note": "1 of 1 changed file(s) are complete answers \u2014 1 whose added code calls nothing this gate checks, 0 prose/asset"
+        },
+        "verified": true,
+        "outcome": "verified",
+        "currency": {
+          "checked": false,
+          "repo": "uqeu/estelle",
+          "indexed_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "known": true,
+          "current_head": "",
+          "status": null,
+          "stale": false,
+          "actionable": false,
+          "unknown_because": "",
+          "note": "indexed at e08a9aeb12db; graph currency was not checked on this request \u2014 this is NOT a claim that the graph is up to date",
+          "asked_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "agrees": true,
+          "certifiable": true,
+          "refutes_absence": true
+        },
+        "working_tree": {
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "files": 1,
+          "declared": 1,
+          "undelivered": [],
+          "dropped": [],
+          "complete": true
+        },
+        "repo": "uqeu/estelle",
+        "scope": "repo:uqeu/estelle",
+        "state": "verified-clean"
+      }
+    },
+    "blocked": {
+      "request": {
+        "diff": "diff --git a/src/estelle/serve/durable_jobs.py b/src/estelle/serve/durable_jobs.py\n--- a/src/estelle/serve/durable_jobs.py\n+++ b/src/estelle/serve/durable_jobs.py\n@@ -4,3 +4,6 @@\n \n     def lease(self, job_id):\n         return job_id\n+\n+def _use():\n+    return completely_invented_helper_xyz()\n",
+        "repo": "uqeu/estelle",
+        "head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "require_verified": true,
+        "sources": {
+          "src/estelle/serve/durable_jobs.py": "class DurableJobWorkers:\n    def __init__(self, count):\n        self.count = count\n\n    def lease(self, job_id):\n        return job_id\n\ndef _use():\n    return completely_invented_helper_xyz()\n"
+        },
+        "working_tree": {
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "changed": [
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "sources": {
+            "src/estelle/serve/durable_jobs.py": "class DurableJobWorkers:\n    def __init__(self, count):\n        self.count = count\n\n    def lease(self, job_id):\n        return job_id\n\ndef _use():\n    return completely_invented_helper_xyz()\n"
+          }
+        }
+      },
+      "response": {
+        "merge": false,
+        "verdict": "blocked",
+        "blockers": [
+          {
+            "path": "src/estelle/serve/durable_jobs.py",
+            "line": 9,
+            "severity": "error",
+            "body": "`completely_invented_helper_xyz` is not defined in this repo \u2014 likely a hallucinated API; verify it exists before merging.",
+            "symbol": "completely_invented_helper_xyz",
+            "col": 12
+          }
+        ],
+        "counts": {
+          "blockers": 1,
+          "warnings": 0,
+          "api_checks": 1,
+          "api_verdicts": 1,
+          "evidence": 1,
+          "symbols_seen": 1,
+          "grounded_by_diff": 0,
+          "hallucinations": 1,
+          "tests_run": 0,
+          "test_regressions": 0,
+          "ruleset": 0
+        },
+        "coverage": {
+          "paths": [
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "inert": [],
+          "out_of_domain": [],
+          "needs_verdict": [
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "state": "undetermined",
+          "note": "1 of 1 changed file(s) call something this gate checks: src/estelle/serve/durable_jobs.py"
+        },
+        "verified": true,
+        "outcome": "refuted",
+        "currency": {
+          "checked": false,
+          "repo": "uqeu/estelle",
+          "indexed_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "known": true,
+          "current_head": "",
+          "status": null,
+          "stale": false,
+          "actionable": false,
+          "unknown_because": "",
+          "note": "indexed at e08a9aeb12db; graph currency was not checked on this request \u2014 this is NOT a claim that the graph is up to date",
+          "asked_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "agrees": true,
+          "certifiable": true,
+          "refutes_absence": true
+        },
+        "working_tree": {
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "files": 1,
+          "declared": 1,
+          "undelivered": [],
+          "dropped": [],
+          "complete": true
+        },
+        "repo": "uqeu/estelle",
+        "scope": "repo:uqeu/estelle",
+        "state": "verified-blocked"
+      }
+    },
+    "typescript_definition": {
+      "request": {
+        "diff": "diff --git a/src/simple.ts b/src/simple.ts\n--- a/src/simple.ts\n+++ b/src/simple.ts\n@@ -1 +1,2 @@\n export function real(): number { return 1; }\n+export function added(): number { return 2; }\n",
+        "repo": "uqeu/estelle",
+        "head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "require_verified": true,
+        "sources": {
+          "src/simple.ts": "export function real(): number { return 1; }\nexport function added(): number { return 2; }\n"
+        },
+        "working_tree": {
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "changed": [
+            "src/simple.ts"
+          ],
+          "sources": {
+            "src/simple.ts": "export function real(): number { return 1; }\nexport function added(): number { return 2; }\n"
+          }
+        }
+      },
+      "response": {
+        "merge": true,
+        "verdict": "clean",
+        "blockers": [],
+        "counts": {
+          "blockers": 0,
+          "warnings": 0,
+          "api_checks": 0,
+          "api_verdicts": 0,
+          "evidence": 1,
+          "symbols_seen": 0,
+          "grounded_by_diff": 0,
+          "hallucinations": 0,
+          "tests_run": 0,
+          "test_regressions": 0,
+          "ruleset": 0
+        },
+        "coverage": {
+          "paths": [
+            "src/simple.ts"
+          ],
+          "inert": [],
+          "out_of_domain": [
+            "src/simple.ts"
+          ],
+          "needs_verdict": [],
+          "state": "clean",
+          "note": "1 of 1 changed file(s) are complete answers \u2014 1 whose added code calls nothing this gate checks, 0 prose/asset"
+        },
+        "verified": true,
+        "outcome": "verified",
+        "currency": {
+          "checked": false,
+          "repo": "uqeu/estelle",
+          "indexed_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "known": true,
+          "current_head": "",
+          "status": null,
+          "stale": false,
+          "actionable": false,
+          "unknown_because": "",
+          "note": "indexed at e08a9aeb12db; graph currency was not checked on this request \u2014 this is NOT a claim that the graph is up to date",
+          "asked_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "agrees": true,
+          "certifiable": true,
+          "refutes_absence": true
+        },
+        "working_tree": {
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "files": 1,
+          "declared": 1,
+          "undelivered": [],
+          "dropped": [],
+          "complete": true
+        },
+        "repo": "uqeu/estelle",
+        "scope": "repo:uqeu/estelle",
+        "state": "verified-clean"
+      }
+    }
+  }
+}

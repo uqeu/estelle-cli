@@ -1,6 +1,6 @@
 # The Estelle plugin for Claude Code
 
-The Claude Code plugin that ships Estelle's always-on hooks, skills and agents. **It does not ship an
+The Claude Code plugin that ships Estelle's policy-controlled hooks, skills and agents. **It does not ship an
 MCP server** — the server is one user-scope entry named `Estelle`, written by `estelle init`. See
 [why](#-why-this-plugin-stopped-shipping-an-mcp-server-037).
 
@@ -13,7 +13,7 @@ same hosted server — `https://api.fatelabs.ca/mcp` — and none of them runs E
 |---|---|---|---|
 | **1** | **`estelle init`** — *the path* | `estelle init` | **Default.** Writes the MCP config for every editor you have installed — Claude Code, Cursor, Cline, Windsurf, JetBrains, VS Code. Claude Code gets a **user-scope** entry named **`Estelle`**. |
 | **2** | **the remote URL** — *the manual fallback* | `claude mcp add --scope user --transport http Estelle https://api.fatelabs.ca/mcp --header 'Authorization: Bearer ${ESTELLE_API_KEY}'` | When you want to write the entry yourself, script it, or you are not installing the CLI. **Single quotes matter** — the `${...}` must reach the config unexpanded. |
-| **3** | **this plugin** — *hooks, skills, agents* | `/plugin marketplace add uqeu/estelle-cli` then `/plugin install estelle@fatelabs` | Claude Code only. Ships the always-on hooks, 23 skills and 4 agents. **Since 0.3.7 it ships no MCP server**, so it is not a substitute for door 1 or 2. |
+| **3** | **this plugin** — *hooks, skills, agents* | `/plugin marketplace add uqeu/estelle-cli` then `/plugin install estelle@fatelabs` | Claude Code only. Ships generated hook registrations, 23 skills and 4 agents. **Since 0.3.7 it ships no MCP server**, so it is not a substitute for door 1 or 2. |
 
 **Door 1 is the recommendation.** Door 2 is what door 1 writes for you, and it is verified working
 end-to-end: a valid key returns a full `initialize` with tools and prompts, and a bogus key returns
@@ -129,7 +129,7 @@ that heading means **scoped to a project's config**, and we were there only beca
 with `claude mcp add` (which writes `~/.claude.json`) instead of `/plugin install`. Our server entry is
 already `{"type":"http","url":"https://api.fatelabs.ca/mcp"}` — the same class as Stripe's.
 
-## ✅ STATUS: SHIPS THE GENERATED ALWAYS-ON HOOKS
+## Status: generated hooks, conditional on host trust and selected policy
 
 | | Codex | Claude Code |
 |---|---|---|
@@ -159,3 +159,18 @@ claude --plugin-dir ./estelle-plugin       # load it
 claude plugin validate ./estelle-plugin     # run before anything ships
 python3 scripts/test-plugin-identity.py     # identity + version agreement
 ```
+
+## Candidate native runner 0.4.1
+
+A plugin update does not prove that the native runner was upgraded. Required direct-edit
+admission and synchronous deterministic Stop review need runner 0.4.1 or newer, compatible
+server responses, usable credentials and trusted host hook events. Explicit advisory is
+non-enforcing; legacy flagged-only opt-in is separate and never enables Stop repairs.
+Required policy also needs an explicit shell pause/observe choice. Unsupported or unknown
+evidence is not a successful verification, and a hook registration cannot intercept tools
+that the host does not expose.
+
+Stop review does not opt into semantic BYOK or hidden model calls. It can request bounded
+repair of confirmed contradictions, but cannot retract already-streamed text or certify
+arbitrary prose. Read [the native policy and limits](../docs/required-hook-policy.md) before
+choosing enforcement. This source candidate is not evidence of a published native release.

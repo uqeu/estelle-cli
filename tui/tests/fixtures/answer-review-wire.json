@@ -1,0 +1,288 @@
+{
+  "block": {
+    "answer_review": {
+      "schema_version": 1,
+      "disposition": "block",
+      "answer_sha256": "aa644a8fa159ab06be4913450a752907ab537ead0ea3b7f28e56a44ebdf5e36c",
+      "repo": "owner/repo",
+      "indexed_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence_revision": "51fb184f7bf224198275a6902a6a61dded3ac8d18dd4e6a6aaae246888786116",
+      "coverage_complete": true,
+      "material_claims": 1,
+      "checked_claims": 1,
+      "findings": [
+        {
+          "claim": "We do not use PostgreSQL for storage.",
+          "verdict": "contradicted",
+          "reason": "Literal conflict with an active recorded decision.",
+          "evidence": [
+            "key:storage@v1 [account; lifecycle_valid_from=2026-10-20T11:03:01.881888+00:00; valid_until=open]: We use PostgreSQL for storage."
+          ],
+          "repair": "Correct or qualify this statement using the cited decision. If the user changed it, preserve the change and resolve its authority; do not rewrite memory merely to pass.",
+          "checked_by": "literal_decision"
+        }
+      ],
+      "reason": "A supported deterministic check found a contradiction; repair and re-check.",
+      "memory_coverage": {
+        "complete": true,
+        "reason": ""
+      },
+      "checked_scope": "literal_active_decisions_and_simple_indexed_repository_statements",
+      "probabilistic_assessment": false,
+      "index_evidence_revision": "51cb09c6e46b1389275b322eea19301e64c71f7d0e8bcd81c47d745535b6dc39",
+      "currency": "current",
+      "currency_basis": "caller_attested_clean_head_matches_index",
+      "index_snapshot_stable": true,
+      "semantic_review": {
+        "status": "unavailable",
+        "probabilistic": true,
+        "reason": "Semantic assessment was not requested; deterministic coverage only.",
+        "findings": [],
+        "coverage_complete": false
+      }
+    }
+  },
+  "pass": {
+    "answer_review": {
+      "schema_version": 1,
+      "disposition": "pass",
+      "answer_sha256": "799922bd7f4104f19e5f0b194f30d65bbb01a0b0d1e30062c4dc44b0cc972ec3",
+      "repo": "owner/repo",
+      "indexed_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence_revision": "51fb184f7bf224198275a6902a6a61dded3ac8d18dd4e6a6aaae246888786116",
+      "coverage_complete": true,
+      "material_claims": 1,
+      "checked_claims": 1,
+      "findings": [
+        {
+          "claim": "We use PostgreSQL for storage.",
+          "verdict": "supported",
+          "reason": "Exact wording of a recorded decision, not proof of live code behavior.",
+          "evidence": [
+            "key:storage@v1 [account; lifecycle_valid_from=2026-10-20T11:03:01.881888+00:00; valid_until=open]: We use PostgreSQL for storage."
+          ],
+          "repair": "",
+          "checked_by": "literal_decision"
+        }
+      ],
+      "reason": "Every sentence was covered by the declared narrow deterministic checks.",
+      "memory_coverage": {
+        "complete": true,
+        "reason": ""
+      },
+      "checked_scope": "literal_active_decisions_and_simple_indexed_repository_statements",
+      "probabilistic_assessment": false,
+      "index_evidence_revision": "51cb09c6e46b1389275b322eea19301e64c71f7d0e8bcd81c47d745535b6dc39",
+      "currency": "current",
+      "currency_basis": "caller_attested_clean_head_matches_index",
+      "index_snapshot_stable": true,
+      "semantic_review": {
+        "status": "unavailable",
+        "probabilistic": true,
+        "reason": "Semantic assessment was not requested; deterministic coverage only.",
+        "findings": [],
+        "coverage_complete": false
+      }
+    }
+  },
+  "not_applicable": {
+    "answer_review": {
+      "schema_version": 1,
+      "disposition": "not_applicable",
+      "answer_sha256": "1aa7b1c1d5fb1fd6d299eae251a665c7898baeb43d48fb6b8a5b76da6c6ef739",
+      "repo": "owner/repo",
+      "indexed_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence_revision": "51fb184f7bf224198275a6902a6a61dded3ac8d18dd4e6a6aaae246888786116",
+      "coverage_complete": true,
+      "material_claims": 0,
+      "checked_claims": 0,
+      "findings": [],
+      "reason": "Only positively recognized nonfactual acknowledgements were present.",
+      "memory_coverage": {
+        "complete": true,
+        "reason": ""
+      },
+      "checked_scope": "literal_active_decisions_and_simple_indexed_repository_statements",
+      "probabilistic_assessment": false,
+      "index_evidence_revision": "51cb09c6e46b1389275b322eea19301e64c71f7d0e8bcd81c47d745535b6dc39",
+      "currency": "current",
+      "currency_basis": "caller_attested_clean_head_matches_index",
+      "index_snapshot_stable": true,
+      "semantic_review": {
+        "status": "unavailable",
+        "probabilistic": true,
+        "reason": "Semantic assessment was not requested; deterministic coverage only.",
+        "findings": [],
+        "coverage_complete": false
+      }
+    }
+  },
+  "unknown": {
+    "answer_review": {
+      "schema_version": 1,
+      "disposition": "unknown",
+      "answer_sha256": "ab8bb8857fbaed19ff79c4d0b28659a3c7787c3fcdcd2035d61137b80a455bc0",
+      "repo": "owner/repo",
+      "indexed_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence_revision": "51fb184f7bf224198275a6902a6a61dded3ac8d18dd4e6a6aaae246888786116",
+      "coverage_complete": false,
+      "material_claims": 1,
+      "checked_claims": 0,
+      "findings": [
+        {
+          "claim": "I deployed the service successfully.",
+          "verdict": "unverifiable",
+          "reason": "Outside the deterministic checker\u2019s supported shapes; this is not a finding that the statement is false.",
+          "evidence": [],
+          "repair": "Disclose what could not be checked; do not claim this sentence was verified.",
+          "checked_by": "none"
+        }
+      ],
+      "reason": "Some content could not be verified; disclose this limit, do not certify it.",
+      "memory_coverage": {
+        "complete": true,
+        "reason": ""
+      },
+      "checked_scope": "literal_active_decisions_and_simple_indexed_repository_statements",
+      "probabilistic_assessment": false,
+      "index_evidence_revision": "51cb09c6e46b1389275b322eea19301e64c71f7d0e8bcd81c47d745535b6dc39",
+      "currency": "current",
+      "currency_basis": "caller_attested_clean_head_matches_index",
+      "index_snapshot_stable": true,
+      "semantic_review": {
+        "status": "unavailable",
+        "probabilistic": true,
+        "reason": "Semantic assessment was not requested; deterministic coverage only.",
+        "findings": [],
+        "coverage_complete": false
+      }
+    }
+  },
+  "index_block": {
+    "answer_review": {
+      "schema_version": 1,
+      "disposition": "block",
+      "answer_sha256": "4af69cbd06f491ceaece06ce30ac04cf6ece6c29050ffb698d0ab7606ba4eb77",
+      "repo": "owner/repo",
+      "indexed_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence_revision": "51fb184f7bf224198275a6902a6a61dded3ac8d18dd4e6a6aaae246888786116",
+      "coverage_complete": true,
+      "material_claims": 1,
+      "checked_claims": 1,
+      "findings": [
+        {
+          "claim": "There is no `storage_pool` in the repository.",
+          "verdict": "contradicted",
+          "reason": "parsed static source defines `storage_pool`",
+          "evidence": [
+            "src/storage.py:1"
+          ],
+          "repair": "Correct this repository statement against the cited indexed source, then submit the changed final answer for another check.",
+          "checked_by": "index"
+        }
+      ],
+      "reason": "A supported deterministic check found a contradiction; repair and re-check.",
+      "memory_coverage": {
+        "complete": true,
+        "reason": ""
+      },
+      "checked_scope": "literal_active_decisions_and_simple_indexed_repository_statements",
+      "probabilistic_assessment": false,
+      "index_evidence_revision": "51cb09c6e46b1389275b322eea19301e64c71f7d0e8bcd81c47d745535b6dc39",
+      "currency": "current",
+      "currency_basis": "caller_attested_clean_head_matches_index",
+      "index_snapshot_stable": true,
+      "semantic_review": {
+        "status": "unavailable",
+        "probabilistic": true,
+        "reason": "Semantic assessment was not requested; deterministic coverage only.",
+        "findings": [],
+        "coverage_complete": false
+      }
+    }
+  },
+  "index_pass": {
+    "answer_review": {
+      "schema_version": 1,
+      "disposition": "pass",
+      "answer_sha256": "fcf7801dc8edf896675559a61e304b2b6ee2de2b7faf217aba43304e65428cd9",
+      "repo": "owner/repo",
+      "indexed_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence_revision": "51fb184f7bf224198275a6902a6a61dded3ac8d18dd4e6a6aaae246888786116",
+      "coverage_complete": true,
+      "material_claims": 1,
+      "checked_claims": 1,
+      "findings": [
+        {
+          "claim": "`storage_pool` is defined in the repository.",
+          "verdict": "supported",
+          "reason": "parsed static source defines `storage_pool`",
+          "evidence": [
+            "src/storage.py:1"
+          ],
+          "repair": "",
+          "checked_by": "index"
+        }
+      ],
+      "reason": "Every sentence was covered by the declared narrow deterministic checks.",
+      "memory_coverage": {
+        "complete": true,
+        "reason": ""
+      },
+      "checked_scope": "literal_active_decisions_and_simple_indexed_repository_statements",
+      "probabilistic_assessment": false,
+      "index_evidence_revision": "51cb09c6e46b1389275b322eea19301e64c71f7d0e8bcd81c47d745535b6dc39",
+      "currency": "current",
+      "currency_basis": "caller_attested_clean_head_matches_index",
+      "index_snapshot_stable": true,
+      "semantic_review": {
+        "status": "unavailable",
+        "probabilistic": true,
+        "reason": "Semantic assessment was not requested; deterministic coverage only.",
+        "findings": [],
+        "coverage_complete": false
+      }
+    }
+  },
+  "absence_unknown": {
+    "answer_review": {
+      "schema_version": 1,
+      "disposition": "unknown",
+      "answer_sha256": "d3d6e07c711135ba8318ab20fe3d48f4fb0eba985e2c67dadf99037cb90e2491",
+      "repo": "owner/repo",
+      "indexed_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence_revision": "51fb184f7bf224198275a6902a6a61dded3ac8d18dd4e6a6aaae246888786116",
+      "coverage_complete": false,
+      "material_claims": 1,
+      "checked_claims": 0,
+      "findings": [
+        {
+          "claim": "There is no `missing_symbol` in the repository.",
+          "verdict": "unverifiable",
+          "reason": "checker_failed",
+          "evidence": [],
+          "repair": "Disclose what could not be checked; do not claim this sentence was verified.",
+          "checked_by": "none"
+        }
+      ],
+      "reason": "Some content could not be verified; disclose this limit, do not certify it.",
+      "memory_coverage": {
+        "complete": true,
+        "reason": ""
+      },
+      "checked_scope": "literal_active_decisions_and_simple_indexed_repository_statements",
+      "probabilistic_assessment": false,
+      "index_evidence_revision": "51cb09c6e46b1389275b322eea19301e64c71f7d0e8bcd81c47d745535b6dc39",
+      "currency": "current",
+      "currency_basis": "caller_attested_clean_head_matches_index",
+      "index_snapshot_stable": true,
+      "semantic_review": {
+        "status": "unavailable",
+        "probabilistic": true,
+        "reason": "Semantic assessment was not requested; deterministic coverage only.",
+        "findings": [],
+        "coverage_complete": false
+      }
+    }
+  }
+}

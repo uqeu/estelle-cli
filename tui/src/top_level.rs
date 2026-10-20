@@ -76,7 +76,7 @@ fn contract(command: &Command) -> Contract {
         | Command::Connect { .. }
         | Command::Remove
         | Command::Hook { .. }
-        | Command::InstallHooks
+        | Command::InstallHooks { .. }
         | Command::UninstallHooks
         | Command::Install { .. }
         | Command::Uninstall { .. }
@@ -128,7 +128,10 @@ pub(crate) async fn run(command: Command, repo: Repo, root: &Path) -> Result<Vec
             )
             .await
         }
-        Command::InstallHooks => install_hooks(),
+        Command::InstallHooks {
+            policy,
+            shell_policy,
+        } => install_hooks(policy.as_deref(), shell_policy.as_deref()),
         Command::UninstallHooks => uninstall_hooks(),
         Command::Install {
             hosts,
@@ -253,6 +256,12 @@ struct HookPayload {
     /// "the host gave us nothing" as "the host gave us the path `\"\"`".
     #[serde(default, alias = "transcriptPath")]
     transcript_path: Option<String>,
+    #[serde(default)]
+    last_assistant_message: Option<String>,
+    #[serde(default, deserialize_with = "null_is_absent")]
+    turn_id: String,
+    #[serde(default, deserialize_with = "null_is_absent")]
+    stop_hook_active: bool,
     #[serde(default, deserialize_with = "null_is_absent")]
     cwd: String,
     #[serde(default, deserialize_with = "null_is_absent")]
@@ -557,6 +566,21 @@ fn transport_detail(failure: TransportFailure) -> String {
     }
 }
 
+/// Sanitized classifications for short synchronous hooks. No body, URL, key,
+/// header or advertised cooldown is reflected into host control output.
+fn hook_request_failure_detail(error: &Error) -> String {
+    match classify_transport_failure(error) {
+        TransportFailure::Http(status @ (401 | 403)) => format!("the server rejected this CLI credential or its scope (HTTP {status}); inspect estelle doctor and the account/repository access. No credential was removed"),
+        TransportFailure::Http(429) => "the server returned HTTP 429 (rate or capacity limit); wait for capacity and retry. This is not evidence of a missing CLI login".into(),
+        TransportFailure::Http(503) => "the server returned HTTP 503 (temporarily unavailable or overloaded, including exhausted pools); retry after service capacity recovers. This is not a CLI login failure; no automatic hook retry was sent".into(),
+        TransportFailure::Http(status) => format!("the server returned HTTP {status}; the required check did not finish. Inspect service status or request scope before retrying"),
+        TransportFailure::Timeout => "the synchronous hook request timed out; no approval was established. Check service latency and retry; timeout alone does not establish an authentication failure".into(),
+        TransportFailure::BadResponse => "the server response did not match the required JSON contract; retry after service recovery or upgrade the incompatible server".into(),
+        TransportFailure::Unknown => "the required request failed without a classified transport result; no approval was established".into(),
+        other => transport_detail(other),
+    }
+}
+
 async fn run_hook(
     mode: &str,
     expected_event: Option<&str>,
@@ -626,6 +650,7 @@ async fn run_hook_with(
         "sync" => sync_hook(&payload, repo, root).await,
         "distil" => Ok(distil_hook(&payload)),
         "checkpoint" => checkpoint_hook(&payload).await,
+        "review" => Ok(stop_review_hook(&payload, repo, root).await),
         "welcome" => Ok(welcome_hook(&payload).await),
         "context" => context_hook(&payload, repo).await,
         _ => Err(format!(
@@ -644,6 +669,7 @@ fn hook_event_label(mode: &str, expected: Option<&str>, payload: Option<&str>) -
             "ground" | "guard" | "pull" => "PreToolUse",
             "shift" | "sync" | "distil" => "PostToolUse",
             "welcome" => "SessionStart",
+            "review" => "Stop",
             // Both verbs answer more than one event. The label is only ever the FALLBACK — the
             // payload's own `hook_event_name` wins whenever it is present — but a fallback that
             // names one of two doors is a diagnostic that points at the wrong one.
@@ -658,6 +684,9 @@ fn hook_execution_need(mode: &str) -> &'static str {
     match mode {
         "ground" | "sync" | "context" => "a valid Estelle credential and a reachable Estelle API",
         "checkpoint" => "a readable transcript and writable local session state",
+        "review" => {
+            "exact latest assistant output, local repair state, and a reachable scoped Estelle API"
+        }
         "welcome" => "readable local session state and repository history",
         "shift" => "a reachable local Estelle session server",
         "guard" | "distil" | "pull" => "a valid host hook payload",
@@ -671,6 +700,197 @@ fn hook_failure(event: &str, mode: &str, branch: &str, needed: &str, detail: &st
     )
 }
 
+// The host budget leaves room for bounded checkout probes and local state I/O. The HTTP
+// future itself is awaited under the smaller budget; this is never an async/background hook.
+const STOP_REVIEW_HOST_BUDGET_S: u64 = 30;
+const STOP_REVIEW_REQUEST_BUDGET: Duration = Duration::from_secs(20);
+const STOP_REVIEW_GIT_BUDGET: Duration = Duration::from_secs(2);
+const STOP_REVIEW_GIT_MAX_BYTES: u64 = 256 * 1024;
+
+async fn stop_review_hook(payload: &HookPayload, repo: &Repo, root: &Path) -> Vec<String> {
+    let policy = match crate::hook_policy::current() {
+        Ok(policy) => policy,
+        Err(_) => {
+            return vec![
+                crate::stop_review::Issue::new("the hook policy could not be established")
+                    .envelope(),
+            ];
+        }
+    };
+    let state = crate::stop_review::state_dir();
+    stop_review_hook_with(
+        payload,
+        repo,
+        root,
+        state.as_deref(),
+        STOP_REVIEW_REQUEST_BUDGET,
+        policy,
+        Api::resolve,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn stop_review_hook_with<F>(
+    payload: &HookPayload,
+    repo: &Repo,
+    root: &Path,
+    state_directory: Option<&Path>,
+    budget: Duration,
+    policy: crate::hook_policy::Policy,
+    resolve: F,
+) -> Vec<String>
+where
+    F: FnOnce() -> Result<Api, String>,
+{
+    use crate::stop_review::{Issue, LocalReview, ReviewInput, ReviewOutcome};
+    let issue = |reason: &str| vec![Issue::new(reason).envelope()];
+    if payload.hook_event_name != "Stop" {
+        return issue("answer review is only registered for the Stop event");
+    }
+    if policy == crate::hook_policy::Policy::Disabled {
+        return vec![json!({"systemMessage":"Estelle Stop review is disabled by the selected hook policy. This answer was not reviewed or certified."}).to_string()];
+    }
+    if repo.is_unresolved() {
+        return issue("the active repository could not be identified");
+    }
+    if payload.cwd.trim().is_empty()
+        || Path::new(&payload.cwd).canonicalize().ok() != root.canonicalize().ok()
+    {
+        return issue("the host working directory does not match the selected repository root");
+    }
+    let before = stop_checkout_snapshot(root).await;
+    let target = match crate::stop_review::prepare(ReviewInput {
+        repo: repo.as_str(),
+        root,
+        session_id: &payload.session_id,
+        turn_id: Some(&payload.turn_id),
+        agent_id: Some(&payload.agent_id),
+        stop_hook_active: payload.stop_hook_active,
+        last_assistant_message: payload.last_assistant_message.as_deref(),
+        transcript_path: payload.transcript().map(Path::new),
+        head: before.0.as_deref(),
+        working_tree_clean: before.1,
+    }) {
+        Ok(target) => target,
+        Err(problem) => return vec![problem.envelope()],
+    };
+    let Some(directory) = state_directory else {
+        return issue("the local repair-state directory could not be resolved");
+    };
+    let transaction = match LocalReview::open(directory, &target) {
+        Ok(transaction) => transaction,
+        Err(problem) => return vec![problem.envelope()],
+    };
+    let api = match resolve() {
+        Ok(api) => api,
+        Err(_) => return issue("no usable Estelle credential was available; no answer review ran"),
+    };
+    let body = target.request_body();
+    let mut outcome =
+        match tokio::time::timeout(budget, api.post_scoped_hook(Endpoint::Verify, repo, &body))
+            .await
+        {
+            Ok(Ok(response)) => crate::stop_review::parse_report(&target, &response),
+            Ok(Err(error)) => ReviewOutcome::unavailable(hook_request_failure_detail(&error)),
+            Err(_) => ReviewOutcome::unavailable("the synchronous answer-review deadline expired"),
+        };
+    // Never certify current-checkout claims against a state that changed while the request ran.
+    if target.working_tree_clean && stop_checkout_snapshot(root).await != before {
+        outcome = ReviewOutcome::unavailable(
+            "the checkout changed during answer review; no current-checkout result can be certified",
+        );
+    }
+    if !policy.requests_answer_repair()
+        && let ReviewOutcome::NeedsRepair { detail } = outcome
+    {
+        outcome = ReviewOutcome::unavailable(format!(
+            "REPAIR FINDINGS ({} policy, not enforced): {detail}. No repair was requested by this policy",
+            policy.label()
+        ));
+    }
+    match transaction.finish(&target, outcome) {
+        Ok(transition) => vec![transition.envelope],
+        Err(problem) => vec![problem.envelope()],
+    }
+}
+
+/// A single bounded sanitized Git status supplies both HEAD and dirty-state facts. Unknown is
+/// `(None, false)`, never a guessed clean checkout. It invokes no shell, fsmonitor or Git hooks.
+async fn stop_checkout_snapshot(root: &Path) -> (Option<String>, bool) {
+    use tokio::io::AsyncReadExt;
+    let mut command = tokio::process::Command::from(scoped_git(root));
+    command
+        .args([
+            "-c",
+            "core.fsmonitor=false",
+            "status",
+            "--porcelain=v2",
+            "--branch",
+            "-z",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ])
+        .kill_on_drop(true)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped());
+    let result = tokio::time::timeout(STOP_REVIEW_GIT_BUDGET, async {
+        let mut child = command.spawn().ok()?;
+        let stdout = child.stdout.take()?;
+        let mut bytes = Vec::new();
+        stdout
+            .take(STOP_REVIEW_GIT_MAX_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .await
+            .ok()?;
+        if bytes.len() as u64 > STOP_REVIEW_GIT_MAX_BYTES || !child.wait().await.ok()?.success() {
+            return None;
+        }
+        Some(parse_stop_checkout_status(&bytes))
+    })
+    .await;
+    result.ok().flatten().unwrap_or((None, false))
+}
+
+fn parse_stop_checkout_status(bytes: &[u8]) -> (Option<String>, bool) {
+    let mut head = None;
+    let mut clean = true;
+    for record in bytes
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty())
+    {
+        if let Some(oid) = record.strip_prefix(b"# branch.oid ") {
+            if head.is_some() {
+                return (None, false);
+            }
+            let Ok(oid) = std::str::from_utf8(oid) else {
+                return (None, false);
+            };
+            if !matches!(oid.len(), 40 | 64) || !oid.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return (None, false);
+            }
+            head = Some(oid.to_string());
+        } else if record.starts_with(b"# branch.head ")
+            || record.starts_with(b"# branch.upstream ")
+            || record.starts_with(b"# branch.ab ")
+        {
+            continue;
+        } else {
+            // Tracked, untracked, renamed, conflicted, submodule, or unfamiliar output is dirty.
+            clean = false;
+        }
+    }
+    if head.is_none() {
+        clean = false;
+    }
+    (head, clean)
+}
+
+#[cfg(test)]
+#[path = "stop_review_integration_tests.rs"]
+mod stop_review_integration_tests;
+
 /// PreToolUse on Bash: warn on the classic destructive commands, and — separately — redirect a
 /// SEARCH-shaped command toward the graph. Advisory, never blocking — a false-positive hard-block
 /// is its own damage.
@@ -682,6 +902,18 @@ fn hook_failure(event: &str, mode: &str, branch: &str, needed: &str, detail: &st
 /// [`crate::hook_pull::search_intent`] — the same function the `Read|Grep|Glob` door calls, so the
 /// two can never drift.
 fn guard_hook(payload: &HookPayload, repo: &Repo, root: &Path) -> Vec<String> {
+    match crate::hook_policy::current() {
+        Ok(crate::hook_policy::Policy::Required) => {
+            return match crate::hook_policy::current_shell() {
+                Ok(Some(crate::hook_policy::ShellPolicy::Pause)) => required_shell_output(payload),
+                Ok(Some(crate::hook_policy::ShellPolicy::Observe)) => vec![hook_message(Some("Estelle: generic shell operation is UNVERIFIED and allowed only by the owner's explicit shell-policy observe choice. No candidate code change or runtime filesystem effects were certified.".into()),Some("Shell enforcement is not active for this operation. Do not report it as passing the required code gate.".into()),"PreToolUse")],
+                Ok(None) => vec![required_ground_denial("no generic-shell policy was selected; choose --shell-policy pause or observe explicitly rather than assuming shell enforcement")],
+                Err(reason) => vec![required_ground_denial(&reason)],
+            };
+        }
+        Err(reason) => return vec![required_ground_denial(&reason)],
+        _ => {}
+    }
     let command = payload
         .tool_input
         .get("command")
@@ -701,6 +933,13 @@ fn guard_hook(payload: &HookPayload, repo: &Repo, root: &Path) -> Vec<String> {
     }
     lines.extend(pull_hook(payload, repo, root));
     lines
+}
+
+fn required_shell_output(payload: &HookPayload) -> Vec<String> {
+    match crate::hook_shell_policy::check(&payload.tool_name, &payload.tool_input) {
+        Ok(()) => vec![hook_message(Some("Estelle: this exact permitted shell builtin presents no code-change candidate. No code was verified; shell hooks are not a filesystem security boundary.".into()), None, "PreToolUse")],
+        Err(reason) => vec![required_ground_denial(&reason)],
+    }
 }
 
 /// PreToolUse on `Read|Grep|Glob` (and, through [`guard_hook`], on a search-shaped `Bash`) —
@@ -2148,11 +2387,11 @@ fn ground_report(
             // and "we could not be sure" send a reader to different places.
             FlaggedOutcome::NotOptedIn => GroundOutput::advisory(
                 format!(
-                    "Estelle flagged {name}: {detail}. Refusing is off ({block_env} is not set), so the edit was not blocked.",
+                    "Estelle flagged {name}: {detail}. Refusing is off for the selected policy (legacy {block_env} compatibility is not active), so the edit was not blocked.",
                     block_env = ground_block::BLOCK_ENV
                 ),
                 Some(format!(
-                    "Estelle's grounding gate flagged this edit to {path}: {detail}. NOT BLOCKED, and the reason is configuration rather than doubt: refusing edits is opt-in and {block_env} is not set on this install. The finding itself stands - treat the flagged symbol as one Estelle could not find.",
+                    "Estelle's grounding gate flagged this edit to {path}: {detail}. NOT BLOCKED, and the reason is configuration rather than doubt: the effective policy does not enable legacy {block_env} refusal. An explicit advisory policy overrides that old opt-in. The finding itself stands - treat the flagged symbol as one Estelle could not find.",
                     block_env = ground_block::BLOCK_ENV
                 )),
             ),
@@ -2175,10 +2414,307 @@ fn ground_report(
     }
 }
 
+/// Required mode is explicitly selected at installation. Existing advisory/disabled
+/// choices remain visible and are never described as successful verification.
 async fn ground_hook(
     payload: &HookPayload,
     repo: &Repo,
     root: &Path,
+) -> Result<Vec<String>, String> {
+    use crate::hook_policy::Policy;
+    match crate::hook_policy::current() {
+        Ok(policy @ (Policy::Advisory | Policy::LegacyFlaggedOnly)) => {
+            legacy_ground_hook(payload, repo, root, policy.legacy_refusal_enabled()).await
+        }
+        Ok(Policy::Disabled) => Ok(vec![hook_message(
+            Some("Estelle API grounding is disabled by explicit policy. This edit was not checked or certified.".into()),
+            Some("The owner disabled API grounding; do not treat this edit as verified.".into()),
+            "PreToolUse",
+        )]),
+        Ok(Policy::Required) => {
+            let outcome = tokio::time::timeout(Duration::from_secs(27), required_ground(payload, repo, root)).await;
+            Ok(vec![match outcome {
+                Ok(Ok(message)) => hook_message(Some(message), None, "PreToolUse"),
+                Ok(Err(reason)) => required_ground_denial(&reason),
+                Err(_) => required_ground_denial("the complete required gate check exceeded 27 seconds; retry after service recovery or explicitly change the policy"),
+            }])
+        }
+        Err(reason) => Ok(vec![required_ground_denial(&reason)]),
+    }
+}
+
+fn required_ground_denial(reason: &str) -> String {
+    let reason = format!(
+        "Estelle paused this edit: {reason}. Repair the finding or restore the required evidence, then retry the edit. The code has not been certified."
+    );
+    hook_envelope(
+        Some(reason.clone()),
+        Some(reason.clone()),
+        "PreToolUse",
+        Some(&reason),
+    )
+}
+
+async fn required_ground(
+    payload: &HookPayload,
+    repo: &Repo,
+    root: &Path,
+) -> Result<String, String> {
+    required_ground_with(payload, repo, root, Duration::from_secs(20), Api::resolve).await
+}
+
+async fn required_ground_with<F>(
+    payload: &HookPayload,
+    repo: &Repo,
+    root: &Path,
+    budget: Duration,
+    resolve: F,
+) -> Result<String, String>
+where
+    F: FnOnce() -> Result<Api, String>,
+{
+    if payload.hook_event_name != "PreToolUse" {
+        return Err("candidate admission is only supported at PreToolUse".into());
+    }
+    if payload.cwd.trim().is_empty() {
+        return Err("the host supplied no working-directory scope".into());
+    }
+    let root = root
+        .canonicalize()
+        .map_err(|_| "the project root could not be resolved")?;
+    let prepared = crate::hook_edit_input::prepare(
+        &payload.tool_name,
+        &payload.tool_input,
+        &root,
+        &payload.cwd,
+    )
+    .await?;
+    let files = prepared.gate_files()?;
+    if files
+        .iter()
+        .all(|file| !file.has_added_code && file.candidate_diff.is_none())
+    {
+        if !prepared.unchanged() {
+            return Err("the source changed during operation inspection".into());
+        }
+        return Ok("Estelle API-reference introduction check: not applicable for a whole-file deletion, unchanged file or empty candidate. Deletion/rename dependency impact and overall correctness were not checked.".into());
+    }
+    if repo.is_unresolved() {
+        return Err("the active repository could not be identified".into());
+    }
+    let git_root = bounded_hook_git(&root, &["rev-parse", "--show-toplevel"]).await?;
+    let git_root = std::str::from_utf8(&git_root)
+        .map_err(|_| "git root is not UTF-8")?
+        .trim_end_matches(['\n', '\r']);
+    if Path::new(git_root).canonicalize().ok().as_ref() != Some(&root) {
+        return Err("required admission currently needs the host cwd at the repository root; restart the session there so gate paths cannot be rebound".into());
+    }
+    let baseline = required_checkout_snapshot(&root).await?;
+    let mut sources = baseline.sources.clone();
+    let mut deleted = baseline.deleted.clone();
+    for (path, content) in prepared.post_images()? {
+        deleted.remove(&path);
+        sources.insert(path, content);
+    }
+    for path in prepared.deleted_paths()? {
+        sources.remove(&path);
+        deleted.insert(path);
+    }
+    let deleted = deleted.into_iter().collect::<Vec<_>>();
+    let total = sources.values().map(String::len).sum::<usize>();
+    if sources.len() + deleted.len() > crate::hook_edit_input::MAX_EDIT_FILES
+        || total > crate::hook_edit_input::MAX_TOTAL_BYTES
+    {
+        return Err(
+            "the complete dirty-tree and candidate overlay exceeds its bounded verification scope"
+                .into(),
+        );
+    }
+    for (path, text) in &sources {
+        if let Some((shape, line)) = estelle_client::find_secret_shape(text) {
+            return Err(format!(
+                "{path} contains possible credential material ({shape} at line {line}); it was not sent to the gate"
+            ));
+        }
+    }
+    let api = resolve().map_err(|_| NO_CREDENTIAL_DETAIL.to_string())?;
+    let checked = crate::hook_gate_review::check_with_deletions(
+        &files,
+        repo.as_str(),
+        &baseline.head,
+        &sources,
+        &deleted,
+        budget,
+        |body| {
+            let api = &api;
+            async move {
+                api.post_scoped_hook(Endpoint::Gate, repo, &body)
+                    .await
+                    .map_err(|error| hook_request_failure_detail(&error))
+            }
+        },
+    )
+    .await?;
+    if !prepared.unchanged() || required_checkout_snapshot(&root).await? != baseline {
+        return Err(
+            "the checkout changed during candidate verification; retry against its new state"
+                .into(),
+        );
+    }
+    Ok(format!(
+        "Estelle admitted {checked} candidate file(s) within the existing gate's API/import/ruleset scope. The actual diff and complete surviving candidate were distinguished; pre-existing candidate issues are not labelled newly introduced. Tests, deletion impact and whole-program correctness are not certified."
+    ))
+}
+
+fn scoped_git(root: &Path) -> ProcessCommand {
+    let mut command = ProcessCommand::new("git");
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
+    }
+    command
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .args([
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "core.fsmonitor=false",
+            "-C",
+        ])
+        .arg(root);
+    command
+}
+
+async fn bounded_hook_git(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    use tokio::io::AsyncReadExt;
+    let mut command = tokio::process::Command::from(scoped_git(root));
+    command
+        .args(args)
+        .kill_on_drop(true)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped());
+    tokio::time::timeout(Duration::from_secs(2), async {
+        let mut child = command
+            .spawn()
+            .map_err(|_| "checkout inspection could not start")?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or("checkout inspection stdout was unavailable")?;
+        let mut bytes = Vec::new();
+        stdout
+            .take(256 * 1024 + 1)
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(|_| "checkout inspection failed")?;
+        if bytes.len() > 256 * 1024
+            || !child
+                .wait()
+                .await
+                .map_err(|_| "checkout inspection could not finish")?
+                .success()
+        {
+            return Err("checkout inspection failed or exceeded its byte bound".to_string());
+        }
+        Ok(bytes)
+    })
+    .await
+    .map_err(|_| "checkout inspection exceeded its two-second deadline".to_string())?
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct RequiredCheckout {
+    head: String,
+    status: Vec<u8>,
+    sources: std::collections::BTreeMap<String, String>,
+    deleted: std::collections::BTreeSet<String>,
+}
+async fn required_checkout_snapshot(root: &Path) -> Result<RequiredCheckout, String> {
+    let head = bounded_hook_git(root, &["rev-parse", "--verify", "HEAD"]).await?;
+    let head = std::str::from_utf8(&head)
+        .map_err(|_| "HEAD is not UTF-8")?
+        .trim()
+        .to_string();
+    if !matches!(head.len(), 40 | 64) || !head.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("checkout has no valid commit HEAD".into());
+    }
+    let status = bounded_hook_git(
+        root,
+        &[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ],
+    )
+    .await?;
+    let mut paths = std::collections::BTreeSet::new();
+    let mut records = status.split(|byte| *byte == 0);
+    while let Some(record) = records.next() {
+        if record.is_empty() {
+            continue;
+        }
+        if record.len() < 4 || record[2] != b' ' {
+            return Err("checkout status is malformed".into());
+        }
+        if record[..2].contains(&b'U') || &record[..2] == b"AA" || &record[..2] == b"DD" {
+            return Err(
+                "resolve the checkout's merge conflicts before required verification".into(),
+            );
+        }
+        let path = std::str::from_utf8(&record[3..]).map_err(|_| "a dirty path is not UTF-8")?;
+        paths.insert(path.to_string());
+        if record[..2].contains(&b'R') || record[..2].contains(&b'C') {
+            let old = records.next().ok_or("rename status is incomplete")?;
+            paths.insert(
+                std::str::from_utf8(old)
+                    .map_err(|_| "a renamed path is not UTF-8")?
+                    .to_string(),
+            );
+        }
+    }
+    if paths.len() > crate::hook_edit_input::MAX_EDIT_FILES {
+        return Err("too many dirty paths for the required working-tree snapshot".into());
+    }
+    let mut sources = std::collections::BTreeMap::new();
+    let mut total = 0;
+    let mut deleted = std::collections::BTreeSet::new();
+    for path in paths {
+        let Some(bytes) = crate::hook_edit_input::scoped_source_bytes(root, &path)? else {
+            deleted.insert(path);
+            continue;
+        };
+        total += bytes.len();
+        if total > crate::hook_edit_input::MAX_TOTAL_BYTES {
+            return Err("dirty-tree source exceeds the verification byte bound".into());
+        }
+        let text = String::from_utf8(bytes).map_err(
+            |_| "a dirty file is binary or not UTF-8; the full scope cannot be verified",
+        )?;
+        sources.insert(path, text);
+    }
+    Ok(RequiredCheckout {
+        head,
+        status,
+        sources,
+        deleted,
+    })
+}
+
+#[cfg(test)]
+#[path = "required_ground_tests.rs"]
+mod required_ground_tests;
+
+async fn legacy_ground_hook(
+    payload: &HookPayload,
+    repo: &Repo,
+    root: &Path,
+    blocking: bool,
 ) -> Result<Vec<String>, String> {
     let (path, code) = edited_file(payload);
     // 🔴 OUT OF SCOPE IS AN ANSWER, NOT A SILENCE. This used to `return Ok(Vec::new())`, which the
@@ -2240,7 +2776,7 @@ async fn ground_hook(
         name,
         &path,
         repo,
-        ground_block::blocking_enabled(),
+        blocking,
         || index_is_current_for(repo, root),
     )])
 }
@@ -2492,17 +3028,15 @@ fn first_string(input: &Value, keys: &[&str]) -> Option<String> {
 fn patch_body_path(input: &Value) -> Option<String> {
     const MAX_PATCH_HEADER_LINES: usize = 64;
     let body = first_string(input, &["input", "patch", "diff", "arguments"])?;
-    body.lines()
-        .take(MAX_PATCH_HEADER_LINES)
-        .find_map(|line| {
-            let line = line.trim();
-            PATCH_FILE_MARKERS.iter().find_map(|marker| {
-                line.strip_prefix(marker)
-                    .map(str::trim)
-                    .filter(|path| !path.is_empty())
-                    .map(str::to_string)
-            })
+    body.lines().take(MAX_PATCH_HEADER_LINES).find_map(|line| {
+        let line = line.trim();
+        PATCH_FILE_MARKERS.iter().find_map(|marker| {
+            line.strip_prefix(marker)
+                .map(str::trim)
+                .filter(|path| !path.is_empty())
+                .map(str::to_string)
         })
+    })
 }
 
 /// What the host DID send, for an abstention that a reader can act on.
@@ -2791,17 +3325,39 @@ fn hook_sync_refusal(path: &str, content: &str) -> Option<String> {
 /// in meaning and still pass.
 const PORTABLE_HOOK_RUNNER: &str = "estelle";
 
-fn install_hooks() -> Result<Vec<String>, String> {
+fn install_hooks(policy: Option<&str>, shell: Option<&str>) -> Result<Vec<String>, String> {
+    let selected_policy = policy.map(crate::hook_policy::Policy::parse).transpose()?;
+    let selected_shell = shell
+        .map(crate::hook_policy::ShellPolicy::parse)
+        .transpose()?;
+    let effective_policy = selected_policy.unwrap_or(crate::hook_policy::current()?);
+    let effective_shell = selected_shell.or(crate::hook_policy::current_shell()?);
+    // A no-policy refresh may preserve the old environment-only opt-in. Never
+    // serialize that compatibility mode when changing any new policy setting.
+    if effective_policy != crate::hook_policy::Policy::LegacyFlaggedOnly
+        || selected_policy.is_some()
+        || selected_shell.is_some()
+    {
+        crate::hook_policy::validate_install(effective_policy, effective_shell)?;
+    }
     let claude_path = claude_settings_path()?;
     let codex_path = codex_hooks_path()?;
     let runner = PORTABLE_HOOK_RUNNER;
     install_hooks_at(&claude_path, HookHost::Claude, runner)?;
     install_hooks_at(&codex_path, HookHost::Codex, runner)?;
+    if selected_policy.is_some() || selected_shell.is_some() {
+        crate::hook_policy::install(effective_policy, effective_shell)?;
+    }
+    let policy = crate::hook_policy::current()?;
     Ok(vec![
-        "Estelle hooks installed for the full session lifecycle (ground, guard, sync, distil, checkpoint, welcome, context).".to_string(),
+        format!("Grounding policy: {}. Only required pauses unverifiable code changes; advisory is non-enforcing. Legacy flagged-only can refuse fresh positive findings but is not required admission; skipped checks are never certified. Explicit ESTELLE_HOOK_POLICY or legacy opt-out may override the saved policy.", policy.label()),
+        format!("Generic shell policy: {}. No generic shell operation is certified by this hook.", crate::hook_policy::current_shell()?.map(crate::hook_policy::ShellPolicy::label).unwrap_or("not selected")),
+        "Estelle hooks installed for the full session lifecycle (ground, guard, sync, distil, review, checkpoint, welcome, context).".to_string(),
         format!("Claude Code settings: {}", claude_path.display()),
         format!("Codex hooks: {}", codex_path.display()),
         "Both files were generated from one hook table. Existing settings and non-Estelle hooks were preserved.".to_string(),
+        format!("Native runner {} wrote these hooks. Candidate admission and answer repair require runner 0.4.1 or newer; a plugin refresh alone does not upgrade the selected binary.", env!("CARGO_PKG_VERSION")),
+        "Review new or modified hook trust in each host's /hooks UI and restart the session. This installer has not verified the host's active runner or trust state.".to_string(),
     ])
 }
 
@@ -2983,7 +3539,7 @@ struct HookRow {
 const HOOK_TABLE: &[HookRow] = &[
     HookRow {
         event: "PreToolUse",
-        matcher: Some("Write|Edit"),
+        matcher: Some("Write|Edit|apply_patch"),
         mode: "ground",
         timeout: 30,
         claude_async: false,
@@ -2992,7 +3548,7 @@ const HOOK_TABLE: &[HookRow] = &[
     },
     HookRow {
         event: "PreToolUse",
-        matcher: Some("Bash"),
+        matcher: Some("Bash|shell_command|exec_command"),
         mode: "guard",
         timeout: 10,
         claude_async: false,
@@ -3052,6 +3608,17 @@ const HOOK_TABLE: &[HookRow] = &[
         matcher: Some("Bash"),
         mode: "distil",
         timeout: 10,
+        claude_async: false,
+        plugin: true,
+        plugin_async: false,
+    },
+    // Semantic review must finish before the host accepts the answer. Checkpoint remains a
+    // separate persistence concern and may run asynchronously only on supported hosts.
+    HookRow {
+        event: "Stop",
+        matcher: None,
+        mode: "review",
+        timeout: STOP_REVIEW_HOST_BUDGET_S,
         claude_async: false,
         plugin: true,
         plugin_async: false,
@@ -3380,14 +3947,16 @@ fn plugin_hook_command_resolves_from_disk(command: &str) -> Option<String> {
 /// The replacement names the real owner: [`HOOK_TABLE`] in this file, rendered by
 /// [`plugin_hooks_manifest`] and pinned byte-for-byte by
 /// `the_plugin_manifest_is_generated_from_the_one_hook_table`.
-const PLUGIN_MANIFEST_DESCRIPTION: &str = "Estelle — memory + the grounding gate, always on. \
+const PLUGIN_MANIFEST_DESCRIPTION: &str = "Estelle — repository memory and scoped checks, with explicit enforcement policy. \
     GENERATED from `HOOK_TABLE` in tui/src/top_level.rs; do not edit this file — change that \
     table and re-run its test with ESTELLE_REGENERATE_PLUGIN_HOOKS=1. These hooks execute \
     commands on the customer's machine: the runner is resolved through the `latest` dist-tag \
     rather than the major-version range ADR 0015 chose, because a range is a satisfaction test \
     against the customer's disk and no publish could move them off a stale copy (measured, see \
     PLUGIN_HOOK_RUNNER); every settings write is backup-before-write and refuses an unparseable \
-    file.";
+    file. Required candidate admission and synchronous answer review require native runner \
+    0.4.1 or newer; a plugin-only update does not prove that the runner was upgraded. Review \
+    modified hook trust in the host and restart the session.";
 
 #[cfg(test)]
 /// The PLUGIN door's manifest — `estelle-plugin/hooks/hooks.json` — rendered from [`HOOK_TABLE`].
@@ -3616,6 +4185,20 @@ impl Api {
         self.finish(result, endpoint.path())
     }
 
+    /// A synchronous hook cannot spend its budget on an advertised background cooldown.
+    async fn post_scoped_hook(
+        &self,
+        endpoint: Endpoint,
+        repo: &Repo,
+        body: &Value,
+    ) -> Result<Value, Error> {
+        self.client
+            .clone()
+            .without_shed_retries()
+            .post_scoped(endpoint, repo, body, &self.cancel)
+            .await
+    }
+
     /// The TYPED error, for the one caller that must say WHICH transport failure happened.
     ///
     /// `finish` formats an error for display, and a formatted `String` is both unclassifiable
@@ -3676,7 +4259,7 @@ async fn run_authenticated(
         | Command::Connect { .. }
         | Command::Remove
         | Command::Hook { .. }
-        | Command::InstallHooks
+        | Command::InstallHooks { .. }
         | Command::UninstallHooks
         | Command::Install { .. }
         | Command::Uninstall { .. }
@@ -4436,10 +5019,8 @@ async fn reindex(
 /// the baseline permanently UNKNOWN for the ingest path that built the graph). The field is
 /// omitted when HEAD cannot be read — never invented.
 fn git_head(root: &Path) -> Option<String> {
-    let output = ProcessCommand::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["rev-parse", "HEAD"])
+    let output = scoped_git(root)
+        .args(["rev-parse", "--verify", "HEAD"])
         .output()
         .ok()?;
     if !output.status.success() {
@@ -5975,6 +6556,9 @@ mod tests {
                 prompt: String::new(),
                 session_id: "s".to_string(),
                 transcript_path: None,
+                last_assistant_message: None,
+                turn_id: String::new(),
+                stop_hook_active: false,
                 cwd: String::new(),
                 hook_event_name: "PreToolUse".to_string(),
                 agent_transcript_path: None,
@@ -6040,7 +6624,10 @@ mod tests {
         /// cap is NOT found — stated as a limit rather than left as a surprise.
         #[test]
         fn a_marker_past_the_header_bound_is_not_searched_for() {
-            let body = format!("*** Begin Patch\n{}*** Update File: late.py\n", "+x\n".repeat(80));
+            let body = format!(
+                "*** Begin Patch\n{}*** Update File: late.py\n",
+                "+x\n".repeat(80)
+            );
             let (path, _) = edited_file(&payload("apply_patch", json!({"input": body})));
             assert!(path.is_empty(), "expected the bound to hold, got {path:?}");
         }
@@ -6351,7 +6938,10 @@ mod tests {
     /// that is the correct direction to be wrong in.
     #[tokio::test]
     async fn live_socket_failures_are_named_by_the_classifier() {
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("client");
         // Port 1 on loopback: nothing listens, the kernel refuses, no network is touched.
         let refused = client
             .get("http://127.0.0.1:1/verify")
@@ -6371,16 +6961,27 @@ mod tests {
             classify_transport_failure(&Error::Transport(dns)),
             TransportFailure::Dns
         );
-        // 10.255.255.1 black-holes rather than refusing, so the client's own deadline fires.
+        // A loopback peer accepts but never answers. Unlike a supposedly
+        // black-holed remote IP, this exercises timeout without proxy or routing assumptions.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("loopback");
+        let address = listener.local_addr().expect("address");
+        let waiting = tokio::spawn(async move {
+            let (_stream, _) = listener.accept().await.expect("accept");
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        });
         let slow = reqwest::Client::builder()
-            .timeout(Duration::from_millis(1))
+            .no_proxy()
+            .timeout(Duration::from_millis(50))
             .build()
             .expect("client");
         let timeout = slow
-            .get("http://10.255.255.1/verify")
+            .get(format!("http://{address}/verify"))
             .send()
             .await
-            .expect_err("a 1ms deadline must fire");
+            .expect_err("non-answering loopback peer must time out");
+        waiting.abort();
         assert_eq!(
             classify_transport_failure(&Error::Transport(timeout)),
             TransportFailure::Timeout
@@ -6504,7 +7105,7 @@ mod tests {
                 GroundKind::Flagged,
                 FlaggedOutcome::NotOptedIn,
                 "not defined in this repo: frobnicate",
-                "Estelle flagged billing.py: not defined in this repo: frobnicate. Refusing is off (ESTELLE_HOOK_BLOCK is not set), so the edit was not blocked.",
+                "Estelle flagged billing.py: not defined in this repo: frobnicate. Refusing is off for the selected policy (legacy ESTELLE_HOOK_BLOCK compatibility is not active), so the edit was not blocked.",
             ),
             (
                 GroundKind::Flagged,
@@ -6783,6 +7384,33 @@ mod tests {
     /// The two allow-branches of a FLAGGED finding must not be one message. "We chose not to stop"
     /// and "we could not be sure" send a reader to different places, and the twin's single line
     /// blamed freshness for both.
+    #[test]
+    fn selected_advisory_never_emits_legacy_denial_but_implicit_legacy_still_can() {
+        let repo = Repo::new("acme/widgets").expect("repo");
+        let verdict = GroundVerdict {
+            kind: GroundKind::Flagged,
+            detail: "missing API".into(),
+        };
+        for policy in [
+            crate::hook_policy::Policy::Advisory,
+            crate::hook_policy::Policy::LegacyFlaggedOnly,
+        ] {
+            let parsed: Value = serde_json::from_str(&ground_envelope(
+                &verdict,
+                "probe.py",
+                "src/probe.py",
+                &repo,
+                policy.legacy_refusal_enabled(),
+                || true,
+            ))
+            .expect("JSON");
+            assert_eq!(
+                parsed["hookSpecificOutput"]["permissionDecision"].as_str() == Some("deny"),
+                policy.legacy_refusal_enabled()
+            );
+        }
+    }
+
     #[test]
     fn the_two_allowed_flagged_branches_name_which_reason_it_was() {
         let repo = Repo::new("acme/widgets").expect("repo");
@@ -7667,7 +8295,7 @@ tests/test_serve.py:88: AssertionError\n\
             installed["hooks"]["PostToolUse"].as_array().map(Vec::len),
             Some(4)
         );
-        assert_eq!(installed["hooks"]["Stop"].as_array().map(Vec::len), Some(2));
+        assert_eq!(installed["hooks"]["Stop"].as_array().map(Vec::len), Some(3));
         assert_eq!(installed["hooks"]["Stop"][0], original["hooks"]["Stop"][0]);
         assert!(backup_path(&path).exists());
 
@@ -7717,6 +8345,9 @@ tests/test_serve.py:88: AssertionError\n\
             prompt: String::new(),
             session_id: session_id.to_string(),
             transcript_path: None,
+            last_assistant_message: None,
+            turn_id: String::new(),
+            stop_hook_active: false,
             cwd: root.path().display().to_string(),
             hook_event_name: "PostToolUse".to_string(),
             // Not a subagent event: spelled out rather than defaulted so a new field on
@@ -7765,7 +8396,7 @@ tests/test_serve.py:88: AssertionError\n\
 
         assert_eq!(parsed.hooks.pre_tool_use.len(), 3);
         assert_eq!(parsed.hooks.post_tool_use.len(), 3);
-        assert_eq!(parsed.hooks.stop.len(), 1);
+        assert_eq!(parsed.hooks.stop.len(), 2);
         assert_eq!(parsed.hooks.pre_compact.len(), 1);
         assert_eq!(parsed.hooks.session_end.len(), 1);
         assert_eq!(parsed.hooks.session_start.len(), 1);
@@ -7775,7 +8406,7 @@ tests/test_serve.py:88: AssertionError\n\
         // and lose the door — a count alone cannot tell those apart.
         assert_eq!(parsed.hooks.subagent_start.len(), 1);
         assert_eq!(parsed.hooks.subagent_stop.len(), 1);
-        assert_eq!(parsed.hooks.handler_count(), 13);
+        assert_eq!(parsed.hooks.handler_count(), 14);
         for (_event, groups) in parsed.hooks.into_matcher_groups() {
             for group in &groups {
                 for handler in &group.hooks {
@@ -7804,13 +8435,19 @@ tests/test_serve.py:88: AssertionError\n\
         // compared the two doors. `the_plugin_manifest_is_generated_from_the_one_hook_table` is
         // the comparison that was missing; these literals are the second, independent statement
         // of the same contract, and they are meant to be edited deliberately, together.
-        let expected: [(&str, Option<&str>, &str, u64); 13] = [
-            ("PreToolUse", Some("Write|Edit"), "ground", 30),
-            ("PreToolUse", Some("Bash"), "guard", 10),
+        let expected: [(&str, Option<&str>, &str, u64); 14] = [
+            ("PreToolUse", Some("Write|Edit|apply_patch"), "ground", 30),
+            (
+                "PreToolUse",
+                Some("Bash|shell_command|exec_command"),
+                "guard",
+                10,
+            ),
             ("PreToolUse", Some("Read|Grep|Glob"), "pull", 5),
             ("PostToolUse", Some("Read|Write|Edit"), "shift", 5),
             ("PostToolUse", Some("Write|Edit"), "sync", 30),
             ("PostToolUse", Some("Bash"), "distil", 10),
+            ("Stop", None, "review", 30),
             ("Stop", None, "checkpoint", 30),
             ("SubagentStop", None, "checkpoint", 30),
             ("PreCompact", None, "checkpoint", 30),
@@ -7884,13 +8521,19 @@ tests/test_serve.py:88: AssertionError\n\
         merge_estelle_hooks(&mut value, HookHost::Codex, "estelle").expect("hook declaration");
         let hooks = &value["hooks"];
 
-        let expected: [(&str, Option<&str>, &str, u64); 13] = [
-            ("PreToolUse", Some("Write|Edit"), "ground", 30),
-            ("PreToolUse", Some("Bash"), "guard", 10),
+        let expected: [(&str, Option<&str>, &str, u64); 14] = [
+            ("PreToolUse", Some("Write|Edit|apply_patch"), "ground", 30),
+            (
+                "PreToolUse",
+                Some("Bash|shell_command|exec_command"),
+                "guard",
+                10,
+            ),
             ("PreToolUse", Some("Read|Grep|Glob"), "pull", 5),
             ("PostToolUse", Some("Read|Write|Edit"), "shift", 5),
             ("PostToolUse", Some("Write|Edit"), "sync", 30),
             ("PostToolUse", Some("Bash"), "distil", 10),
+            ("Stop", None, "review", 30),
             ("Stop", None, "checkpoint", 30),
             ("SubagentStop", None, "checkpoint", 30),
             ("PreCompact", None, "checkpoint", 30),

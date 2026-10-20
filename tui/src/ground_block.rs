@@ -149,7 +149,8 @@ pub fn ground_scope(path: &str, code: &str) -> GroundScope {
     GroundScope::Analysable
 }
 
-/// Is refusing switched on for this install? Reads the process environment.
+/// Legacy environment-only reader. Modern policy resolution must decide whether
+/// this compatibility opt-in is applicable before permitting a refusal.
 pub fn blocking_enabled() -> bool {
     blocking_enabled_from(std::env::var(BLOCK_ENV).ok().as_deref())
 }

@@ -41,8 +41,12 @@ mod gate_refusal;
 mod graph_view;
 mod history_import;
 mod hook_distil;
+mod hook_edit_input;
+mod hook_gate_review;
 mod hook_guard;
+mod hook_policy;
 mod hook_pull;
+mod hook_shell_policy;
 mod hook_timings;
 mod host_install;
 mod keys_view;
@@ -63,6 +67,7 @@ mod screens;
 mod session_server;
 mod session_view;
 mod setup_flow;
+mod stop_review;
 /// The `SubagentStart` door: a subagent inherits the grounding the parent already paid for.
 mod subagent_context;
 mod sweep_estimate;
@@ -510,7 +515,14 @@ enum Command {
         event: Option<String>,
     },
     /// Install Estelle's harness hooks (P4).
-    InstallHooks,
+    InstallHooks {
+        /// Explicit grounding policy. Omit to preserve existing installation behavior.
+        #[arg(long, value_parser = ["required", "advisory", "disabled"])]
+        policy: Option<String>,
+        /// Explicit generic-shell tradeoff; required direct-edit mode does not choose one for you.
+        #[arg(long, value_parser = ["pause", "observe"])]
+        shell_policy: Option<String>,
+    },
     /// Remove Estelle's harness hooks (P4).
     UninstallHooks,
     /// Install Estelle's standing rule into a coding assistant's instruction file.
@@ -8017,10 +8029,17 @@ async fn main() -> ExitCode {
             .resolve()
             .or_else(|| args.repo.as_deref().and_then(Repo::new))
             .unwrap_or_default();
+        let is_hook = matches!(&command, Command::Hook { .. });
         let outcome = top_level::run(command, repo, &root).await;
         let (lines, code) = match outcome {
             Ok(lines) => (lines, ExitCode::SUCCESS),
             Err(error) => {
+                if is_hook {
+                    // Control stdout contains JSON only; failed hooks explain themselves on stderr.
+                    let mut stderr = tokio::io::stderr();
+                    let _ = stderr.write_all(format!("{error}\n").as_bytes()).await;
+                    return ExitCode::FAILURE;
+                }
                 let mut lines = vec![format!("Estelle command failed: {error}")];
                 lines.extend(failure_advice(&error));
                 (lines, ExitCode::FAILURE)

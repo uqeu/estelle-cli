@@ -1,11 +1,12 @@
 # Estelle CLI
 
-**The trust layer under your AI coding agents.** Estelle grounds every model in your real codebase and
-refuses to ship what isn't true.
+**Repository memory and scoped checks for AI coding agents.** Estelle can ground supported
+API/import claims against repository evidence. It does not certify arbitrary prose, all
+symbols, test success or whole-program correctness.
 
-It is not another agent. It runs underneath the agents you already use and gives them three things they do
-not have on their own: memory of your repository, a deterministic gate that resolves every symbol a change
-names against your real code, and grounded review. Model-agnostic, bring your own key.
+The candidate 0.4.1 native runner adds explicit required/advisory/disabled policies and
+bounded deterministic Stop review. A source merge or plugin refresh does not prove that
+an installed runner has been upgraded. See [the policy and limits](docs/required-hook-policy.md).
 
 This repository holds the Rust CLI and the Claude Code plugin. The hosted server is separate.
 
@@ -38,35 +39,38 @@ Both doors reach the same hosted server at `https://api.fatelabs.ca/mcp`. They d
 /plugin install estelle@fatelabs
 ```
 
-The plugin ships the hooks and the server entry together. The hooks fire on every edit rather than when the
-model decides to call a tool, and they send your working tree as you edit it, so **uncommitted work is
-indexed**. The plugin carries no credential: the client negotiates OAuth in the browser. Its hooks shell
-out through `npx`, so Node 18 or newer has to be on the machine.
+The plugin ships generated hook registrations, skills and agents, not an MCP server
+(since plugin 0.3.7). Connect Estelle's MCP endpoint separately with `estelle init` or
+the remote MCP configuration below. Native hooks also need their own usable Estelle
+credential; the plugin carries none. The packaged hook command resolves the npm runner,
+so Node 18 or newer and a compatible native runner must be available.
 
-For editors that are not Claude Code, `estelle install-hooks` writes the same ten handlers across seven
-events (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `Stop`, `PreCompact`,
-`SessionEnd`) for both Claude Code and the Codex CLI.
+`estelle install-hooks` generates Claude Code and Codex configurations from one table.
+Hosts must trust and run the relevant hook events. Registration is not proof that
+an event ran, that the model read its context, or that every write tool is intercepted.
 
-Every hook fails silently by design (`tui/src/top_level.rs:471`): no credentials, no network, a slow
-server or an empty memory all produce nothing rather than an error on the hot path. **The
-`UserPromptSubmit` handler is still the slowest one, and it is now bounded.** It used to ask the
-server for a full search and read only the recall text, paying for a code branch it discarded
-unread — measured at 133.4 s against 8.4 s for the same recall, byte for byte. It now asks for the
-one field it reads (`top_level.rs:424`) and gives up at 20 seconds (`top_level.rs:397`), ten
-seconds under the host's 30-second kill, because being killed by the host discards your prompt
-along with the hook's answer. **The floor is the server's, not ours**: `POST /search` has an
-observed floor near 6 seconds, so a prompt still costs that much before the model sees it, and if
-the budget expires the turn proceeds with no added context. Nothing tells you that happened.
+**Candidate native runner 0.4.1:** explicit `advisory` is non-enforcing, `disabled`
+reports skipped checks, and `required` pauses supported direct edits when a scoped
+check cannot establish approval. Required installation also demands an explicit
+shell choice: `pause` restricts generic shell commands; `observe` keeps them usable
+but unverified. Neither is a general filesystem enforcement boundary.
 
-**What the edit hook does, exactly.** It grounds the edit and reports one of four verdicts to you and to
-the model: PASSED, FLAGGED, ABSTAINED, or UNREACHABLE. ABSTAINED says in its own words that it is not a
-pass. **It does not block the edit** (`tui/src/top_level.rs:805`). The finding is advisory while the
-server does not attest index freshness, and the runner says so in the text it emits. The blocking check is
-`estelle gate`, which returns a merge verdict you can fail a build on.
+The old `ESTELLE_HOOK_BLOCK=1/true/on` opt-in remains a separately reported
+legacy flagged-only mode only when no modern environment or saved policy is chosen.
+It can refuse fresh positive Python findings, but does not become required admission
+or request Stop repairs. An explicit modern advisory choice overrides that old opt-in.
 
-**And the edit hook inspects Python only today** (`tui/src/top_level.rs:807`). A write to any other file
-type produces no output at all, so on that path "not checked" and "clean" look the same. Use
-`estelle gate` on the diff if you need a verdict for another language.
+Required edits use complete candidate post-images and the existing server gate's
+supported API/import/ruleset scope. Unsupported input, incomplete or stale evidence,
+network/authentication failures and timeouts are visible denials, not silent passes.
+Recall and background ingestion remain best-effort and do not certify the turn.
+
+Stop review in this candidate consumes deterministic evidence only. It does not opt
+into semantic BYOK/model review. Confirmed contradictions can request at most two
+repairs under required policy; unknown prose is disclosed rather than declared true
+or blanket-blocked. Stop cannot retract text the host already streamed. These limits,
+version requirements and installation steps are detailed in
+[required-hook-policy.md](docs/required-hook-policy.md).
 
 **Door 2: the remote MCP URL.** For hosts that cannot run a Claude Code plugin:
 
@@ -84,7 +88,7 @@ push to GitHub.** If you are asking about code you wrote in the last ten minutes
 ```sh
 estelle sweep                          # index this repo into your memory
 estelle ask "how does billing retry a failed charge?"
-estelle verify src/http/headers.rs     # resolve every symbol against the repo's real symbol graph
+estelle verify src/http/headers.rs     # inspect supported API claims against repository evidence
 estelle gate                           # run that check over a local diff
 estelle mcp-server                     # Estelle's tools over MCP, for any agent
 estelle acp                            # Agent Client Protocol, over stdio

@@ -74,7 +74,20 @@ pub(crate) fn lines(context: Context) -> Vec<String> {
             "Repository ingest preflight  FAIL · local inventory unavailable: {error}"
         )),
     }
+    lines.extend(hook_policy_lines());
     lines
+}
+
+fn hook_policy_lines() -> Vec<String> {
+    let policy = crate::hook_policy::current()
+        .map(|p| p.label().to_string())
+        .unwrap_or_else(|reason| format!("invalid ({reason})"));
+    vec![
+        format!("Hook runner  {} · selected direct-edit/answer policy: {policy}; shell policy: {}", env!("CARGO_PKG_VERSION"), crate::hook_policy::current_shell().map(|p|p.map(crate::hook_policy::ShellPolicy::label).unwrap_or("not selected").to_string()).unwrap_or_else(|_|"invalid".into())),
+        "Required candidate admission and synchronous answer repair need native runner 0.4.1 or newer. A plugin refresh alone does not prove the invoked native binary was upgraded.".into(),
+        "After upgrading the native runner, select required direct-edit policy plus an explicit --shell-policy pause or observe choice if desired. Existing advisory/disabled choices are retained. Review new or modified hook trust in each host's /hooks UI and restart the session.".into(),
+        "This diagnostic has not inspected the currently executing Claude Code or Codex process, PATH-selected runner, or its hook trust. Inspect those in that host before claiming enforcement is active.".into(),
+    ]
 }
 
 fn estelle_status() -> &'static str {

@@ -1,0 +1,1085 @@
+{
+  "generator": "actual api_dev.handle_gate with in-memory account/memory, no network",
+  "schema_version": 2,
+  "fixtures": [
+    {
+      "name": "deleted_plain_import",
+      "request": {
+        "diff": "diff --git a/src/estelle/consumer.py b/src/estelle/consumer.py\n--- a/src/estelle/consumer.py\n+++ b/src/estelle/consumer.py\n@@ -0,0 +1 @@\n+import estelle.serve.durable_jobs\n",
+        "repo": "uqeu/estelle",
+        "head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "require_verified": true,
+        "sources": {
+          "src/estelle/consumer.py": "import estelle.serve.durable_jobs\n"
+        },
+        "working_tree": {
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "changed": [
+            "src/estelle/consumer.py",
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "sources": {
+            "src/estelle/consumer.py": "import estelle.serve.durable_jobs\n"
+          },
+          "deleted": [
+            "src/estelle/serve/durable_jobs.py"
+          ]
+        }
+      },
+      "response": {
+        "repo": "uqeu/estelle",
+        "scope": "repo:uqeu/estelle",
+        "merge": false,
+        "verified": true,
+        "state": "verified-blocked",
+        "outcome": "refuted",
+        "verdict": "blocked",
+        "blockers": [
+          {
+            "path": "src/estelle/consumer.py",
+            "line": 1,
+            "severity": "error",
+            "body": "`estelle.serve.durable_jobs` is not defined in this repo \u2014 likely a hallucinated API; verify it exists before merging. \u2014 did you mean `estelle.serve`?",
+            "symbol": "estelle.serve.durable_jobs",
+            "col": 8
+          }
+        ],
+        "currency": {
+          "checked": false,
+          "repo": "uqeu/estelle",
+          "indexed_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "known": true,
+          "current_head": "",
+          "status": null,
+          "stale": false,
+          "actionable": false,
+          "unknown_because": "",
+          "note": "indexed at e08a9aeb12db; graph currency was not checked on this request \u2014 this is NOT a claim that the graph is up to date",
+          "asked_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "agrees": true,
+          "certifiable": true,
+          "refutes_absence": true
+        },
+        "coverage": {
+          "paths": [
+            "src/estelle/consumer.py"
+          ],
+          "inert": [],
+          "out_of_domain": [
+            "src/estelle/consumer.py"
+          ],
+          "needs_verdict": [],
+          "state": "clean",
+          "note": "1 of 1 changed file(s) are complete answers \u2014 1 whose added code calls nothing this gate checks, 0 prose/asset"
+        },
+        "counts": {
+          "blockers": 1,
+          "warnings": 0,
+          "api_checks": 1,
+          "api_verdicts": 1,
+          "evidence": 1,
+          "symbols_seen": 1,
+          "grounded_by_diff": 0,
+          "hallucinations": 1,
+          "tests_run": 0,
+          "test_regressions": 0,
+          "ruleset": 0
+        },
+        "working_tree": {
+          "schema_version": 2,
+          "deleted": [
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "files": 1,
+          "declared": 2,
+          "undelivered": [],
+          "dropped": [],
+          "complete": true
+        }
+      }
+    },
+    {
+      "name": "deleted_from_package_leaf",
+      "request": {
+        "diff": "diff --git a/src/estelle/consumer.py b/src/estelle/consumer.py\n--- a/src/estelle/consumer.py\n+++ b/src/estelle/consumer.py\n@@ -0,0 +1 @@\n+from estelle.serve import durable_jobs\n",
+        "repo": "uqeu/estelle",
+        "head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "require_verified": true,
+        "sources": {
+          "src/estelle/consumer.py": "from estelle.serve import durable_jobs\n"
+        },
+        "working_tree": {
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "changed": [
+            "src/estelle/consumer.py",
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "sources": {
+            "src/estelle/consumer.py": "from estelle.serve import durable_jobs\n"
+          },
+          "deleted": [
+            "src/estelle/serve/durable_jobs.py"
+          ]
+        }
+      },
+      "response": {
+        "repo": "uqeu/estelle",
+        "scope": "repo:uqeu/estelle",
+        "merge": false,
+        "verified": true,
+        "state": "verified-blocked",
+        "outcome": "refuted",
+        "verdict": "blocked",
+        "blockers": [
+          {
+            "path": "src/estelle/consumer.py",
+            "line": 0,
+            "severity": "error",
+            "body": "`estelle.serve.durable_jobs` is not defined in this repo \u2014 likely a hallucinated API; verify it exists before merging. \u2014 did you mean `estelle.serve`? (No single added line could be pinpointed \u2014 file-level finding; review the change as a whole.)"
+          },
+          {
+            "path": "src/estelle/consumer.py",
+            "line": 1,
+            "severity": "error",
+            "body": "`durable_jobs` is not defined in this repo \u2014 likely a hallucinated API; verify it exists before merging. \u2014 did you mean `estelle.serve.durable_jobs`?",
+            "symbol": "durable_jobs",
+            "col": 27
+          },
+          {
+            "path": "src/estelle/consumer.py",
+            "line": 1,
+            "severity": "error",
+            "body": "`estelle.serve` is not defined in this repo \u2014 likely a hallucinated API; verify it exists before merging. \u2014 did you mean `estelle`?",
+            "symbol": "estelle.serve",
+            "col": 6
+          }
+        ],
+        "currency": {
+          "checked": false,
+          "repo": "uqeu/estelle",
+          "indexed_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "known": true,
+          "current_head": "",
+          "status": null,
+          "stale": false,
+          "actionable": false,
+          "unknown_because": "",
+          "note": "indexed at e08a9aeb12db; graph currency was not checked on this request \u2014 this is NOT a claim that the graph is up to date",
+          "asked_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "agrees": true,
+          "certifiable": true,
+          "refutes_absence": true
+        },
+        "coverage": {
+          "paths": [
+            "src/estelle/consumer.py"
+          ],
+          "inert": [],
+          "out_of_domain": [
+            "src/estelle/consumer.py"
+          ],
+          "needs_verdict": [],
+          "state": "clean",
+          "note": "1 of 1 changed file(s) are complete answers \u2014 1 whose added code calls nothing this gate checks, 0 prose/asset"
+        },
+        "counts": {
+          "blockers": 3,
+          "warnings": 0,
+          "api_checks": 3,
+          "api_verdicts": 3,
+          "evidence": 1,
+          "symbols_seen": 3,
+          "grounded_by_diff": 0,
+          "hallucinations": 3,
+          "tests_run": 0,
+          "test_regressions": 0,
+          "ruleset": 0
+        },
+        "working_tree": {
+          "schema_version": 2,
+          "deleted": [
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "files": 1,
+          "declared": 2,
+          "undelivered": [],
+          "dropped": [],
+          "complete": true
+        }
+      }
+    },
+    {
+      "name": "deleted_symbol_import",
+      "request": {
+        "diff": "diff --git a/src/estelle/consumer.py b/src/estelle/consumer.py\n--- a/src/estelle/consumer.py\n+++ b/src/estelle/consumer.py\n@@ -0,0 +1 @@\n+from estelle.serve.durable_jobs import DurableJobWorkers\n",
+        "repo": "uqeu/estelle",
+        "head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "require_verified": true,
+        "sources": {
+          "src/estelle/consumer.py": "from estelle.serve.durable_jobs import DurableJobWorkers\n"
+        },
+        "working_tree": {
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "changed": [
+            "src/estelle/consumer.py",
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "sources": {
+            "src/estelle/consumer.py": "from estelle.serve.durable_jobs import DurableJobWorkers\n"
+          },
+          "deleted": [
+            "src/estelle/serve/durable_jobs.py"
+          ]
+        }
+      },
+      "response": {
+        "repo": "uqeu/estelle",
+        "scope": "repo:uqeu/estelle",
+        "merge": false,
+        "verified": true,
+        "state": "verified-blocked",
+        "outcome": "refuted",
+        "verdict": "blocked",
+        "blockers": [
+          {
+            "path": "src/estelle/consumer.py",
+            "line": 1,
+            "severity": "error",
+            "body": "`DurableJobWorkers` is not defined in this repo \u2014 likely a hallucinated API; verify it exists before merging.",
+            "symbol": "DurableJobWorkers",
+            "col": 40
+          },
+          {
+            "path": "src/estelle/consumer.py",
+            "line": 1,
+            "severity": "error",
+            "body": "`estelle.serve.durable_jobs` is not defined in this repo \u2014 likely a hallucinated API; verify it exists before merging. \u2014 did you mean `estelle.serve`?",
+            "symbol": "estelle.serve.durable_jobs",
+            "col": 6
+          }
+        ],
+        "currency": {
+          "checked": false,
+          "repo": "uqeu/estelle",
+          "indexed_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "known": true,
+          "current_head": "",
+          "status": null,
+          "stale": false,
+          "actionable": false,
+          "unknown_because": "",
+          "note": "indexed at e08a9aeb12db; graph currency was not checked on this request \u2014 this is NOT a claim that the graph is up to date",
+          "asked_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "agrees": true,
+          "certifiable": true,
+          "refutes_absence": true
+        },
+        "coverage": {
+          "paths": [
+            "src/estelle/consumer.py"
+          ],
+          "inert": [],
+          "out_of_domain": [
+            "src/estelle/consumer.py"
+          ],
+          "needs_verdict": [],
+          "state": "clean",
+          "note": "1 of 1 changed file(s) are complete answers \u2014 1 whose added code calls nothing this gate checks, 0 prose/asset"
+        },
+        "counts": {
+          "blockers": 2,
+          "warnings": 0,
+          "api_checks": 2,
+          "api_verdicts": 2,
+          "evidence": 1,
+          "symbols_seen": 2,
+          "grounded_by_diff": 0,
+          "hallucinations": 2,
+          "tests_run": 0,
+          "test_regressions": 0,
+          "ruleset": 0
+        },
+        "working_tree": {
+          "schema_version": 2,
+          "deleted": [
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "files": 1,
+          "declared": 2,
+          "undelivered": [],
+          "dropped": [],
+          "complete": true
+        }
+      }
+    },
+    {
+      "name": "rename_new_module",
+      "request": {
+        "diff": "diff --git a/src/estelle/consumer.py b/src/estelle/consumer.py\n--- a/src/estelle/consumer.py\n+++ b/src/estelle/consumer.py\n@@ -0,0 +1 @@\n+import estelle.serve.renamed_jobs\n",
+        "repo": "uqeu/estelle",
+        "head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "require_verified": true,
+        "sources": {
+          "src/estelle/consumer.py": "import estelle.serve.renamed_jobs\n",
+          "src/estelle/serve/renamed_jobs.py": "class DurableJobWorkers:\n    def __init__(self, count):\n        self.count = count\n\n    def lease(self, job_id):\n        return job_id\n"
+        },
+        "working_tree": {
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "changed": [
+            "src/estelle/consumer.py",
+            "src/estelle/serve/renamed_jobs.py",
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "sources": {
+            "src/estelle/consumer.py": "import estelle.serve.renamed_jobs\n",
+            "src/estelle/serve/renamed_jobs.py": "class DurableJobWorkers:\n    def __init__(self, count):\n        self.count = count\n\n    def lease(self, job_id):\n        return job_id\n"
+          },
+          "deleted": [
+            "src/estelle/serve/durable_jobs.py"
+          ]
+        }
+      },
+      "response": {
+        "repo": "uqeu/estelle",
+        "scope": "repo:uqeu/estelle",
+        "merge": true,
+        "verified": true,
+        "state": "verified-clean",
+        "outcome": "verified",
+        "verdict": "clean",
+        "blockers": [],
+        "currency": {
+          "checked": false,
+          "repo": "uqeu/estelle",
+          "indexed_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "known": true,
+          "current_head": "",
+          "status": null,
+          "stale": false,
+          "actionable": false,
+          "unknown_because": "",
+          "note": "indexed at e08a9aeb12db; graph currency was not checked on this request \u2014 this is NOT a claim that the graph is up to date",
+          "asked_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "agrees": true,
+          "certifiable": true,
+          "refutes_absence": true
+        },
+        "coverage": {
+          "paths": [
+            "src/estelle/consumer.py"
+          ],
+          "inert": [],
+          "out_of_domain": [
+            "src/estelle/consumer.py"
+          ],
+          "needs_verdict": [],
+          "state": "clean",
+          "note": "1 of 1 changed file(s) are complete answers \u2014 1 whose added code calls nothing this gate checks, 0 prose/asset"
+        },
+        "counts": {
+          "blockers": 0,
+          "warnings": 0,
+          "api_checks": 0,
+          "api_verdicts": 0,
+          "evidence": 1,
+          "symbols_seen": 0,
+          "grounded_by_diff": 0,
+          "hallucinations": 0,
+          "tests_run": 0,
+          "test_regressions": 0,
+          "ruleset": 0
+        },
+        "working_tree": {
+          "schema_version": 2,
+          "deleted": [
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "files": 2,
+          "declared": 3,
+          "undelivered": [],
+          "dropped": [],
+          "complete": true
+        }
+      }
+    },
+    {
+      "name": "rename_new_symbol",
+      "request": {
+        "diff": "diff --git a/src/estelle/consumer.py b/src/estelle/consumer.py\n--- a/src/estelle/consumer.py\n+++ b/src/estelle/consumer.py\n@@ -0,0 +1 @@\n+from estelle.serve.renamed_jobs import DurableJobWorkers\n",
+        "repo": "uqeu/estelle",
+        "head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "require_verified": true,
+        "sources": {
+          "src/estelle/consumer.py": "from estelle.serve.renamed_jobs import DurableJobWorkers\n",
+          "src/estelle/serve/renamed_jobs.py": "class DurableJobWorkers:\n    def __init__(self, count):\n        self.count = count\n\n    def lease(self, job_id):\n        return job_id\n"
+        },
+        "working_tree": {
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "changed": [
+            "src/estelle/consumer.py",
+            "src/estelle/serve/renamed_jobs.py",
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "sources": {
+            "src/estelle/consumer.py": "from estelle.serve.renamed_jobs import DurableJobWorkers\n",
+            "src/estelle/serve/renamed_jobs.py": "class DurableJobWorkers:\n    def __init__(self, count):\n        self.count = count\n\n    def lease(self, job_id):\n        return job_id\n"
+          },
+          "deleted": [
+            "src/estelle/serve/durable_jobs.py"
+          ]
+        }
+      },
+      "response": {
+        "repo": "uqeu/estelle",
+        "scope": "repo:uqeu/estelle",
+        "merge": true,
+        "verified": true,
+        "state": "verified-clean",
+        "outcome": "verified",
+        "verdict": "clean",
+        "blockers": [],
+        "currency": {
+          "checked": false,
+          "repo": "uqeu/estelle",
+          "indexed_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "known": true,
+          "current_head": "",
+          "status": null,
+          "stale": false,
+          "actionable": false,
+          "unknown_because": "",
+          "note": "indexed at e08a9aeb12db; graph currency was not checked on this request \u2014 this is NOT a claim that the graph is up to date",
+          "asked_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "agrees": true,
+          "certifiable": true,
+          "refutes_absence": true
+        },
+        "coverage": {
+          "paths": [
+            "src/estelle/consumer.py"
+          ],
+          "inert": [],
+          "out_of_domain": [
+            "src/estelle/consumer.py"
+          ],
+          "needs_verdict": [],
+          "state": "clean",
+          "note": "1 of 1 changed file(s) are complete answers \u2014 1 whose added code calls nothing this gate checks, 0 prose/asset"
+        },
+        "counts": {
+          "blockers": 0,
+          "warnings": 0,
+          "api_checks": 1,
+          "api_verdicts": 1,
+          "evidence": 1,
+          "symbols_seen": 1,
+          "grounded_by_diff": 0,
+          "hallucinations": 0,
+          "tests_run": 0,
+          "test_regressions": 0,
+          "ruleset": 0
+        },
+        "working_tree": {
+          "schema_version": 2,
+          "deleted": [
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "files": 2,
+          "declared": 3,
+          "undelivered": [],
+          "dropped": [],
+          "complete": true
+        }
+      }
+    },
+    {
+      "name": "rename_old_symbol_must_not_survive",
+      "request": {
+        "diff": "diff --git a/src/estelle/consumer.py b/src/estelle/consumer.py\n--- a/src/estelle/consumer.py\n+++ b/src/estelle/consumer.py\n@@ -0,0 +1 @@\n+from estelle.serve.durable_jobs import DurableJobWorkers\n",
+        "repo": "uqeu/estelle",
+        "head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "require_verified": true,
+        "sources": {
+          "src/estelle/consumer.py": "from estelle.serve.durable_jobs import DurableJobWorkers\n",
+          "src/estelle/serve/renamed_jobs.py": "class DurableJobWorkers:\n    def __init__(self, count):\n        self.count = count\n\n    def lease(self, job_id):\n        return job_id\n"
+        },
+        "working_tree": {
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "changed": [
+            "src/estelle/consumer.py",
+            "src/estelle/serve/renamed_jobs.py",
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "sources": {
+            "src/estelle/consumer.py": "from estelle.serve.durable_jobs import DurableJobWorkers\n",
+            "src/estelle/serve/renamed_jobs.py": "class DurableJobWorkers:\n    def __init__(self, count):\n        self.count = count\n\n    def lease(self, job_id):\n        return job_id\n"
+          },
+          "deleted": [
+            "src/estelle/serve/durable_jobs.py"
+          ]
+        }
+      },
+      "response": {
+        "repo": "uqeu/estelle",
+        "scope": "repo:uqeu/estelle",
+        "merge": false,
+        "verified": true,
+        "state": "verified-blocked",
+        "outcome": "refuted",
+        "verdict": "blocked",
+        "blockers": [
+          {
+            "path": "src/estelle/consumer.py",
+            "line": 1,
+            "severity": "error",
+            "body": "`estelle.serve.durable_jobs` is not defined in this repo \u2014 likely a hallucinated API; verify it exists before merging. \u2014 did you mean `estelle.serve`?",
+            "symbol": "estelle.serve.durable_jobs",
+            "col": 6
+          }
+        ],
+        "currency": {
+          "checked": false,
+          "repo": "uqeu/estelle",
+          "indexed_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "known": true,
+          "current_head": "",
+          "status": null,
+          "stale": false,
+          "actionable": false,
+          "unknown_because": "",
+          "note": "indexed at e08a9aeb12db; graph currency was not checked on this request \u2014 this is NOT a claim that the graph is up to date",
+          "asked_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "agrees": true,
+          "certifiable": true,
+          "refutes_absence": true
+        },
+        "coverage": {
+          "paths": [
+            "src/estelle/consumer.py"
+          ],
+          "inert": [],
+          "out_of_domain": [
+            "src/estelle/consumer.py"
+          ],
+          "needs_verdict": [],
+          "state": "clean",
+          "note": "1 of 1 changed file(s) are complete answers \u2014 1 whose added code calls nothing this gate checks, 0 prose/asset"
+        },
+        "counts": {
+          "blockers": 1,
+          "warnings": 0,
+          "api_checks": 2,
+          "api_verdicts": 2,
+          "evidence": 1,
+          "symbols_seen": 2,
+          "grounded_by_diff": 0,
+          "hallucinations": 1,
+          "tests_run": 0,
+          "test_regressions": 0,
+          "ruleset": 0
+        },
+        "working_tree": {
+          "schema_version": 2,
+          "deleted": [
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "files": 2,
+          "declared": 3,
+          "undelivered": [],
+          "dropped": [],
+          "complete": true
+        }
+      }
+    },
+    {
+      "name": "deleted_leaf_cannot_borrow_class",
+      "request": {
+        "diff": "diff --git a/src/estelle/consumer.py b/src/estelle/consumer.py\n--- a/src/estelle/consumer.py\n+++ b/src/estelle/consumer.py\n@@ -0,0 +1 @@\n+from estelle.serve import durable_jobs\n",
+        "repo": "uqeu/estelle",
+        "head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "require_verified": true,
+        "sources": {
+          "src/estelle/consumer.py": "from estelle.serve import durable_jobs\n",
+          "src/estelle/serve/renamed_jobs.py": "class durable_jobs:\n    pass\n"
+        },
+        "working_tree": {
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "changed": [
+            "src/estelle/consumer.py",
+            "src/estelle/serve/renamed_jobs.py",
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "sources": {
+            "src/estelle/consumer.py": "from estelle.serve import durable_jobs\n",
+            "src/estelle/serve/renamed_jobs.py": "class durable_jobs:\n    pass\n"
+          },
+          "deleted": [
+            "src/estelle/serve/durable_jobs.py"
+          ]
+        }
+      },
+      "response": {
+        "repo": "uqeu/estelle",
+        "scope": "repo:uqeu/estelle",
+        "merge": false,
+        "verified": true,
+        "state": "verified-blocked",
+        "outcome": "refuted",
+        "verdict": "blocked",
+        "blockers": [
+          {
+            "path": "src/estelle/consumer.py",
+            "line": 0,
+            "severity": "error",
+            "body": "`estelle.serve.durable_jobs` is not defined in this repo \u2014 likely a hallucinated API; verify it exists before merging. \u2014 did you mean `estelle.serve`? (No single added line could be pinpointed \u2014 file-level finding; review the change as a whole.)"
+          }
+        ],
+        "currency": {
+          "checked": false,
+          "repo": "uqeu/estelle",
+          "indexed_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "known": true,
+          "current_head": "",
+          "status": null,
+          "stale": false,
+          "actionable": false,
+          "unknown_because": "",
+          "note": "indexed at e08a9aeb12db; graph currency was not checked on this request \u2014 this is NOT a claim that the graph is up to date",
+          "asked_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "agrees": true,
+          "certifiable": true,
+          "refutes_absence": true
+        },
+        "coverage": {
+          "paths": [
+            "src/estelle/consumer.py"
+          ],
+          "inert": [],
+          "out_of_domain": [
+            "src/estelle/consumer.py"
+          ],
+          "needs_verdict": [],
+          "state": "clean",
+          "note": "1 of 1 changed file(s) are complete answers \u2014 1 whose added code calls nothing this gate checks, 0 prose/asset"
+        },
+        "counts": {
+          "blockers": 1,
+          "warnings": 0,
+          "api_checks": 2,
+          "api_verdicts": 2,
+          "evidence": 1,
+          "symbols_seen": 2,
+          "grounded_by_diff": 0,
+          "hallucinations": 1,
+          "tests_run": 0,
+          "test_regressions": 0,
+          "ruleset": 0
+        },
+        "working_tree": {
+          "schema_version": 2,
+          "deleted": [
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "files": 2,
+          "declared": 3,
+          "undelivered": [],
+          "dropped": [],
+          "complete": true
+        }
+      }
+    },
+    {
+      "name": "deleted_relative_leaf_cannot_borrow_class",
+      "request": {
+        "diff": "diff --git a/src/estelle/consumer.py b/src/estelle/consumer.py\n--- a/src/estelle/consumer.py\n+++ b/src/estelle/consumer.py\n@@ -0,0 +1 @@\n+from .serve import durable_jobs\n",
+        "repo": "uqeu/estelle",
+        "head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "require_verified": true,
+        "sources": {
+          "src/estelle/consumer.py": "from .serve import durable_jobs\n",
+          "src/estelle/serve/renamed_jobs.py": "class durable_jobs:\n    pass\n"
+        },
+        "working_tree": {
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "changed": [
+            "src/estelle/consumer.py",
+            "src/estelle/serve/renamed_jobs.py",
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "sources": {
+            "src/estelle/consumer.py": "from .serve import durable_jobs\n",
+            "src/estelle/serve/renamed_jobs.py": "class durable_jobs:\n    pass\n"
+          },
+          "deleted": [
+            "src/estelle/serve/durable_jobs.py"
+          ]
+        }
+      },
+      "response": {
+        "repo": "uqeu/estelle",
+        "scope": "repo:uqeu/estelle",
+        "merge": false,
+        "verified": true,
+        "state": "verified-blocked",
+        "outcome": "refuted",
+        "verdict": "blocked",
+        "blockers": [
+          {
+            "path": "src/estelle/consumer.py",
+            "line": 0,
+            "severity": "error",
+            "body": "`estelle.serve.durable_jobs` is not defined in this repo \u2014 likely a hallucinated API; verify it exists before merging. \u2014 did you mean `estelle.serve`? (No single added line could be pinpointed \u2014 file-level finding; review the change as a whole.)"
+          }
+        ],
+        "currency": {
+          "checked": false,
+          "repo": "uqeu/estelle",
+          "indexed_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "known": true,
+          "current_head": "",
+          "status": null,
+          "stale": false,
+          "actionable": false,
+          "unknown_because": "",
+          "note": "indexed at e08a9aeb12db; graph currency was not checked on this request \u2014 this is NOT a claim that the graph is up to date",
+          "asked_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "agrees": true,
+          "certifiable": true,
+          "refutes_absence": true
+        },
+        "coverage": {
+          "paths": [
+            "src/estelle/consumer.py"
+          ],
+          "inert": [],
+          "out_of_domain": [
+            "src/estelle/consumer.py"
+          ],
+          "needs_verdict": [],
+          "state": "clean",
+          "note": "1 of 1 changed file(s) are complete answers \u2014 1 whose added code calls nothing this gate checks, 0 prose/asset"
+        },
+        "counts": {
+          "blockers": 1,
+          "warnings": 0,
+          "api_checks": 2,
+          "api_verdicts": 2,
+          "evidence": 1,
+          "symbols_seen": 2,
+          "grounded_by_diff": 0,
+          "hallucinations": 1,
+          "tests_run": 0,
+          "test_regressions": 0,
+          "ruleset": 0
+        },
+        "working_tree": {
+          "schema_version": 2,
+          "deleted": [
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "files": 2,
+          "declared": 3,
+          "undelivered": [],
+          "dropped": [],
+          "complete": true
+        }
+      }
+    },
+    {
+      "name": "parent_export_is_valid",
+      "request": {
+        "diff": "diff --git a/src/estelle/consumer.py b/src/estelle/consumer.py\n--- a/src/estelle/consumer.py\n+++ b/src/estelle/consumer.py\n@@ -0,0 +1 @@\n+from estelle.serve import durable_jobs\n",
+        "repo": "uqeu/estelle",
+        "head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "require_verified": true,
+        "sources": {
+          "src/estelle/consumer.py": "from estelle.serve import durable_jobs\n",
+          "src/estelle/serve/__init__.py": "class durable_jobs:\n    pass\n"
+        },
+        "working_tree": {
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "changed": [
+            "src/estelle/consumer.py",
+            "src/estelle/serve/__init__.py",
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "sources": {
+            "src/estelle/consumer.py": "from estelle.serve import durable_jobs\n",
+            "src/estelle/serve/__init__.py": "class durable_jobs:\n    pass\n"
+          },
+          "deleted": [
+            "src/estelle/serve/durable_jobs.py"
+          ]
+        }
+      },
+      "response": {
+        "repo": "uqeu/estelle",
+        "scope": "repo:uqeu/estelle",
+        "merge": true,
+        "verified": true,
+        "state": "verified-clean",
+        "outcome": "verified",
+        "verdict": "clean",
+        "blockers": [],
+        "currency": {
+          "checked": false,
+          "repo": "uqeu/estelle",
+          "indexed_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "known": true,
+          "current_head": "",
+          "status": null,
+          "stale": false,
+          "actionable": false,
+          "unknown_because": "",
+          "note": "indexed at e08a9aeb12db; graph currency was not checked on this request \u2014 this is NOT a claim that the graph is up to date",
+          "asked_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "agrees": true,
+          "certifiable": true,
+          "refutes_absence": true
+        },
+        "coverage": {
+          "paths": [
+            "src/estelle/consumer.py"
+          ],
+          "inert": [],
+          "out_of_domain": [
+            "src/estelle/consumer.py"
+          ],
+          "needs_verdict": [],
+          "state": "clean",
+          "note": "1 of 1 changed file(s) are complete answers \u2014 1 whose added code calls nothing this gate checks, 0 prose/asset"
+        },
+        "counts": {
+          "blockers": 0,
+          "warnings": 0,
+          "api_checks": 1,
+          "api_verdicts": 1,
+          "evidence": 1,
+          "symbols_seen": 1,
+          "grounded_by_diff": 0,
+          "hallucinations": 0,
+          "tests_run": 0,
+          "test_regressions": 0,
+          "ruleset": 0
+        },
+        "working_tree": {
+          "schema_version": 2,
+          "deleted": [
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "files": 2,
+          "declared": 3,
+          "undelivered": [],
+          "dropped": [],
+          "complete": true
+        }
+      }
+    },
+    {
+      "name": "plain_parent_reexport_is_unverified",
+      "request": {
+        "diff": "diff --git a/src/estelle/consumer.py b/src/estelle/consumer.py\n--- a/src/estelle/consumer.py\n+++ b/src/estelle/consumer.py\n@@ -0,0 +1 @@\n+from estelle.serve import durable_jobs\n",
+        "repo": "uqeu/estelle",
+        "head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "require_verified": true,
+        "sources": {
+          "src/estelle/consumer.py": "from estelle.serve import durable_jobs\n",
+          "src/estelle/serve/__init__.py": "from .renamed_jobs import durable_jobs\n",
+          "src/estelle/serve/renamed_jobs.py": "class durable_jobs:\n    pass\n"
+        },
+        "working_tree": {
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "changed": [
+            "src/estelle/consumer.py",
+            "src/estelle/serve/__init__.py",
+            "src/estelle/serve/renamed_jobs.py",
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "sources": {
+            "src/estelle/consumer.py": "from estelle.serve import durable_jobs\n",
+            "src/estelle/serve/__init__.py": "from .renamed_jobs import durable_jobs\n",
+            "src/estelle/serve/renamed_jobs.py": "class durable_jobs:\n    pass\n"
+          },
+          "deleted": [
+            "src/estelle/serve/durable_jobs.py"
+          ]
+        }
+      },
+      "response": {
+        "repo": "uqeu/estelle",
+        "scope": "repo:uqeu/estelle",
+        "merge": false,
+        "verified": false,
+        "state": "could-not-verify",
+        "outcome": "unknown",
+        "verdict": "clean-unverified",
+        "blockers": [
+          {
+            "path": "",
+            "line": 0,
+            "severity": "error",
+            "body": "the merge gate did not verify this change, so it does not authorize the merge \u2014 blocked. Nothing here is a claim that the diff is WRONG; the gate could not read part of it, so it has nothing to certify and refuses rather than passing an unchecked change. Sweep the repository (or the directories named below) and re-run to get a real verdict; a caller that wants the gate's advisory reading instead can read `state`, `warnings` and `counts` on this same response. Here is what it could not verify: symbols this gate did not examine: estelle.serve.durable_jobs. The change presented these and no repository check produced a verdict on them, so this result certifies nothing about them \u2014 it is NOT verified-clean. Review them by hand."
+          },
+          {
+            "path": "",
+            "line": 0,
+            "severity": "error",
+            "body": "the merge gate could not verify part of this change and this caller requires a verified verdict (require_verified) \u2014 blocked. Nothing is wrong with the diff that the gate could SEE; the grounding pass could not read some of it, so the hallucination checks never ran there. Review those hunks by hand, or re-run without require_verified to get the gate's own (advisory) verdict."
+          }
+        ],
+        "currency": {
+          "checked": false,
+          "repo": "uqeu/estelle",
+          "indexed_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "known": true,
+          "current_head": "",
+          "status": null,
+          "stale": false,
+          "actionable": false,
+          "unknown_because": "",
+          "note": "indexed at e08a9aeb12db; graph currency was not checked on this request \u2014 this is NOT a claim that the graph is up to date",
+          "asked_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "agrees": true,
+          "certifiable": true,
+          "refutes_absence": true
+        },
+        "coverage": {
+          "paths": [
+            "src/estelle/consumer.py"
+          ],
+          "inert": [],
+          "out_of_domain": [
+            "src/estelle/consumer.py"
+          ],
+          "needs_verdict": [],
+          "state": "clean",
+          "note": "1 of 1 changed file(s) are complete answers \u2014 1 whose added code calls nothing this gate checks, 0 prose/asset"
+        },
+        "counts": {
+          "blockers": 2,
+          "warnings": 1,
+          "api_checks": 1,
+          "api_verdicts": 1,
+          "evidence": 1,
+          "symbols_seen": 2,
+          "grounded_by_diff": 0,
+          "hallucinations": 0,
+          "tests_run": 0,
+          "test_regressions": 0,
+          "ruleset": 0
+        },
+        "working_tree": {
+          "schema_version": 2,
+          "deleted": [
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "files": 3,
+          "declared": 4,
+          "undelivered": [],
+          "dropped": [],
+          "complete": true
+        },
+        "unverified_reasons": [
+          "saw_more_than_it_checked",
+          "unexamined_symbol"
+        ]
+      }
+    },
+    {
+      "name": "real_empty_module",
+      "request": {
+        "diff": "diff --git a/src/estelle/consumer.py b/src/estelle/consumer.py\n--- a/src/estelle/consumer.py\n+++ b/src/estelle/consumer.py\n@@ -0,0 +1 @@\n+import estelle.serve.durable_jobs\n",
+        "repo": "uqeu/estelle",
+        "head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "require_verified": true,
+        "sources": {
+          "src/estelle/consumer.py": "import estelle.serve.durable_jobs\n",
+          "src/estelle/serve/durable_jobs.py": ""
+        },
+        "working_tree": {
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "changed": [
+            "src/estelle/consumer.py",
+            "src/estelle/serve/durable_jobs.py"
+          ],
+          "sources": {
+            "src/estelle/consumer.py": "import estelle.serve.durable_jobs\n",
+            "src/estelle/serve/durable_jobs.py": ""
+          },
+          "deleted": []
+        }
+      },
+      "response": {
+        "repo": "uqeu/estelle",
+        "scope": "repo:uqeu/estelle",
+        "merge": true,
+        "verified": true,
+        "state": "verified-clean",
+        "outcome": "verified",
+        "verdict": "clean",
+        "blockers": [],
+        "currency": {
+          "checked": false,
+          "repo": "uqeu/estelle",
+          "indexed_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "known": true,
+          "current_head": "",
+          "status": null,
+          "stale": false,
+          "actionable": false,
+          "unknown_because": "",
+          "note": "indexed at e08a9aeb12db; graph currency was not checked on this request \u2014 this is NOT a claim that the graph is up to date",
+          "asked_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "agrees": true,
+          "certifiable": true,
+          "refutes_absence": true
+        },
+        "coverage": {
+          "paths": [
+            "src/estelle/consumer.py"
+          ],
+          "inert": [],
+          "out_of_domain": [
+            "src/estelle/consumer.py"
+          ],
+          "needs_verdict": [],
+          "state": "clean",
+          "note": "1 of 1 changed file(s) are complete answers \u2014 1 whose added code calls nothing this gate checks, 0 prose/asset"
+        },
+        "counts": {
+          "blockers": 0,
+          "warnings": 0,
+          "api_checks": 0,
+          "api_verdicts": 0,
+          "evidence": 1,
+          "symbols_seen": 0,
+          "grounded_by_diff": 0,
+          "hallucinations": 0,
+          "tests_run": 0,
+          "test_regressions": 0,
+          "ruleset": 0
+        },
+        "working_tree": {
+          "schema_version": 2,
+          "deleted": [],
+          "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+          "files": 2,
+          "declared": 2,
+          "undelivered": [],
+          "dropped": [],
+          "complete": true
+        }
+      }
+    }
+  ]
+}
