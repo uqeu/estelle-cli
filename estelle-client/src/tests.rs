@@ -1831,3 +1831,33 @@ fn no_test_in_the_workspace_resolves_through_the_ambient_environment() {
          `resolve_with_environment(Some(..))` to test the environment branch on purpose."
     );
 }
+
+#[tokio::test]
+async fn short_hook_client_surfaces_capacity_without_advertised_retry_sleep() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/account"))
+        .respond_with(
+            ResponseTemplate::new(503)
+                .insert_header("Retry-After", "30")
+                .set_body_json(
+                    serde_json::json!({"error":{"message":"pool_exhausted"},"wait_s":30}),
+                ),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = Client::new(&format!("{}/", server.uri()), test_key(), MINIMUM_TIMEOUT)
+        .unwrap()
+        .without_shed_retries();
+    let error = tokio::time::timeout(
+        Duration::from_millis(250),
+        client.account(&CancellationToken::new()),
+    )
+    .await
+    .expect("hook does not sleep through its host deadline")
+    .unwrap_err();
+    assert!(
+        matches!(error,Error::Http{status,..} if status==reqwest::StatusCode::SERVICE_UNAVAILABLE)
+    );
+}

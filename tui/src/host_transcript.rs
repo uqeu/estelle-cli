@@ -384,9 +384,15 @@ impl Fold {
         if blocks.is_empty() {
             return;
         }
+        let mut message = json!({"role": role, "content": blocks});
+        // Consumers that review a final answer must distinguish final prose from private
+        // analysis or pre-tool commentary. Checkpoint consumers may ignore this metadata.
+        if let Some(channel) = payload.get("channel") {
+            message["channel"] = channel.clone();
+        }
         self.records.push(json!({
             "type": role,
-            "message": {"role": role, "content": blocks},
+            "message": message,
         }));
         self.open_assistant = (role == "assistant").then(|| self.records.len() - 1);
     }

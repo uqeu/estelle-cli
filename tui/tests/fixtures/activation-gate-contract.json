@@ -1,0 +1,169 @@
+{
+  "actual_diff": {
+    "request": {
+      "diff": "diff --git a/src/activated.py b/src/activated.py\n--- a/src/activated.py\n+++ b/src/activated.py\n@@ -1,4 +1,3 @@\n def task():\n-    \"\"\"\n     ghost_api()\n-    \"\"\"\n+    pass\n",
+      "repo": "uqeu/estelle",
+      "head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+      "require_verified": true,
+      "sources": {
+        "src/activated.py": "def task():\n    ghost_api()\n    pass\n"
+      },
+      "working_tree": {
+        "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "changed": [
+          "src/activated.py"
+        ],
+        "sources": {
+          "src/activated.py": "def task():\n    ghost_api()\n    pass\n"
+        }
+      }
+    },
+    "response": {
+      "repo": "uqeu/estelle",
+      "scope": "repo:uqeu/estelle",
+      "merge": true,
+      "verified": true,
+      "state": "verified-clean",
+      "outcome": "verified",
+      "verdict": "clean",
+      "blockers": [],
+      "currency": {
+        "checked": false,
+        "repo": "uqeu/estelle",
+        "indexed_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "known": true,
+        "current_head": "",
+        "status": null,
+        "stale": false,
+        "actionable": false,
+        "unknown_because": "",
+        "note": "indexed at e08a9aeb12db; graph currency was not checked on this request \u2014 this is NOT a claim that the graph is up to date",
+        "asked_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "agrees": true,
+        "certifiable": true,
+        "refutes_absence": true
+      },
+      "coverage": {
+        "paths": [
+          "src/activated.py"
+        ],
+        "inert": [],
+        "out_of_domain": [
+          "src/activated.py"
+        ],
+        "needs_verdict": [],
+        "state": "clean",
+        "note": "1 of 1 changed file(s) are complete answers \u2014 1 whose added code calls nothing this gate checks, 0 prose/asset"
+      },
+      "counts": {
+        "blockers": 0,
+        "warnings": 0,
+        "api_checks": 0,
+        "api_verdicts": 0,
+        "evidence": 1,
+        "symbols_seen": 0,
+        "grounded_by_diff": 0,
+        "hallucinations": 0,
+        "tests_run": 0,
+        "test_regressions": 0,
+        "ruleset": 0
+      },
+      "working_tree": {
+        "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "files": 1,
+        "declared": 1,
+        "undelivered": [],
+        "dropped": [],
+        "complete": true
+      }
+    }
+  },
+  "candidate_artifact": {
+    "request": {
+      "diff": "diff --git a/src/activated.py b/src/activated.py\n--- a/src/activated.py\n+++ b/src/activated.py\n@@ -0,0 +1,3 @@\n+def task():\n+    ghost_api()\n+    pass\n",
+      "repo": "uqeu/estelle",
+      "head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+      "require_verified": true,
+      "sources": {
+        "src/activated.py": "def task():\n    ghost_api()\n    pass\n"
+      },
+      "working_tree": {
+        "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "changed": [
+          "src/activated.py"
+        ],
+        "sources": {
+          "src/activated.py": "def task():\n    ghost_api()\n    pass\n"
+        }
+      }
+    },
+    "response": {
+      "repo": "uqeu/estelle",
+      "scope": "repo:uqeu/estelle",
+      "merge": false,
+      "verified": true,
+      "state": "verified-blocked",
+      "outcome": "refuted",
+      "verdict": "blocked",
+      "blockers": [
+        {
+          "path": "src/activated.py",
+          "line": 2,
+          "severity": "error",
+          "body": "`ghost_api` is not defined in this repo \u2014 likely a hallucinated API; verify it exists before merging.",
+          "symbol": "ghost_api",
+          "col": 5
+        }
+      ],
+      "currency": {
+        "checked": false,
+        "repo": "uqeu/estelle",
+        "indexed_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "known": true,
+        "current_head": "",
+        "status": null,
+        "stale": false,
+        "actionable": false,
+        "unknown_because": "",
+        "note": "indexed at e08a9aeb12db; graph currency was not checked on this request \u2014 this is NOT a claim that the graph is up to date",
+        "asked_head": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "agrees": true,
+        "certifiable": true,
+        "refutes_absence": true
+      },
+      "coverage": {
+        "paths": [
+          "src/activated.py"
+        ],
+        "inert": [],
+        "out_of_domain": [],
+        "needs_verdict": [
+          "src/activated.py"
+        ],
+        "state": "undetermined",
+        "note": "1 of 1 changed file(s) call something this gate checks: src/activated.py"
+      },
+      "counts": {
+        "blockers": 1,
+        "warnings": 0,
+        "api_checks": 1,
+        "api_verdicts": 1,
+        "evidence": 1,
+        "symbols_seen": 1,
+        "grounded_by_diff": 0,
+        "hallucinations": 1,
+        "tests_run": 0,
+        "test_regressions": 0,
+        "ruleset": 0
+      },
+      "working_tree": {
+        "base": "e08a9aeb12dbc839769a2a2e1d19c392b8a0d64b",
+        "files": 1,
+        "declared": 1,
+        "undelivered": [],
+        "dropped": [],
+        "complete": true
+      }
+    }
+  }
+}

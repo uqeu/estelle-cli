@@ -204,6 +204,8 @@ fn sample_for_field(field: &str, spec: &Value, defs: &Value, nulls: bool, root: 
         // `context` never reaches `/memory/chat`. A non-blank prompt here would make this suite
         // spend a customer's credential on every run.
         "prompt" => json!("   "),
+        // Empty text forces review's explicit unknown branch before credentials or HTTP.
+        "last_assistant_message" => json!(""),
         // A `.txt` write: `ground_scope` abstains on anything that is not Python and
         // `hook_sync_refusal` calls it an unindexable type, so neither mode calls out.
         "tool_input" => json!({"file_path": "notes.txt", "content": "probe"}),
@@ -410,7 +412,14 @@ fn every_field_any_host_schema_can_send_tolerates_absent_null_and_its_own_type()
             continue;
         }
         all_null[field] = Value::Null;
-        for spelling in [json!(null), json!("estelle-probe")] {
+        // stop_hook_active is now consumed by review rather than ignored. Its host schema is
+        // boolean: a string was never a permitted spelling, even while unknown-field serde hid it.
+        let populated = if field == "stop_hook_active" {
+            json!(false)
+        } else {
+            json!("estelle-probe")
+        };
+        for spelling in [json!(null), populated] {
             let mut payload = json!({"hook_event_name": "PreToolUse"});
             payload[field] = spelling.clone();
             let parsed = serde_json::from_value::<HookPayload>(payload);

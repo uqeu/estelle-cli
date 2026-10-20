@@ -482,6 +482,61 @@ mod tests {
         );
     }
 
+    /// A nonblocking answer-review disclosure uses the host's supported human-warning field,
+    /// not additionalContext (which would request another model continuation).
+    #[test]
+    fn answer_review_unknown_is_a_warning_without_continuation_or_approval() {
+        let parsed = parse_completed(
+            &handler(),
+            run_result(
+                Some(0),
+                r#"{"systemMessage":"Estelle Stop review is UNVERIFIED; this is not a pass or certification."}"#,
+                "",
+            ),
+            Some("turn-1".to_string()),
+        );
+        assert_eq!(parsed.data, StopHandlerData::default());
+        assert_eq!(parsed.completed.run.status, HookRunStatus::Completed);
+        assert_eq!(
+            parsed.completed.run.entries,
+            vec![HookOutputEntry {
+                kind: HookOutputEntryKind::Warning,
+                text: "Estelle Stop review is UNVERIFIED; this is not a pass or certification."
+                    .to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn exhausted_answer_review_stops_without_another_repair_continuation() {
+        let parsed = parse_completed(
+            &handler(),
+            run_result(
+                Some(0),
+                r#"{"continue":false,"stopReason":"UNRESOLVED after two repair attempts","systemMessage":"UNRESOLVED after two repair attempts"}"#,
+                "",
+            ),
+            Some("turn-1".to_string()),
+        );
+        assert!(parsed.data.should_stop);
+        assert!(!parsed.data.should_block);
+        assert!(parsed.data.continuation_fragments.is_empty());
+        assert_eq!(parsed.completed.run.status, HookRunStatus::Stopped);
+        assert_eq!(
+            parsed.completed.run.entries,
+            vec![
+                HookOutputEntry {
+                    kind: HookOutputEntryKind::Warning,
+                    text: "UNRESOLVED after two repair attempts".to_string()
+                },
+                HookOutputEntry {
+                    kind: HookOutputEntryKind::Stop,
+                    text: "UNRESOLVED after two repair attempts".to_string()
+                },
+            ]
+        );
+    }
+
     #[test]
     fn continue_false_overrides_block_decision() {
         let parsed = parse_completed(

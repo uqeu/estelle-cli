@@ -244,6 +244,9 @@ PLUGIN_CONTRACT_SHA256_BY_VERSION = {
     # DIGEST PROVENANCE: emitted by this file's own guard against this working tree (34 files hashed),
     # never copied out of a CI log and never re-implemented.
     "0.3.9": "feeb5e4053696a9806e5164be96eeef9ae336c65e4b671c7318d5213e2548375",
+    # Candidate 0.4.1 adds canonical edit/shell matchers and synchronous Stop review.
+    # Old version records are immutable. This registration is not publication.
+    "0.4.1": "6cbae7b27c223c0d51d0be4cf961e3353b6cd09df507b510e8ce8b962da0b0a4",
 }
 
 #: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.
@@ -398,13 +401,20 @@ if hooks_path.is_file():
         if hook.get("command")
     ]
     commands = {hook["command"]: hook for hook in handlers}
-    # TWELVE handlers since v0.3.8 (eleven from v0.3.4, nine through v0.3.3). The count is asserted
+    # THIRTEEN handlers in candidate v0.4.1: the new synchronous Stop/review row. The count is asserted
     # rather than the membership because a replacement would keep the count and change the row.
     # ⚠️ THE NUMBER IS IN THE CLAUSE'S NAME ON PURPOSE, AND THE NAME MOVES WITH IT. A clause called
     # "the eleven rows" that asserts twelve is a claim no reader can falsify by reading it — this
     # repo has paid for that shape before. v0.3.8 added `PreToolUse` / `Read|Grep|Glob` / `pull`.
-    check("shipping hook bundle has the twelve plugin-door rows", len(handlers) == 12,
+    check("shipping hook bundle has the thirteen plugin-door rows", len(handlers) == 13,
           str(len(handlers)))
+    review_rows = [h for g in hooks["hooks"]["Stop"] for h in g.get("hooks", [])
+                   if h.get("command") == f"{PLUGIN_HOOK_RUNNER} hook review"]
+    check("Stop review is synchronous", len(review_rows) == 1 and
+          not review_rows[0].get("async", False), str(review_rows))
+    check("canonical Codex patch and shell tools are registered", {
+          g.get("matcher") for g in hooks["hooks"]["PreToolUse"]} >= {
+          "Write|Edit|apply_patch", "Bash|shell_command|exec_command"})
     # ⚠️ A DECLARED EXEMPTION, ASSERTED AS AN ABSENCE. `shift` fires on every Read. The Rust owner
     # marks it `plugin: false` because adding it is a product decision with a release attached,
     # not a drift fix. A lane regenerated this file WITH it; that is why the absence is now a
@@ -419,7 +429,7 @@ if hooks_path.is_file():
     # events with two different budgets (30 on Stop/PreCompact, 3 on SessionEnd), so a single expected
     # value here would be a claim that is false on one of them.
     for mode, expected in (("ground", 30), ("sync", 30), ("context", 30),
-                           ("guard", 10), ("distil", 10), ("welcome", 30)):
+                           ("guard", 10), ("distil", 10), ("welcome", 30), ("review", 30)):
         command = f"{PLUGIN_HOOK_RUNNER} hook {mode}"
         matching = [h for c, h in commands.items() if c == command]
         check(f"shipping timeout for {mode} is {expected}s",
