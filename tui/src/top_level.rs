@@ -630,6 +630,7 @@ async fn run_hook_with(
         "sync" => sync_hook(&payload, repo, root).await,
         "distil" => Ok(distil_hook(&payload)),
         "checkpoint" => checkpoint_hook(&payload).await,
+        "stream" => stream_hook(&payload, repo).await,
         "welcome" => Ok(welcome_hook(&payload).await),
         "context" => context_hook(&payload, repo).await,
         _ => Err(format!(
@@ -653,6 +654,7 @@ fn hook_event_label(mode: &str, expected: Option<&str>, payload: Option<&str>) -
             // names one of two doors is a diagnostic that points at the wrong one.
             "context" => "UserPromptSubmit|SubagentStart",
             "checkpoint" => "Stop|SubagentStop|PreCompact|SessionEnd",
+            "stream" => "UserPromptSubmit|PostToolUse|Stop",
             _ => "unknown",
         })
         .to_string()
@@ -661,7 +663,7 @@ fn hook_event_label(mode: &str, expected: Option<&str>, payload: Option<&str>) -
 fn hook_execution_need(mode: &str) -> &'static str {
     match mode {
         "ground" | "sync" | "context" => "a valid Estelle credential and a reachable Estelle API",
-        "checkpoint" => "a readable transcript and writable local session state",
+        "checkpoint" | "stream" => "a readable transcript and writable local session state",
         "welcome" => "readable local session state and repository history",
         "shift" => "a reachable local Estelle session server",
         "guard" | "distil" | "pull" => "a valid host hook payload",
@@ -1922,6 +1924,62 @@ fn checkpoint_refused(reason: &str) -> Option<Value> {
 /// and the NEXT session's SessionStart pays it. Stop and PreCompact are UNCHANGED — they have
 /// the full budget and keep doing the full durable write. Turning a network round trip into a
 /// local write is the only thing that honestly fits in three seconds.
+/// `stream`: send the transcript lines appended since the last run to the customer's session timeline.
+/// Best-effort and silent: a failure leaves the offset where it was, so the next run resends (the server
+/// dedupes by event id). It never blocks the host and never prints into the conversation.
+async fn stream_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>, String> {
+    let Some(path) = payload.transcript_path.as_deref().map(str::trim).filter(|p| !p.is_empty()) else {
+        return Ok(Vec::new());
+    };
+    let session = payload.session_id.trim();
+    if session.is_empty() || session.len() > 200 || !session.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Ok(Vec::new());
+    }
+    let Some(home) = dirs::home_dir() else { return Ok(Vec::new()) };
+    let state_dir = home.join(".estelle").join("stream");
+    let _ = std::fs::create_dir_all(&state_dir);
+    let offset_file = state_dir.join(format!("{session}.offset"));
+    let offset: u64 = std::fs::read_to_string(&offset_file).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
+    let Ok(bytes) = std::fs::read(path) else { return Ok(Vec::new()) };
+    if offset as usize >= bytes.len() {
+        return Ok(Vec::new());
+    }
+    let appended = String::from_utf8_lossy(&bytes[offset as usize..]).into_owned();
+    let (mut events, consumed) = crate::hook_stream::parse_appended(&appended);
+    let session_id = format!("{}-{session}", harness_of(payload));
+    if offset == 0 {
+        let title = events.iter().find(|e| e["kind"] == "customer_message")
+            .and_then(|e| e["payload"]["text"].as_str()).map(|t| t.lines().next().unwrap_or("").chars().take(90).collect::<String>())
+            .unwrap_or_else(|| "Coding session".to_string());
+        let at = events.first().and_then(|e| e["at"].as_str()).unwrap_or("1970-01-01T00:00:00Z").to_string();
+        events.insert(0, crate::hook_stream::started(&session_id, &at, &title, repo.as_str(), harness_of(payload)));
+    }
+    // The host's own events are the lifecycle: a prompt starts work, Stop means the agent finished its turn
+    // and is waiting on the person. Ids are per transcript position, so a replay is a no-op.
+    let now = chrono::Utc::now().to_rfc3339();
+    let mark = format!("{}", offset + consumed as u64);
+    match payload.hook_event_name.trim() {
+        "UserPromptSubmit" if offset > 0 => events.push(crate::hook_stream::lifecycle(&format!("{session_id}:prompt:{mark}"), &now, "running", "input_received")),
+        "Stop" => events.push(crate::hook_stream::lifecycle(&format!("{session_id}:stop:{mark}"), &now, "waiting_for_review", "input_required")),
+        "SessionEnd" => events.push(crate::hook_stream::lifecycle(&format!("{session_id}:end:{mark}"), &now, "ended", "completed")),
+        _ => {}
+    }
+    if events.is_empty() {
+        let _ = std::fs::write(&offset_file, (offset + consumed as u64).to_string());
+        return Ok(Vec::new());
+    }
+    let Ok(api) = Api::resolve() else { return Ok(Vec::new()) };
+    if api.post(Endpoint::SessionEvents, &json!({"session_id": session_id, "events": events})).await.is_ok() {
+        let _ = std::fs::write(&offset_file, (offset + consumed as u64).to_string());
+    }
+    Ok(Vec::new())
+}
+
+/// Which host this payload came from: Codex sends `turn_id` and no transcript on most events.
+fn harness_of(payload: &HookPayload) -> &'static str {
+    if payload.transcript_path.is_none() { "codex" } else { "claude-code" }
+}
+
 async fn checkpoint_hook(payload: &HookPayload) -> Result<Vec<String>, String> {
     checkpoint_hook_at(
         payload,

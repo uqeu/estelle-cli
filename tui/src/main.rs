@@ -41,6 +41,7 @@ mod gate_refusal;
 mod graph_view;
 mod history_import;
 mod hook_distil;
+mod hook_stream;
 mod hook_guard;
 mod hook_pull;
 mod hook_timings;

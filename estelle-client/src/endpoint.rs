@@ -119,6 +119,7 @@ endpoints! {
     (VendorDriftWatchlist, "vendor-drift/watchlist", [Get, Put], false),
     (VendorDriftRepair, "vendor-drift/repair", [Post], false),
     (Checkpoint, "checkpoint", [Post], false),
+    (SessionEvents, "session/events", [Get, Post], false),
     (Govern, "govern", [Post], false),
     (Spend, "spend", [Get], false),
 }
