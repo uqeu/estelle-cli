@@ -25,7 +25,7 @@ Ask about uqeu/estelle                                                         â
 
 
 
-  /me           your account: plan, balance, budget, provider, invites
+  /me           your account: plan usage, provider, invites
   /marketplace  the team's published plugins
   /memory       an answered question: what Estelle knows about this repo
   /mode         read or lower the server autonomy ceiling

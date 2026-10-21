@@ -121,6 +121,7 @@ endpoints! {
     (Checkpoint, "checkpoint", [Post], false),
     (Govern, "govern", [Post], false),
     (Spend, "spend", [Get], false),
+    (CreditsForecast, "credits/forecast", [Get], false),
 }
 
 impl Endpoint {

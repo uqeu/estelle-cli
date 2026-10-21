@@ -72,10 +72,7 @@ const SESSION_HELP: [(&str, &str); 50] = [
         "graph",
         "the swept code graph; /graph nodes draws the dependency view",
     ),
-    (
-        "me",
-        "your account: plan, balance, budget, provider, invites",
-    ),
+    ("me", "your account: plan usage, provider, invites"),
     (
         "keys",
         "your API keys — label, prefix, status; read-only, manage them in the dashboard",
@@ -1143,14 +1140,6 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                     .filter(|value| !value.is_empty())
                     .unwrap_or_else(|| "not returned".to_string())
             };
-            let money = |key: &str| {
-                reply
-                    .extra
-                    .get(key)
-                    .and_then(Value::as_f64)
-                    .map(|value| format!("${value:.2}"))
-                    .unwrap_or_else(|| "not returned".to_string())
-            };
             let identity = scalar("email");
             let mut lines = vec![format!(
                 "{identity}{}",
@@ -1162,27 +1151,25 @@ pub(crate) fn render_remote_reply(name: &str, reply: &estelle_client::CommandRep
                     .map(|company| format!("  |  {company}"))
                     .unwrap_or_default()
             )];
-            lines.push(format!(
-                "plan {}  |  {}{}",
-                scalar("plan"),
-                match reply.extra.get("plan_active").and_then(Value::as_bool) {
-                    Some(true) => "active",
-                    Some(false) => "INACTIVE",
-                    None => "activity not returned",
-                },
-                reply
-                    .extra
-                    .get("seats")
-                    .and_then(Value::as_u64)
-                    .map(|seats| format!("  |  {seats} seats"))
-                    .unwrap_or_default()
+            // Usage as a SHARE of the plan, like Claude's /usage — never the raw credit or dollar
+            // totals this line used to print (founder, 2026-10-21). See `usage_meter`.
+            let plan = crate::usage_meter::plan_label(
+                reply.extra.get("plan").and_then(Value::as_str),
+                reply.extra.get("plan_active").and_then(Value::as_bool),
+            );
+            lines.extend(crate::usage_meter::usage_lines(
+                &plan,
+                reply.extra.get(crate::usage_meter::FORECAST_FIELD),
+                *chrono::Local::now().offset(),
             ));
-            lines.push(format!(
-                "balance {}  |  budget {}  |  spent this period {}",
-                money("balance_usd"),
-                money("budget_usd"),
-                money("period_spend_usd")
-            ));
+            if let Some(seats) = reply
+                .extra
+                .get("seats")
+                .and_then(Value::as_u64)
+                .filter(|seats| *seats > 0)
+            {
+                lines.push(format!("{seats} seats"));
+            }
             match reply.extra.get("has_provider_key").and_then(Value::as_bool) {
                 Some(true) => lines.push(format!(
                     "provider {}  |  {}",
@@ -4060,11 +4047,14 @@ mod tests {
     }
 
     #[test]
-    fn me_reply_renders_plan_balance_budget_and_pending_invites_honestly() {
+    fn me_reply_renders_plan_usage_share_and_pending_invites_never_raw_totals() {
         let reply: estelle_client::CommandReply = serde_json::from_value(json!({
             "email": "dev@example.com", "account_id": "acct-1", "company": "Fate Labs",
-            "plan": "pro", "plan_active": true, "seats": 3,
+            "plan": "ultra", "plan_active": true, "seats": 3,
             "balance_usd": 12.5, "budget_usd": 50.0, "period_spend_usd": 4.25,
+            // What `execute_remote_command` attaches from GET /credits/forecast.
+            "credits_forecast": {"balance_parts": {"spent_this_period": 3790.0, "grant": 10000.0,
+                "period_end": "2026-11-20T12:00:00Z", "period_source": "stripe"}},
             "has_provider_key": true, "provider": "anthropic", "provider_model": "claude-opus-4-8",
             "pending_invites": [{"team": "core", "from": "founder@example.com"}],
             "entitlements": {"persist_index": true, "best_retrieval": false, "memory_pack_qty": 2}
@@ -4076,9 +4066,21 @@ mod tests {
             rendered.contains("dev@example.com"),
             "identity missing\n{rendered}"
         );
-        assert!(rendered.contains("pro"), "plan missing\n{rendered}");
-        assert!(rendered.contains("12.5"), "balance missing\n{rendered}");
-        assert!(rendered.contains("50"), "budget missing\n{rendered}");
+        assert!(
+            rendered.contains("Plan: Ultra · 37% used this period · resets Nov 2"),
+            "usage headline missing\n{rendered}"
+        );
+        assert!(
+            rendered.contains("███████░░░░░░░░░░░░░ 37%"),
+            "bar missing\n{rendered}"
+        );
+        // The founder's rule: a share of the plan, never the credit or dollar totals behind it.
+        for raw in ["12.5", "$50", "4.25", "3790", "10000", "balance", "budget"] {
+            assert!(
+                !rendered.contains(raw),
+                "raw total {raw:?} reached /me\n{rendered}"
+            );
+        }
         assert!(
             rendered.contains("anthropic"),
             "provider missing\n{rendered}"
@@ -4101,6 +4103,12 @@ mod tests {
         assert!(
             !rendered.contains("$0"),
             "absent balance rendered as zero\n{rendered}"
+        );
+        // No forecast attached (the read never ran): "Usage unavailable", never "0% used".
+        assert!(rendered.contains("Usage unavailable"), "{rendered}");
+        assert!(
+            !rendered.contains("0%"),
+            "an unread usage rendered as 0%\n{rendered}"
         );
     }
 
