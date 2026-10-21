@@ -3203,6 +3203,50 @@ struct HookRow {
 /// manifest only**, so the same hook got 30 s through the plugin door and 10–20 s through
 /// `estelle install-hooks` — measured off the shipped 0.2.32 binary, four rows disagreed.
 const HOOK_TABLE: &[HookRow] = &[
+    // SESSION STREAM: mirrors this session into the customer's own Estelle dashboard (`hook_stream.rs`).
+    // Async on every door — it must never delay the agent — and silent: a failure resends next time.
+    HookRow {
+        event: "UserPromptSubmit",
+        matcher: None,
+        mode: "stream",
+        timeout: 15,
+        claude_async: true,
+        plugin: true,
+        plugin_async: true,
+    },
+    // SESSION STREAM: mirrors this session into the customer's own Estelle dashboard (`hook_stream.rs`).
+    // Async on every door — it must never delay the agent — and silent: a failure resends next time.
+    HookRow {
+        event: "PostToolUse",
+        matcher: Some("*"),
+        mode: "stream",
+        timeout: 15,
+        claude_async: true,
+        plugin: true,
+        plugin_async: true,
+    },
+    // SESSION STREAM: mirrors this session into the customer's own Estelle dashboard (`hook_stream.rs`).
+    // Async on every door — it must never delay the agent — and silent: a failure resends next time.
+    HookRow {
+        event: "Stop",
+        matcher: None,
+        mode: "stream",
+        timeout: 15,
+        claude_async: true,
+        plugin: true,
+        plugin_async: true,
+    },
+    // SESSION STREAM: mirrors this session into the customer's own Estelle dashboard (`hook_stream.rs`).
+    // Async on every door — it must never delay the agent — and silent: a failure resends next time.
+    HookRow {
+        event: "SessionEnd",
+        matcher: None,
+        mode: "stream",
+        timeout: 15,
+        claude_async: true,
+        plugin: true,
+        plugin_async: true,
+    },
     HookRow {
         event: "PreToolUse",
         matcher: Some("Write|Edit"),
