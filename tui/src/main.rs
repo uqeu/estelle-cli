@@ -58,6 +58,7 @@ mod production_hud;
 mod provider_catalog;
 mod provider_keys;
 mod provider_store;
+mod reindex_spool;
 mod run_spend;
 mod screens;
 mod session_server;

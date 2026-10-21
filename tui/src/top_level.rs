@@ -29,6 +29,7 @@ use crate::Command;
 use crate::commands;
 use crate::hook_timings;
 use crate::plugin_currency;
+use crate::reindex_spool;
 use estelle_tui::ground_block;
 use estelle_tui::ground_block::FlaggedOutcome;
 use estelle_tui::host_transcript;
@@ -47,7 +48,7 @@ const INGEST_MAX_FILES: usize = 4_000;
 const INGEST_LANGUAGE_FLOOR: usize = 100;
 const INGEST_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const INGEST_MAX_POLLS: usize = 7_200;
-const SKIP_DIRECTORIES: &[&str] = &[
+pub(crate) const SKIP_DIRECTORIES: &[&str] = &[
     ".git",
     "build",
     "coverage",
@@ -119,6 +120,9 @@ pub(crate) async fn run(command: Command, repo: Repo, root: &Path) -> Result<Vec
         Command::Connect { client, .. } => Ok(connect_lines(client.as_deref().unwrap_or("cursor"))),
         Command::Serve { .. } => Err("serve is handled by the session runtime".to_string()),
         Command::Remove => remove_editor_configs(root),
+        Command::Hook { mode, .. } if mode.as_deref() == Some(REINDEX_FLUSH_MODE) => {
+            reindex_flush(&repo, root).await
+        }
         Command::Hook { mode, event } => {
             run_hook(
                 mode.as_deref().unwrap_or("ground"),
@@ -2306,6 +2310,14 @@ fn mark_index_current(repo: &Repo) {
     }
 }
 
+/// [`mark_index_current`] at a given instant (unix ms) rather than now. Best effort, same reason.
+fn mark_index_current_at(repo: &Repo, at_ms: u64) {
+    let (Some(key), Some(stamp)) = (freshness_key(repo), ground_block::stamp_path()) else {
+        return;
+    };
+    let _ = ground_block::mark_indexed_at(&stamp, key, at_ms as f64 / 1000.0);
+}
+
 /// The subject of the abstention sentences when the payload named no file. An empty `{name}` reads
 /// as a broken message; naming the absence reads as an answer.
 fn display_names(path: &str) -> (&str, &str) {
@@ -2395,56 +2407,210 @@ async fn file_shift_hook_at(
     file_shift_messages(notices)
 }
 
+/// PostToolUse `Write|Edit`: record the write and return. **No network call happens here.**
+///
+/// 🔴 **THIS USED TO POST `/reindex` ONCE PER WRITE, SYNCHRONOUSLY, INSIDE THE AGENT'S TURN.**
+/// Five agents writing in one account took every in-flight slot it had and production answered
+/// `429 too many concurrent requests for this account` — and each request spent the customer's
+/// credits on a one-file embed the endpoint would have taken as part of a list. The write is now
+/// filtered locally, spooled, and sent by ONE detached flusher per (repo, root) per window. See
+/// [`crate::reindex_spool`] for the shape and its stated limits.
+///
+/// Silence is the right answer for a path the filter refuses (outside the repo, gitignored, a
+/// credential file, a type the index does not read): it is not a failure, so it is not news. A
+/// FAILED flush is news, and the next write reports it once.
 async fn sync_hook(payload: &HookPayload, repo: &Repo, root: &Path) -> Result<Vec<String>, String> {
     let (path, _) = edited_file(payload);
-    if path.is_empty() {
+    let Some(dir) = reindex_spool_dir() else {
         return Ok(Vec::new());
-    }
-    if let Some(reason) = hook_sync_refusal(&path, "")
-        && reason == "not an indexable file type"
+    };
+    sync_hook_with(
+        &path,
+        repo,
+        root,
+        &dir,
+        reindex_spool::now_ms(),
+        SPAWN_FLUSHER,
+    )
+}
+
+fn sync_hook_with(
+    path: &str,
+    repo: &Repo,
+    root: &Path,
+    dir: &Path,
+    now: u64,
+    spawn: fn(&Path) -> Result<(), String>,
+) -> Result<Vec<String>, String> {
+    let Ok(key) = reindex_spool::admit(root, path, SKIP_DIRECTORIES, hook_indexable) else {
+        return Ok(Vec::new());
+    };
+    let spool = reindex_spool::spool_path_in(dir, repo.as_str(), root);
+    let queued = reindex_spool::enqueue(&spool, repo.as_str(), root, &key, now)?;
+    if queued.spawn
+        && let Err(error) = spawn(root)
     {
-        return Ok(Vec::new());
+        reindex_spool::abandon(&spool, &error, now)?;
     }
-    let (files, skipped) = collect_files(root, &[PathBuf::from(&path)])?;
-    if files.is_empty() {
-        let reason = skipped
-            .first()
-            .map(String::as_str)
-            .unwrap_or("the file was not readable");
-        return Ok(vec![hook_message(
-            Some(format!("Estelle did not reindex {path}: {reason}.")),
-            None,
-            "PreToolUse",
-        )]);
+    Ok(queued
+        .report
+        .map(|report| {
+            hook_message(
+                Some(format!("Estelle reindex is behind: {report}.")),
+                None,
+                "PostToolUse",
+            )
+        })
+        .into_iter()
+        .collect())
+}
+
+/// The per-write hook's type list is NARROWER than the sweep's (`hook_sync_refusal`, pinned to the
+/// Python twin) — kept exactly, so this change moves WHEN files are sent, never WHICH.
+fn hook_indexable(path: &Path) -> bool {
+    is_source(path) && hook_sync_refusal(&path.to_string_lossy(), "").is_none()
+}
+
+/// The hidden hook mode the sync hook spawns. Not in [`HOOK_TABLE`]: no host ever invokes it.
+pub(crate) const REINDEX_FLUSH_MODE: &str = "reindex-flush";
+
+/// Where spools live. Tests never touch the real `~/.estelle`.
+fn reindex_spool_dir() -> Option<PathBuf> {
+    if cfg!(test) {
+        return Some(
+            std::env::temp_dir().join(format!("estelle-test-reindex-spool-{}", std::process::id())),
+        );
+    }
+    reindex_spool::default_spool_dir()
+}
+
+/// A test binary must never spawn itself as a flusher — it would run the suite again.
+#[cfg(not(test))]
+const SPAWN_FLUSHER: fn(&Path) -> Result<(), String> = spawn_flusher;
+#[cfg(test)]
+const SPAWN_FLUSHER: fn(&Path) -> Result<(), String> = |_| Ok(());
+
+/// Start `estelle hook reindex-flush` detached from the hook's process group, with no stdio, and
+/// do not wait for it. The repo is resolved from `root` exactly as the hook resolved it.
+#[cfg_attr(test, allow(dead_code))]
+fn spawn_flusher(root: &Path) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
+    let mut command = ProcessCommand::new(exe);
+    command
+        .args(["hook", REINDEX_FLUSH_MODE])
+        .current_dir(root)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
+    command.spawn().map(drop).map_err(|error| error.to_string())
+}
+
+/// `estelle hook reindex-flush`: claim this (repo, root)'s spool and drain it in batches.
+async fn reindex_flush(repo: &Repo, root: &Path) -> Result<Vec<String>, String> {
+    let dir = reindex_spool_dir().ok_or("no home directory for the reindex spool")?;
+    let spool = reindex_spool::spool_path_in(&dir, repo.as_str(), root);
+    let now = reindex_spool::now_ms();
+    if !reindex_spool::claim(&spool, std::process::id(), now)? {
+        return Ok(Vec::new());
     }
     let api = match Api::resolve() {
         Ok(api) => api,
         Err(error) => {
-            return Ok(vec![hook_message(
-                Some(format!("Estelle did not reindex {path}: {error}.")),
-                None,
-                "PreToolUse",
-            )]);
+            reindex_spool::abandon(&spool, &error, now)?;
+            return Ok(Vec::new());
         }
     };
-    match api
-        .post_scoped(Endpoint::Reindex, repo, &json!({"files": files}))
-        .await
-    {
-        // 🔑 THE FRESHNESS SIGNAL IS WRITTEN HERE AND NOWHERE ELSE ON THIS PATH. The grounding
-        // gate may only refuse an edit when it can also say the index is current, and this is the
-        // one moment we know a change reached the server. It is stamped ONLY on success: a failed
-        // reindex that stamped would make a stale index look current, which is a false block on
-        // real code. Best-effort — a stamp we cannot write costs a block, never causes one.
+    let mut port = HttpFlushPort {
+        api: &api,
+        repo,
+        root,
+    };
+    let report = reindex_spool::run_flusher(&spool, &mut port).await;
+    Ok(vec![format!(
+        "reindex flusher: {} request(s), {} path(s), gave_up={}",
+        report.requests, report.paths_sent, report.gave_up
+    )])
+}
+
+struct HttpFlushPort<'a> {
+    api: &'a Api,
+    repo: &'a Repo,
+    root: &'a Path,
+}
+
+impl reindex_spool::FlushPort for HttpFlushPort<'_> {
+    async fn post(&mut self, paths: &[String], drained_at: u64) -> reindex_spool::PostOutcome {
+        post_reindex_batch(self.api, self.repo, self.root, paths, drained_at).await
+    }
+
+    async fn sleep(&mut self, duration: Duration) {
+        tokio::time::sleep(duration).await;
+    }
+
+    fn now(&self) -> u64 {
+        reindex_spool::now_ms()
+    }
+}
+
+/// ONE `POST /reindex` carrying every path in `paths`. Content is read NOW, so the newest bytes go
+/// out; a path that no longer exists is sent as `removed`. `collect_files` re-applies the Git
+/// inventory, the size cap and the credential-content screen before anything is sent.
+async fn post_reindex_batch(
+    api: &Api,
+    repo: &Repo,
+    root: &Path,
+    paths: &[String],
+    drained_at: u64,
+) -> reindex_spool::PostOutcome {
+    use reindex_spool::PostOutcome;
+    assert!(!paths.is_empty(), "a flush batch is never empty");
+    let (present, removed): (Vec<&String>, Vec<&String>) = paths
+        .iter()
+        .partition(|key| root.join(key.as_str()).exists());
+    let present: Vec<PathBuf> = present.into_iter().map(PathBuf::from).collect();
+    let files = match collect_files(root, &present) {
+        Ok((files, _skipped)) => files,
+        Err(error) => return PostOutcome::Failed(error),
+    };
+    if files.is_empty() && removed.is_empty() {
+        return PostOutcome::NothingToSend;
+    }
+    let mut body = json!({"files": files});
+    if !removed.is_empty() {
+        body["removed"] = json!(removed);
+    }
+    match api.post_scoped_typed(Endpoint::Reindex, repo, &body).await {
+        // The stamp is the DRAIN time, not now: a write made while this request was in flight has a
+        // newer mtime and must keep the index reading stale. Stamped only on success (see
+        // `mark_index_current`) — a failed reindex that stamped would make a stale index look current.
         Ok(_) => {
-            mark_index_current(repo);
-            Ok(Vec::new())
+            mark_index_current_at(repo, drained_at);
+            PostOutcome::Accepted
         }
-        Err(error) => Ok(vec![hook_message(
-            Some(format!("Estelle did not reindex {path}: {error}.")),
-            None,
-            "PreToolUse",
-        )]),
+        Err(error) => {
+            let failure = classify_transport_failure(&error);
+            let detail = format!("Estelle {}", transport_detail(failure));
+            match failure {
+                TransportFailure::Http(429 | 502 | 503 | 504)
+                | TransportFailure::Timeout
+                | TransportFailure::Refused
+                | TransportFailure::Dns
+                | TransportFailure::Unknown => PostOutcome::Retry(detail),
+                _ => PostOutcome::Failed(detail),
+            }
+        }
     }
 }
 
@@ -2492,17 +2658,15 @@ fn first_string(input: &Value, keys: &[&str]) -> Option<String> {
 fn patch_body_path(input: &Value) -> Option<String> {
     const MAX_PATCH_HEADER_LINES: usize = 64;
     let body = first_string(input, &["input", "patch", "diff", "arguments"])?;
-    body.lines()
-        .take(MAX_PATCH_HEADER_LINES)
-        .find_map(|line| {
-            let line = line.trim();
-            PATCH_FILE_MARKERS.iter().find_map(|marker| {
-                line.strip_prefix(marker)
-                    .map(str::trim)
-                    .filter(|path| !path.is_empty())
-                    .map(str::to_string)
-            })
+    body.lines().take(MAX_PATCH_HEADER_LINES).find_map(|line| {
+        let line = line.trim();
+        PATCH_FILE_MARKERS.iter().find_map(|marker| {
+            line.strip_prefix(marker)
+                .map(str::trim)
+                .filter(|path| !path.is_empty())
+                .map(str::to_string)
         })
+    })
 }
 
 /// What the host DID send, for an abstention that a reader can act on.
@@ -4021,7 +4185,7 @@ fn walk_paths(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(paths)
 }
 
-fn is_source(path: &Path) -> bool {
+pub(crate) fn is_source(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| {
@@ -6040,7 +6204,10 @@ mod tests {
         /// cap is NOT found — stated as a limit rather than left as a surprise.
         #[test]
         fn a_marker_past_the_header_bound_is_not_searched_for() {
-            let body = format!("*** Begin Patch\n{}*** Update File: late.py\n", "+x\n".repeat(80));
+            let body = format!(
+                "*** Begin Patch\n{}*** Update File: late.py\n",
+                "+x\n".repeat(80)
+            );
             let (path, _) = edited_file(&payload("apply_patch", json!({"input": body})));
             assert!(path.is_empty(), "expected the bound to hold, got {path:?}");
         }
@@ -11040,3 +11207,7 @@ mod portable_hook_runner_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "reindex_hook_tests.rs"]
+mod reindex_hook_tests;
