@@ -29,7 +29,7 @@ followed; see `ROUTE-INVENTORY-2026-08-07.md`.)
 | help | local table generated from the command registry |
 | init | scoped `GET /wiki` |
 | graph | scoped `GET /graph`; counts, roots, explicit `building`/unswept states. `/graph nodes` → scoped `GET /graph/nodes`; nodes/edges, explicit `truncated` |
-| me | `GET /me`; plan, balance, budget, provider, seats; pending invites explicit, omitted fields "not returned" |
+| me | `GET /me` + `GET /credits/forecast`; plan usage as a share (`Plan: Ultra · 37% used this period · resets Nov 20` + bar, never credit/dollar totals; a failed read is "Usage unavailable", never 0%), provider, seats; pending invites explicit, omitted fields "not returned" |
 | keys | `GET /me/keys`; prefixes + expiry/revoked state, raw keys never returned |
 | team | `GET /me/team`; role, seat ledger, members, admin invites; null team renders as absent. `/team board` → `GET /team/leaderboard`; per-actor rows with window + metric |
 | marketplace | `GET /marketplace`; published plugins with mode and skill lists |
