@@ -1,7 +1,7 @@
 schema_version = 1
 audit_date = "2026-08-20"
 audit_state = "source census recorded; call-site exhaustion and process-tree runtime canary remain open"
-released_sink_count = 18
+released_sink_count = 19
 latent_sink_count = 5
 
 [[sink]]
@@ -135,6 +135,17 @@ confirmation = "none"
 destination = "exact HTTP(S) loopback only after 3ea4936"
 data = "refresh or revoke credential"
 disposition = "keep for isolated tests; arbitrary remote hosts are refused"
+
+[[sink]]
+id = "estelle-api-base-url-override"
+reachability = "released"
+source_file = "estelle-client/src/base_url.rs"
+source_symbol = "configured_base_url"
+trigger = "ESTELLE_API_URL is set in the process environment (developer/self-host testing); unset means https://api.fatelabs.ca"
+confirmation = "none; the operator chose the value"
+destination = "the ESTELLE_API_URL host: https to any host, plain http only to localhost, 127.0.0.1 or [::1]"
+data = "everything the default Estelle client would send to api.fatelabs.ca, including the Estelle credential as a bearer header"
+disposition = "keep; one owner (Client::production), refuses URL credentials/query/fragment and remote plain http, and an invalid value fails closed rather than falling back to production"
 
 [[sink]]
 id = "github-browser-handoff"

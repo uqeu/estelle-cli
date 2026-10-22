@@ -2862,10 +2862,10 @@ impl App {
             "status" => self.transcript.push(TranscriptEntry::Command {
                 name: "status".to_string(),
                 lines: vec![
-                    format!(
-                        "endpoint  {}/",
-                        estelle_client::DEFAULT_BASE_URL.trim_end_matches('/')
-                    ),
+                    match estelle_client::configured_base_url() {
+                        Ok(url) => format!("endpoint  {url}"),
+                        Err(error) => format!("endpoint  {error}"),
+                    },
                     format!(
                         "credential  {}",
                         if self.client.is_some() {
