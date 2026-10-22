@@ -21,7 +21,10 @@ fn test_key() -> ApiKey {
 #[test]
 fn endpoint_inventory_is_unique_and_matches_the_server_audit() {
     // 85 -> 86 on 2026-09-05: `GET /spend`, the vendor-list spend estimate the SPEND screen reads.
-    assert_eq!(API_ENDPOINTS.len(), 87);
+    // 87 -> 88 on 2026-10-22: PR #16's `session/events` (the `stream` hook) and PR #17's `credits/forecast`
+    // (`/me` usage) each counted from 86 on their own branch; merged, both are present. Both routes are
+    // registered on the server (`api.py`: POST+GET /session/events, GET /credits/forecast).
+    assert_eq!(API_ENDPOINTS.len(), 88);
     let unique = API_ENDPOINTS
         .iter()
         .map(|spec| spec.path)

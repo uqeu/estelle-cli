@@ -1,7 +1,7 @@
 schema_version = 1
 audit_date = "2026-08-20"
 audit_state = "source census recorded; call-site exhaustion and process-tree runtime canary remain open"
-released_sink_count = 17
+released_sink_count = 18
 latent_sink_count = 5
 
 [[sink]]
@@ -27,6 +27,17 @@ data = "prompt and up to the bounded dirty working-memory excerpt"
 disposition = "keep; ignored/secret-file canary remains open"
 
 [[sink]]
+id = "hook-stream"
+reachability = "released"
+source_file = "tui/src/hook_stream_run.rs"
+source_symbol = "impl StreamSink for ClientSink"
+trigger = "automatic after explicit install-hooks: UserPromptSubmit, PostToolUse, Stop and SessionEnd on Claude Code (Codex sends nothing)"
+confirmation = "no per-event confirmation"
+destination = "https://api.fatelabs.ca/session/events"
+data = "the host session transcript and its subagent transcripts: prompts, replies, recorded thinking, tool calls and results, edit diffs, token usage and Estelle's own injected prompt context; secret-shaped values redacted, each text field capped at 20,000 characters, NUL stripped"
+disposition = "keep; this is the feature (the customer's own session mirrored into their dashboard); a per-install opt-out is not yet built"
+
+[[sink]]
 id = "hook-context"
 reachability = "released"
 source_file = "tui/src/top_level.rs"
@@ -34,7 +45,7 @@ source_symbol = "context_hook"
 trigger = "automatic after explicit install-hooks"
 confirmation = "no per-event confirmation"
 destination = "https://api.fatelabs.ca/search"
-data = "bounded hook context query"
+data = "bounded hook context query and the asking host name (claude-code or codex)"
 disposition = "keep; kill-switch and no-credential zero-traffic tests remain open"
 
 [[sink]]

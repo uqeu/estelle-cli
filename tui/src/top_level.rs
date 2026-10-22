@@ -281,6 +281,10 @@ struct HookPayload {
     /// stamp it, in which case the id is the label: a real id beats an invented type name.
     #[serde(default, alias = "agentType", deserialize_with = "null_is_absent")]
     agent_type: String,
+    /// Codex's per-turn id. Read for ONE fact: its presence says the host is Codex ([`harness_of`]).
+    /// Typed `Value` so no spelling of it (a number, an object) can ever refuse the payload.
+    #[serde(default, alias = "turnId")]
+    turn_id: Value,
 }
 
 /// 🔴 THE WHOLE CONTRACT, DRIVEN FROM THE HOST'S OWN GENERATED SCHEMAS.
@@ -654,7 +658,7 @@ fn hook_event_label(mode: &str, expected: Option<&str>, payload: Option<&str>) -
             // names one of two doors is a diagnostic that points at the wrong one.
             "context" => "UserPromptSubmit|SubagentStart",
             "checkpoint" => "Stop|SubagentStop|PreCompact|SessionEnd",
-            "stream" => "UserPromptSubmit|PostToolUse|Stop",
+            "stream" => "UserPromptSubmit|PostToolUse|Stop|SessionEnd",
             _ => "unknown",
         })
         .to_string()
@@ -996,8 +1000,21 @@ const CONTEXT_HOOK_BUDGET: std::time::Duration =
 /// (`commands.rs`) asks for `"code": true` outright. Only the two callers that read `recall` and
 /// nothing else may suppress it. The rule is not "the hook is fast", it is **"ask only for the
 /// fields you read"**.
-fn context_search_body(query: &str) -> Value {
-    json!({"query": query, "code": false})
+fn context_search_body(ask: ContextAsk<'_>) -> Value {
+    json!({"query": ask.query, "code": false, "host": ask.host})
+}
+
+/// What the context hook asks `/search`: the prompt, and WHICH HOST is asking.
+///
+/// `host` is `"claude-code"` or `"codex"` (the one owner is [`harness_of`]) so the server can deliver
+/// only the workspace rules limited to that agent (`learned_rules.rules_for(..., agent)`).
+/// ⚠️ MEASURED 2026-10-22 against `origin/main` of the server: `handle_search` does not read `host` yet
+/// (it binds `rules_for(account_key, email, repo)` with no agent), so today the field is carried and
+/// ignored — an agent-limited rule still reaches both hosts until the server reads it.
+#[derive(Clone, Copy, Debug)]
+struct ContextAsk<'a> {
+    query: &'a str,
+    host: &'a str,
 }
 
 /// The NETWORK half of the context hook, bounded, taking its client and its budget as arguments.
@@ -1161,11 +1178,11 @@ async fn context_recall(
     client: &Client,
     cancel: &CancellationToken,
     repo: &Repo,
-    query: &str,
+    ask: ContextAsk<'_>,
     budget: Duration,
     log: Option<&Path>,
 ) -> ContextOutcome {
-    let body = context_search_body(query);
+    let body = context_search_body(ask);
     let request = client.post_scoped::<Value, Value>(Endpoint::Search, repo, &body, cancel);
     // 🔑 STARTED BEFORE THE AWAIT, SO THE NUMBER IS MEASURED RATHER THAN THE BUDGET RESTATED.
     // `tokio::time::timeout` hands back only `Elapsed`, which carries no duration, and a message
@@ -1244,12 +1261,12 @@ async fn context_recall_lines(
     client: &Client,
     cancel: &CancellationToken,
     repo: &Repo,
-    query: &str,
+    ask: ContextAsk<'_>,
     budget: Duration,
     log: Option<&Path>,
     parent_session: &str,
 ) -> Vec<String> {
-    let outcome = context_recall(client, cancel, repo, query, budget, log).await;
+    let outcome = context_recall(client, cancel, repo, ask, budget, log).await;
     // 🔴 STORED ON THE ONE DURABLE OUTCOME THIS RUNNER HAS, AND THE LIMIT IS SAID OUT LOUD.
     // The parent has already paid for this recall — a slot, a request and ~6 s — so every subagent
     // the turn spawns INHERITS it (`crate::subagent_context::inherited_context`) rather than each
@@ -1349,7 +1366,10 @@ where
         &api.client,
         &api.cancel,
         repo,
-        &query,
+        ContextAsk {
+            query: &query,
+            host: harness_of(payload),
+        },
         CONTEXT_HOOK_BUDGET,
         None,
         &payload.session_id,
@@ -1910,6 +1930,63 @@ fn checkpoint_refused(reason: &str) -> Option<Value> {
     None
 }
 
+/// `stream`: mirror this host session into the customer's session timeline (`hook_stream_run`).
+/// Best-effort and silent: a failure leaves the offset where it was, so the next run resends (the server
+/// dedupes by event id). It never blocks the host and never prints into the conversation.
+///
+/// ⚠️ A CODEX SESSION STREAMS NOTHING. Codex's rollout is not Claude Code's JSONL, and no reader for it
+/// exists here — so a Codex payload is refused by HOST (`harness_of`), not by the accident of a null
+/// `transcript_path`: a Codex thread with a materialised rollout used to be parsed as a Claude transcript.
+async fn stream_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>, String> {
+    let Some(path) = payload
+        .transcript_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+    else {
+        return Ok(Vec::new());
+    };
+    let session = payload.session_id.trim();
+    if harness_of(payload) != "claude-code" || !crate::hook_stream_run::safe_session(session) {
+        return Ok(Vec::new());
+    }
+    let Some(home) = dirs::home_dir() else {
+        return Ok(Vec::new());
+    };
+    let Ok(api) = Api::resolve() else {
+        return Ok(Vec::new());
+    };
+    let state_dir = home.join(".estelle").join("stream");
+    let input = crate::hook_stream_run::StreamInput {
+        state_dir: &state_dir,
+        transcript: Path::new(path),
+        session,
+        hook_event: payload.hook_event_name.trim(),
+        repo: repo.as_str(),
+        now: chrono::Utc::now(),
+    };
+    let sink = crate::hook_stream_run::ClientSink::new(api.client, api.cancel);
+    let _report = crate::hook_stream_run::run(&input, &sink).await;
+    Ok(Vec::new())
+}
+
+/// Which host this payload came from — the ONE owner of that answer (`stream`, and `/search`'s `host`).
+///
+/// Codex stamps `turn_id` on every hook event (all eleven of its generated input schemas require it) and
+/// Claude Code sends none; a payload with no transcript at all is Codex's ordinary state too.
+fn harness_of(payload: &HookPayload) -> &'static str {
+    let has_turn = match &payload.turn_id {
+        Value::Null => false,
+        Value::String(text) => !text.trim().is_empty(),
+        _ => true,
+    };
+    if has_turn || payload.transcript_path.is_none() {
+        "codex"
+    } else {
+        "claude-code"
+    }
+}
+
 /// 🔴 THE THREE-SECOND EVENT. `checkpoint` is wired to Stop, PreCompact and SessionEnd, and
 /// exactly one of them cannot afford what the other two do.
 ///
@@ -1924,62 +2001,6 @@ fn checkpoint_refused(reason: &str) -> Option<Value> {
 /// and the NEXT session's SessionStart pays it. Stop and PreCompact are UNCHANGED — they have
 /// the full budget and keep doing the full durable write. Turning a network round trip into a
 /// local write is the only thing that honestly fits in three seconds.
-/// `stream`: send the transcript lines appended since the last run to the customer's session timeline.
-/// Best-effort and silent: a failure leaves the offset where it was, so the next run resends (the server
-/// dedupes by event id). It never blocks the host and never prints into the conversation.
-async fn stream_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>, String> {
-    let Some(path) = payload.transcript_path.as_deref().map(str::trim).filter(|p| !p.is_empty()) else {
-        return Ok(Vec::new());
-    };
-    let session = payload.session_id.trim();
-    if session.is_empty() || session.len() > 200 || !session.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return Ok(Vec::new());
-    }
-    let Some(home) = dirs::home_dir() else { return Ok(Vec::new()) };
-    let state_dir = home.join(".estelle").join("stream");
-    let _ = std::fs::create_dir_all(&state_dir);
-    let offset_file = state_dir.join(format!("{session}.offset"));
-    let offset: u64 = std::fs::read_to_string(&offset_file).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
-    let Ok(bytes) = std::fs::read(path) else { return Ok(Vec::new()) };
-    if offset as usize >= bytes.len() {
-        return Ok(Vec::new());
-    }
-    let appended = String::from_utf8_lossy(&bytes[offset as usize..]).into_owned();
-    let (mut events, consumed) = crate::hook_stream::parse_appended(&appended);
-    let session_id = format!("{}-{session}", harness_of(payload));
-    if offset == 0 {
-        let title = events.iter().find(|e| e["kind"] == "customer_message")
-            .and_then(|e| e["payload"]["text"].as_str()).map(|t| t.lines().next().unwrap_or("").chars().take(90).collect::<String>())
-            .unwrap_or_else(|| "Coding session".to_string());
-        let at = events.first().and_then(|e| e["at"].as_str()).unwrap_or("1970-01-01T00:00:00Z").to_string();
-        events.insert(0, crate::hook_stream::started(&session_id, &at, &title, repo.as_str(), harness_of(payload)));
-    }
-    // The host's own events are the lifecycle: a prompt starts work, Stop means the agent finished its turn
-    // and is waiting on the person. Ids are per transcript position, so a replay is a no-op.
-    let now = chrono::Utc::now().to_rfc3339();
-    let mark = format!("{}", offset + consumed as u64);
-    match payload.hook_event_name.trim() {
-        "UserPromptSubmit" if offset > 0 => events.push(crate::hook_stream::lifecycle(&format!("{session_id}:prompt:{mark}"), &now, "running", "input_received")),
-        "Stop" => events.push(crate::hook_stream::lifecycle(&format!("{session_id}:stop:{mark}"), &now, "waiting_for_review", "input_required")),
-        "SessionEnd" => events.push(crate::hook_stream::lifecycle(&format!("{session_id}:end:{mark}"), &now, "ended", "completed")),
-        _ => {}
-    }
-    if events.is_empty() {
-        let _ = std::fs::write(&offset_file, (offset + consumed as u64).to_string());
-        return Ok(Vec::new());
-    }
-    let Ok(api) = Api::resolve() else { return Ok(Vec::new()) };
-    if api.post(Endpoint::SessionEvents, &json!({"session_id": session_id, "events": events})).await.is_ok() {
-        let _ = std::fs::write(&offset_file, (offset + consumed as u64).to_string());
-    }
-    Ok(Vec::new())
-}
-
-/// Which host this payload came from: Codex sends `turn_id` and no transcript on most events.
-fn harness_of(payload: &HookPayload) -> &'static str {
-    if payload.transcript_path.is_none() { "codex" } else { "claude-code" }
-}
-
 async fn checkpoint_hook(payload: &HookPayload) -> Result<Vec<String>, String> {
     checkpoint_hook_at(
         payload,
@@ -3450,6 +3471,11 @@ fn hook_timeout(host: HookHost, row: &HookRow) -> u64 {
 fn estelle_hook_groups(host: HookHost, runner: &str) -> Vec<(String, Value)> {
     HOOK_TABLE
         .iter()
+        // `stream` reads Claude Code's transcript and refuses every Codex payload (`harness_of`), and the
+        // Codex door writes no `async` key — so installing it there would cost a SYNCHRONOUS process
+        // spawn on every Codex tool call to do nothing. It is left off the Codex door until a rollout
+        // reader exists.
+        .filter(|row| host == HookHost::Claude || row.mode != "stream")
         .map(|row| {
             let mut handler = json!({
                 "type": "command",
@@ -6246,6 +6272,7 @@ mod tests {
                 agent_transcript_path: None,
                 agent_id: String::new(),
                 agent_type: String::new(),
+                turn_id: Value::Null,
             }
         }
 
@@ -7932,11 +7959,12 @@ tests/test_serve.py:88: AssertionError\n\
             installed["hooks"]["PreToolUse"].as_array().map(Vec::len),
             Some(4)
         );
+        // PostToolUse and Stop each gained the `stream` row in 0.4.0 (Claude door only).
         assert_eq!(
             installed["hooks"]["PostToolUse"].as_array().map(Vec::len),
-            Some(4)
+            Some(5)
         );
-        assert_eq!(installed["hooks"]["Stop"].as_array().map(Vec::len), Some(2));
+        assert_eq!(installed["hooks"]["Stop"].as_array().map(Vec::len), Some(3));
         assert_eq!(installed["hooks"]["Stop"][0], original["hooks"]["Stop"][0]);
         assert!(backup_path(&path).exists());
 
@@ -7993,6 +8021,7 @@ tests/test_serve.py:88: AssertionError\n\
             agent_transcript_path: None,
             agent_id: String::new(),
             agent_type: String::new(),
+            turn_id: Value::Null,
         };
 
         assert!(
@@ -8460,8 +8489,18 @@ tests/test_serve.py:88: AssertionError\n\
 
         let manifest: Value =
             serde_json::from_str(SHIPPED_PLUGIN_MANIFEST).expect("the shipped manifest is JSON");
-        let plugin_kill = manifest["hooks"]["UserPromptSubmit"][0]["hooks"][0]["timeout"]
-            .as_u64()
+        // Found by COMMAND, not by position: since 0.4.0 the `stream` row is also on UserPromptSubmit and
+        // sits first in the manifest, so `[0]` read the stream hook's budget and called it context's.
+        let plugin_kill = manifest["hooks"]["UserPromptSubmit"]
+            .as_array()
+            .and_then(|groups| {
+                groups.iter().find(|g| {
+                    g["hooks"][0]["command"]
+                        .as_str()
+                        .is_some_and(|c| c.ends_with("hook context"))
+                })
+            })
+            .and_then(|g| g["hooks"][0]["timeout"].as_u64())
             .expect("the plugin door declares a context timeout");
 
         for (door, kill) in [("install-hooks", row.timeout), ("plugin", plugin_kill)] {
@@ -9150,7 +9189,10 @@ tests/test_serve.py:88: AssertionError\n\
             &client,
             &cancel,
             &repo,
-            "where is the retry policy set?",
+            ContextAsk {
+                query: "where is the retry policy set?",
+                host: "claude-code",
+            },
             CONTEXT_HOOK_BUDGET,
             Some(&log),
             "",
@@ -9170,6 +9212,11 @@ tests/test_serve.py:88: AssertionError\n\
              body.get(\"code\", True), so omitting it asks for the 133 s branch: {body}"
         );
         assert_eq!(body["query"], json!("where is the retry policy set?"));
+        assert_eq!(
+            body["host"],
+            json!("claude-code"),
+            "the asking host rides on /search: {body}"
+        );
 
         // And the response half is unchanged: it still reads `recall`, and ONLY `recall`.
         assert_eq!(lines.len(), 1);
@@ -9233,7 +9280,10 @@ tests/test_serve.py:88: AssertionError\n\
             &client,
             &cancel,
             &repo,
-            "a prompt worth enriching",
+            ContextAsk {
+                query: "a prompt worth enriching",
+                host: "claude-code",
+            },
             BUDGET,
             Some(&log),
             "",
@@ -9319,7 +9369,10 @@ tests/test_serve.py:88: AssertionError\n\
             &client,
             &cancel,
             &repo,
-            "a prompt worth enriching",
+            ContextAsk {
+                query: "a prompt worth enriching",
+                host: "claude-code",
+            },
             BUDGET,
             Some(&log),
             "",
@@ -9571,7 +9624,10 @@ tests/test_serve.py:88: AssertionError\n\
             &client,
             &cancel,
             &repo,
-            "a prompt worth enriching",
+            ContextAsk {
+                query: "a prompt worth enriching",
+                host: "claude-code",
+            },
             Duration::from_secs(8),
             Some(&log),
             REAL_PARENT_SESSION,
@@ -9920,7 +9976,10 @@ tests/test_serve.py:88: AssertionError\n\
                 &client,
                 &cancel,
                 &repo,
-                "where is the retry policy set?",
+                ContextAsk {
+                    query: "where is the retry policy set?",
+                    host: "claude-code",
+                },
                 CONTEXT_HOOK_BUDGET,
                 Some(&log),
                 "",
@@ -9986,7 +10045,10 @@ tests/test_serve.py:88: AssertionError\n\
             &client,
             &cancel,
             &repo,
-            "where is the retry policy set?",
+            ContextAsk {
+                query: "where is the retry policy set?",
+                host: "claude-code",
+            },
             CONTEXT_HOOK_BUDGET,
             Some(&log),
         )
@@ -10181,7 +10243,10 @@ tests/test_serve.py:88: AssertionError\n\
     /// the hook suppresses code because it never reads it; `recall` must not.
     #[test]
     fn only_the_caller_that_ignores_code_is_allowed_to_suppress_it() {
-        let hook_body = context_search_body("where is the retry policy set?");
+        let hook_body = context_search_body(ContextAsk {
+            query: "where is the retry policy set?",
+            host: "claude-code",
+        });
         assert_eq!(hook_body.get("code"), Some(&json!(false)));
 
         // `recall`'s body, quoted from its call site. If that call site ever grows `code: false`,
