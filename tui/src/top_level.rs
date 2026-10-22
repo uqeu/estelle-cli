@@ -634,7 +634,7 @@ async fn run_hook_with(
         "sync" => sync_hook(&payload, repo, root).await,
         "distil" => Ok(distil_hook(&payload)),
         "checkpoint" => checkpoint_hook(&payload).await,
-        "stream" => stream_hook(&payload, repo).await,
+        "stream" => stream_hook(&payload, repo, root).await,
         "welcome" => Ok(welcome_hook(&payload).await),
         "context" => context_hook(&payload, repo).await,
         _ => Err(format!(
@@ -1934,23 +1934,41 @@ fn checkpoint_refused(reason: &str) -> Option<Value> {
 /// Best-effort and silent: a failure leaves the offset where it was, so the next run resends (the server
 /// dedupes by event id). It never blocks the host and never prints into the conversation.
 ///
-/// ⚠️ A CODEX SESSION STREAMS NOTHING. Codex's rollout is not Claude Code's JSONL, and no reader for it
-/// exists here — so a Codex payload is refused by HOST (`harness_of`), not by the accident of a null
-/// `transcript_path`: a Codex thread with a materialised rollout used to be parsed as a Claude transcript.
-async fn stream_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>, String> {
-    let Some(path) = payload
+/// Both hosts stream. Claude Code's JSONL is read on every installed door; a CODEX payload reads Codex's
+/// rollout (`hook_stream_codex`) — from `transcript_path` when Codex sent one, else found by session id
+/// under `$CODEX_HOME/sessions` — and is installed on Codex's Stop door only, because Codex hooks are
+/// synchronous and a per-tool-call spawn would stall every tool call. Both also send the session's
+/// git-derived events from the hook's repository root (`hook_stream_git`).
+async fn stream_hook(
+    payload: &HookPayload,
+    repo: &Repo,
+    root: &Path,
+) -> Result<Vec<String>, String> {
+    let session = payload.session_id.trim();
+    if !crate::hook_stream_run::safe_session(session) {
+        return Ok(Vec::new());
+    }
+    let Some(home) = dirs::home_dir() else {
+        return Ok(Vec::new());
+    };
+    let given = payload
         .transcript_path
         .as_deref()
         .map(str::trim)
         .filter(|p| !p.is_empty())
-    else {
-        return Ok(Vec::new());
+        .map(PathBuf::from);
+    let (dialect, transcript) = if harness_of(payload) == "codex" {
+        let codex_home = std::env::var_os("CODEX_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".codex"));
+        let found = given.or_else(|| {
+            crate::hook_stream_codex::find_rollout(&codex_home.join("sessions"), session)
+        });
+        (crate::hook_stream_run::Dialect::Codex, found)
+    } else {
+        (crate::hook_stream_run::Dialect::Claude, given)
     };
-    let session = payload.session_id.trim();
-    if harness_of(payload) != "claude-code" || !crate::hook_stream_run::safe_session(session) {
-        return Ok(Vec::new());
-    }
-    let Some(home) = dirs::home_dir() else {
+    let Some(transcript) = transcript else {
         return Ok(Vec::new());
     };
     let Ok(api) = Api::resolve() else {
@@ -1959,11 +1977,13 @@ async fn stream_hook(payload: &HookPayload, repo: &Repo) -> Result<Vec<String>, 
     let state_dir = home.join(".estelle").join("stream");
     let input = crate::hook_stream_run::StreamInput {
         state_dir: &state_dir,
-        transcript: Path::new(path),
+        transcript: &transcript,
         session,
         hook_event: payload.hook_event_name.trim(),
         repo: repo.as_str(),
         now: chrono::Utc::now(),
+        dialect,
+        git_root: Some(root),
     };
     let sink = crate::hook_stream_run::ClientSink::new(api.client, api.cancel);
     let _report = crate::hook_stream_run::run(&input, &sink).await;
@@ -3471,11 +3491,10 @@ fn hook_timeout(host: HookHost, row: &HookRow) -> u64 {
 fn estelle_hook_groups(host: HookHost, runner: &str) -> Vec<(String, Value)> {
     HOOK_TABLE
         .iter()
-        // `stream` reads Claude Code's transcript and refuses every Codex payload (`harness_of`), and the
-        // Codex door writes no `async` key — so installing it there would cost a SYNCHRONOUS process
-        // spawn on every Codex tool call to do nothing. It is left off the Codex door until a rollout
-        // reader exists.
-        .filter(|row| host == HookHost::Claude || row.mode != "stream")
+        // The Codex door writes no `async` key, so a `stream` row there is a SYNCHRONOUS process spawn.
+        // On every tool call that would stall the agent; once per turn, on Stop, it is one bounded run
+        // that reads what the turn wrote to the rollout. So Codex gets the Stop row and nothing else.
+        .filter(|row| host == HookHost::Claude || row.mode != "stream" || row.event == "Stop")
         .map(|row| {
             let mut handler = json!({
                 "type": "command",
@@ -8059,11 +8078,12 @@ tests/test_serve.py:88: AssertionError\n\
         merge_estelle_hooks(&mut value, HookHost::Codex, "estelle").expect("hook declaration");
 
         let parsed: codex_config::HooksFile =
-            serde_json::from_value(value).expect("Codex hooks schema");
+            serde_json::from_value(value.clone()).expect("Codex hooks schema");
 
         assert_eq!(parsed.hooks.pre_tool_use.len(), 3);
         assert_eq!(parsed.hooks.post_tool_use.len(), 3);
-        assert_eq!(parsed.hooks.stop.len(), 1);
+        // Stop = checkpoint + `stream` (0.4.0: Codex streams its rollout once per turn, from Stop only).
+        assert_eq!(parsed.hooks.stop.len(), 2);
         assert_eq!(parsed.hooks.pre_compact.len(), 1);
         assert_eq!(parsed.hooks.session_end.len(), 1);
         assert_eq!(parsed.hooks.session_start.len(), 1);
@@ -8073,7 +8093,14 @@ tests/test_serve.py:88: AssertionError\n\
         // and lose the door — a count alone cannot tell those apart.
         assert_eq!(parsed.hooks.subagent_start.len(), 1);
         assert_eq!(parsed.hooks.subagent_stop.len(), 1);
-        assert_eq!(parsed.hooks.handler_count(), 13);
+        assert_eq!(parsed.hooks.handler_count(), 14);
+        let rendered = serde_json::to_string(&value).expect("hooks serialise");
+        assert_eq!(
+            rendered.matches("hook stream").count(),
+            1,
+            "Codex hooks are synchronous: `stream` may ride Stop and nothing else"
+        );
+        assert!(rendered.contains("estelle hook stream --event Stop"));
         for (_event, groups) in parsed.hooks.into_matcher_groups() {
             for group in &groups {
                 for handler in &group.hooks {

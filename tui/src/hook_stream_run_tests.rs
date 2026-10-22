@@ -93,6 +93,8 @@ impl Fixture {
             now: DateTime::parse_from_rfc3339("2026-10-22T12:00:00Z")
                 .unwrap()
                 .with_timezone(&Utc),
+            dialect: Dialect::Claude,
+            git_root: None,
         };
         run(&input, sink).await
     }
@@ -430,6 +432,170 @@ fn session_ids_are_validated_before_they_name_a_file() {
 
 /// The real client against a real HTTP server: the wire shape, and that a server's `400 event N:` reaches the
 /// isolation path as a typed refusal rather than as prose.
+async fn run_as(
+    fx: &Fixture,
+    hook_event: &str,
+    dialect: Dialect,
+    git_root: Option<&Path>,
+    sink: &FakeServer,
+) -> StreamReport {
+    let state_dir = fx.state_dir();
+    let input = StreamInput {
+        state_dir: &state_dir,
+        transcript: &fx.transcript,
+        session: SESSION,
+        hook_event,
+        repo: "uqeu/estelle",
+        now: DateTime::parse_from_rfc3339("2026-10-22T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc),
+        dialect,
+        git_root,
+    };
+    run(&input, sink).await
+}
+
+fn rollout(payload_type: &str, at: &str, payload: Value) -> Value {
+    json!({"timestamp": at, "type": payload_type, "payload": payload})
+}
+
+/// A Codex rollout streams into `codex-<session>`, starts with harness `codex`, and its Stop-door run
+/// lands the whole turn; a second Stop with nothing new sends only the host's own Stop lifecycle.
+#[tokio::test]
+async fn a_codex_rollout_streams_into_its_own_timeline_from_the_stop_door() {
+    let fx = Fixture::new();
+    fx.append(&[
+        rollout("session_meta", "2026-10-21T09:59:59Z", json!({"id": SESSION, "cwd": "/x"})),
+        rollout("response_item", "2026-10-21T10:00:00Z", json!({"type": "message", "role": "user",
+            "content": [{"type": "input_text", "text": "<environment_context>x</environment_context>"},
+                        {"type": "input_text", "text": "run the tests"}]})),
+        rollout("response_item", "2026-10-21T10:00:01Z", json!({"type": "function_call", "name": "exec_command",
+            "call_id": "c1", "arguments": "{\"cmd\":\"cargo test\"}"})),
+        rollout("response_item", "2026-10-21T10:00:05Z", json!({"type": "function_call_output", "call_id": "c1", "output": "ok"})),
+        rollout("response_item", "2026-10-21T10:00:06Z", json!({"type": "message", "role": "assistant",
+            "content": [{"type": "output_text", "text": "All green."}]})),
+        rollout("event_msg", "2026-10-21T10:00:07Z", json!({"type": "task_complete", "turn_id": "t1"})),
+    ]);
+    let server = FakeServer::default();
+    let report = run_as(&fx, "Stop", Dialect::Codex, None, &server).await;
+    assert_eq!(report.error, None);
+    let timeline = format!("codex-{SESSION}");
+    let sent = server.accepted_for(&timeline);
+    assert!(
+        server.accepted_for(TIMELINE).is_empty(),
+        "nothing goes to a claude-code timeline"
+    );
+    let kinds: Vec<&str> = sent.iter().map(|e| e["kind"].as_str().unwrap()).collect();
+    assert_eq!(
+        kinds,
+        [
+            "lifecycle",
+            "customer_message",
+            "lifecycle",
+            "tool_call",
+            "tool_result",
+            "agent_message",
+            "lifecycle",
+            "lifecycle"
+        ],
+        "started, prompt, input, call, result, reply, task_complete, Stop"
+    );
+    assert_eq!(sent[0]["event_id"], format!("{timeline}:started"));
+    assert_eq!(sent[0]["payload"]["harness"], "codex");
+    assert_eq!(sent[0]["payload"]["title"], "run the tests");
+    assert_eq!(
+        sent.last().unwrap()["at"],
+        "2026-10-21T10:00:07.000Z",
+        "Stop is stamped at the last entry"
+    );
+    assert_eq!(report.subagent_events, 0);
+    assert_eq!(
+        fx.offset(),
+        std::fs::metadata(&fx.transcript).unwrap().len()
+    );
+    let again = FakeServer::default();
+    run_as(&fx, "Stop", Dialect::Codex, None, &again).await;
+    let resent = again.accepted_for(&timeline);
+    assert_eq!(resent.len(), 1, "only the new Stop: {resent:?}");
+}
+
+/// One Codex Stop run catches up a turn bigger than the Claude per-run event bound.
+#[tokio::test]
+async fn a_codex_turn_larger_than_the_claude_bound_is_caught_up_in_one_stop() {
+    let fx = Fixture::new();
+    let entries: Vec<Value> = (0..MAX_EVENTS_PER_RUN + 50)
+        .map(|i| {
+            rollout(
+                "response_item",
+                "2026-10-21T10:00:00Z",
+                json!({"type": "function_call_output", "call_id": format!("c{i}"), "output": "ok"}),
+            )
+        })
+        .collect();
+    fx.append(&entries);
+    let server = FakeServer::default();
+    let report = run_as(&fx, "Stop", Dialect::Codex, None, &server).await;
+    assert_eq!(report.error, None);
+    assert_eq!(
+        fx.offset(),
+        std::fs::metadata(&fx.transcript).unwrap().len()
+    );
+    let results = server
+        .accepted_for(&format!("codex-{SESSION}"))
+        .iter()
+        .filter(|e| e["kind"] == "tool_result")
+        .count();
+    assert_eq!(results, MAX_EVENTS_PER_RUN + 50);
+}
+
+/// The git pass rides the same timeline and the same send; a refused git batch is resent next run.
+#[tokio::test]
+async fn git_events_reach_the_session_timeline_and_are_resent_after_a_refusal() {
+    let fx = Fixture::new();
+    let repo = fx.dir.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    for args in [
+        &["init", "-q"][..],
+        &["config", "user.email", "t@example.com"],
+        &["config", "user.name", "T"],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    std::fs::write(repo.join("notes.md"), "hello\n").unwrap();
+    fx.append(&[
+        prompt("u1", "2026-10-21T10:00:00Z", "write notes"),
+        json!({"type": "assistant", "uuid": "a1", "timestamp": "2026-10-21T10:00:01Z", "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "echo hello > notes.md"}}]}}),
+    ]);
+    // The transcript lands; the git batch (second POST) is refused once.
+    let refusing = FakeServer::default()
+        .then(Ok(()))
+        .then(Err((503, "store down")));
+    let report = run_as(&fx, "Stop", Dialect::Claude, Some(&repo), &refusing).await;
+    assert_eq!(report.error.as_deref(), Some("503: store down"));
+    assert_eq!(report.git_events, 0);
+    let server = FakeServer::default();
+    let report = run_as(&fx, "Stop", Dialect::Claude, Some(&repo), &server).await;
+    assert_eq!(report.error, None);
+    let sent = server.accepted_for(TIMELINE);
+    let diff = sent
+        .iter()
+        .find(|e| e["kind"] == "workspace_diff")
+        .expect("the refused diff is resent");
+    assert_eq!(diff["payload"]["path"], "notes.md");
+    assert_eq!(diff["payload"]["status"], "added");
+    assert!(diff["at"].as_str().unwrap() <= "2026-10-21T10:00:01.000Z");
+    assert!(report.git_events >= 1);
+}
+
 #[tokio::test]
 async fn the_client_sink_speaks_the_server_contract() {
     use wiremock::matchers::{method, path};
@@ -513,6 +679,8 @@ async fn smoke_stream_against_a_local_api() {
             hook_event: "Stop",
             repo: "uqeu/estelle",
             now: Utc::now(),
+            dialect: Dialect::Claude,
+            git_root: None,
         };
         let report = run(&input, &sink).await;
         println!(

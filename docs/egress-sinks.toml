@@ -31,10 +31,10 @@ id = "hook-stream"
 reachability = "released"
 source_file = "tui/src/hook_stream_run.rs"
 source_symbol = "impl StreamSink for ClientSink"
-trigger = "automatic after explicit install-hooks: UserPromptSubmit, PostToolUse, Stop and SessionEnd on Claude Code (Codex sends nothing)"
+trigger = "automatic after explicit install-hooks: UserPromptSubmit, PostToolUse, Stop and SessionEnd on Claude Code; Stop only on Codex (its hooks are synchronous)"
 confirmation = "no per-event confirmation"
 destination = "https://api.fatelabs.ca/session/events"
-data = "the host session transcript and its subagent transcripts: prompts, replies, recorded thinking, tool calls and results, edit diffs, token usage and Estelle's own injected prompt context; secret-shaped values redacted, each text field capped at 20,000 characters, NUL stripped"
+data = "the host session transcript (Claude Code JSONL and its subagent transcripts, or the Codex rollout): prompts, replies, recorded thinking, tool calls and results, edit diffs, token usage and Estelle's own injected prompt context; plus, from the hook's git repository (local git subprocesses, no network): working-tree diffs against HEAD of files the session's own tool calls named and changed since it began (80 files, 120,000 chars each), the session's commits (sha, author name, subject, file names) and the tracked path list (20,000 paths, names only, no contents); secret-shaped values redacted (diffs included), each text field capped at 20,000 characters, NUL stripped"
 disposition = "keep; this is the feature (the customer's own session mirrored into their dashboard); a per-install opt-out is not yet built"
 
 [[sink]]

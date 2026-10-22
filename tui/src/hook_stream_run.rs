@@ -14,11 +14,15 @@
 //!
 //! ⚠️ LIMITS, STATED: concurrent runs (parallel PostToolUse hooks) may read the same offset and both send —
 //! harmless, the server dedupes — and the later writer of the offset wins, which can only move it BACK to a
-//! point already sent (a replay), never past unsent lines. Git-derived events (`workspace_diff`, `commit`,
-//! `workspace_tree`) are NOT produced by the hook; the bridge reads them from the working tree and this
-//! port does not, so a hook-only install shows the transcript's own edits and no git view.
+//! point already sent (a replay), never past unsent lines.
+//!
+//! Two dialects share this runner ([`Dialect`]): Claude Code's JSONL transcript ([`crate::hook_stream`])
+//! and Codex's rollout ([`crate::hook_stream_codex`]). After the transcript, the run sends the session's
+//! git-derived events ([`crate::hook_stream_git`]) when given a repository root.
 
 use crate::hook_stream::{Notes, batches, entry_time, events_of, lifecycle, scrub, stamp, started};
+use crate::hook_stream_codex::{codex_events_of, codex_mentions};
+use crate::hook_stream_git::{GitInput, claude_mentions};
 use chrono::{DateTime, Utc};
 use estelle_client::{Client, Endpoint};
 use serde::{Deserialize, Serialize};
@@ -37,6 +41,42 @@ const TAIL_SEED_BYTES: u64 = 2_000_000;
 const MAX_SKIP_BYTES: u64 = 256_000_000;
 /// Longest host session id accepted (the server's own bound on a session id is 256).
 const MAX_SESSION_CHARS: usize = 200;
+/// Read windows per run on a Codex rollout. Codex streams only from its Stop hook (one run per turn), so a
+/// turn that wrote more than one window must still be caught up in that run — up to this many.
+const CODEX_WINDOWS_PER_RUN: usize = 4;
+/// Events per run on a Codex rollout, for the same reason: one run per turn, not one per tool call.
+pub(crate) const MAX_CODEX_EVENTS_PER_RUN: usize = 1_000;
+/// Bytes read from the transcript's START to learn the session's first entry time (git's floor).
+const HEAD_SEED_BYTES: u64 = 256_000;
+
+/// Which host wrote the transcript.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Dialect {
+    Claude,
+    Codex,
+}
+
+impl Dialect {
+    /// The harness name, which is also the timeline id prefix (`claude-code-<session>`, `codex-<session>`).
+    pub(crate) fn harness(self) -> &'static str {
+        match self {
+            Self::Claude => "claude-code",
+            Self::Codex => "codex",
+        }
+    }
+    fn untitled(self) -> &'static str {
+        match self {
+            Self::Claude => "Claude Code session",
+            Self::Codex => "Codex session",
+        }
+    }
+    fn window_budget(self) -> (usize, usize) {
+        match self {
+            Self::Claude => (1, MAX_EVENTS_PER_RUN),
+            Self::Codex => (CODEX_WINDOWS_PER_RUN, MAX_CODEX_EVENTS_PER_RUN),
+        }
+    }
+}
 
 /// Why a POST did not land.
 #[derive(Debug)]
@@ -92,6 +132,9 @@ pub(crate) struct StreamInput<'a> {
     pub(crate) hook_event: &'a str,
     pub(crate) repo: &'a str,
     pub(crate) now: DateTime<Utc>,
+    pub(crate) dialect: Dialect,
+    /// The repository root whose working tree, log and file list are mirrored; `None` = no git events.
+    pub(crate) git_root: Option<&'a Path>,
 }
 
 /// What a run did — returned for tests and kept (as `last_error`) in the state file for diagnosis.
@@ -100,6 +143,7 @@ pub(crate) struct StreamReport {
     pub(crate) sent: usize,
     pub(crate) dropped: usize,
     pub(crate) subagent_events: usize,
+    pub(crate) git_events: usize,
     pub(crate) error: Option<String>,
 }
 
@@ -230,6 +274,20 @@ fn end_of_line(file: &mut std::fs::File, from: u64) -> std::io::Result<Option<u6
     Ok(Some(at))
 }
 
+/// The OLDEST entry time in the transcript's first [`HEAD_SEED_BYTES`] — when the session began.
+pub(crate) fn first_entry_time(path: &Path) -> Option<DateTime<Utc>> {
+    let mut buf = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(HEAD_SEED_BYTES)
+        .read_to_end(&mut buf)
+        .ok()?;
+    buf.split(|b| *b == b'\n')
+        .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
+        .filter_map(|entry| entry_time(&entry))
+        .min()
+}
+
 /// The newest entry time in the transcript's last [`TAIL_SEED_BYTES`] — the clamp for every derived event.
 pub(crate) fn last_entry_time(path: &Path) -> Option<DateTime<Utc>> {
     let mut file = std::fs::File::open(path).ok()?;
@@ -334,10 +392,11 @@ pub(crate) async fn run<S: StreamSink>(input: &StreamInput<'_>, sink: &S) -> Str
         report.error = Some("the stream state directory could not be created".to_string());
         return report;
     }
-    let timeline = format!("claude-code-{}", input.session);
+    let timeline = format!("{}-{}", input.dialect.harness(), input.session);
     let mut state = load_state(input);
     let mut notes = Notes::default();
-    match parent_events(input, &timeline, &state, &mut notes) {
+    let mut mentions = Vec::new();
+    match parent_events(input, &timeline, &state, &mut notes, &mut mentions) {
         Err(error) => report.error = Some(error),
         Ok((events, offset, started_now)) => {
             match (events.len(), send(sink, &timeline, events).await) {
@@ -355,10 +414,54 @@ pub(crate) async fn run<S: StreamSink>(input: &StreamInput<'_>, sink: &S) -> Str
         state.last_error = report.error.clone();
     }
     save_json(&state_path(input), &state);
-    let sub = crate::hook_stream_subagents::sync(input, &timeline, &notes.notified, sink).await;
-    report.subagent_events = sub.events;
-    report.error = report.error.or(sub.error);
+    if report.error.is_none() {
+        let (sent, error) = git_pass(input, &timeline, mentions, sink).await;
+        report.git_events = sent;
+        report.error = error;
+    }
+    if input.dialect == Dialect::Claude {
+        let sub = crate::hook_stream_subagents::sync(input, &timeline, &notes.notified, sink).await;
+        report.subagent_events = sub.events;
+        report.error = report.error.or(sub.error);
+    }
     report
+}
+
+/// The git-derived events ([`crate::hook_stream_git`]), sent; their state is saved only once they landed.
+async fn git_pass<S: StreamSink>(
+    input: &StreamInput<'_>,
+    timeline: &str,
+    mentions: Vec<String>,
+    sink: &S,
+) -> (usize, Option<String>) {
+    let Some(root) = input.git_root else {
+        return (0, None);
+    };
+    let state_file = input.state_dir.join(format!("{}.git.json", input.session));
+    let git = GitInput {
+        root,
+        state_file: &state_file,
+        first_at: first_entry_time(input.transcript),
+        last: last_entry_time(input.transcript),
+        now: input.now,
+        force: matches!(input.hook_event, "Stop" | "SessionEnd"),
+        mentions,
+    };
+    let (events, state) = crate::hook_stream_git::collect(&git).await;
+    let total = events.len();
+    match send(sink, timeline, events).await {
+        Ok(dropped) => {
+            save_json(&state_file, &state);
+            (total - dropped, None)
+        }
+        Err(error) => {
+            save_json(
+                &state_file,
+                &crate::hook_stream_git::unsent(&state_file, state),
+            );
+            (0, Some(error))
+        }
+    }
 }
 
 /// The parent's new events, the offset they reach, and whether they include the session's `started`.
@@ -367,6 +470,7 @@ fn parent_events(
     timeline: &str,
     state: &ParentState,
     notes: &mut Notes,
+    mentions: &mut Vec<String>,
 ) -> Result<(Vec<Value>, u64, bool), String> {
     let unreadable = |_| "the transcript is unreadable".to_string();
     let len = std::fs::metadata(input.transcript)
@@ -374,19 +478,34 @@ fn parent_events(
         .len();
     // A transcript shorter than the saved offset was rewritten: start over (the server dedupes the replay).
     let from = if state.offset > len { 0 } else { state.offset };
-    let lines = read_lines(input.transcript, from, usize::MAX).map_err(unreadable)?;
+    let (windows, max_events) = input.dialect.window_budget();
     let mut events = Vec::new();
-    let mut offset = from + lines.consumed;
-    let mut used = 0u64;
-    for (entry, bytes) in &lines.entries {
-        if events.len() >= MAX_EVENTS_PER_RUN {
-            offset = from + used; // the rest of this read goes on the next run
+    let mut offset = from;
+    'windows: for _ in 0..windows {
+        let lines = read_lines(input.transcript, offset, usize::MAX).map_err(unreadable)?;
+        if lines.consumed == 0 {
             break;
         }
-        if let Some(entry) = entry {
-            events.extend(events_of(entry, notes, false));
+        let start = offset;
+        offset += lines.consumed;
+        let mut used = 0u64;
+        for (entry, bytes) in &lines.entries {
+            if events.len() >= max_events {
+                offset = start + used; // the rest of this read goes on the next run
+                break 'windows;
+            }
+            if let Some(entry) = entry {
+                events.extend(match input.dialect {
+                    Dialect::Claude => events_of(entry, notes, false),
+                    Dialect::Codex => codex_events_of(entry, start + used, notes),
+                });
+                mentions.extend(match input.dialect {
+                    Dialect::Claude => claude_mentions(entry),
+                    Dialect::Codex => codex_mentions(entry),
+                });
+            }
+            used += bytes;
         }
-        used += bytes;
     }
     let mut started_now = false;
     if !state.started
@@ -398,10 +517,16 @@ fn parent_events(
         let title = notes
             .title
             .clone()
-            .unwrap_or_else(|| "Claude Code session".to_string());
+            .unwrap_or_else(|| input.dialect.untitled().to_string());
         events.insert(
             0,
-            started(timeline, &first_at, &title, input.repo, "claude-code"),
+            started(
+                timeline,
+                &first_at,
+                &title,
+                input.repo,
+                input.dialect.harness(),
+            ),
         );
         started_now = true;
     }
