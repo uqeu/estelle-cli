@@ -460,7 +460,7 @@ fn rollout(payload_type: &str, at: &str, payload: Value) -> Value {
 }
 
 /// A Codex rollout streams into `codex-<session>`, starts with harness `codex`, and its Stop-door run
-/// lands the whole turn; a second Stop with nothing new sends only the host's own Stop lifecycle.
+/// lands the whole turn; a second Stop with nothing new sends nothing (it would only repeat the waiting row).
 #[tokio::test]
 async fn a_codex_rollout_streams_into_its_own_timeline_from_the_stop_door() {
     let fx = Fixture::new();
@@ -495,18 +495,22 @@ async fn a_codex_rollout_streams_into_its_own_timeline_from_the_stop_door() {
             "tool_call",
             "tool_result",
             "agent_message",
-            "lifecycle",
             "lifecycle"
         ],
-        "started, prompt, input, call, result, reply, task_complete, Stop"
+        "started, prompt, input, call, result, reply, then ONE turn end: task_complete and the Stop \
+         both say waiting_for_review, and one turn end is one row (the pair was the 2026-10-23 bug)"
     );
     assert_eq!(sent[0]["event_id"], format!("{timeline}:started"));
     assert_eq!(sent[0]["payload"]["harness"], "codex");
     assert_eq!(sent[0]["payload"]["title"], "run the tests");
-    assert_eq!(
-        sent.last().unwrap()["at"],
-        "2026-10-21T10:00:07.000Z",
-        "Stop is stamped at the last entry"
+    let end = sent.last().unwrap();
+    assert_eq!(end["payload"]["state"], "waiting_for_review");
+    assert!(
+        end["at"]
+            .as_str()
+            .unwrap()
+            .starts_with("2026-10-21T10:00:07"),
+        "the turn end is stamped at the last entry, never the clock: {end}"
     );
     assert_eq!(report.subagent_events, 0);
     assert_eq!(
@@ -516,7 +520,10 @@ async fn a_codex_rollout_streams_into_its_own_timeline_from_the_stop_door() {
     let again = FakeServer::default();
     run_as(&fx, "Stop", Dialect::Codex, None, &again).await;
     let resent = again.accepted_for(&timeline);
-    assert_eq!(resent.len(), 1, "only the new Stop: {resent:?}");
+    assert!(
+        resent.is_empty(),
+        "a second Stop with nothing new would only repeat waiting_for_review: {resent:?}"
+    );
 }
 
 /// One Codex Stop run catches up a turn bigger than the Claude per-run event bound.
@@ -691,4 +698,88 @@ async fn smoke_stream_against_a_local_api() {
         total = (total.0 + report.sent, total.1 + report.subagent_events);
     }
     println!("total sent={} subagent_events={}", total.0, total.1);
+}
+
+fn turn_duration(uuid: &str, at: &str) -> Value {
+    json!({"type": "system", "subtype": "turn_duration", "uuid": uuid, "timestamp": at, "durationMs": 7000})
+}
+
+#[tokio::test]
+async fn one_turn_end_shows_one_waiting_even_when_the_transcript_reports_it_after_stop() {
+    let fx = Fixture::new();
+    fx.append(&[prompt("u1", "2026-10-21T10:00:00Z", "a"),
+        json!({"type": "assistant", "uuid": "a1", "timestamp": "2026-10-21T10:00:07Z", "message": {"content": [{"type": "text", "text": "done"}]}})]);
+    let server = FakeServer::default();
+    fx.run("Stop", &server).await;
+    // Claude Code writes `system/turn_duration` AFTER the Stop hook ran; the next run reads it.
+    fx.append(&[turn_duration("t1", "2026-10-21T10:00:07.500Z")]);
+    fx.run("PostToolUse", &server).await;
+    let waiting = server
+        .accepted_for(TIMELINE)
+        .iter()
+        .filter(|e| e["kind"] == "lifecycle" && e["payload"]["state"] == "waiting_for_review")
+        .count();
+    assert_eq!(
+        waiting, 1,
+        "one turn end is one waiting row, not one per source"
+    );
+    // and the NEXT turn's end is reported again: the dedupe is on repeats, not on the state forever.
+    fx.append(&[
+        prompt("u2", "2026-10-21T10:01:00Z", "b"),
+        turn_duration("t2", "2026-10-21T10:01:09Z"),
+    ]);
+    fx.run("Stop", &server).await;
+    let waiting = server
+        .accepted_for(TIMELINE)
+        .iter()
+        .filter(|e| e["kind"] == "lifecycle" && e["payload"]["state"] == "waiting_for_review")
+        .count();
+    assert_eq!(
+        waiting, 2,
+        "a second turn end after new input is a second waiting row"
+    );
+}
+
+#[test]
+fn collapse_lifecycle_drops_only_a_repeated_waiting_and_carries_the_last_across_runs() {
+    let ev = |s: &str, r: &str| json!({"kind": "lifecycle", "payload": {"state": s, "reason": r}});
+    let msg = json!({"kind": "customer_message", "payload": {}});
+    let (kept, last) = collapse_lifecycle(
+        vec![
+            ev("running", "started"),
+            ev("running", "input_received"),
+            msg.clone(),
+            ev("waiting_for_review", "input_required"),
+            ev("waiting_for_review", "input_required"),
+        ],
+        None,
+    );
+    assert_eq!(
+        kept.len(),
+        4,
+        "start and input differ in reason, so both stay; the repeat waiting goes"
+    );
+    let (kept, _) = collapse_lifecycle(
+        vec![
+            ev("running", "input_received"),
+            ev("running", "input_received"),
+        ],
+        None,
+    );
+    assert_eq!(
+        kept.len(),
+        2,
+        "only a repeated WAITING is a duplicate; two inputs in a row are two rows"
+    );
+    assert_eq!(last.as_deref(), Some("waiting_for_review/input_required"));
+    let (kept, _) = collapse_lifecycle(
+        vec![ev("waiting_for_review", "input_required")],
+        last.clone(),
+    );
+    assert!(
+        kept.is_empty(),
+        "a repeat of what an EARLIER run landed is dropped too"
+    );
+    let (kept, _) = collapse_lifecycle(vec![msg], last);
+    assert_eq!(kept.len(), 1, "non-lifecycle events are never touched");
 }

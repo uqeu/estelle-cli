@@ -162,6 +162,46 @@ struct ParentState {
     started: bool,
     #[serde(default)]
     last_error: Option<String>,
+    /// The `state/reason` of the last lifecycle event this session LANDED. One owner for "did the
+    /// timeline already say this": see [`collapse_lifecycle`].
+    #[serde(default)]
+    last_lifecycle: Option<String>,
+}
+
+/// Drop a `waiting_for_review/input_required` that repeats the lifecycle before it, counting the last one
+/// already landed in an earlier run. ⛔ WHY: one turn end arrives twice — the Stop hook reports it at
+/// once, and Claude Code's `system/turn_duration` entry, written AFTER the Stop hook, reports it again on a
+/// later run under a different id, so the server (idempotent per event id) keeps both and the dashboard
+/// showed "Waiting for your input" twice per turn. The ids cannot be shared: the entry's uuid does not
+/// exist when Stop fires. So the dedupe is on what the event SAYS, carried across runs in the state file.
+/// Every other lifecycle passes untouched.
+/// The one repeat that was MEASURED (founder's timeline, 2026-10-23: a pair per turn from seq 525 on). Other
+/// consecutive lifecycles — two prompts in a row, a codex rollout's own transitions — are distinct rows and stay.
+const WAITING_KEY: &str = "waiting_for_review/input_required";
+
+pub(crate) fn collapse_lifecycle(
+    events: Vec<Value>,
+    last: Option<String>,
+) -> (Vec<Value>, Option<String>) {
+    let mut last = last;
+    let mut kept = Vec::with_capacity(events.len());
+    for event in events {
+        if event["kind"] != "lifecycle" {
+            kept.push(event);
+            continue;
+        }
+        let key = format!(
+            "{}/{}",
+            event["payload"]["state"].as_str().unwrap_or(""),
+            event["payload"]["reason"].as_str().unwrap_or("")
+        );
+        if key == WAITING_KEY && last.as_deref() == Some(WAITING_KEY) {
+            continue;
+        }
+        last = Some(key);
+        kept.push(event);
+    }
+    (kept, last)
 }
 
 fn state_path(input: &StreamInput<'_>) -> PathBuf {
@@ -187,6 +227,7 @@ fn load_state(input: &StreamInput<'_>) -> ParentState {
         offset,
         started: offset > 0,
         last_error: None,
+        last_lifecycle: None,
     }
 }
 
@@ -399,12 +440,14 @@ pub(crate) async fn run<S: StreamSink>(input: &StreamInput<'_>, sink: &S) -> Str
     match parent_events(input, &timeline, &state, &mut notes, &mut mentions) {
         Err(error) => report.error = Some(error),
         Ok((events, offset, started_now)) => {
+            let (events, last_lifecycle) = collapse_lifecycle(events, state.last_lifecycle.clone());
             match (events.len(), send(sink, &timeline, events).await) {
                 (total, Ok(dropped)) => {
                     (report.sent, report.dropped) = (total - dropped, dropped);
                     state.offset = offset;
                     state.started |= started_now;
                     state.last_error = None;
+                    state.last_lifecycle = last_lifecycle;
                 }
                 (_, Err(error)) => report.error = Some(error),
             }
