@@ -281,6 +281,10 @@ struct HookPayload {
     /// stamp it, in which case the id is the label: a real id beats an invented type name.
     #[serde(default, alias = "agentType", deserialize_with = "null_is_absent")]
     agent_type: String,
+    /// Codex's per-turn id. Read for ONE fact: its presence says the host is Codex ([`harness_of`]).
+    /// Typed `Value` so no spelling of it (a number, an object) can ever refuse the payload.
+    #[serde(default, alias = "turnId")]
+    turn_id: Value,
 }
 
 /// 🔴 THE WHOLE CONTRACT, DRIVEN FROM THE HOST'S OWN GENERATED SCHEMAS.
@@ -630,6 +634,7 @@ async fn run_hook_with(
         "sync" => sync_hook(&payload, repo, root).await,
         "distil" => Ok(distil_hook(&payload)),
         "checkpoint" => checkpoint_hook(&payload).await,
+        "stream" => stream_hook(&payload, repo, root).await,
         "welcome" => Ok(welcome_hook(&payload).await),
         "context" => context_hook(&payload, repo).await,
         _ => Err(format!(
@@ -653,6 +658,7 @@ fn hook_event_label(mode: &str, expected: Option<&str>, payload: Option<&str>) -
             // names one of two doors is a diagnostic that points at the wrong one.
             "context" => "UserPromptSubmit|SubagentStart",
             "checkpoint" => "Stop|SubagentStop|PreCompact|SessionEnd",
+            "stream" => "UserPromptSubmit|PostToolUse|Stop|SessionEnd",
             _ => "unknown",
         })
         .to_string()
@@ -661,7 +667,7 @@ fn hook_event_label(mode: &str, expected: Option<&str>, payload: Option<&str>) -
 fn hook_execution_need(mode: &str) -> &'static str {
     match mode {
         "ground" | "sync" | "context" => "a valid Estelle credential and a reachable Estelle API",
-        "checkpoint" => "a readable transcript and writable local session state",
+        "checkpoint" | "stream" => "a readable transcript and writable local session state",
         "welcome" => "readable local session state and repository history",
         "shift" => "a reachable local Estelle session server",
         "guard" | "distil" | "pull" => "a valid host hook payload",
@@ -994,8 +1000,21 @@ const CONTEXT_HOOK_BUDGET: std::time::Duration =
 /// (`commands.rs`) asks for `"code": true` outright. Only the two callers that read `recall` and
 /// nothing else may suppress it. The rule is not "the hook is fast", it is **"ask only for the
 /// fields you read"**.
-fn context_search_body(query: &str) -> Value {
-    json!({"query": query, "code": false})
+fn context_search_body(ask: ContextAsk<'_>) -> Value {
+    json!({"query": ask.query, "code": false, "host": ask.host})
+}
+
+/// What the context hook asks `/search`: the prompt, and WHICH HOST is asking.
+///
+/// `host` is `"claude-code"` or `"codex"` (the one owner is [`harness_of`]) so the server can deliver
+/// only the workspace rules limited to that agent (`learned_rules.rules_for(..., agent)`).
+/// ⚠️ MEASURED 2026-10-22 against `origin/main` of the server: `handle_search` does not read `host` yet
+/// (it binds `rules_for(account_key, email, repo)` with no agent), so today the field is carried and
+/// ignored — an agent-limited rule still reaches both hosts until the server reads it.
+#[derive(Clone, Copy, Debug)]
+struct ContextAsk<'a> {
+    query: &'a str,
+    host: &'a str,
 }
 
 /// The NETWORK half of the context hook, bounded, taking its client and its budget as arguments.
@@ -1159,11 +1178,11 @@ async fn context_recall(
     client: &Client,
     cancel: &CancellationToken,
     repo: &Repo,
-    query: &str,
+    ask: ContextAsk<'_>,
     budget: Duration,
     log: Option<&Path>,
 ) -> ContextOutcome {
-    let body = context_search_body(query);
+    let body = context_search_body(ask);
     let request = client.post_scoped::<Value, Value>(Endpoint::Search, repo, &body, cancel);
     // 🔑 STARTED BEFORE THE AWAIT, SO THE NUMBER IS MEASURED RATHER THAN THE BUDGET RESTATED.
     // `tokio::time::timeout` hands back only `Elapsed`, which carries no duration, and a message
@@ -1242,12 +1261,12 @@ async fn context_recall_lines(
     client: &Client,
     cancel: &CancellationToken,
     repo: &Repo,
-    query: &str,
+    ask: ContextAsk<'_>,
     budget: Duration,
     log: Option<&Path>,
     parent_session: &str,
 ) -> Vec<String> {
-    let outcome = context_recall(client, cancel, repo, query, budget, log).await;
+    let outcome = context_recall(client, cancel, repo, ask, budget, log).await;
     // 🔴 STORED ON THE ONE DURABLE OUTCOME THIS RUNNER HAS, AND THE LIMIT IS SAID OUT LOUD.
     // The parent has already paid for this recall — a slot, a request and ~6 s — so every subagent
     // the turn spawns INHERITS it (`crate::subagent_context::inherited_context`) rather than each
@@ -1347,7 +1366,10 @@ where
         &api.client,
         &api.cancel,
         repo,
-        &query,
+        ContextAsk {
+            query: &query,
+            host: harness_of(payload),
+        },
         CONTEXT_HOOK_BUDGET,
         None,
         &payload.session_id,
@@ -1906,6 +1928,83 @@ fn checkpoint_refused(reason: &str) -> Option<Value> {
         eprintln!("{reason}");
     }
     None
+}
+
+/// `stream`: mirror this host session into the customer's session timeline (`hook_stream_run`).
+/// Best-effort and silent: a failure leaves the offset where it was, so the next run resends (the server
+/// dedupes by event id). It never blocks the host and never prints into the conversation.
+///
+/// Both hosts stream. Claude Code's JSONL is read on every installed door; a CODEX payload reads Codex's
+/// rollout (`hook_stream_codex`) — from `transcript_path` when Codex sent one, else found by session id
+/// under `$CODEX_HOME/sessions` — and is installed on Codex's Stop door only, because Codex hooks are
+/// synchronous and a per-tool-call spawn would stall every tool call. Both also send the session's
+/// git-derived events from the hook's repository root (`hook_stream_git`).
+async fn stream_hook(
+    payload: &HookPayload,
+    repo: &Repo,
+    root: &Path,
+) -> Result<Vec<String>, String> {
+    let session = payload.session_id.trim();
+    if !crate::hook_stream_run::safe_session(session) {
+        return Ok(Vec::new());
+    }
+    let Some(home) = dirs::home_dir() else {
+        return Ok(Vec::new());
+    };
+    let given = payload
+        .transcript_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from);
+    let (dialect, transcript) = if harness_of(payload) == "codex" {
+        let codex_home = std::env::var_os("CODEX_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".codex"));
+        let found = given.or_else(|| {
+            crate::hook_stream_codex::find_rollout(&codex_home.join("sessions"), session)
+        });
+        (crate::hook_stream_run::Dialect::Codex, found)
+    } else {
+        (crate::hook_stream_run::Dialect::Claude, given)
+    };
+    let Some(transcript) = transcript else {
+        return Ok(Vec::new());
+    };
+    let Ok(api) = Api::resolve() else {
+        return Ok(Vec::new());
+    };
+    let state_dir = home.join(".estelle").join("stream");
+    let input = crate::hook_stream_run::StreamInput {
+        state_dir: &state_dir,
+        transcript: &transcript,
+        session,
+        hook_event: payload.hook_event_name.trim(),
+        repo: repo.as_str(),
+        now: chrono::Utc::now(),
+        dialect,
+        git_root: Some(root),
+    };
+    let sink = crate::hook_stream_run::ClientSink::new(api.client, api.cancel);
+    let _report = crate::hook_stream_run::run(&input, &sink).await;
+    Ok(Vec::new())
+}
+
+/// Which host this payload came from — the ONE owner of that answer (`stream`, and `/search`'s `host`).
+///
+/// Codex stamps `turn_id` on every hook event (all eleven of its generated input schemas require it) and
+/// Claude Code sends none; a payload with no transcript at all is Codex's ordinary state too.
+fn harness_of(payload: &HookPayload) -> &'static str {
+    let has_turn = match &payload.turn_id {
+        Value::Null => false,
+        Value::String(text) => !text.trim().is_empty(),
+        _ => true,
+    };
+    if has_turn || payload.transcript_path.is_none() {
+        "codex"
+    } else {
+        "claude-code"
+    }
 }
 
 /// 🔴 THE THREE-SECOND EVENT. `checkpoint` is wired to Stop, PreCompact and SessionEnd, and
@@ -3145,6 +3244,50 @@ struct HookRow {
 /// manifest only**, so the same hook got 30 s through the plugin door and 10–20 s through
 /// `estelle install-hooks` — measured off the shipped 0.2.32 binary, four rows disagreed.
 const HOOK_TABLE: &[HookRow] = &[
+    // SESSION STREAM: mirrors this session into the customer's own Estelle dashboard (`hook_stream.rs`).
+    // Async on every door — it must never delay the agent — and silent: a failure resends next time.
+    HookRow {
+        event: "UserPromptSubmit",
+        matcher: None,
+        mode: "stream",
+        timeout: 15,
+        claude_async: true,
+        plugin: true,
+        plugin_async: true,
+    },
+    // SESSION STREAM: mirrors this session into the customer's own Estelle dashboard (`hook_stream.rs`).
+    // Async on every door — it must never delay the agent — and silent: a failure resends next time.
+    HookRow {
+        event: "PostToolUse",
+        matcher: Some("*"),
+        mode: "stream",
+        timeout: 15,
+        claude_async: true,
+        plugin: true,
+        plugin_async: true,
+    },
+    // SESSION STREAM: mirrors this session into the customer's own Estelle dashboard (`hook_stream.rs`).
+    // Async on every door — it must never delay the agent — and silent: a failure resends next time.
+    HookRow {
+        event: "Stop",
+        matcher: None,
+        mode: "stream",
+        timeout: 15,
+        claude_async: true,
+        plugin: true,
+        plugin_async: true,
+    },
+    // SESSION STREAM: mirrors this session into the customer's own Estelle dashboard (`hook_stream.rs`).
+    // Async on every door — it must never delay the agent — and silent: a failure resends next time.
+    HookRow {
+        event: "SessionEnd",
+        matcher: None,
+        mode: "stream",
+        timeout: 15,
+        claude_async: true,
+        plugin: true,
+        plugin_async: true,
+    },
     HookRow {
         event: "PreToolUse",
         matcher: Some("Write|Edit"),
@@ -3348,6 +3491,10 @@ fn hook_timeout(host: HookHost, row: &HookRow) -> u64 {
 fn estelle_hook_groups(host: HookHost, runner: &str) -> Vec<(String, Value)> {
     HOOK_TABLE
         .iter()
+        // The Codex door writes no `async` key, so a `stream` row there is a SYNCHRONOUS process spawn.
+        // On every tool call that would stall the agent; once per turn, on Stop, it is one bounded run
+        // that reads what the turn wrote to the rollout. So Codex gets the Stop row and nothing else.
+        .filter(|row| host == HookHost::Claude || row.mode != "stream" || row.event == "Stop")
         .map(|row| {
             let mut handler = json!({
                 "type": "command",
@@ -6144,6 +6291,7 @@ mod tests {
                 agent_transcript_path: None,
                 agent_id: String::new(),
                 agent_type: String::new(),
+                turn_id: Value::Null,
             }
         }
 
@@ -7830,11 +7978,12 @@ tests/test_serve.py:88: AssertionError\n\
             installed["hooks"]["PreToolUse"].as_array().map(Vec::len),
             Some(4)
         );
+        // PostToolUse and Stop each gained the `stream` row in 0.4.0 (Claude door only).
         assert_eq!(
             installed["hooks"]["PostToolUse"].as_array().map(Vec::len),
-            Some(4)
+            Some(5)
         );
-        assert_eq!(installed["hooks"]["Stop"].as_array().map(Vec::len), Some(2));
+        assert_eq!(installed["hooks"]["Stop"].as_array().map(Vec::len), Some(3));
         assert_eq!(installed["hooks"]["Stop"][0], original["hooks"]["Stop"][0]);
         assert!(backup_path(&path).exists());
 
@@ -7891,6 +8040,7 @@ tests/test_serve.py:88: AssertionError\n\
             agent_transcript_path: None,
             agent_id: String::new(),
             agent_type: String::new(),
+            turn_id: Value::Null,
         };
 
         assert!(
@@ -7928,11 +8078,12 @@ tests/test_serve.py:88: AssertionError\n\
         merge_estelle_hooks(&mut value, HookHost::Codex, "estelle").expect("hook declaration");
 
         let parsed: codex_config::HooksFile =
-            serde_json::from_value(value).expect("Codex hooks schema");
+            serde_json::from_value(value.clone()).expect("Codex hooks schema");
 
         assert_eq!(parsed.hooks.pre_tool_use.len(), 3);
         assert_eq!(parsed.hooks.post_tool_use.len(), 3);
-        assert_eq!(parsed.hooks.stop.len(), 1);
+        // Stop = checkpoint + `stream` (0.4.0: Codex streams its rollout once per turn, from Stop only).
+        assert_eq!(parsed.hooks.stop.len(), 2);
         assert_eq!(parsed.hooks.pre_compact.len(), 1);
         assert_eq!(parsed.hooks.session_end.len(), 1);
         assert_eq!(parsed.hooks.session_start.len(), 1);
@@ -7942,7 +8093,14 @@ tests/test_serve.py:88: AssertionError\n\
         // and lose the door — a count alone cannot tell those apart.
         assert_eq!(parsed.hooks.subagent_start.len(), 1);
         assert_eq!(parsed.hooks.subagent_stop.len(), 1);
-        assert_eq!(parsed.hooks.handler_count(), 13);
+        assert_eq!(parsed.hooks.handler_count(), 14);
+        let rendered = serde_json::to_string(&value).expect("hooks serialise");
+        assert_eq!(
+            rendered.matches("hook stream").count(),
+            1,
+            "Codex hooks are synchronous: `stream` may ride Stop and nothing else"
+        );
+        assert!(rendered.contains("estelle hook stream --event Stop"));
         for (_event, groups) in parsed.hooks.into_matcher_groups() {
             for group in &groups {
                 for handler in &group.hooks {
@@ -8358,8 +8516,18 @@ tests/test_serve.py:88: AssertionError\n\
 
         let manifest: Value =
             serde_json::from_str(SHIPPED_PLUGIN_MANIFEST).expect("the shipped manifest is JSON");
-        let plugin_kill = manifest["hooks"]["UserPromptSubmit"][0]["hooks"][0]["timeout"]
-            .as_u64()
+        // Found by COMMAND, not by position: since 0.4.0 the `stream` row is also on UserPromptSubmit and
+        // sits first in the manifest, so `[0]` read the stream hook's budget and called it context's.
+        let plugin_kill = manifest["hooks"]["UserPromptSubmit"]
+            .as_array()
+            .and_then(|groups| {
+                groups.iter().find(|g| {
+                    g["hooks"][0]["command"]
+                        .as_str()
+                        .is_some_and(|c| c.ends_with("hook context"))
+                })
+            })
+            .and_then(|g| g["hooks"][0]["timeout"].as_u64())
             .expect("the plugin door declares a context timeout");
 
         for (door, kill) in [("install-hooks", row.timeout), ("plugin", plugin_kill)] {
@@ -9048,7 +9216,10 @@ tests/test_serve.py:88: AssertionError\n\
             &client,
             &cancel,
             &repo,
-            "where is the retry policy set?",
+            ContextAsk {
+                query: "where is the retry policy set?",
+                host: "claude-code",
+            },
             CONTEXT_HOOK_BUDGET,
             Some(&log),
             "",
@@ -9068,6 +9239,11 @@ tests/test_serve.py:88: AssertionError\n\
              body.get(\"code\", True), so omitting it asks for the 133 s branch: {body}"
         );
         assert_eq!(body["query"], json!("where is the retry policy set?"));
+        assert_eq!(
+            body["host"],
+            json!("claude-code"),
+            "the asking host rides on /search: {body}"
+        );
 
         // And the response half is unchanged: it still reads `recall`, and ONLY `recall`.
         assert_eq!(lines.len(), 1);
@@ -9131,7 +9307,10 @@ tests/test_serve.py:88: AssertionError\n\
             &client,
             &cancel,
             &repo,
-            "a prompt worth enriching",
+            ContextAsk {
+                query: "a prompt worth enriching",
+                host: "claude-code",
+            },
             BUDGET,
             Some(&log),
             "",
@@ -9217,7 +9396,10 @@ tests/test_serve.py:88: AssertionError\n\
             &client,
             &cancel,
             &repo,
-            "a prompt worth enriching",
+            ContextAsk {
+                query: "a prompt worth enriching",
+                host: "claude-code",
+            },
             BUDGET,
             Some(&log),
             "",
@@ -9469,7 +9651,10 @@ tests/test_serve.py:88: AssertionError\n\
             &client,
             &cancel,
             &repo,
-            "a prompt worth enriching",
+            ContextAsk {
+                query: "a prompt worth enriching",
+                host: "claude-code",
+            },
             Duration::from_secs(8),
             Some(&log),
             REAL_PARENT_SESSION,
@@ -9818,7 +10003,10 @@ tests/test_serve.py:88: AssertionError\n\
                 &client,
                 &cancel,
                 &repo,
-                "where is the retry policy set?",
+                ContextAsk {
+                    query: "where is the retry policy set?",
+                    host: "claude-code",
+                },
                 CONTEXT_HOOK_BUDGET,
                 Some(&log),
                 "",
@@ -9884,7 +10072,10 @@ tests/test_serve.py:88: AssertionError\n\
             &client,
             &cancel,
             &repo,
-            "where is the retry policy set?",
+            ContextAsk {
+                query: "where is the retry policy set?",
+                host: "claude-code",
+            },
             CONTEXT_HOOK_BUDGET,
             Some(&log),
         )
@@ -10079,7 +10270,10 @@ tests/test_serve.py:88: AssertionError\n\
     /// the hook suppresses code because it never reads it; `recall` must not.
     #[test]
     fn only_the_caller_that_ignores_code_is_allowed_to_suppress_it() {
-        let hook_body = context_search_body("where is the retry policy set?");
+        let hook_body = context_search_body(ContextAsk {
+            query: "where is the retry policy set?",
+            host: "claude-code",
+        });
         assert_eq!(hook_body.get("code"), Some(&json!(false)));
 
         // `recall`'s body, quoted from its call site. If that call site ever grows `code: false`,

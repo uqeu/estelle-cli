@@ -1,7 +1,7 @@
 schema_version = 1
 audit_date = "2026-08-20"
 audit_state = "source census recorded; call-site exhaustion and process-tree runtime canary remain open"
-released_sink_count = 17
+released_sink_count = 19
 latent_sink_count = 5
 
 [[sink]]
@@ -27,6 +27,17 @@ data = "prompt and up to the bounded dirty working-memory excerpt"
 disposition = "keep; ignored/secret-file canary remains open"
 
 [[sink]]
+id = "hook-stream"
+reachability = "released"
+source_file = "tui/src/hook_stream_run.rs"
+source_symbol = "impl StreamSink for ClientSink"
+trigger = "automatic after explicit install-hooks: UserPromptSubmit, PostToolUse, Stop and SessionEnd on Claude Code; Stop only on Codex (its hooks are synchronous)"
+confirmation = "no per-event confirmation"
+destination = "https://api.fatelabs.ca/session/events"
+data = "the host session transcript (Claude Code JSONL and its subagent transcripts, or the Codex rollout): prompts, replies, recorded thinking, tool calls and results, edit diffs, token usage and Estelle's own injected prompt context; plus, from the hook's git repository (local git subprocesses, no network): working-tree diffs against HEAD of files the session's own tool calls named and changed since it began (80 files, 120,000 chars each), the session's commits (sha, author name, subject, file names) and the tracked path list (20,000 paths, names only, no contents); secret-shaped values redacted (diffs included), each text field capped at 20,000 characters, NUL stripped"
+disposition = "keep; this is the feature (the customer's own session mirrored into their dashboard); a per-install opt-out is not yet built"
+
+[[sink]]
 id = "hook-context"
 reachability = "released"
 source_file = "tui/src/top_level.rs"
@@ -34,7 +45,7 @@ source_symbol = "context_hook"
 trigger = "automatic after explicit install-hooks"
 confirmation = "no per-event confirmation"
 destination = "https://api.fatelabs.ca/search"
-data = "bounded hook context query"
+data = "bounded hook context query and the asking host name (claude-code or codex)"
 disposition = "keep; kill-switch and no-credential zero-traffic tests remain open"
 
 [[sink]]
@@ -124,6 +135,17 @@ confirmation = "none"
 destination = "exact HTTP(S) loopback only after 3ea4936"
 data = "refresh or revoke credential"
 disposition = "keep for isolated tests; arbitrary remote hosts are refused"
+
+[[sink]]
+id = "estelle-api-base-url-override"
+reachability = "released"
+source_file = "estelle-client/src/base_url.rs"
+source_symbol = "configured_base_url"
+trigger = "ESTELLE_API_URL is set in the process environment (developer/self-host testing); unset means https://api.fatelabs.ca"
+confirmation = "none; the operator chose the value"
+destination = "the ESTELLE_API_URL host: https to any host, plain http only to localhost, 127.0.0.1 or [::1]"
+data = "everything the default Estelle client would send to api.fatelabs.ca, including the Estelle credential as a bearer header"
+disposition = "keep; one owner (Client::production), refuses URL credentials/query/fragment and remote plain http, and an invalid value fails closed rather than falling back to production"
 
 [[sink]]
 id = "github-browser-handoff"

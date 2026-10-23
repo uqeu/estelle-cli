@@ -43,6 +43,11 @@ mod history_import;
 mod hook_distil;
 mod hook_guard;
 mod hook_pull;
+mod hook_stream;
+mod hook_stream_codex;
+mod hook_stream_git;
+mod hook_stream_run;
+mod hook_stream_subagents;
 mod hook_timings;
 mod host_install;
 mod keys_view;
@@ -74,6 +79,7 @@ mod top_level;
 mod transcript;
 #[cfg(test)]
 mod transcript_adoption_tests;
+mod usage_meter;
 mod version_check;
 mod work_job;
 mod work_plan;
@@ -2856,10 +2862,10 @@ impl App {
             "status" => self.transcript.push(TranscriptEntry::Command {
                 name: "status".to_string(),
                 lines: vec![
-                    format!(
-                        "endpoint  {}/",
-                        estelle_client::DEFAULT_BASE_URL.trim_end_matches('/')
-                    ),
+                    match estelle_client::configured_base_url() {
+                        Ok(url) => format!("endpoint  {url}"),
+                        Err(error) => format!("endpoint  {error}"),
+                    },
                     format!(
                         "credential  {}",
                         if self.client.is_some() {
@@ -6080,12 +6086,34 @@ async fn execute_remote_command(
     {
         reply = work_job::watch(&client, &job_id, cancel, work_progress_sink).await?;
     }
+    if pending.name == "me" {
+        let forecast = credits_forecast(&client, cancel).await;
+        reply
+            .extra
+            .insert(usage_meter::FORECAST_FIELD.to_string(), forecast);
+    }
     Ok(RemoteCommandReply {
         reply,
         inspected_files: measured_diff
             .map(|measured| measured.files)
             .unwrap_or_default(),
     })
+}
+
+/// `/me`'s usage line reads `GET /credits/forecast` beside `GET /me`. A failed read is recorded as
+/// an error envelope, so the line says "Usage unavailable" with the reason and never 0%.
+async fn credits_forecast(client: &Client, cancel: &CancellationToken) -> Value {
+    match client
+        .get::<_, Value>(
+            estelle_client::Endpoint::CreditsForecast,
+            &estelle_client::NoQuery,
+            cancel,
+        )
+        .await
+    {
+        Ok(forecast) => forecast,
+        Err(error) => serde_json::json!({"error": {"message": error.to_string()}}),
+    }
 }
 
 struct MeasuredDiff {
@@ -13215,6 +13243,95 @@ mod tests {
         assert!(rendered.contains("TEAM SENTINEL ANSWER"));
         assert!(!rendered.contains("Working memory ("));
         assert!(!rendered.contains("main.rs"));
+    }
+
+    /// `/me` reads GET /me AND GET /credits/forecast, and prints the plan share — the WIRE, not
+    /// just the formatter: the two answers below differ only in what the forecast route returns.
+    #[tokio::test]
+    async fn me_reads_the_forecast_and_prints_a_share_or_usage_unavailable() {
+        async fn run_me(forecast: ResponseTemplate) -> (String, Vec<String>) {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/me"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "email": "dev@example.com", "plan": "ultra", "plan_active": true,
+                    "balance_usd": 63.0, "period_spend_usd": 37.0
+                })))
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/credits/forecast"))
+                .respond_with(forecast)
+                .mount(&server)
+                .await;
+            let mut app = test_app();
+            let (tx, _rx) = mpsc::unbounded_channel();
+            app.submit("/me".to_string(), &tx);
+            let Some(QueuedRequest::Command(pending)) = app.queue.pop_front() else {
+                panic!("/me did not queue a command")
+            };
+            let client = Client::new(
+                &format!("{}/", server.uri()),
+                estelle_client::ApiKey::new("test-key").expect("key"),
+                Duration::from_secs(120),
+            )
+            .expect("client");
+            let root = tempfile::tempdir().expect("working tree");
+            let answer = execute_remote_command(
+                client,
+                Repo::new("fatelabs/estelle").expect("repo"),
+                root.path().to_path_buf(),
+                pending,
+                &CancellationToken::new(),
+                None,
+                None,
+            )
+            .await
+            .expect("/me runs even when the forecast read fails");
+            let paths = server
+                .received_requests()
+                .await
+                .expect("request recording")
+                .iter()
+                .map(|request| request.url.path().to_string())
+                .collect();
+            (
+                commands::render_remote_reply("me", &answer.reply).join("\n"),
+                paths,
+            )
+        }
+
+        let (rendered, paths) = run_me(ResponseTemplate::new(200).set_body_json(json!({
+            "balance_parts": {"spent_this_period": 370.0, "grant": 1000.0,
+                "period_end": "2026-11-20T12:00:00Z", "period_source": "stripe"}
+        })))
+        .await;
+        assert_eq!(
+            paths,
+            vec!["/me".to_string(), "/credits/forecast".to_string()]
+        );
+        assert!(
+            rendered.contains("Plan: Ultra · 37% used this period · resets Nov 2"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("63") && !rendered.contains("$"),
+            "raw totals reached /me\n{rendered}"
+        );
+
+        // CONTROL: the same /me with the forecast route failing says so, and never draws 0%.
+        let (failed, _) = run_me(ResponseTemplate::new(503).set_body_json(json!({
+            "error": {"message": "pool exhausted"}
+        })))
+        .await;
+        assert!(
+            failed.contains("Plan: Ultra · Usage unavailable"),
+            "{failed}"
+        );
+        assert!(
+            !failed.contains('%'),
+            "a failed read rendered a percentage\n{failed}"
+        );
     }
 
     #[tokio::test]

@@ -96,6 +96,11 @@ of inventing one. `estelle --help` lists all twenty-six commands.
 To bypass credential storage, set `ESTELLE_API_KEY` in the process environment. It takes precedence over
 `~/.estelle/auth.json` and is never persisted by Estelle.
 
+To point the CLI and its hooks at a different Estelle API (a local or self-hosted server), set
+`ESTELLE_API_URL`, for example `ESTELLE_API_URL=http://localhost:8787`. It must be `https`, or plain `http`
+only for `localhost`, `127.0.0.1` or `[::1]`; an invalid value is refused rather than silently replaced by
+`https://api.fatelabs.ca`. The credential is sent to that host, so use a key that server issued.
+
 ## What is measured
 
 Estelle's grounding gate caught **38,153 of 38,153 invented APIs**, with **0 false positives on 6,933 real

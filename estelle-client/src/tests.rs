@@ -21,7 +21,10 @@ fn test_key() -> ApiKey {
 #[test]
 fn endpoint_inventory_is_unique_and_matches_the_server_audit() {
     // 85 -> 86 on 2026-09-05: `GET /spend`, the vendor-list spend estimate the SPEND screen reads.
-    assert_eq!(API_ENDPOINTS.len(), 86);
+    // 87 -> 88 on 2026-10-22: PR #16's `session/events` (the `stream` hook) and PR #17's `credits/forecast`
+    // (`/me` usage) each counted from 86 on their own branch; merged, both are present. Both routes are
+    // registered on the server (`api.py`: POST+GET /session/events, GET /credits/forecast).
+    assert_eq!(API_ENDPOINTS.len(), 88);
     let unique = API_ENDPOINTS
         .iter()
         .map(|spec| spec.path)
@@ -50,6 +53,15 @@ fn endpoint_inventory_is_unique_and_matches_the_server_audit() {
 /// sibling path answers the router's generic `404 {"error":{"message":"not found"}}`. Those are
 /// different bodies from one build, so the route is REGISTERED and declining, not absent. Recorded
 /// here because a route pinned by a test that only reads this table proves the table, not serving.
+#[test]
+fn credits_forecast_is_a_get_and_is_not_repo_scoped() {
+    // `/me`'s usage line reads it (`tui/src/usage_meter.rs`); the backend owner is
+    // `api_credits.py::handle_credits_forecast`, account-scoped by the caller's key.
+    assert_eq!(Endpoint::CreditsForecast.path(), "credits/forecast");
+    assert_eq!(Endpoint::CreditsForecast.methods(), &[HttpMethod::Get]);
+    assert!(!Endpoint::CreditsForecast.requires_repo());
+}
+
 #[test]
 fn spend_is_a_get_and_is_not_repo_scoped() {
     assert_eq!(Endpoint::Spend.path(), "spend");

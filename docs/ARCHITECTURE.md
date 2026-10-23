@@ -204,7 +204,7 @@ workflow's own exit code is not publication evidence.
 
 `fork-manifest.yaml` records the upstream Codex import and hashes every reviewed high-risk delta after the
 audit checkpoint. `docs/egress-sinks.toml` is the finite sink register. The release gate currently expects
-17 released and 5 latent entries and fails if a source symbol disappears or a primitive census changes.
+19 released and 5 latent entries and fails if a source symbol disappears or a primitive census changes.
 This is a source census, not a process-tree network proof; runtime canaries remain explicitly open.
 
 The released product may send customer data only to Estelle or a provider the customer selected. Local shell

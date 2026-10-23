@@ -474,6 +474,10 @@ goals = true
         .await
         .expect("source goal usage should be recorded");
 
+    // The goal is ACTIVE while this turn runs, so the runtime adds the turn's wall-clock seconds
+    // (`time_delta_since_last_accounting`, floored) on interrupt. Measured from here so the bound below
+    // is the real elapsed time, not an assumption that the turn takes under one second.
+    let turn_clock = std::time::Instant::now();
     submit_prompt(&mut app, RETRY_PROMPT);
     let active_turn = next_user_turn_event(&mut app_event_rx);
     app.submit_thread_op(&mut app_server, source_thread_id, active_turn.clone())
@@ -739,10 +743,18 @@ goals = true
     let expected_source_tokens = if committed_steer.is_some() { 150 } else { 50 };
     assert_eq!(source_goal.objective, RETRY_GOAL);
     assert_eq!(source_goal.tokens_used, expected_source_tokens);
-    assert_eq!(source_goal.time_used_seconds, 12);
+    // 12 seeded seconds plus the interrupted turn's own wall time — never less, never more than measured.
+    // (This asserted exactly 12 and failed whenever the turn crossed one second: 13 on every run here.)
+    let turn_seconds = i64::try_from(turn_clock.elapsed().as_secs()).unwrap_or(i64::MAX);
+    assert!(
+        (12..=12 + turn_seconds).contains(&source_goal.time_used_seconds),
+        "source goal time {} outside 12..={}",
+        source_goal.time_used_seconds,
+        12 + turn_seconds
+    );
     assert_eq!(retry_goal.objective, RETRY_GOAL);
     assert!(retry_goal.tokens_used >= expected_source_tokens);
-    assert!(retry_goal.time_used_seconds >= 12);
+    assert!(retry_goal.time_used_seconds >= source_goal.time_used_seconds);
 
     let request_bodies = server
         .requests()

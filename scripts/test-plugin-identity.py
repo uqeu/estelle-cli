@@ -244,6 +244,10 @@ PLUGIN_CONTRACT_SHA256_BY_VERSION = {
     # DIGEST PROVENANCE: emitted by this file's own guard against this working tree (34 files hashed),
     # never copied out of a CI log and never re-implemented.
     "0.3.9": "feeb5e4053696a9806e5164be96eeef9ae336c65e4b671c7318d5213e2548375",
+    # 0.4.0 ships the regenerated hooks.json: four async `stream` rows that mirror the host session into the
+    # customer's dashboard over POST /session/events. DIGEST PROVENANCE: emitted by this file's own guard
+    # against this working tree (34 files hashed), never copied out of a CI log.
+    "0.4.0": "dd474a8fb22df6ec7f11a67856aed1ed105be63de0bb35da67049037efe82b6b",
 }
 
 #: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.
@@ -403,7 +407,8 @@ if hooks_path.is_file():
     # ⚠️ THE NUMBER IS IN THE CLAUSE'S NAME ON PURPOSE, AND THE NAME MOVES WITH IT. A clause called
     # "the eleven rows" that asserts twelve is a claim no reader can falsify by reading it — this
     # repo has paid for that shape before. v0.3.8 added `PreToolUse` / `Read|Grep|Glob` / `pull`.
-    check("shipping hook bundle has the twelve plugin-door rows", len(handlers) == 12,
+    # SIXTEEN since v0.4.0: the async `stream` mirror on UserPromptSubmit, PostToolUse, Stop, SessionEnd.
+    check("shipping hook bundle has the sixteen plugin-door rows", len(handlers) == 16,
           str(len(handlers)))
     # ⚠️ A DECLARED EXEMPTION, ASSERTED AS AN ABSENCE. `shift` fires on every Read. The Rust owner
     # marks it `plugin: false` because adding it is a product decision with a release attached,

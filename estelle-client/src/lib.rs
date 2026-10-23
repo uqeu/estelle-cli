@@ -2,6 +2,7 @@
 
 mod auth;
 mod auth_record;
+mod base_url;
 mod endpoint;
 mod key_display;
 mod repo;
@@ -14,6 +15,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub use auth_record::AuthRecord;
+pub use base_url::BASE_URL_ENV;
+pub use base_url::configured_base_url;
+pub use base_url::resolve_base_url;
 pub use endpoint::API_ENDPOINTS;
 pub use endpoint::Endpoint;
 pub use endpoint::HttpMethod;
@@ -129,6 +133,8 @@ pub enum Error {
     TimeoutTooShort,
     #[error("invalid Estelle API base URL: {0}")]
     InvalidBaseUrl(#[from] url::ParseError),
+    #[error("refused Estelle API base URL: {0}")]
+    DisallowedBaseUrl(String),
     #[error("request cancelled")]
     Cancelled,
     #[error("{endpoint:?} does not support {method}")]
@@ -187,8 +193,11 @@ pub struct Client {
 }
 
 impl Client {
+    /// The client every shipped entry point uses: [`DEFAULT_BASE_URL`], unless [`BASE_URL_ENV`]
+    /// (`ESTELLE_API_URL`) names another API. The override is resolved — and refused when invalid —
+    /// by [`configured_base_url`], the single owner of that decision.
     pub fn production(api_key: ApiKey) -> Result<Self, Error> {
-        Self::new(DEFAULT_BASE_URL, api_key, DEFAULT_TIMEOUT)
+        Self::new(configured_base_url()?.as_str(), api_key, DEFAULT_TIMEOUT)
     }
 
     pub fn new(base_url: &str, api_key: ApiKey, timeout: Duration) -> Result<Self, Error> {
