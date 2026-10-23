@@ -251,8 +251,25 @@ async fn a_prompt_before_anything_streamed_does_not_claim_input_on_a_session_tha
     let last = server.accepted_for(TIMELINE).pop().unwrap();
     assert_eq!(
         (last["payload"]["reason"].as_str(), last["at"].as_str()),
-        (Some("input_received"), Some("2026-10-21T10:00:00.000Z"))
+        (Some("input_received"), Some("2026-10-22T12:00:00.000Z")),
+        "a prompt is stamped when the host fired it, not at the previous turn's last entry"
     );
+}
+
+#[test]
+fn a_prompt_is_stamped_at_the_clock_and_never_before_the_last_entry() {
+    let at = |s: &str| DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc);
+    let (earlier, later) = (at("2026-10-21T10:00:00Z"), at("2026-10-22T12:00:00Z"));
+    assert_eq!(
+        prompt_stamp(Some(earlier), later),
+        "2026-10-22T12:00:00.000Z"
+    );
+    assert_eq!(
+        prompt_stamp(Some(later), earlier),
+        "2026-10-22T12:00:00.000Z",
+        "a slow clock is floored"
+    );
+    assert_eq!(prompt_stamp(None, earlier), "2026-10-21T10:00:00.000Z");
 }
 
 #[tokio::test]

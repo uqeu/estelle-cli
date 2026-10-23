@@ -23,7 +23,7 @@
 use crate::hook_stream::{Notes, batches, entry_time, events_of, lifecycle, scrub, stamp, started};
 use crate::hook_stream_codex::{codex_events_of, codex_mentions};
 use crate::hook_stream_git::{GitInput, claude_mentions};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, SecondsFormat, Utc};
 use estelle_client::{Client, Endpoint};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -401,7 +401,13 @@ async fn send_batch<S: StreamSink>(
     unreachable!("the loop bound is one more than the batch length")
 }
 
-/// The lifecycle the HOST just reported by firing this hook, stamped at the transcript's last entry.
+/// The lifecycle the HOST just reported by firing this hook.
+///
+/// A Stop or SessionEnd is stamped at the transcript's last entry (see [`stamp`]): a replayed one must not
+/// read as fresh activity. A UserPromptSubmit is different — the host fires it AT the moment the person
+/// submits, BEFORE the prompt reaches the transcript, so the last entry is the PREVIOUS turn's end and
+/// clamping to it back-dated the prompt by the whole idle gap. It is stamped at the hook's clock, never
+/// earlier than the last entry, so it still cannot sort before anything already streamed.
 fn host_lifecycle(
     input: &StreamInput<'_>,
     timeline: &str,
@@ -409,7 +415,11 @@ fn host_lifecycle(
     last: Option<DateTime<Utc>>,
     started: bool,
 ) -> Option<Value> {
-    let at = stamp(None, last, input.now);
+    let at = if input.hook_event == "UserPromptSubmit" {
+        prompt_stamp(last, input.now)
+    } else {
+        stamp(None, last, input.now)
+    };
     let (tag, state, reason) = match input.hook_event {
         // `system/turn_duration` is written AFTER the Stop hooks run, so this run cannot see it yet; the
         // Stop itself is the host saying the turn ended.
@@ -424,6 +434,16 @@ fn host_lifecycle(
         state,
         reason,
     ))
+}
+
+/// A prompt's instant: the hook's clock, floored at the transcript's last entry.
+fn prompt_stamp(last: Option<DateTime<Utc>>, now: DateTime<Utc>) -> String {
+    let chosen = last.map_or(now, |l| l.max(now));
+    debug_assert!(
+        last.is_none_or(|l| chosen >= l),
+        "a prompt never sorts before what already streamed"
+    );
+    chosen.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 /// One hook run: the parent transcript, then its subagents.
