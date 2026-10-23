@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 REGISTRY_VERIFIER = ROOT / "scripts" / "verify-npm-release.py"
 REGISTRY_READBACK = 'python3 scripts/verify-npm-release.py "${ESTELLE_RELEASE_TAG#v}"'
-NATIVE_TIMEOUT = "timeout-minutes: 75"
+NATIVE_TIMEOUT = "timeout-minutes: 85"
 RESUMABLE_IDENTITY = '''remote_sha=$(git ls-remote origin "refs/tags/${ESTELLE_RELEASE_TAG}^{}" | awk '{print $1}')
           if test -n "$remote_sha"; then
             test "$remote_sha" = "$GITHUB_SHA"
@@ -86,7 +86,7 @@ def main() -> None:
     assert_release_contract(workflow, verifier)
     prove_contract_rejects_mutants(workflow, verifier)
     print(
-        "release pipeline proof: Linux gate before native fan-out, 75m native ceiling, "
+        "release pipeline proof: Linux gate before native fan-out, 85m native ceiling, "
         "dispatch-before-tag, exact-tag resume, remote npm artifact read-back"
     )
 

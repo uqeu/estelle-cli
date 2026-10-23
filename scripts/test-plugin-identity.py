@@ -248,6 +248,10 @@ PLUGIN_CONTRACT_SHA256_BY_VERSION = {
     # customer's dashboard over POST /session/events. DIGEST PROVENANCE: emitted by this file's own guard
     # against this working tree (34 files hashed), never copied out of a CI log.
     "0.4.0": "dd474a8fb22df6ec7f11a67856aed1ed105be63de0bb35da67049037efe82b6b",
+    # 0.4.1: no plugin file changed beyond the version string; the binary carries the stream-hook fix that
+    # one turn end is one "waiting" row (uqeu/estelle-cli#20). DIGEST PROVENANCE: emitted by this file's own
+    # guard against this working tree on 2026-10-23 (34 files hashed), never copied out of a CI log.
+    "0.4.1": "f4bf36048c6e83ccde937027930d6b83eb14f0962cb474da7e71bd836a946944",
 }
 
 #: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.
