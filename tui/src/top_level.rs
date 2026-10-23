@@ -4501,7 +4501,7 @@ where
                 )
                 .await
                 .map_err(SweepFailure::Client)?;
-            lines.push("Repo swept. The server accepted the complete source set.".to_string());
+            lines.extend(sync_outcome_lines(&response));
             lines.extend(dropped_lines(&response));
             report(SweepProgress {
                 state: "repo swept".to_string(),
@@ -4766,6 +4766,32 @@ fn with_measured_head(mut body: Value, root: &Path) -> Value {
     }
     body
 }
+
+/// What the server did with the CODE GRAPH, read off its answer rather than assumed from a 200.
+///
+/// 🔴 `surface_updated: false` is the server keeping the previous graph: the chunks landed, but the sweep
+/// offered fewer source files than are already indexed, so a rebuild would have gutted the graph. This
+/// line used to print "accepted the complete source set" regardless — measured 2026-10-23 on
+/// uqeu/estelle-sdk, a 14-file sweep left a stale-generation graph in place under that sentence, and every
+/// Atlas plan kept refusing it. The server's own `warning` says what to do, so it is shown verbatim.
+pub(crate) fn sync_outcome_lines(response: &Value) -> Vec<String> {
+    if response.get("surface_updated") != Some(&Value::Bool(false)) {
+        return vec!["Repo swept. The server accepted the complete source set.".to_string()];
+    }
+    let mut lines = vec![
+        "Repo swept, but the server KEPT the previous code graph: it was not rebuilt from this sweep."
+            .to_string(),
+    ];
+    let warning = response
+        .get("warning")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    lines.extend(warning.lines().take(MAX_WARNING_LINES).map(str::to_string));
+    lines
+}
+
+/// Bound on the server warning lines a kept-graph sweep renders (the server's is 7).
+const MAX_WARNING_LINES: usize = 12;
 
 fn dropped_lines(response: &Value) -> Vec<String> {
     let Some(dropped) = response.get("dropped").and_then(Value::as_object) else {
@@ -6267,6 +6293,28 @@ fn split_flag(values: &[String], flag: &str) -> (Vec<String>, Option<String>) {
 
 #[cfg(test)]
 mod tests {
+
+    /// A sweep whose graph the server KEPT must not read as a success (uqeu/estelle-sdk, 2026-10-23).
+    #[test]
+    fn a_kept_graph_is_said_and_the_server_warning_is_shown() {
+        let kept = serde_json::json!({"surface": "kept", "surface_updated": false,
+            "warning": "the code graph was NOT rebuilt from this sweep\n  · sending a repo IN PIECES? add partial"});
+        let lines = super::sync_outcome_lines(&kept);
+        assert!(
+            lines[0].contains("KEPT the previous code graph"),
+            "{lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|l| l.contains("accepted the complete")),
+            "{lines:?}"
+        );
+        assert!(lines.iter().any(|l| l.contains("IN PIECES")), "{lines:?}");
+        let rebuilt = serde_json::json!({"surface": "rebuilt"});
+        assert_eq!(
+            super::sync_outcome_lines(&rebuilt),
+            vec!["Repo swept. The server accepted the complete source set.".to_string()]
+        );
+    }
 
     /// `edited_file` + `diagnose_missing_path` — the gate was inert on a whole host because the
     /// path lookup knew one spelling.
