@@ -24,7 +24,13 @@ the field was populated, never that the right playbooks loaded. It is paired her
 from __future__ import annotations
 
 #: The tool surface the CLI is built against. A CONTRACT: a change here is a CLI change, so it is pinned.
-EXPECTED_TOOLS_BASE = 16
+#: 🔴 16 -> 28 on 2026-10-23. The v0.4.0 release's public-install-receipts DISCARDED all three setup
+#: receipts as "production not stable_and_verified" while every customer-facing check inside them passed
+#: (/mcp, /sync, /sweep/estimate and /v1/chat/completions all 200 against build 78fee09044c8). The cause
+#: was this pin: production had grown to tools_base 28 and nothing told the CLI. Those receipts are the
+#: evidence that the 0.4.0 binary works against the 28-tool surface; that is why the pin moved, rather
+#: than moving it because the number differed.
+EXPECTED_TOOLS_BASE = 28
 
 
 def surface_ok(surface: object) -> bool:

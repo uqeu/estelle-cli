@@ -27,7 +27,7 @@ HEALTH_URL = "https://api.fatelabs.ca/health"
 #: Kept as a NAME for the tests that reference it; the JUDGEMENT lives in production_surface.
 from production_surface import EXPECTED_TOOLS_BASE, surface_ok  # noqa: E402
 
-EXPECTED_SURFACE = {"tools_base": EXPECTED_TOOLS_BASE, "prompts": 249}
+EXPECTED_SURFACE = {"tools_base": EXPECTED_TOOLS_BASE, "prompts": 250}
 BEGIN = "<!-- BEGIN ESTELLE — managed block, safe to move, do not edit inside -->"
 END = "<!-- END ESTELLE -->"
 QUESTION = re.compile(r"Proving question: What does `([A-Za-z_][A-Za-z0-9_]*)` do")
