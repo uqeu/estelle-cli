@@ -18,8 +18,8 @@ curl --proto '=https' --tlsv1.2 -fsSL \
 
 That is the whole install. It detects your platform, downloads from this repository's latest release,
 verifies the archive against the release's `SHA256SUMS`, rejects archives with unexpected members, and
-atomically installs `estelle` into `~/.local/bin`. macOS or Linux, arm64 or x86_64. There is no Windows
-build.
+atomically installs `estelle` into `~/.local/bin`. macOS or Linux, arm64 or x86_64. `install.sh` is a
+POSIX installer; on Windows (x64, releases after v0.4.2) install through npm below.
 
 The same binary is on npm for machines that are already npm-based:
 
@@ -138,8 +138,9 @@ live in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/SCORECARD.md`](do
 
 ## How a release is verified
 
-Public releases are cut by [`.github/workflows/release.yml`](.github/workflows/release.yml) and carry four
-checksummed binaries: macOS and Linux, arm64 and x86_64. The workflow refuses a tag that disagrees with the
+Public releases are cut by [`.github/workflows/release.yml`](.github/workflows/release.yml) and carry five
+checksummed binaries: macOS and Linux, arm64 and x86_64, plus Windows x86_64 (from the first release after
+v0.4.2). The workflow refuses a tag that disagrees with the
 version in `Cargo.toml`, `npm-shim/package.json`, `estelle-plugin/.claude-plugin/plugin.json`, or
 `.claude-plugin/marketplace.json`, builds from the lockfile with warnings denied, and requests a
 GitHub-signed SLSA build provenance attestation for every published artifact.

@@ -123,6 +123,16 @@ jobs:
           - runner: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
             file_marker: "ARM aarch64"
+          # Native Windows, so `npm i -g @fatelabs/estelle` and the `estelle@fatelabs` plugin hooks
+          # work there. Before this entry the npm launcher refused win32 outright ("unsupported
+          # operating system"), so a Windows user's hooks never ran and no session ever streamed.
+          # ⚠️ BILLING: GitHub bills Windows runner minutes at 2x Linux. At the 85-minute cap below
+          # a worst-case run is 170 billed minutes for this one entry. x64 only — there is no
+          # aarch64-pc-windows-msvc entry, and the launcher refuses ARM64 Windows by name.
+          # `file_marker` is unused here: the Windows step reads the PE header itself instead.
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            file_marker: "PE32+"
     runs-on: ${{ matrix.runner }}
     # v0.2.25 reached a valid Intel binary after 66m26s. Give the installer proof another 8m34s,
     # but stop below the old 90m / 900 billed-minute ceiling instead of spending through a hang.
@@ -135,6 +145,7 @@ jobs:
       - name: Install Rust target
         run: rustup target add "${{ matrix.target }}"
       - name: Build locked release binary
+        if: runner.os != 'Windows'
         shell: bash
         env:
           RUSTFLAGS: -D warnings
@@ -156,6 +167,32 @@ jobs:
             ./scripts/test-installer.sh
           mkdir dist
           install -m 0755 "$binary" "dist/estelle-${{ matrix.target }}"
+      - name: Build locked Windows release binary
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          # 🔴 RUSTFLAGS REPLACES `.cargo/config.toml`'s MSVC rustflags; it does not add to them.
+          # `-D warnings` alone would silently drop `+crt-static` (the exe then needs the VC++
+          # runtime, present on every runner and absent on a fresh Windows install) and the 8 MiB
+          # main-thread stack. So both are restated here, and check-windows-pe.py reads the import
+          # table of the produced exe to prove the CRT really is static.
+          RUSTFLAGS: -D warnings -C link-arg=/STACK:8388608 -C target-feature=+crt-static
+        run: |
+          set -euo pipefail
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          test "$host" = "${{ matrix.target }}"
+          cargo build --locked --release --package estelle-tui --bin estelle --target "${{ matrix.target }}"
+          binary="target/${{ matrix.target }}/release/estelle.exe"
+          test -f "$binary"
+          python scripts/check-ip-boundary.py "$binary"
+          python scripts/check-windows-pe.py "$binary"
+          test "$("$binary" --version | tr -d '\r')" = "estelle ${ESTELLE_RELEASE_TAG#v}"
+          # install.sh is POSIX-only and has no Windows target, so test-installer.sh does not run
+          # here; the npm launcher is the Windows install path and its tests run in ci.yml on
+          # windows. The raw binary keeps the extension-less dist name every target uses, and
+          # package-release.sh names the archive member `estelle.exe`.
+          mkdir dist
+          cp "$binary" "dist/estelle-${{ matrix.target }}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: estelle-${{ matrix.target }}
@@ -179,7 +216,7 @@ jobs:
       - name: Build reproducible archives and checksum manifest
         run: |
           set -euo pipefail
-          test "$(find dist -maxdepth 1 -type f -name 'estelle-*' | wc -l)" -eq 4
+          test "$(find dist -maxdepth 1 -type f -name 'estelle-*' | wc -l)" -eq 5
           ./scripts/package-release.sh dist release
           cp install.sh release/install.sh
           cp fork-manifest.yaml docs/egress-sinks.toml release/
@@ -214,6 +251,10 @@ jobs:
 
               curl --proto '=https' --tlsv1.2 -fsSL \
                 https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/install.sh | sh
+
+          On Windows (x64), install through npm; the launcher verifies SHA256SUMS the same way:
+
+              npm install -g @fatelabs/estelle
 
           The installer verifies SHA256SUMS before installing. Verify GitHub's signed provenance separately:
 

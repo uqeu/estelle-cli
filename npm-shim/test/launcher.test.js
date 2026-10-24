@@ -16,6 +16,9 @@ const LAUNCHER_SOURCE = fs.readFileSync(path.join(SHIM_DIR, 'bin', 'estelle.js')
 const INSTALL_SOURCE = fs.readFileSync(path.join(SHIM_DIR, 'install.js'));
 const MANIFEST_SOURCE = fs.readFileSync(path.join(SHIM_DIR, 'package.json'));
 const { targetFor, nativeBinaryPath } = require('../install.js');
+const { writeStandIn, writeScript } = require('./standin.js');
+
+const STANDIN = JSON.stringify(path.join(__dirname, 'standin.js'));
 
 // A package directory shaped exactly like the published tarball: bin/estelle.js, install.js,
 // package.json. `installJs` may be replaced by a stub so the lazy-download path is observable
@@ -28,11 +31,8 @@ function fakePackage(root, installJs = INSTALL_SOURCE) {
   return path.join(root, 'bin', 'estelle.js');
 }
 
-function writeNativeBinary(packageDir, target, body) {
-  const binary = nativeBinaryPath(packageDir, target);
-  fs.mkdirSync(path.dirname(binary), { recursive: true });
-  fs.writeFileSync(binary, body, { mode: 0o755 });
-  return binary;
+function writeNativeBinary(packageDir, target) {
+  return writeStandIn(nativeBinaryPath(packageDir, target));
 }
 
 function runLauncher(launcher, args, env = {}) {
@@ -48,9 +48,11 @@ test('the launcher runs the vendored binary and passes arguments through', (t) =
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'estelle-launcher-ok.'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const launcher = fakePackage(root);
-  writeNativeBinary(root, TARGET, '#!/bin/sh\nprintf "native %s\\n" "$*"\n');
+  const binary = writeNativeBinary(root, TARGET);
+  if (process.platform === 'win32') assert.match(binary, /estelle\.exe$/, 'Windows must run estelle.exe');
+  const script = writeScript(root, 'native', 'native ');
 
-  const result = runLauncher(launcher, ['--version', '--extra']);
+  const result = runLauncher(launcher, [script, '--version', '--extra']);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.trim(), 'native --version --extra');
   // The happy path must not mention downloading; a customer with a working install sees nothing.
@@ -61,9 +63,9 @@ test('the exit status of the native binary is the exit status of the launcher', 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'estelle-launcher-status.'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const launcher = fakePackage(root);
-  writeNativeBinary(root, TARGET, '#!/bin/sh\nexit 42\n');
+  writeNativeBinary(root, TARGET);
 
-  assert.equal(runLauncher(launcher, []).status, 42);
+  assert.equal(runLauncher(launcher, [writeScript(root, 'status', '', 42)]).status, 42);
 });
 
 test('a missing binary with downloads disabled names npm 12 and prints a working repair command', (t) => {
@@ -77,7 +79,9 @@ test('a missing binary with downloads disabled names npm 12 and prints a working
   assert.match(result.stderr, /npm 12 blocks package install scripts by default/);
   assert.match(result.stderr, /postinstall/);
   assert.match(result.stderr, /npm install -g @fatelabs\/estelle --allow-scripts=@fatelabs\/estelle/);
-  assert.match(result.stderr, /install\.sh/);
+  // install.sh is POSIX-only; a Windows customer must not be told to pipe it into `sh`.
+  if (process.platform === 'win32') assert.equal(/install\.sh/.test(result.stderr), false, result.stderr);
+  else assert.match(result.stderr, /install\.sh/);
   // The searched path is named, so a reader can check it themselves.
   assert.match(result.stderr, new RegExp(`vendor.${TARGET}.estelle`));
   // And the old, uninformative failure must be gone.
@@ -100,15 +104,13 @@ module.exports = {
   install: async (options) => {
     fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ packageDir: options.packageDir }));
     const binary = upstream.nativeBinaryPath(options.packageDir, upstream.targetFor(process.platform, process.arch));
-    fs.mkdirSync(path.dirname(binary), { recursive: true });
-    fs.writeFileSync(binary, '#!/bin/sh\\nprintf "lazily-installed\\\\n"\\n', { mode: 0o755 });
-    return binary;
+    return require(${STANDIN}).writeStandIn(binary);
   },
 };
 `;
   const launcher = fakePackage(root, Buffer.from(stub));
 
-  const result = runLauncher(launcher, ['--version']);
+  const result = runLauncher(launcher, [writeScript(root, 'lazy', 'lazily-installed')]);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.trim(), 'lazily-installed');
   assert.equal(fs.existsSync(marker), true, 'the launcher must call install() when the binary is absent');
@@ -141,6 +143,13 @@ test('an unwritable package directory installs into the per-user cache instead',
     t.skip('root can write a 0o555 directory, so this case is unobservable as root');
     return;
   }
+  if (process.platform === 'win32') {
+    // NOT MEASURED ON WINDOWS: chmod 0o555 on a directory does not deny writes there (the
+    // read-only attribute is ignored for directories), so the unwritable case cannot be built
+    // this way. The cache ROOT on win32 is covered by install.test.js's defaultCacheRoot case.
+    t.skip('a 0o555 directory is still writable on Windows');
+    return;
+  }
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'estelle-launcher-cache.'));
   t.after(() => {
     fs.chmodSync(root, 0o700);
@@ -154,9 +163,7 @@ module.exports = {
   ...upstream,
   install: async (options) => {
     const binary = upstream.nativeBinaryPath(options.packageDir, upstream.targetFor(process.platform, process.arch));
-    fs.mkdirSync(path.dirname(binary), { recursive: true });
-    fs.writeFileSync(binary, '#!/bin/sh\\nprintf "from-cache\\\\n"\\n', { mode: 0o755 });
-    return binary;
+    return require(${STANDIN}).writeStandIn(binary);
   },
 };
 `;
@@ -165,14 +172,15 @@ module.exports = {
   t.after(() => fs.rmSync(cache, { recursive: true, force: true }));
   fs.chmodSync(root, 0o555);
 
-  const result = runLauncher(launcher, ['--version'], { ESTELLE_CACHE_DIR: cache });
+  const script = writeScript(cache, 'cached', 'from-cache');
+  const result = runLauncher(launcher, [script], { ESTELLE_CACHE_DIR: cache });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.trim(), 'from-cache');
   const cached = path.join(cache, `v${JSON.parse(MANIFEST_SOURCE.toString('utf8')).version}`);
   assert.equal(fs.existsSync(nativeBinaryPath(cached, TARGET)), true, 'the cache copy must exist');
 
   // And a second run must reuse the cache without installing again.
-  const again = runLauncher(launcher, ['--version'], { ESTELLE_CACHE_DIR: cache });
+  const again = runLauncher(launcher, [script], { ESTELLE_CACHE_DIR: cache });
   assert.equal(again.stdout.trim(), 'from-cache');
   assert.equal(/npm blocked/.test(again.stderr), false, again.stderr);
 });

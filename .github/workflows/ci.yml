@@ -156,3 +156,75 @@ jobs:
             exit 1
           fi
           echo "MEASURED: blocked postinstall -> lazy verified download -> estelle ${version}, second run silent"
+
+  # 🔴 NOTHING IN THIS REPOSITORY HAD EVER BEEN COMPILED FOR WINDOWS, AND IT SHOWED. A Windows user
+  # who installed the npm package and the plugin got hooks that never ran: the launcher refused
+  # win32 as an "unsupported operating system", so no session ever reached the dashboard. And the
+  # first cross-check of the workspace for Windows found `windows-sandbox-rs` did not compile at all
+  # (a field removed by the egress purge was still set on the Windows-only path) — invisible because
+  # every job here is Linux. A guard that runs on one OS has a coverage hole exactly where the other
+  # OS's code lives.
+  #
+  # ⚠️ BILLING: Windows runner minutes bill at 2x Linux, so this job's 80-minute cap is up to 160
+  # billed minutes per push. It is the only job that can see a `#[cfg(windows)]` arm compile.
+  #
+  # WHAT IT PROVES, AND WHAT IT DOES NOT. It builds the real `estelle.exe` with `-D warnings`, reads
+  # its PE import table (static CRT, console subsystem), and drives the REAL binary — directly and
+  # through the npm launcher, the way a customer runs it — through login, `hook stream` (asserting the
+  # session/events POST that arrives at a loopback capture server, with a control that must send
+  # nothing), sweep, `mcp-server` initialize and install-hooks. It does NOT start Claude Code, so it
+  # does not prove Claude Code's Windows hook shell invokes `npx … estelle hook stream`; and it builds
+  # the dev profile, so the release profile's Windows build time is measured only by release.yml.
+  windows:
+    name: Windows x64 — build, real-binary surface probe, npm launcher, unit tests
+    runs-on: windows-latest
+    timeout-minutes: 80
+    env:
+      # RUSTFLAGS replaces `.cargo/config.toml`'s MSVC rustflags rather than adding to them, so the
+      # static CRT and the 8 MiB main stack are restated next to `-D warnings` (see release.yml).
+      RUSTFLAGS: -D warnings -C link-arg=/STACK:8388608 -C target-feature=+crt-static
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - name: npm launcher unit tests on a real Windows node
+        run: npm test --prefix npm-shim
+      - name: The PE checker can fail
+        run: python scripts/test-windows-pe.py
+      - name: Build the Windows binary
+        run: |
+          set -euo pipefail
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          test "$host" = "x86_64-pc-windows-msvc"
+          cargo build --locked -p estelle-tui --bin estelle
+          test -f target/debug/estelle.exe
+          python scripts/check-windows-pe.py target/debug/estelle.exe
+          version=$(node -p "require('./npm-shim/package.json').version")
+          test "$(target/debug/estelle.exe --version | tr -d '\r')" = "estelle ${version}"
+      - name: Real binary — login, hook stream, sweep, mcp-server, install-hooks
+        run: python scripts/probe-native-surfaces.py --binary target/debug/estelle.exe
+      - name: Same surfaces through the npm launcher a customer installs
+        run: |
+          set -euo pipefail
+          # The probe refuses to overwrite a credential or settings file; these are the dummy-key
+          # files the previous step created on this ephemeral runner, never a real credential.
+          python -c "import os, pathlib; h = pathlib.Path(os.environ['USERPROFILE']); [p.unlink() for p in (h / '.estelle' / 'auth.json', h / '.claude' / 'settings.json') if p.exists()]"
+          npm pack ./npm-shim --ignore-scripts --pack-destination "$RUNNER_TEMP"
+          prefix="$RUNNER_TEMP/npm-prefix"
+          # --ignore-scripts: the postinstall would fetch THIS version's release, which has no Windows
+          # asset until a release ships one. The built exe is placed where postinstall would put it.
+          npm install -g "$RUNNER_TEMP"/fatelabs-estelle-*.tgz --prefix "$prefix" --ignore-scripts \
+            --no-audit --no-fund
+          package="$prefix/node_modules/@fatelabs/estelle"
+          test -f "$package/bin/estelle.js"
+          mkdir -p "$package/vendor/x86_64-pc-windows-msvc"
+          cp target/debug/estelle.exe "$package/vendor/x86_64-pc-windows-msvc/estelle.exe"
+          test -f "$prefix/estelle.cmd"
+          python scripts/probe-native-surfaces.py --binary "$prefix/estelle.cmd"
+      - name: Unit tests (Windows)
+        run: cargo test --locked -p estelle-acp -p estelle-client -p estelle-tui --no-fail-fast

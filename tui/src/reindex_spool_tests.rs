@@ -23,6 +23,30 @@ fn dead(_: u32) -> bool {
     false
 }
 
+// The REAL liveness probe, not the `alive`/`dead` doubles every other test injects. Its two answers
+// must DIFFER on two processes we control, or the test cannot see the probe at all: before this
+// existed, the non-unix arm returned `true` for every PID and no test could tell.
+#[test]
+fn the_real_liveness_probe_tells_a_running_process_from_an_exited_one() {
+    assert!(
+        pid_is_alive(std::process::id()),
+        "this test process is running"
+    );
+    let mut child = ProcessCommand::new("git")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn git");
+    let pid = child.id();
+    assert!(child.wait().expect("wait for git").success());
+    // Reaped (unix) / exited with a code (windows): either way, no longer a live process. PID reuse
+    // inside this window is possible in principle and would make this flaky, never falsely green.
+    assert!(
+        !pid_is_alive(pid),
+        "an exited, reaped child must read as dead"
+    );
+}
+
 fn git_repo() -> tempfile::TempDir {
     let root = tempfile::tempdir().expect("root");
     let status = ProcessCommand::new("git")
@@ -82,20 +106,20 @@ fn the_filter_decides_locally_and_names_why() {
     );
 }
 
+// Unix-only: creating a symlink on Windows needs Developer Mode or an elevated token, so the case
+// cannot be built portably. `admit`'s canonicalising containment check is the same code on both.
+#[cfg(unix)]
 #[test]
 fn a_symlink_out_of_the_repo_is_outside_it() {
     let root = git_repo();
     let outside = tempfile::tempdir().expect("outside");
     std::fs::write(outside.path().join("x.py"), "x = 1\n").expect("write");
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(outside.path().join("x.py"), root.path().join("src/l.py"))
-            .expect("symlink");
-        assert_eq!(
-            admit(root.path(), "src/l.py", SKIP, rust_or_python),
-            Err(Skip::OutsideRepo)
-        );
-    }
+    std::os::unix::fs::symlink(outside.path().join("x.py"), root.path().join("src/l.py"))
+        .expect("symlink");
+    assert_eq!(
+        admit(root.path(), "src/l.py", SKIP, rust_or_python),
+        Err(Skip::OutsideRepo)
+    );
 }
 
 fn spool_in(dir: &tempfile::TempDir) -> PathBuf {
