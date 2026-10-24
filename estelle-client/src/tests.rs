@@ -1843,3 +1843,34 @@ fn no_test_in_the_workspace_resolves_through_the_ambient_environment() {
          `resolve_with_environment(Some(..))` to test the environment branch on purpose."
     );
 }
+
+/// 2026-10-23: a pasted agent report was blocked as "an sk- API key (line 9)" because the branch
+/// name `fix/ask-flow-automation-title-kickoff` contains "sk-flow-automation-title-kickoff".
+#[test]
+fn a_hyphenated_word_ending_in_sk_is_not_an_api_key() {
+    for prose in [
+        "Branch is `fix/ask-flow-automation-title-kickoff`, worktree scratchpad/ask-flow.",
+        "the task-runner-for-the-whole-night finished",
+        "see desk-booking-integration-service-notes",
+    ] {
+        assert_eq!(crate::find_secret_shape(prose), None, "{prose}");
+        assert_eq!(
+            crate::redact_secrets(prose),
+            prose,
+            "prose must survive redaction: {prose}"
+        );
+    }
+}
+
+#[test]
+fn a_real_shaped_sk_key_is_still_refused() {
+    let fake = format!("token sk-proj-{}9{}", "Ab".repeat(12), "Zx".repeat(12));
+    let (shape, line) = crate::find_secret_shape(&fake).expect("an sk- key with digits is refused");
+    assert_eq!(line, 1);
+    assert!(!shape.is_empty());
+    let digits = format!("sk-{}1234567890", "q".repeat(10));
+    assert!(
+        crate::find_secret_shape(&digits).is_some(),
+        "a bare sk- key with digits is refused"
+    );
+}

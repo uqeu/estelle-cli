@@ -7924,7 +7924,7 @@ tests/test_serve.py:88: AssertionError\n\
 
     #[test]
     fn rust_sync_refusal_matches_the_python_hook_contract() {
-        let live_key = format!("sk-{}", "a".repeat(32));
+        let live_key = format!("sk-{}7", "a".repeat(31));
         let fixtures = [
             ("serve/api.py", "def handler():\n    return 1\n".to_string()),
             ("README.md", "# hello\n".to_string()),
@@ -9156,7 +9156,7 @@ tests/test_serve.py:88: AssertionError\n\
     fn context_kill_switch_precedes_every_check() {
         // Even a prompt carrying a live-looking credential is silent when the gate is disabled —
         // the kill switch is checked BEFORE the secret check and before any network call.
-        let secret = format!("the key is sk-{}", "a".repeat(32));
+        let secret = format!("the key is sk-{}7", "a".repeat(31));
         assert!(matches!(
             context_precheck(&secret, true),
             ContextPrecheck::Silent
@@ -9165,7 +9165,7 @@ tests/test_serve.py:88: AssertionError\n\
 
     #[test]
     fn context_blocks_a_secret_shaped_prompt_before_any_network() {
-        let secret = format!("sk-{}", "a".repeat(32));
+        let secret = format!("sk-{}7", "a".repeat(31));
         let prompt = format!("first line\nplease use {secret} for this");
         let ContextPrecheck::Block(reason) = context_precheck(&prompt, false) else {
             panic!("a secret-shaped prompt must be blocked");

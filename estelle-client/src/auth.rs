@@ -18,7 +18,7 @@ use crate::secret_engine;
 
 static SECRET_SHAPE: LazyLock<Result<Regex, regex::Error>> = LazyLock::new(|| {
     Regex::new(
-        r"(?:estelle_live_[A-Za-z0-9_-]{12,}|sk-[A-Za-z0-9_-]{16,}|sk_live_[A-Za-z0-9]{10,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)",
+        r"(?:estelle_live_[A-Za-z0-9_-]{12,}|\bsk-[A-Za-z0-9_-]{16,}|sk_live_[A-Za-z0-9]{10,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)",
     )
 });
 
@@ -27,13 +27,31 @@ static SECRET_SHAPE: LazyLock<Result<Regex, regex::Error>> = LazyLock::new(|| {
 /// AWS key). The matched value is never returned — shape name + line number only.
 const SECRET_SHAPES: &[(&str, &str)] = &[
     ("an Estelle key", r"estelle_live_[A-Za-z0-9_-]{12,}"),
-    ("an sk- API key", r"sk-[A-Za-z0-9_-]{16,}"),
+    // 🔴 `\b` AND A DIGIT (`plausible_match`), 2026-10-23: the unanchored `sk-` matched INSIDE words, so a
+    // branch name like `fix/ask-flow-automation-title-kickoff` ("a·sk-flow-…") blocked a whole prompt as an
+    // API key. Real sk- keys (sk-proj-, sk-ant-api03-, sk-or-v1-) start at a token boundary and carry digits.
+    ("an sk- API key", r"\bsk-[A-Za-z0-9_-]{16,}"),
     ("a Stripe live key", r"sk_live_[A-Za-z0-9]{10,}"),
     ("a GitHub token", r"ghp_[A-Za-z0-9]{20,}"),
     ("a GitHub PAT", r"github_pat_[A-Za-z0-9_]{20,}"),
     ("an AWS access key", r"AKIA[0-9A-Z]{16}"),
     ("a private key block", r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
 ];
+
+/// Whether a legacy-shape match is plausibly a credential rather than prose. Only the sk- shape needs
+/// it: every real sk- key carries a digit in its body, while hyphenated words (`sk-flow-automation-…`)
+/// never do. Every other shape's pattern is already specific enough to stand alone.
+fn plausible_match(name: &str, matched: &str) -> bool {
+    if name != "an sk- API key" {
+        return true;
+    }
+    let body = matched.strip_prefix("sk-").unwrap_or(matched);
+    debug_assert!(
+        matched.starts_with("sk-"),
+        "the sk- shape only matches text starting sk-"
+    );
+    body.bytes().any(|b| b.is_ascii_digit())
+}
 
 static SECRET_SHAPE_RES: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     SECRET_SHAPES
@@ -54,9 +72,11 @@ static SECRET_SHAPE_RES: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(||
 /// the 2026-08-10 false positive was exactly such a fixture.
 pub fn find_secret_shape(value: &str) -> Option<(&'static str, usize)> {
     for (index, line) in value.lines().enumerate() {
-        if let Some((name, _)) = SECRET_SHAPE_RES.iter().find(|(_, re)| {
-            re.find_iter(line)
-                .any(|m| !secret_engine::engine().is_allowlisted(m.as_str()))
+        if let Some((name, _)) = SECRET_SHAPE_RES.iter().find(|(name, re)| {
+            re.find_iter(line).any(|m| {
+                plausible_match(name, m.as_str())
+                    && !secret_engine::engine().is_allowlisted(m.as_str())
+            })
         }) {
             return Some((*name, index + 1));
         }
@@ -86,7 +106,9 @@ pub fn redact_secrets(value: &str) -> String {
         out = re
             .replace_all(&out, |captures: &regex::Captures| {
                 let matched = captures.get(0).map(|m| m.as_str()).unwrap_or_default();
-                if secret_engine::engine().is_allowlisted(matched) {
+                if !plausible_match(name, matched)
+                    || secret_engine::engine().is_allowlisted(matched)
+                {
                     matched.to_string()
                 } else {
                     format!("[redacted: {name}]")

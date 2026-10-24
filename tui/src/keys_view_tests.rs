@@ -80,7 +80,7 @@ fn a_credential_shape_and_a_rendered_key_row_cannot_both_exist() {
     // is safe to write down and still long enough for the fence to name.
     const SHAPES: [&str; 6] = [
         "estelle_live_aaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "sk-bbbbbbbbbbbbbbbbbbbbbbbb",
+        "sk-bbbbbbbbbbbb7bbbbbbbbbbb", // real sk- keys carry a digit (auth.rs `plausible_match`)
         "sk_live_cccccccccccccccc",
         "ghp_dddddddddddddddddddddddddd",
         "github_pat_eeeeeeeeeeeeeeeeeeeeeeee",
