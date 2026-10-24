@@ -1,0 +1,6 @@
+# GENERATED and compared BYTE-FOR-BYTE by `the_plugin_manifest_is_generated_from_the_one_hook_table`,
+# and inside the per-version SHA-256 of scripts/test-plugin-identity.py. A Windows checkout with
+# core.autocrlf=true rewrote it to CRLF, so the first Windows CI run reported a drift that was only
+# line endings. Pinned to LF so every checkout, including a customer's plugin clone, has the bytes
+# the digest was taken over.
+estelle-plugin/hooks/hooks.json text eol=lf

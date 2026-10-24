@@ -302,7 +302,35 @@ fn pid_is_alive(pid: u32) -> bool {
         let result = unsafe { libc::kill(pid, 0) };
         result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
-    #[cfg(not(unix))]
+    // 🔴 THIS USED TO BE `true` ON EVERY NON-UNIX HOST. A crashed flusher on Windows then held the
+    // spool for the full FLUSHER_MAX_AGE_MS (20 minutes) with nothing draining it, because the
+    // only liveness answer was "assume alive". OpenProcess + GetExitCodeProcess is the Windows
+    // equivalent of `kill(pid, 0)`: a handle we may not query (ACCESS_DENIED) is a live process
+    // owned by someone else, exactly as EPERM is above.
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::Foundation::ERROR_ACCESS_DENIED;
+        use windows_sys::Win32::Foundation::GetLastError;
+        use windows_sys::Win32::Foundation::STILL_ACTIVE;
+        use windows_sys::Win32::System::Threading::GetExitCodeProcess;
+        use windows_sys::Win32::System::Threading::OpenProcess;
+        use windows_sys::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION;
+
+        // SAFETY: OpenProcess takes plain integers and returns a handle or 0; it reads no memory.
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle == 0 {
+            // SAFETY: reads this thread's last-error slot, set by the failed call just above.
+            return unsafe { GetLastError() } == ERROR_ACCESS_DENIED;
+        }
+        let mut code: u32 = 0;
+        // SAFETY: `handle` is a live process handle opened above; `code` outlives the call.
+        let queried = unsafe { GetExitCodeProcess(handle, &mut code) };
+        // SAFETY: `handle` was opened above and is closed exactly once, here.
+        unsafe { CloseHandle(handle) };
+        queried != 0 && code == STILL_ACTIVE as u32
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = pid;
         true

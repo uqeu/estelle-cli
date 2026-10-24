@@ -208,8 +208,19 @@ no auto-deploy step.
 
 ## Requirements
 
-macOS or Linux, on arm64 or x86_64. Node 18 or newer for this npm install path and for the plugin's hooks.
-There is no Windows build.
+macOS or Linux on arm64 or x86_64, or Windows 10 (1803) or newer on x86_64. Node 18 or newer for this
+npm install path and for the plugin's hooks.
+
+Windows is x64 only: there is no ARM64 Windows build, and the launcher says so by name rather than
+fetching an archive that does not exist. The Windows binary is `estelle.exe` with a statically linked
+C runtime, so it needs no Visual C++ redistributable. Its credential file (`%USERPROFILE%\.estelle\auth.json`)
+is protected by your user profile's ACL; POSIX `0600` modes do not exist on Windows. The local session
+server (`estelle serve` / `connect`) uses a Unix-domain socket, which Windows supports from 10 (1803).
+CI on Windows drives login, the hook runtime (`hook stream` included), sweep, `mcp-server` and
+`install-hooks` through the real binary; the interactive terminal UI and the session server compile for
+Windows but are not exercised there.
+The first release with a Windows archive is the first one cut after v0.4.2; earlier versions refuse
+win32.
 
 ## How the install is verified
 

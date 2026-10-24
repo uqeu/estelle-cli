@@ -23,20 +23,46 @@ const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
 const MAX_REQUEST_MILLIS = 300_000;
 const ALLOWED_DOWNLOAD_HOSTS = new Set(['github.com', 'release-assets.githubusercontent.com']);
 
+// The published targets, and the ONE owner of "which file inside the archive is the CLI".
+// Windows is x64-only: no aarch64-pc-windows-msvc build is published, so an ARM64 Windows host is
+// refused by name rather than handed an x64 binary it may or may not be able to emulate.
+const RELEASE_TARGET = /^(aarch64|x86_64)-(apple-darwin|unknown-linux-gnu)$|^x86_64-pc-windows-msvc$/;
+
 function targetFor(platform, arch) {
-  const platforms = { darwin: 'apple-darwin', linux: 'unknown-linux-gnu' };
+  const platforms = { darwin: 'apple-darwin', linux: 'unknown-linux-gnu', win32: 'pc-windows-msvc' };
   const arches = { arm64: 'aarch64', x64: 'x86_64' };
   if (!platforms[platform]) throw new Error(`unsupported operating system: ${platform}`);
   if (!arches[arch]) throw new Error(`unsupported architecture: ${arch}`);
+  if (platform === 'win32' && arch !== 'x64') {
+    throw new Error(`unsupported architecture on Windows: ${arch} (only x64 is published; no aarch64-pc-windows-msvc build exists yet)`);
+  }
   return `${arches[arch]}-${platforms[platform]}`;
+}
+
+function isWindowsTarget(target) {
+  return target.endsWith('-pc-windows-msvc');
+}
+
+// The name of the single member of the release archive, which is also the installed file name.
+function binaryName(target) {
+  if (!RELEASE_TARGET.test(target)) throw new Error(`invalid release target: ${target}`);
+  return isWindowsTarget(target) ? 'estelle.exe' : 'estelle';
 }
 
 function nativeBinaryPath(packageDir, target) {
   if (!path.isAbsolute(packageDir)) throw new Error('package directory must be absolute');
-  if (!/^(aarch64|x86_64)-(apple-darwin|unknown-linux-gnu)$/.test(target)) {
-    throw new Error(`invalid release target: ${target}`);
-  }
-  return path.join(packageDir, 'vendor', target, 'estelle');
+  return path.join(packageDir, 'vendor', target, binaryName(target));
+}
+
+// 🔴 ON WINDOWS, `tar` ON PATH MAY BE GNU TAR — AND GNU TAR READS `C:\...` AS A REMOTE HOST.
+// Under Git Bash (which Claude Code on Windows requires) PATH can put Git's GNU tar ahead of the
+// system one, and GNU tar parses `C:\Users\...\estelle.tar.gz` as `host:path` and tries to rsh to host `C`.
+// Windows 10 1803+ ships bsdtar at %SystemRoot%\System32\tar.exe, which takes drive paths as
+// files, so on win32 that absolute path is used and PATH is never consulted.
+function tarCommand(platform = process.platform, env = process.env) {
+  if (platform !== 'win32') return 'tar';
+  const systemRoot = env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows';
+  return path.win32.join(systemRoot, 'System32', 'tar.exe');
 }
 
 function validateDownloadUrl(rawUrl) {
@@ -116,7 +142,7 @@ function expectedChecksum(manifest, archiveName) {
 }
 
 function runTar(args) {
-  const result = spawnSync('tar', args, { encoding: 'utf8', maxBuffer: MAX_MANIFEST_BYTES });
+  const result = spawnSync(tarCommand(), args, { encoding: 'utf8', maxBuffer: MAX_MANIFEST_BYTES });
   if (result.error) throw new Error(`tar could not run: ${result.error.message}`);
   if (result.status !== 0) throw new Error(`tar rejected the release archive: ${result.stderr.trim()}`);
   return result.stdout;
@@ -132,11 +158,12 @@ function installVerifiedArchive(packageDir, target, manifest, archive) {
   try {
     const archivePath = path.join(staging, archiveName);
     fs.writeFileSync(archivePath, archive, { mode: 0o600, flag: 'wx' });
-    if (runTar(['-tzf', archivePath]).trim() !== 'estelle') {
-      throw new Error('release archive must contain exactly one estelle binary');
+    const member = binaryName(target);
+    if (runTar(['-tzf', archivePath]).trim() !== member) {
+      throw new Error(`release archive must contain exactly one ${member} binary`);
     }
     runTar(['-xzf', archivePath, '-C', staging]);
-    const unpacked = path.join(staging, 'estelle');
+    const unpacked = path.join(staging, member);
     const metadata = fs.lstatSync(unpacked);
     if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error('release binary is not a regular file');
 
@@ -154,13 +181,19 @@ function installVerifiedArchive(packageDir, target, manifest, archive) {
   }
 }
 
+// Per-user cache root. Windows has no XDG convention; %LOCALAPPDATA% is the per-user, non-roaming
+// directory the profile ACL already restricts to this user.
+function defaultCacheRoot(platform = process.platform, env = process.env) {
+  if (platform === 'win32' && env.LOCALAPPDATA) return path.win32.join(env.LOCALAPPDATA, 'estelle', 'cache');
+  return path.join(env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), 'estelle');
+}
+
 // Where the launcher may install when the package directory is not writable by the running user
 // (a `sudo npm i -g` leaves root-owned files; a first run as the user must still be able to repair
 // itself). Keyed by version so an upgrade never runs a stale binary out of the cache.
 function fallbackPackageDir(version = PACKAGE_VERSION) {
   if (!/^[0-9A-Za-z][0-9A-Za-z.-]*$/.test(version)) throw new Error('cache version must be a simple version string');
-  const root = process.env.ESTELLE_CACHE_DIR
-    || path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), 'estelle');
+  const root = process.env.ESTELLE_CACHE_DIR || defaultCacheRoot();
   if (!path.isAbsolute(root)) throw new Error('cache directory must be absolute');
   return path.join(root, `v${version}`);
 }
@@ -184,13 +217,17 @@ module.exports = {
   MAX_MANIFEST_BYTES,
   MAX_REQUEST_MILLIS,
   PACKAGE_VERSION,
+  RELEASE_TARGET,
   RELEASE_BASE,
+  binaryName,
+  defaultCacheRoot,
   expectedChecksum,
   fallbackPackageDir,
   install,
   installVerifiedArchive,
   nativeBinaryPath,
   requestBuffer,
+  tarCommand,
   targetFor,
   validateDownloadUrl,
 };

@@ -129,8 +129,11 @@ function diagnose(target, reason) {
     '  Repair with any one of these:',
     `    npm install -g ${PACKAGE_NAME} --allow-scripts=${PACKAGE_NAME}`,
     `    node ${path.join(PACKAGE_DIR, 'install.js')}`,
-    "    curl --proto '=https' --tlsv1.2 -fsSL \\",
-    '      https://github.com/uqeu/estelle-cli/releases/latest/download/install.sh | sh',
+    // install.sh is a POSIX shell installer with no Windows target, so it is not offered there.
+    ...(process.platform === 'win32' ? [] : [
+      "    curl --proto '=https' --tlsv1.2 -fsSL \\",
+      '      https://github.com/uqeu/estelle-cli/releases/latest/download/install.sh | sh',
+    ]),
     '',
     `  This build expects release v${PACKAGE_VERSION}: ${RELEASE_BASE}`,
     `  Searched: ${nativeBinaryPathOrUnknown(PACKAGE_DIR, target)}`,

@@ -516,8 +516,25 @@ fn classify_reqwest_failure(error: &reqwest::Error) -> TransportFailure {
         _ if error.is_connect() && cause.is_some_and(|io| io.raw_os_error().is_none()) => {
             TransportFailure::Dns
         }
+        _ if error.is_connect() && cause.is_some_and(is_windows_resolver_error) => {
+            TransportFailure::Dns
+        }
         _ => TransportFailure::Unknown,
     }
+}
+
+/// 🔴 WINDOWS BREAKS THE "NO ERRNO" DISCRIMINATOR ABOVE. Its `getaddrinfo` reports through
+/// `WSAGetLastError`, so a name that does not resolve carries a raw OS error — measured on the
+/// first Windows CI run, where `estelle-no-such-host.invalid` classified as `Unknown`. These are
+/// the four Winsock resolver codes (WSAHOST_NOT_FOUND, WSATRY_AGAIN, WSANO_RECOVERY, WSANO_DATA);
+/// they are resolver-only, so matching them cannot misname a connect failure. Always false off
+/// Windows, where the same numbers mean nothing.
+fn is_windows_resolver_error(io: &std::io::Error) -> bool {
+    const WINSOCK_RESOLVER_ERRORS: [i32; 4] = [11001, 11002, 11003, 11004];
+    cfg!(windows)
+        && io
+            .raw_os_error()
+            .is_some_and(|code| WINSOCK_RESOLVER_ERRORS.contains(&code))
 }
 
 /// The first `io::Error` under a transport error — the only frame in the chain carrying a
@@ -8166,7 +8183,17 @@ tests/test_serve.py:88: AssertionError\n\
         let warning =
             file_shift_hook_at(&payload("reader", "Read"), &repo, root.path(), &socket).await;
         assert_eq!(warning.len(), 1);
-        assert!(warning[0].contains("File shift: writer changed src/lib.rs"));
+        // The notice renders the session-normalised PathBuf, whose separator is the platform's
+        // (`src\lib.rs` on Windows, where this assertion first ran).
+        // The hook output is JSON, so that backslash arrives escaped: read the decoded field.
+        let changed = Path::new("src").join("lib.rs");
+        let decoded: Value = serde_json::from_str(&warning[0]).expect("hook output is JSON");
+        let message = decoded["systemMessage"].as_str().unwrap_or_default();
+        assert!(
+            message.contains(&format!("File shift: writer changed {}", changed.display())),
+            "{}",
+            warning[0]
+        );
         assert!(warning[0].contains("Inspect the diff before continuing"));
         assert!(
             file_shift_hook_at(&payload("reader", "Read"), &repo, root.path(), &socket)

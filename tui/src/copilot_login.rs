@@ -227,9 +227,6 @@ fn persist_token(token: &str, destination: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::os::unix::fs::PermissionsExt;
-
     use tempfile::tempdir;
     use wiremock::Mock;
     use wiremock::MockServer;
@@ -282,14 +279,21 @@ mod tests {
         .await
         .expect("Copilot device login");
 
-        assert_eq!(
-            fs::metadata(&destination)
-                .expect("metadata")
-                .permissions()
-                .mode()
-                & 0o777,
-            0o600
-        );
+        // POSIX mode bits only: on Windows the file inherits the per-user profile ACL, and there is
+        // no `mode()` to assert. The Windows arm is covered by the file existing at all.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&destination)
+                    .expect("metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+        assert!(destination.is_file(), "the credential file must exist");
         let receipt = String::from_utf8(output).expect("UTF-8 receipt");
         assert!(receipt.contains("ABCD-EFGH"));
         assert!(!receipt.contains(token));

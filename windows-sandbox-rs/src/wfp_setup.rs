@@ -1,7 +1,4 @@
 use crate::install_wfp_filters_for_account;
-use crate::setup_error::sanitize_setup_metric_tag_value;
-use anyhow::Result;
-use std::path::Path;
 
 fn panic_payload_to_string(panic_payload: Box<dyn std::any::Any + Send>) -> String {
     match panic_payload.downcast::<String>() {
@@ -17,7 +14,7 @@ pub fn install_wfp_filters<F>(offline_username: &str, mut log: F)
 where
     F: FnMut(&str),
 {
-    let metric = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         install_wfp_filters_for_account(offline_username)
     })) {
         Ok(Ok(installed_filter_count)) => {
