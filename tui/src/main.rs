@@ -68,6 +68,8 @@ mod run_spend;
 mod screens;
 mod session_server;
 mod session_view;
+/// `estelle sessions import`: earlier sessions from this machine's transcripts onto the timeline.
+mod sessions_import;
 mod setup_flow;
 /// The `SubagentStart` door: a subagent inherits the grounding the parent already paid for.
 mod subagent_context;
@@ -492,6 +494,11 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         values: Vec<String>,
     },
+    /// Your session history: `estelle sessions import` adds the sessions that ran before the stream hook.
+    Sessions {
+        #[command(subcommand)]
+        action: SessionsAction,
+    },
     /// Inspect and erase stored memory.
     Memory {
         action: Option<String>,
@@ -586,6 +593,24 @@ enum Command {
     /// Print the version. `--version` already did this; `estelle version` did not, and errored with a
     /// tip suggesting `verify`. Both spellings now work.
     Version,
+}
+
+/// `estelle sessions …`.
+#[derive(Clone, Debug, Subcommand)]
+enum SessionsAction {
+    /// Send the sessions already on this machine (Claude Code and Codex transcripts) to your session
+    /// timeline, with their real timestamps. Idempotent and resumable; nothing is deleted.
+    Import {
+        /// Which host's transcripts to read.
+        #[arg(long = "from", value_enum, default_value = "all", value_name = "HOST")]
+        from: sessions_import::Source,
+        /// Only sessions whose last activity is on or after this date (YYYY-MM-DD) or instant (RFC 3339).
+        #[arg(long, value_name = "DATE")]
+        since: Option<String>,
+        /// Map every transcript and report what would be sent; send nothing, move no offset.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 struct TerminalSession;

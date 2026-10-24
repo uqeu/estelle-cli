@@ -88,10 +88,19 @@ estelle verify src/http/headers.rs     # resolve every symbol against the repo's
 estelle gate                           # run that check over a local diff
 estelle mcp-server                     # Estelle's tools over MCP, for any agent
 estelle acp                            # Agent Client Protocol, over stdio
+estelle sessions import --dry-run      # what earlier sessions on this machine would be added to your timeline
+estelle sessions import                # add them (Claude Code + Codex transcripts, real timestamps, idempotent)
 ```
 
 Answers cite the files and lines they came from. When Estelle cannot ground an answer, it says so instead
-of inventing one. `estelle --help` lists all twenty-six commands.
+of inventing one. `estelle --help` lists all thirty-two commands.
+
+The session timeline on the dashboard is fed by the stream hook from the moment it is installed, so sessions
+that ran before it are not on it. `estelle sessions import` sends the transcripts Claude Code
+(`~/.claude/projects`) and Codex (`$CODEX_HOME/sessions`) still hold on this machine, through the hook's own
+mapping and secret redaction, under the hook's own session and event ids, so a re-run or a later live stream sends
+nothing twice. It deletes nothing. It can only import what the host kept: Claude Code prunes old transcripts.
+`estelle setup` mentions it when this machine holds sessions the timeline does not have.
 
 To bypass credential storage, set `ESTELLE_API_KEY` in the process environment. It takes precedence over
 `~/.estelle/auth.json` and is never persisted by Estelle.

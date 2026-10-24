@@ -26,6 +26,7 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
 use crate::Command;
+use crate::SessionsAction;
 use crate::commands;
 use crate::hook_timings;
 use crate::plugin_currency;
@@ -93,7 +94,8 @@ fn contract(command: &Command) -> Contract {
         | Command::Sweep { .. }
         | Command::Reindex { .. }
         | Command::Github { .. }
-        | Command::Research { .. } => Contract::Compound,
+        | Command::Research { .. }
+        | Command::Sessions { .. } => Contract::Compound,
         Command::Monitor { .. }
         | Command::Memory { .. }
         | Command::Ask { .. }
@@ -169,6 +171,14 @@ pub(crate) async fn run(command: Command, repo: Repo, root: &Path) -> Result<Vec
         Command::Mcp { .. } | Command::McpServer => {
             Err("MCP is handled by the protocol runtime".to_string())
         }
+        Command::Sessions {
+            action:
+                SessionsAction::Import {
+                    from,
+                    since,
+                    dry_run,
+                },
+        } => sessions_import(from, since.as_deref(), dry_run).await,
         Command::Screens {
             screen,
             cream,
@@ -1958,9 +1968,7 @@ async fn stream_hook(
         .filter(|p| !p.is_empty())
         .map(PathBuf::from);
     let (dialect, transcript) = if harness_of(payload) == "codex" {
-        let codex_home = std::env::var_os("CODEX_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".codex"));
+        let codex_home = codex_home_under(&home);
         let found = given.or_else(|| {
             crate::hook_stream_codex::find_rollout(&codex_home.join("sessions"), session)
         });
@@ -1974,7 +1982,7 @@ async fn stream_hook(
     let Ok(api) = Api::resolve() else {
         return Ok(Vec::new());
     };
-    let state_dir = home.join(".estelle").join("stream");
+    let state_dir = crate::hook_stream_run::state_dir_under(&home);
     let input = crate::hook_stream_run::StreamInput {
         state_dir: &state_dir,
         transcript: &transcript,
@@ -1988,6 +1996,51 @@ async fn stream_hook(
     let sink = crate::hook_stream_run::ClientSink::new(api.client, api.cancel);
     let _report = crate::hook_stream_run::run(&input, &sink).await;
     Ok(Vec::new())
+}
+
+/// `$CODEX_HOME`, else `~/.codex` — one owner for the live hook and `estelle sessions import`.
+fn codex_home_under(home: &Path) -> PathBuf {
+    std::env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".codex"))
+}
+
+/// Where this machine's hosts keep their transcripts.
+fn transcript_roots(home: &Path) -> crate::sessions_import::Roots {
+    crate::sessions_import::Roots {
+        claude_projects: home.join(".claude").join("projects"),
+        codex_sessions: codex_home_under(home).join("sessions"),
+    }
+}
+
+/// `estelle sessions import`: the hook's own runner over the transcripts already on disk. A dry run
+/// needs no credential and sends nothing; a real one resolves the stored credential like every command.
+async fn sessions_import(
+    from: crate::sessions_import::Source,
+    since: Option<&str>,
+    dry_run: bool,
+) -> Result<Vec<String>, String> {
+    let since = since.map(crate::sessions_import::parse_since).transpose()?;
+    let home = dirs::home_dir().ok_or("no home directory, so no transcripts to read")?;
+    let roots = transcript_roots(&home);
+    let state_dir = crate::hook_stream_run::state_dir_under(&home);
+    let input = crate::sessions_import::ImportInput {
+        roots: &roots,
+        state_dir: &state_dir,
+        source: from,
+        since,
+        dry_run,
+        now: chrono::Utc::now(),
+        limits: crate::sessions_import::Limits::DEFAULT,
+    };
+    let summary = if dry_run {
+        crate::sessions_import::import(&input, &crate::sessions_import::NoSink).await
+    } else {
+        let api = Api::resolve()?;
+        let sink = crate::hook_stream_run::ClientSink::new(api.client, api.cancel);
+        crate::sessions_import::import(&input, &sink).await
+    };
+    Ok(crate::sessions_import::summary_lines(&summary, dry_run))
 }
 
 /// Which host this payload came from — the ONE owner of that answer (`stream`, and `/search`'s `host`).
@@ -3995,6 +4048,7 @@ async fn run_authenticated(
         | Command::Mcp { .. }
         | Command::McpServer
         | Command::Screens { .. }
+        | Command::Sessions { .. }
         | Command::Demo { .. }
         | Command::Upgrade { .. }
         | Command::Version => Err("local command reached the remote dispatcher".to_string()),
@@ -5858,6 +5912,14 @@ async fn setup(
     // allows. The proof step is a NICETY on top. So the value the user came for is delivered first,
     // and the proof degrades to an honest sentence instead of taking the ingest down with it.
     lines.extend(sweep(api, repo, root, false).await?);
+    if let Some(offer) = dirs::home_dir().and_then(|home| {
+        crate::sessions_import::setup_offer(
+            &transcript_roots(&home),
+            &crate::hook_stream_run::state_dir_under(&home),
+        )
+    }) {
+        lines.push(offer);
+    }
     match question {
         Some(question) => {
             lines.push(format!("Proving question: {question}"));

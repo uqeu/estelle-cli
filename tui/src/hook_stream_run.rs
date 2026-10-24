@@ -204,21 +204,37 @@ pub(crate) fn collapse_lifecycle(
     (kept, last)
 }
 
+/// Where every session's stream state lives: `~/.estelle/stream`. ONE owner, shared by the live hook and
+/// `estelle sessions import`, so an import and a later live run of the same session read one offset and the
+/// second never resends what the first already landed.
+pub(crate) fn state_dir_under(home: &Path) -> PathBuf {
+    home.join(".estelle").join("stream")
+}
+
 fn state_path(input: &StreamInput<'_>) -> PathBuf {
     input
         .state_dir
         .join(format!("{}.stream.json", input.session))
 }
 
+/// The byte offset the parent transcript of `session` has been streamed to (0 = never streamed).
+pub(crate) fn streamed_offset(state_dir: &Path, session: &str) -> u64 {
+    load_state_at(state_dir, session).offset
+}
+
 /// The saved state; a pre-0.4.0 `<session>.offset` (a bare number) is read as a session already started.
 fn load_state(input: &StreamInput<'_>) -> ParentState {
-    if let Some(state) = std::fs::read(state_path(input))
+    load_state_at(input.state_dir, input.session)
+}
+
+fn load_state_at(state_dir: &Path, session: &str) -> ParentState {
+    if let Some(state) = std::fs::read(state_dir.join(format!("{session}.stream.json")))
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
     {
         return state;
     }
-    let legacy = input.state_dir.join(format!("{}.offset", input.session));
+    let legacy = state_dir.join(format!("{session}.offset"));
     let offset = std::fs::read_to_string(legacy)
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
