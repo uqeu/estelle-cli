@@ -14152,6 +14152,9 @@ mod tests {
     /// ⚠️ What it CANNOT assert: whether a given terminal delivers `ctrl+o` at all. That is a
     /// property of the emulator, and it is exactly the gap that let the `alt+s` bug ship.
     #[test]
+    // Windows: the toggle drives crossterm's console-API mouse capture, and a CI runner has no
+    // console, so `mouse_is_captured()` cannot flip. Same cause as the four ignored tests above.
+    #[cfg_attr(windows, ignore = "mouse capture needs an attached Windows console")]
     fn the_selection_toggle_is_a_control_chord_and_reaches_it() {
         let before = mouse_is_captured();
         let mut app = test_app();

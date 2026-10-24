@@ -8183,7 +8183,14 @@ tests/test_serve.py:88: AssertionError\n\
         let warning =
             file_shift_hook_at(&payload("reader", "Read"), &repo, root.path(), &socket).await;
         assert_eq!(warning.len(), 1);
-        assert!(warning[0].contains("File shift: writer changed src/lib.rs"));
+        // The notice renders the session-normalised PathBuf, whose separator is the platform's
+        // (`src\lib.rs` on Windows, where this assertion first ran).
+        let changed = Path::new("src").join("lib.rs");
+        assert!(
+            warning[0].contains(&format!("File shift: writer changed {}", changed.display())),
+            "{}",
+            warning[0]
+        );
         assert!(warning[0].contains("Inspect the diff before continuing"));
         assert!(
             file_shift_hook_at(&payload("reader", "Read"), &repo, root.path(), &socket)
