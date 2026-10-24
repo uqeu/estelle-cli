@@ -8185,9 +8185,12 @@ tests/test_serve.py:88: AssertionError\n\
         assert_eq!(warning.len(), 1);
         // The notice renders the session-normalised PathBuf, whose separator is the platform's
         // (`src\lib.rs` on Windows, where this assertion first ran).
+        // The hook output is JSON, so that backslash arrives escaped: read the decoded field.
         let changed = Path::new("src").join("lib.rs");
+        let decoded: Value = serde_json::from_str(&warning[0]).expect("hook output is JSON");
+        let message = decoded["systemMessage"].as_str().unwrap_or_default();
         assert!(
-            warning[0].contains(&format!("File shift: writer changed {}", changed.display())),
+            message.contains(&format!("File shift: writer changed {}", changed.display())),
             "{}",
             warning[0]
         );
