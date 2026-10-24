@@ -114,7 +114,22 @@ fn safe_session_id(session_id: &str) -> Option<&str> {
 /// ⚠️ The same `dirs::home_dir()` the sibling state uses (`session_gap::state_path`), so the two
 /// halves of `~/.estelle` cannot end up in different homes — one owner for "where is home".
 fn cache_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|home| home.join(".estelle").join(CACHE_DIR_NAME))
+    home_dir().map(|home| home.join(".estelle").join(CACHE_DIR_NAME))
+}
+
+/// `dirs::home_dir()`, except that under `cfg(test)` an explicit `HOME` wins.
+///
+/// ⚠️ THE OVERRIDE IS ONLY OBSERVABLE ON WINDOWS, AND ONLY IN TESTS. [`TempHome`] isolates the tests
+/// by pointing `HOME` at a temp dir. On Unix `dirs::home_dir` already reads `HOME`, so this is the
+/// same answer; on Windows it reads the profile known-folder and ignores `HOME`, so the first
+/// Windows CI run had the "a miss is said out loud" tests reading a hit that another test had
+/// written into the runner's REAL profile. Production builds never compile the override.
+fn home_dir() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(home) = std::env::var_os("HOME").filter(|home| !home.is_empty()) {
+        return Some(PathBuf::from(home));
+    }
+    dirs::home_dir()
 }
 
 fn cache_path(session_id: &str) -> Option<PathBuf> {

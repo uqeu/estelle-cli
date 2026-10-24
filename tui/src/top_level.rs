@@ -516,8 +516,25 @@ fn classify_reqwest_failure(error: &reqwest::Error) -> TransportFailure {
         _ if error.is_connect() && cause.is_some_and(|io| io.raw_os_error().is_none()) => {
             TransportFailure::Dns
         }
+        _ if error.is_connect() && cause.is_some_and(is_windows_resolver_error) => {
+            TransportFailure::Dns
+        }
         _ => TransportFailure::Unknown,
     }
+}
+
+/// 🔴 WINDOWS BREAKS THE "NO ERRNO" DISCRIMINATOR ABOVE. Its `getaddrinfo` reports through
+/// `WSAGetLastError`, so a name that does not resolve carries a raw OS error — measured on the
+/// first Windows CI run, where `estelle-no-such-host.invalid` classified as `Unknown`. These are
+/// the four Winsock resolver codes (WSAHOST_NOT_FOUND, WSATRY_AGAIN, WSANO_RECOVERY, WSANO_DATA);
+/// they are resolver-only, so matching them cannot misname a connect failure. Always false off
+/// Windows, where the same numbers mean nothing.
+fn is_windows_resolver_error(io: &std::io::Error) -> bool {
+    const WINSOCK_RESOLVER_ERRORS: [i32; 4] = [11001, 11002, 11003, 11004];
+    cfg!(windows)
+        && io
+            .raw_os_error()
+            .is_some_and(|code| WINSOCK_RESOLVER_ERRORS.contains(&code))
 }
 
 /// The first `io::Error` under a transport error — the only frame in the chain carrying a

@@ -1308,6 +1308,12 @@ async fn prepare_socket_path(socket_path: &Path) -> io::Result<()> {
             ),
         )),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        // 🔴 WINDOWS AF_UNIX ANSWERS A MISSING PATH WITH ConnectionRefused, NOT NotFound. The arm
+        // below then asked `is_stale_socket_path`, which on Windows is "does the path exist" —
+        // false — and refused a FRESH socket path as "not a socket", so `estelle serve` could
+        // never bind on Windows (first Windows CI run, 7 session-server tests). Nothing exists,
+        // so there is nothing to protect; this is the same verdict as the fallback arm, earlier.
+        Err(_error) if !socket_path.exists() => Ok(()),
         Err(error) if error.kind() == ErrorKind::ConnectionRefused => {
             if codex_uds::is_stale_socket_path(socket_path).await? {
                 tokio::fs::remove_file(socket_path).await
@@ -1321,7 +1327,6 @@ async fn prepare_socket_path(socket_path: &Path) -> io::Result<()> {
                 ))
             }
         }
-        Err(_error) if !socket_path.exists() => Ok(()),
         Err(error) => Err(error),
     }
 }
@@ -2070,19 +2075,28 @@ mod tests {
 
     #[test]
     fn file_activity_paths_are_lexically_confined_to_the_session_root() {
-        let root = Path::new("/work/repository");
+        // An ABSOLUTE root on this platform: `/work` has no drive prefix, so on Windows it is not
+        // absolute and every absolute-path case below would test the relative branch instead.
+        let base = if cfg!(windows) {
+            PathBuf::from(r"C:\work")
+        } else {
+            PathBuf::from("/work")
+        };
+        let root = base.join("repository");
+        let root = root.as_path();
+        assert!(root.is_absolute());
 
         assert_eq!(
             normalize_session_path(root, Path::new("./src/lib.rs")),
             Some(PathBuf::from("src/lib.rs"))
         );
         assert_eq!(
-            normalize_session_path(root, Path::new("/work/repository/src/lib.rs")),
+            normalize_session_path(root, &root.join("src").join("lib.rs")),
             Some(PathBuf::from("src/lib.rs"))
         );
         assert_eq!(normalize_session_path(root, Path::new("../secret")), None);
         assert_eq!(
-            normalize_session_path(root, Path::new("/work/other/secret")),
+            normalize_session_path(root, &base.join("other").join("secret")),
             None
         );
         assert_eq!(normalize_session_path(root, Path::new(".")), None);

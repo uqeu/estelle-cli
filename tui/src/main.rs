@@ -13966,6 +13966,9 @@ mod tests {
     }
 
     #[test]
+    // Windows: crossterm drives mouse capture through the console API, not ANSI bytes, and a CI
+    // runner has no console ("Initial console modes not set"). Unix-shaped, so ignored there.
+    #[cfg_attr(windows, ignore = "mouse capture needs an attached Windows console")]
     fn terminal_session_requests_mouse_events_instead_of_wheel_to_arrow_translation() {
         let mut enter = Vec::new();
         enter_terminal_screen(&mut enter, /*capture_mouse*/ true).expect("enter commands");
@@ -13995,6 +13998,9 @@ mod tests {
     ///
     /// A one-way assertion here would pass on a "toggle" that only ever enables.
     #[test]
+    // Windows: crossterm drives mouse capture through the console API, not ANSI bytes, and a CI
+    // runner has no console ("Initial console modes not set"). Unix-shaped, so ignored there.
+    #[cfg_attr(windows, ignore = "mouse capture needs an attached Windows console")]
     fn mouse_capture_can_be_released_to_the_terminal_and_taken_back() {
         let mut released = Vec::new();
         write_mouse_capture(&mut released, /*captured*/ false).expect("release the mouse");
@@ -14020,6 +14026,9 @@ mod tests {
     /// the user's back. This test could not have passed before that became a parameter, and it is
     /// the half that a "does entering enable the mouse?" test can never cover.
     #[test]
+    // Windows: crossterm drives mouse capture through the console API, not ANSI bytes, and a CI
+    // runner has no console ("Initial console modes not set"). Unix-shaped, so ignored there.
+    #[cfg_attr(windows, ignore = "mouse capture needs an attached Windows console")]
     fn re_entering_the_screen_does_not_repossess_a_mouse_the_user_handed_back() {
         let mut entered = Vec::new();
         enter_terminal_screen(&mut entered, /*capture_mouse*/ false).expect("enter commands");
@@ -14185,6 +14194,9 @@ mod tests {
 
     /// `/select` is the door that still works if a terminal eats the chord too.
     #[test]
+    // Windows: crossterm drives mouse capture through the console API, not ANSI bytes, and a CI
+    // runner has no console ("Initial console modes not set"). Unix-shaped, so ignored there.
+    #[cfg_attr(windows, ignore = "mouse capture needs an attached Windows console")]
     fn slash_select_toggles_the_mouse_without_a_chord_at_all() {
         let before = mouse_is_captured();
         let mut app = test_app();
