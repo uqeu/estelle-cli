@@ -1070,8 +1070,8 @@
     },
     {
       "path": "tui/src/hook_stream_spool_tests.rs",
-      "blob": "9dce29887c06f2022045d5799c559b265858f857",
-      "reason": "TEST-ONLY: drives the spool against a scripted in-process sink and tempdir transcripts/spool dirs; one string literal https://127.0.0.1:9 appears only inside a fabricated error message and is never dialled. No network, no credential, no env read. Mechanical scan 2026-10-26: 0 reqwest/hyper, 0 Command::new, 0 env::var."
+      "blob": "c82009a61e0a93d11842313e47881b63d04483c4",
+      "reason": "TEST-ONLY: drives the spool against a scripted in-process sink and tempdir transcripts/spool dirs; one string literal https://127.0.0.1:9 appears only inside a fabricated error message and is never dialled. No network, no credential, no env read. Mechanical scan 2026-10-26: 0 reqwest/hyper, 0 Command::new, 0 env::var. RE-ATTESTED 2026-10-26 for 0.4.4: the only change is `#[cfg(unix)]` on the TIMELINE constant (Windows dead-code fix, #30); rescan identical: 0 reqwest/hyper, 0 Command::new, 0 env::var, the same one never-dialled 127.0.0.1:9 literal."
     },
     {
       "path": "tui/src/hook_stream_subagents.rs",
