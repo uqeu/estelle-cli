@@ -264,6 +264,10 @@ PLUGIN_CONTRACT_SHA256_BY_VERSION = {
     # session events an outage refused (#30). DIGEST PROVENANCE: emitted by this file's own guard against this
     # working tree on 2026-10-26 (34 files hashed).
     "0.4.4": "13c3aca98caad12f2a52bdd6b62b04a44cd36a3fa972d74bf55649a369b4d993",
+    # 0.4.5: no plugin file changed beyond the version string; the release adds push protection (#32) and the
+    # context hook's timeline_session for session mail (#33). DIGEST PROVENANCE: emitted by this file's own guard
+    # against this working tree on 2026-10-26 (34 files hashed).
+    "0.4.5": "53f8d1dc76dea66ecd08c45982a8970fb9667a315f5262e8b6308fdf89ab1b06",
 }
 
 #: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.
