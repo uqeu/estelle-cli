@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 
 const SESSION: &str = "5p001ed0-aaaa-bbbb-cccc-1234567890ab";
+#[cfg(unix)] // only the unix-only permission test posts to a named timeline
 const TIMELINE: &str = "claude-code-5p001ed0-aaaa-bbbb-cccc-1234567890ab";
 const SAID: &str = "the founder said this during the outage";
 
