@@ -1040,7 +1040,26 @@ const CONTEXT_HOOK_BUDGET: std::time::Duration =
 /// nothing else may suppress it. The rule is not "the hook is fast", it is **"ask only for the
 /// fields you read"**.
 fn context_search_body(ask: ContextAsk<'_>) -> Value {
-    json!({"query": ask.query, "code": false, "host": ask.host})
+    let mut body = json!({"query": ask.query, "code": false, "host": ask.host});
+    // SESSION MAIL (server `api_session_mail`): the server appends mail another live session sent THIS one to
+    // `recall`, framed as untrusted data. Sent only when the session id is safe, and as its own field rather than
+    // `session_id`, which `/search` already reads for other purposes this hook has never opted into.
+    if !ask.timeline_session.is_empty() {
+        body["timeline_session"] = json!(ask.timeline_session);
+    }
+    body
+}
+
+/// The id the STREAM hook files this session under in the server's timeline (`hook_stream_run::run`:
+/// `{harness}-{session}`), so mail addressed to a session in the dashboard reaches this one. ONE rule for both:
+/// the same `harness_of` and the same `safe_session` check. `""` when the host sent no usable id.
+fn timeline_session(payload: &HookPayload) -> String {
+    let session = payload.session_id.trim();
+    if crate::hook_stream_run::safe_session(session) {
+        format!("{}-{}", harness_of(payload), session)
+    } else {
+        String::new()
+    }
 }
 
 /// What the context hook asks `/search`: the prompt, and WHICH HOST is asking.
@@ -1054,6 +1073,8 @@ fn context_search_body(ask: ContextAsk<'_>) -> Value {
 struct ContextAsk<'a> {
     query: &'a str,
     host: &'a str,
+    /// [`timeline_session`] of the asking hook, or `""` (tests, hosts with no session id).
+    timeline_session: &'a str,
 }
 
 /// The NETWORK half of the context hook, bounded, taking its client and its budget as arguments.
@@ -1408,6 +1429,7 @@ where
         ContextAsk {
             query: &query,
             host: harness_of(payload),
+            timeline_session: &timeline_session(payload),
         },
         CONTEXT_HOOK_BUDGET,
         None,
@@ -9159,6 +9181,57 @@ tests/test_serve.py:88: AssertionError\n\
         assert!(refused.contains("branch=input-json"), "{refused}");
     }
 
+    /// SESSION MAIL: the context hook names its session in the SAME form the stream hook files it under
+    /// (`hook_stream_run::run`: `{harness}-{session}`), so the server can deliver mail addressed to that
+    /// timeline id into this session's `recall`. Discriminating: a payload with no usable session id sends
+    /// no field at all (an older server, and a host that sent none, see the body they always saw).
+    #[test]
+    fn context_body_names_the_timeline_session_exactly_as_the_stream_hook_files_it() {
+        let claude: HookPayload = serde_json::from_value(json!({
+            "session_id": " 5f1c-claude ",
+            "transcript_path": "/tmp/t.jsonl",
+            "cwd": "/tmp",
+            "hook_event_name": "UserPromptSubmit",
+        }))
+        .expect("a Claude Code payload parses");
+        let id = timeline_session(&claude);
+        assert_eq!(
+            id,
+            format!(
+                "{}-{}",
+                crate::hook_stream_run::Dialect::Claude.harness(),
+                "5f1c-claude"
+            ),
+            "the same id the stream hook writes the session's timeline under"
+        );
+        let body = context_search_body(ContextAsk {
+            query: "q",
+            host: harness_of(&claude),
+            timeline_session: &id,
+        });
+        assert_eq!(body["timeline_session"], json!("claude-code-5f1c-claude"));
+        assert_eq!(body["code"], json!(false));
+
+        let unsafe_id: HookPayload = serde_json::from_value(json!({
+            "session_id": "../../etc",
+            "transcript_path": "/tmp/t.jsonl",
+            "cwd": "/tmp",
+            "hook_event_name": "UserPromptSubmit",
+        }))
+        .expect("a payload parses");
+        let none = timeline_session(&unsafe_id);
+        assert_eq!(none, "", "an unsafe session id is never sent");
+        let bare = context_search_body(ContextAsk {
+            query: "q",
+            host: "claude-code",
+            timeline_session: &none,
+        });
+        assert!(
+            bare.get("timeline_session").is_none(),
+            "no session, no field"
+        );
+    }
+
     /// The consumer half: `checkpoint` is the ONE mode of eight that reads the transcript, and
     /// without one it must degrade rather than fail — while still doing its job when the host
     /// does supply one. Both halves are in one test on purpose: a silence-only assertion would
@@ -9520,6 +9593,7 @@ tests/test_serve.py:88: AssertionError\n\
             ContextAsk {
                 query: "where is the retry policy set?",
                 host: "claude-code",
+                timeline_session: "",
             },
             CONTEXT_HOOK_BUDGET,
             Some(&log),
@@ -9611,6 +9685,7 @@ tests/test_serve.py:88: AssertionError\n\
             ContextAsk {
                 query: "a prompt worth enriching",
                 host: "claude-code",
+                timeline_session: "",
             },
             BUDGET,
             Some(&log),
@@ -9700,6 +9775,7 @@ tests/test_serve.py:88: AssertionError\n\
             ContextAsk {
                 query: "a prompt worth enriching",
                 host: "claude-code",
+                timeline_session: "",
             },
             BUDGET,
             Some(&log),
@@ -9955,6 +10031,7 @@ tests/test_serve.py:88: AssertionError\n\
             ContextAsk {
                 query: "a prompt worth enriching",
                 host: "claude-code",
+                timeline_session: "",
             },
             Duration::from_secs(8),
             Some(&log),
@@ -10307,6 +10384,7 @@ tests/test_serve.py:88: AssertionError\n\
                 ContextAsk {
                     query: "where is the retry policy set?",
                     host: "claude-code",
+                    timeline_session: "",
                 },
                 CONTEXT_HOOK_BUDGET,
                 Some(&log),
@@ -10376,6 +10454,7 @@ tests/test_serve.py:88: AssertionError\n\
             ContextAsk {
                 query: "where is the retry policy set?",
                 host: "claude-code",
+                timeline_session: "",
             },
             CONTEXT_HOOK_BUDGET,
             Some(&log),
@@ -10574,6 +10653,7 @@ tests/test_serve.py:88: AssertionError\n\
         let hook_body = context_search_body(ContextAsk {
             query: "where is the retry policy set?",
             host: "claude-code",
+            timeline_session: "",
         });
         assert_eq!(hook_body.get("code"), Some(&json!(false)));
 
