@@ -725,6 +725,18 @@ fn guard_hook(payload: &HookPayload, repo: &Repo, root: &Path) -> Vec<String> {
         .and_then(Value::as_str)
         .unwrap_or_default();
     let mut lines = Vec::new();
+    // PUSH PROTECTION first: the one BLOCKING clause on this door. A refusal is the whole answer —
+    // nothing advisory is worth saying about a command that will not run.
+    if !crate::push_protect::switched_off() {
+        let cwd = hook_cwd(payload, root);
+        let log = crate::push_protect::default_log_path();
+        let verdict = crate::push_protect::check_push(command, &cwd, log.as_deref());
+        match push_protect_envelope(verdict) {
+            Some((envelope, true)) => return vec![envelope],
+            Some((envelope, false)) => lines.push(envelope),
+            None => {}
+        }
+    }
     if let Some(reason) = crate::hook_guard::dangerous_command(command) {
         lines.push(hook_message(
             Some(format!(
@@ -2361,6 +2373,66 @@ async fn ground_hook(
     root: &Path,
 ) -> Result<Vec<String>, String> {
     let (path, code) = edited_file(payload);
+    // PUSH PROTECTION, before the scope check and before any network call: a credential written
+    // into a file is refused on EVERY language, including the ones the grounding gate abstains on.
+    if !crate::push_protect::switched_off() {
+        let log = crate::push_protect::default_log_path();
+        let verdict = crate::push_protect::check_write(
+            &path,
+            &payload.tool_input,
+            &hook_cwd(payload, root),
+            log.as_deref(),
+        );
+        if let Some((envelope, blocked)) = push_protect_envelope(verdict) {
+            if blocked {
+                return Ok(vec![envelope]);
+            }
+            let mut lines = vec![envelope];
+            lines.extend(ground_hook_checked(payload, repo, root, path, code).await?);
+            return Ok(lines);
+        }
+    }
+    ground_hook_checked(payload, repo, root, path, code).await
+}
+
+/// The directory a hooked tool call runs in: the host's `cwd`, else the hook's own root.
+fn hook_cwd(payload: &HookPayload, root: &Path) -> PathBuf {
+    let cwd = payload.cwd.trim();
+    if cwd.is_empty() {
+        root.to_path_buf()
+    } else {
+        PathBuf::from(cwd)
+    }
+}
+
+/// A push-protection verdict → `(envelope, refuses)`, or `None` when there is nothing to say.
+fn push_protect_envelope(verdict: crate::push_protect::Verdict) -> Option<(String, bool)> {
+    use crate::push_protect::Verdict;
+    match verdict {
+        Verdict::Clear => None,
+        Verdict::Block(reason) => Some((
+            hook_envelope(
+                Some(format!("⛔ {reason}")),
+                Some(reason.clone()),
+                "PreToolUse",
+                Some(&reason),
+            ),
+            true,
+        )),
+        Verdict::Bypassed(notice) | Verdict::NotScanned(notice) => Some((
+            hook_message(Some(format!("⚠️ {notice}")), Some(notice), "PreToolUse"),
+            false,
+        )),
+    }
+}
+
+async fn ground_hook_checked(
+    payload: &HookPayload,
+    repo: &Repo,
+    root: &Path,
+    path: String,
+    code: String,
+) -> Result<Vec<String>, String> {
     // 🔴 OUT OF SCOPE IS AN ANSWER, NOT A SILENCE. This used to `return Ok(Vec::new())`, which the
     // host cannot distinguish from a clean pass — while the installed matcher is `Write|Edit`, so
     // every TypeScript, Go and Rust write got exit 0 and empty stdout. The analysis really does
@@ -9246,6 +9318,91 @@ tests/test_serve.py:88: AssertionError\n\
         }))
         .expect("payload");
         assert!(guard_hook(&quiet, &guard_repo, guard_root.path()).is_empty());
+    }
+
+    /// PUSH PROTECTION, driven through the REAL dispatcher on both doors. Discriminating: without
+    /// the wiring, a `.ts` write ABSTAINS (the gate covers `.py` only) and a plain `git push` is not
+    /// a dangerous command — so neither payload could produce a deny unless push protection ran.
+    #[tokio::test]
+    async fn push_protection_denies_on_both_hook_doors() {
+        let key = format!("sk_live_{}{}", "FAKEFAKE", "0123456789abcdef");
+        let repo = Repo::new("acme/widgets").expect("repo");
+        let root = tempfile::tempdir().expect("root");
+        let denied = |lines: &[String]| {
+            lines.iter().any(|line| {
+                serde_json::from_str::<Value>(line).is_ok_and(|envelope| {
+                    envelope["hookSpecificOutput"]["permissionDecision"] == json!("deny")
+                        && envelope["hookSpecificOutput"]["permissionDecisionReason"]
+                            .as_str()
+                            .is_some_and(|r| {
+                                r.contains("a Stripe live key") && !r.contains("FAKEFAKE")
+                            })
+                })
+            })
+        };
+
+        let write = json!({
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Write",
+            "tool_input": {"file_path": "src/pay.ts", "content": format!("export const k = \"{key}\";\n")},
+        })
+        .to_string();
+        let lines = run_hook_with("ground", Some("PreToolUse"), &write, &repo, root.path())
+            .await
+            .expect("ground ran");
+        assert!(
+            denied(&lines),
+            "a .ts write carrying a live-shaped key must be denied: {lines:?}"
+        );
+
+        let git = |args: &[&str], dir: &Path| {
+            let ok = ProcessCommand::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(["-c", "user.email=t@example.invalid", "-c", "user.name=t"])
+                .args(["-c", "commit.gpgsign=false"])
+                .args(args)
+                .output()
+                .expect("git")
+                .status
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        let remote = root.path().join("remote.git");
+        let work = root.path().join("work");
+        fs::create_dir_all(&work).expect("mkdir");
+        git(
+            &["init", "-q", "--bare", remote.to_str().expect("utf8")],
+            root.path(),
+        );
+        git(&["init", "-q"], &work);
+        fs::write(work.join("a.md"), "a\n").expect("write");
+        git(&["add", "a.md"], &work);
+        git(&["commit", "-q", "-m", "a"], &work);
+        git(
+            &["remote", "add", "origin", remote.to_str().expect("utf8")],
+            &work,
+        );
+        git(&["push", "-q", "origin", "HEAD:main"], &work);
+        git(&["fetch", "-q", "origin"], &work);
+        fs::write(work.join("pay.py"), format!("K = \"{key}\"\n")).expect("write");
+        git(&["add", "pay.py"], &work);
+        git(&["commit", "-q", "-m", "key"], &work);
+        let push = json!({
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "cwd": work.to_str().expect("utf8"),
+            "tool_input": {"command": "git push origin HEAD:main"},
+        })
+        .to_string();
+        let lines = run_hook_with("guard", Some("PreToolUse"), &push, &repo, root.path())
+            .await
+            .expect("guard ran");
+        assert!(
+            denied(&lines),
+            "a push carrying a live-shaped key must be denied: {lines:?}"
+        );
+        assert_eq!(lines.len(), 1, "a refusal is the whole answer");
     }
 
     #[test]
