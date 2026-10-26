@@ -1958,8 +1958,11 @@ fn checkpoint_refused(reason: &str) -> Option<Value> {
 }
 
 /// `stream`: mirror this host session into the customer's session timeline (`hook_stream_run`).
-/// Best-effort and silent: a failure leaves the offset where it was, so the next run resends (the server
-/// dedupes by event id). It never blocks the host and never prints into the conversation.
+/// Silent, and it never blocks the host. A batch the server could not take because IT was away (no answer,
+/// 5xx, 401/403/408/429) goes to the on-disk spool (`hook_stream_spool`) and is replayed by the next hook of
+/// any session, so an outage on a session's last hook, or a transcript deleted afterwards, loses nothing.
+/// A full spool, or any other failure, leaves the offset where it was (the next run of this session
+/// resends; the server dedupes by event id).
 ///
 /// Both hosts stream. Claude Code's JSONL is read on every installed door; a CODEX payload reads Codex's
 /// rollout (`hook_stream_codex`) — from `transcript_path` when Codex sent one, else found by session id
@@ -2010,7 +2013,11 @@ async fn stream_hook(
         dialect,
         git_root: Some(root),
     };
-    let sink = crate::hook_stream_run::ClientSink::new(api.client, api.cancel);
+    let live = crate::hook_stream_run::ClientSink::new(api.client, api.cancel);
+    // Replay what earlier hooks (of ANY session) could not deliver, oldest first, before adding to it.
+    let spool = state_dir.join("spool");
+    let _drained = crate::hook_stream_spool::drain(&spool, &live).await;
+    let sink = crate::hook_stream_spool::SpoolingSink::new(&live, &spool);
     let _report = crate::hook_stream_run::run(&input, &sink).await;
     Ok(Vec::new())
 }

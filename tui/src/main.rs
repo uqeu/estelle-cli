@@ -47,6 +47,7 @@ mod hook_stream;
 mod hook_stream_codex;
 mod hook_stream_git;
 mod hook_stream_run;
+mod hook_stream_spool;
 mod hook_stream_subagents;
 mod hook_timings;
 mod host_install;
