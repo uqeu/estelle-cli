@@ -260,6 +260,10 @@ PLUGIN_CONTRACT_SHA256_BY_VERSION = {
     # (#27) and `estelle sessions import` (#28). DIGEST PROVENANCE: emitted by this file's own guard against this
     # working tree on 2026-10-24 (34 files hashed).
     "0.4.3": "92ef5bf4e37415c26e60a43044ee855d425ae29fa72539e3202f0d1abeb917d2",
+    # 0.4.4: no plugin file changed beyond the version string; the release adds the on-disk spool that replays
+    # session events an outage refused (#30). DIGEST PROVENANCE: emitted by this file's own guard against this
+    # working tree on 2026-10-26 (34 files hashed).
+    "0.4.4": "13c3aca98caad12f2a52bdd6b62b04a44cd36a3fa972d74bf55649a369b4d993",
 }
 
 #: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.
