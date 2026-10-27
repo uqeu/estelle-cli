@@ -2861,7 +2861,14 @@ async fn post_reindex_batch(
     if !removed.is_empty() {
         body["removed"] = json!(removed);
     }
+    // WHICH CHECKOUT this edit came from. The server keeps lane edits out of the default-branch graph
+    // (see `checkout_identity`); this only declares the facts.
+    body["checkout"] = crate::checkout_identity::read(root).to_json();
     match api.post_scoped_typed(Endpoint::Reindex, repo, &body).await {
+        // A lane's edit the server declined by name: consumed, and NEVER stamped as current.
+        Ok(response) if crate::checkout_identity::skipped_off_default(&response) => {
+            PostOutcome::SkippedOffDefault
+        }
         // The stamp is the DRAIN time, not now: a write made while this request was in flight has a
         // newer mtime and must keep the index reading stale. Stamped only on success (see
         // `mark_index_current`) — a failed reindex that stamped would make a stale index look current.

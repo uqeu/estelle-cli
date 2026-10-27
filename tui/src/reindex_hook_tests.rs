@@ -297,3 +297,28 @@ async fn a_deleted_file_goes_out_as_removed_and_a_filtered_one_never_leaves() {
     assert_eq!(bodies[0]["files"][0]["path"], "src/a.py");
     assert_eq!(bodies[0]["removed"], json!(["src/gone.py"]));
 }
+
+/// 🔴 A LANE'S EDIT IS DECLARED, AND A DECLINE IS NEVER READ AS "INDEXED". The body carries the
+/// checkout identity the server rules on, and a `skipped_off_default` answer is its own outcome —
+/// before this, any 2xx was `Accepted` and stamped the local index as current.
+#[tokio::test]
+async fn a_declined_lane_edit_is_not_accepted_and_the_body_names_its_checkout() {
+    let files = vec!["src/a.py".to_string()];
+    let root = git_repo_with(&files);
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/reindex"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(
+                json!({"indexed": 0, "skipped_off_default": true, "reason": "lane"}),
+            ),
+        )
+        .mount(&server)
+        .await;
+    let api = api_for(&server);
+    let outcome = post_reindex_batch(&api, &Repo::default(), root.path(), &files, 0).await;
+    assert_eq!(outcome, PostOutcome::SkippedOffDefault);
+    let bodies = reindex_bodies(&server).await;
+    assert_eq!(bodies.len(), 1);
+    assert_eq!(bodies[0]["checkout"]["linked_worktree"], json!(false));
+}
