@@ -11820,7 +11820,10 @@ mod gate_exit_tests {
     #[test]
     fn an_allowed_merge_or_an_absent_verdict_keeps_the_success_exit() {
         let lines = vec!["Verdict clean".to_string()];
-        assert_eq!(gate_exit(lines.clone(), &reply(Some(true))), Ok(lines.clone()));
+        assert_eq!(
+            gate_exit(lines.clone(), &reply(Some(true))),
+            Ok(lines.clone())
+        );
         assert_eq!(gate_exit(lines.clone(), &reply(None)), Ok(lines));
     }
 }
