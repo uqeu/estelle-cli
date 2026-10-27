@@ -5052,7 +5052,19 @@ async fn gate(
         .post_scoped(Endpoint::Gate, repo, &json!({"diff": diff}))
         .await?;
     let typed: CommandReply = serde_json::from_value(reply).map_err(|error| error.to_string())?;
-    Ok(commands::render_remote_reply("gate", &typed))
+    gate_exit(commands::render_remote_reply("gate", &typed), &typed)
+}
+
+/// A gate that refused the merge FAILS the command, so `estelle gate` can stand in CI.
+///
+/// Measured 2026-10-27 (e2e matrix): 0.4.4 printed "Verdict blocked" and exited 0, on staged changes and with
+/// `--base HEAD~1` alike, so no pipeline could act on it. Only an explicit `merge: false` fails: an absent field
+/// (an older server, or a reply that carries no verdict) keeps the old exit, and says nothing it did not measure.
+fn gate_exit(lines: Vec<String>, reply: &CommandReply) -> Result<Vec<String>, String> {
+    match reply.merge.as_ref().and_then(Value::as_bool) {
+        Some(false) => Err(lines.join("\n")),
+        _ => Ok(lines),
+    }
 }
 
 async fn github(api: &Api, action: Option<&str>, values: &[String]) -> Result<Vec<String>, String> {
@@ -11786,3 +11798,32 @@ mod portable_hook_runner_tests {
 #[cfg(test)]
 #[path = "reindex_hook_tests.rs"]
 mod reindex_hook_tests;
+
+#[cfg(test)]
+mod gate_exit_tests {
+    use super::*;
+
+    fn reply(merge: Option<bool>) -> CommandReply {
+        let mut body = json!({"verdict": "blocked"});
+        if let Some(merge) = merge {
+            body["merge"] = json!(merge);
+        }
+        serde_json::from_value(body).expect("a gate reply deserializes")
+    }
+
+    #[test]
+    fn a_blocked_merge_fails_the_command() {
+        let out = gate_exit(vec!["Verdict blocked".to_string()], &reply(Some(false)));
+        assert_eq!(out, Err("Verdict blocked".to_string()));
+    }
+
+    #[test]
+    fn an_allowed_merge_or_an_absent_verdict_keeps_the_success_exit() {
+        let lines = vec!["Verdict clean".to_string()];
+        assert_eq!(
+            gate_exit(lines.clone(), &reply(Some(true))),
+            Ok(lines.clone())
+        );
+        assert_eq!(gate_exit(lines.clone(), &reply(None)), Ok(lines));
+    }
+}
