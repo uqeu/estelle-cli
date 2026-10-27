@@ -436,6 +436,10 @@ pub(crate) enum PostOutcome {
     Retry(String),
     /// Anything else (401, 402, 400): retrying cannot help; stop and report.
     Failed(String),
+    /// The server answered and declined by name (`skipped_off_default`): this checkout is a lane, not
+    /// the default branch, so the shared graph was NOT written. The batch is consumed (re-sending it
+    /// cannot change the answer) and the local index is NOT stamped current.
+    SkippedOffDefault,
 }
 
 /// The flusher's effects, injected so the loop is tested with a fake clock and a counting server.
@@ -559,7 +563,7 @@ fn settle(
     last: bool,
 ) -> Result<bool, String> {
     with_state(spool, |state| match outcome {
-        PostOutcome::Accepted | PostOutcome::NothingToSend => {
+        PostOutcome::Accepted | PostOutcome::NothingToSend | PostOutcome::SkippedOffDefault => {
             state.failures = 0;
             state.overflowed = 0;
             state.backoff_until_ms = 0;

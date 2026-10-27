@@ -6,6 +6,7 @@ mod agent_loop;
 #[cfg(test)]
 mod answer_currency_tests;
 mod binding_probe;
+mod checkout_identity;
 mod claude_import;
 mod cols;
 mod commands;
