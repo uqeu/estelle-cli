@@ -322,3 +322,154 @@ async fn a_declined_lane_edit_is_not_accepted_and_the_body_names_its_checkout() 
     assert_eq!(bodies.len(), 1);
     assert_eq!(bodies[0]["checkout"]["linked_worktree"], json!(false));
 }
+
+// ---- v0.4.6 release regression checks: each one fails on the 0.4.5 code it guards against. ----
+
+fn git_ok(dir: &Path, args: &[&str]) {
+    let status = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env("GIT_AUTHOR_NAME", "t")
+        .env("GIT_AUTHOR_EMAIL", "t@t")
+        .env("GIT_COMMITTER_NAME", "t")
+        .env("GIT_COMMITTER_EMAIL", "t@t")
+        .status()
+        .expect("git");
+    assert!(status.success(), "git {args:?}");
+}
+
+/// A primary checkout on `main` with one commit, plus a linked `git worktree add` lane on `lane/x`.
+fn primary_and_lane() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+    let root = tempfile::tempdir().expect("root");
+    let main = root.path().join("main");
+    std::fs::create_dir_all(main.join("src")).expect("dir");
+    git_ok(&main, &["init", "-q", "-b", "main"]);
+    std::fs::write(main.join("src/a.py"), "def f():\n    return 1\n").expect("write");
+    git_ok(&main, &["add", "src/a.py"]);
+    git_ok(&main, &["commit", "-q", "-m", "init"]);
+    let lane = root.path().join("lane");
+    git_ok(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "lane/x",
+            lane.to_str().expect("utf8"),
+        ],
+    );
+    (root, main, lane)
+}
+
+async fn reindex_server(reply: Value) -> wiremock::MockServer {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/reindex"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(reply))
+        .mount(&server)
+        .await;
+    server
+}
+
+/// 🔴 THE HOOK FROM A REAL LINKED WORKTREE SAYS SO ON THE WIRE. The #36 wire test ran from a primary
+/// checkout and asserted `linked_worktree: false`, which a client that never reads git also sends; this one
+/// can only pass if the facts the server rules on are read from git.
+#[tokio::test]
+async fn the_hook_from_a_linked_lane_declares_the_lane_on_the_wire() {
+    let (_root, _main, lane) = primary_and_lane();
+    std::fs::write(lane.join("src/a.py"), "def f():\n    return 2\n").expect("edit");
+    let server = reindex_server(json!({"indexed": 1})).await;
+    let files = vec!["src/a.py".to_string()];
+    let outcome = post_reindex_batch(&api_for(&server), &Repo::default(), &lane, &files, 0).await;
+    assert_eq!(outcome, PostOutcome::Accepted);
+    let bodies = reindex_bodies(&server).await;
+    assert_eq!(bodies.len(), 1);
+    assert_eq!(bodies[0]["checkout"]["linked_worktree"], json!(true));
+    assert_eq!(bodies[0]["checkout"]["branch"], json!("lane/x"));
+}
+
+/// 🔴 `estelle reindex` IS THE SIBLING DOOR ONTO THE SAME GRAPH. Before 0.4.6 it sent no `checkout`, so
+/// the server (absent = permissive) kept writing a lane's bytes into the default-branch graph after the
+/// hook stopped, and a decline would have been printed as "Memory current".
+#[tokio::test]
+async fn manual_reindex_declares_its_checkout_and_reports_a_decline_as_not_indexed() {
+    let (_root, _main, lane) = primary_and_lane();
+    std::fs::write(lane.join("src/a.py"), "def f():\n    return 3\n").expect("edit");
+    let server = reindex_server(json!({
+        "indexed": 0, "skipped": 0, "chunks": 0, "removed": 0,
+        "skipped_off_default": true, "reason": "linked worktree"
+    }))
+    .await;
+    let lines = reindex(&api_for(&server), &Repo::default(), &lane, &[], false)
+        .await
+        .expect("a named decline is an answer, not a transport failure");
+    let bodies = reindex_bodies(&server).await;
+    assert_eq!(bodies.len(), 1);
+    assert_eq!(bodies[0]["checkout"]["linked_worktree"], json!(true));
+    assert_eq!(bodies[0]["checkout"]["branch"], json!("lane/x"));
+    let text = lines.join("\n");
+    assert!(text.contains("Not indexed"), "{text}");
+    assert!(
+        text.contains("linked worktree"),
+        "the server's reason is shown: {text}"
+    );
+    assert!(
+        !text.contains("Memory current"),
+        "a decline is never reported as indexed: {text}"
+    );
+}
+
+/// The control for the test above: the same command, accepted, still reads "Memory current". Without it
+/// the decline test could pass on a command that never says "Memory current" at all.
+#[tokio::test]
+async fn manual_reindex_accepted_still_reads_memory_current() {
+    let (_root, main, _lane) = primary_and_lane();
+    std::fs::write(main.join("src/a.py"), "def f():\n    return 4\n").expect("edit");
+    let server = reindex_server(json!({"indexed": 1})).await;
+    let lines = reindex(&api_for(&server), &Repo::default(), &main, &[], false)
+        .await
+        .expect("accepted");
+    let bodies = reindex_bodies(&server).await;
+    assert_eq!(bodies[0]["checkout"]["linked_worktree"], json!(false));
+    assert_eq!(bodies[0]["checkout"]["branch"], json!("main"));
+    let text = lines.join("\n");
+    assert!(text.contains("Memory current"), "{text}");
+    assert!(!text.contains("Not indexed"), "{text}");
+}
+
+async fn gate_server(reply: Value) -> wiremock::MockServer {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/gate"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(reply))
+        .mount(&server)
+        .await;
+    server
+}
+
+/// 🔴 THE WHOLE `estelle gate` PATH, NOT ONLY `gate_exit`: a staged diff goes out, the server answers
+/// `merge: false` (the shape prod returned on 2026-10-28 for an import of a package that does not exist),
+/// and the command returns Err — which `main` turns into exit 1. 0.4.5 returned Ok here (exit 0).
+#[tokio::test]
+async fn estelle_gate_on_a_blocked_merge_is_an_error_and_on_an_allowed_one_is_not() {
+    let (_root, main, _lane) = primary_and_lane();
+    std::fs::write(main.join("src/a.py"), "import estelle_no_such_pkg\n").expect("edit");
+    git_ok(&main, &["add", "src/a.py"]);
+
+    let blocked = gate_server(json!({"verdict": "blocked", "merge": false})).await;
+    let out = gate(&api_for(&blocked), &Repo::default(), &main, None).await;
+    assert!(
+        out.is_err(),
+        "a blocked merge must fail the command: {out:?}"
+    );
+    let sent = blocked.received_requests().await.expect("recording");
+    assert_eq!(sent.len(), 1, "the staged diff reached the gate");
+
+    let allowed = gate_server(json!({"verdict": "clean", "merge": true})).await;
+    let out = gate(&api_for(&allowed), &Repo::default(), &main, None).await;
+    assert!(out.is_ok(), "an allowed merge keeps exit 0: {out:?}");
+}
