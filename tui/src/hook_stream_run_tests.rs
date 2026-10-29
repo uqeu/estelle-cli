@@ -476,6 +476,60 @@ fn rollout(payload_type: &str, at: &str, payload: Value) -> Value {
     json!({"timestamp": at, "type": payload_type, "payload": payload})
 }
 
+/// 🔴 THE FOUNDER'S 2026-10-29 SESSION: one long turn, no `task_complete`, no Stop yet. A mid-turn
+/// `PostToolUse` run must land the session as STARTED and RUNNING — with what the turn has done so far
+/// and no turn-end row — so the board shows it while it runs instead of after it ends.
+#[tokio::test]
+async fn a_codex_turn_still_running_is_on_the_timeline_from_its_first_tool_call() {
+    let fx = Fixture::new();
+    fx.append(&[
+        rollout(
+            "session_meta",
+            "2026-10-29T10:08:19Z",
+            json!({"id": SESSION, "cwd": "/x"}),
+        ),
+        rollout(
+            "response_item",
+            "2026-10-29T10:09:02Z",
+            json!({"type": "message", "role": "user",
+            "content": [{"type": "input_text", "text": "finish the PR"}]}),
+        ),
+        rollout(
+            "response_item",
+            "2026-10-29T10:09:20Z",
+            json!({"type": "function_call", "name": "exec_command",
+            "call_id": "c1", "arguments": "{\"cmd\":\"git status\"}"}),
+        ),
+        rollout(
+            "response_item",
+            "2026-10-29T10:09:21Z",
+            json!({"type": "function_call_output", "call_id": "c1", "output": "clean"}),
+        ),
+    ]);
+    let server = FakeServer::default();
+    let report = run_as(&fx, "PostToolUse", Dialect::Codex, None, &server).await;
+    assert_eq!(report.error, None);
+    let sent = server.accepted_for(&format!("codex-{SESSION}"));
+    let kinds: Vec<&str> = sent.iter().map(|e| e["kind"].as_str().unwrap()).collect();
+    assert_eq!(
+        kinds,
+        [
+            "lifecycle",
+            "customer_message",
+            "lifecycle",
+            "tool_call",
+            "tool_result"
+        ]
+    );
+    assert_eq!(sent[0]["payload"]["harness"], "codex");
+    assert_eq!(sent[2]["payload"]["state"], "running");
+    assert!(
+        sent.iter()
+            .all(|e| e["payload"]["state"] != "waiting_for_review"),
+        "a mid-turn run must never claim the turn ended: {sent:?}"
+    );
+}
+
 /// A Codex rollout streams into `codex-<session>`, starts with harness `codex`, and its Stop-door run
 /// lands the whole turn; a second Stop with nothing new sends nothing (it would only repeat the waiting row).
 #[tokio::test]

@@ -2008,39 +2008,24 @@ async fn stream_hook(
     repo: &Repo,
     root: &Path,
 ) -> Result<Vec<String>, String> {
-    let session = payload.session_id.trim();
-    if !crate::hook_stream_run::safe_session(session) {
-        return Ok(Vec::new());
-    }
     let Some(home) = dirs::home_dir() else {
         return Ok(Vec::new());
     };
-    let given = payload
-        .transcript_path
-        .as_deref()
-        .map(str::trim)
-        .filter(|p| !p.is_empty())
-        .map(PathBuf::from);
-    let (dialect, transcript) = if harness_of(payload) == "codex" {
-        let codex_home = codex_home_under(&home);
-        let found = given.or_else(|| {
-            crate::hook_stream_codex::find_rollout(&codex_home.join("sessions"), session)
-        });
-        (crate::hook_stream_run::Dialect::Codex, found)
-    } else {
-        (crate::hook_stream_run::Dialect::Claude, given)
-    };
-    let Some(transcript) = transcript else {
+    let Some(StreamPlan {
+        dialect,
+        transcript,
+        state_dir,
+    }) = stream_plan(payload, &home)
+    else {
         return Ok(Vec::new());
     };
     let Ok(api) = Api::resolve() else {
         return Ok(Vec::new());
     };
-    let state_dir = crate::hook_stream_run::state_dir_under(&home);
     let input = crate::hook_stream_run::StreamInput {
         state_dir: &state_dir,
         transcript: &transcript,
-        session,
+        session: payload.session_id.trim(),
         hook_event: payload.hook_event_name.trim(),
         repo: repo.as_str(),
         now: chrono::Utc::now(),
@@ -2054,6 +2039,51 @@ async fn stream_hook(
     let sink = crate::hook_stream_spool::SpoolingSink::new(&live, &spool);
     let _report = crate::hook_stream_run::run(&input, &sink).await;
     Ok(Vec::new())
+}
+
+/// What one `stream` run will read and where its state lives — decided before any credential or network.
+struct StreamPlan {
+    dialect: crate::hook_stream_run::Dialect,
+    transcript: PathBuf,
+    state_dir: PathBuf,
+}
+
+/// The offline half of [`stream_hook`]: which host, which transcript, and — for Codex — whether this
+/// run is due under the mid-turn throttle ([`crate::hook_stream_codex::codex_claim_run`], which stamps
+/// the attempt BEFORE the network). `None` = this run sends nothing. Split out so the wired gate is
+/// testable without a credential or a server.
+fn stream_plan(payload: &HookPayload, home: &Path) -> Option<StreamPlan> {
+    let session = payload.session_id.trim();
+    if !crate::hook_stream_run::safe_session(session) {
+        return None;
+    }
+    let given = payload
+        .transcript_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from);
+    let (dialect, transcript) = if harness_of(payload) == "codex" {
+        let codex_home = codex_home_under(home);
+        let found = given.or_else(|| {
+            crate::hook_stream_codex::find_rollout(&codex_home.join("sessions"), session)
+        });
+        (crate::hook_stream_run::Dialect::Codex, found?)
+    } else {
+        (crate::hook_stream_run::Dialect::Claude, given?)
+    };
+    let state_dir = crate::hook_stream_run::state_dir_under(home);
+    let event = payload.hook_event_name.trim();
+    if dialect == crate::hook_stream_run::Dialect::Codex
+        && !crate::hook_stream_codex::codex_claim_run(&state_dir, session, event)
+    {
+        return None;
+    }
+    Some(StreamPlan {
+        dialect,
+        transcript,
+        state_dir,
+    })
 }
 
 /// `$CODEX_HOME`, else `~/.codex` — one owner for the live hook and `estelle sessions import`.
@@ -3666,13 +3696,51 @@ fn hook_timeout(host: HookHost, row: &HookRow) -> u64 {
     }
 }
 
+/// The `stream` rows the Codex door gained after 0.4.6, beside the `Stop` row it always had.
+///
+/// 🔴 WHY: Codex fires `Stop` only when a turn ends without a follow-up, so a Stop-only stream left a
+/// session INVISIBLE for its whole first turn and forever if that turn was aborted (measured on the
+/// founder's machine 2026-10-29, see [`crate::hook_stream_codex::CODEX_MIDTURN_EVERY`]). The prompt
+/// row fires once per prompt and catches up an aborted turn; the tool row makes a long turn visible
+/// while it runs and is throttled inside the hook to one network run per interval, because the
+/// Codex door is synchronous.
+///
+/// ⚠️ SessionEnd stays off the Codex door: Codex clamps it to 3 s, less than one measured POST.
+const CODEX_MIDTURN_STREAM_EVENTS: [&str; 2] = ["UserPromptSubmit", "PostToolUse"];
+
+/// Whether `row` is written to `host`'s file, and whether it belongs in the APPENDED tail.
+///
+/// 🔑 Codex keys hook TRUST by POSITION (`<file>:<event>:<group>:<handler>`, upstream
+/// `hooks/src/engine/discovery.rs`), so a row inserted before an existing one silently un-trusts
+/// every hook after it and Codex stops running them until the person re-approves. The new Codex
+/// rows therefore go AFTER every row of their event, where no existing key moves.
+fn row_placement(host: HookHost, row: &HookRow) -> Option<Placement> {
+    let midturn = row.mode == "stream" && CODEX_MIDTURN_STREAM_EVENTS.contains(&row.event);
+    match host {
+        HookHost::Claude => Some(Placement::InTableOrder),
+        HookHost::Codex if row.mode != "stream" || row.event == "Stop" => {
+            Some(Placement::InTableOrder)
+        }
+        HookHost::Codex if midturn => Some(Placement::Appended),
+        HookHost::Codex => None,
+    }
+}
+
+/// Where a written row sits among its event's groups (see [`row_placement`]).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Placement {
+    InTableOrder,
+    Appended,
+}
+
 fn estelle_hook_groups(host: HookHost, runner: &str) -> Vec<(String, Value)> {
-    HOOK_TABLE
+    let (tail, head): (Vec<_>, Vec<_>) = HOOK_TABLE
         .iter()
-        // The Codex door writes no `async` key, so a `stream` row there is a SYNCHRONOUS process spawn.
-        // On every tool call that would stall the agent; once per turn, on Stop, it is one bounded run
-        // that reads what the turn wrote to the rollout. So Codex gets the Stop row and nothing else.
-        .filter(|row| host == HookHost::Claude || row.mode != "stream" || row.event == "Stop")
+        .filter_map(|row| row_placement(host, row).map(|place| (place, row)))
+        .partition(|(place, _)| *place == Placement::Appended);
+    head.into_iter()
+        .chain(tail)
+        .map(|(_, row)| row)
         .map(|row| {
             let mut handler = json!({
                 "type": "command",
@@ -8357,26 +8425,31 @@ tests/test_serve.py:88: AssertionError\n\
             serde_json::from_value(value.clone()).expect("Codex hooks schema");
 
         assert_eq!(parsed.hooks.pre_tool_use.len(), 3);
-        assert_eq!(parsed.hooks.post_tool_use.len(), 3);
-        // Stop = checkpoint + `stream` (0.4.0: Codex streams its rollout once per turn, from Stop only).
+        // shift + sync + distil + `stream` (after 0.4.6: a Codex turn is mirrored WHILE it runs, throttled).
+        assert_eq!(parsed.hooks.post_tool_use.len(), 4);
+        // Stop = checkpoint + `stream`.
         assert_eq!(parsed.hooks.stop.len(), 2);
         assert_eq!(parsed.hooks.pre_compact.len(), 1);
         assert_eq!(parsed.hooks.session_end.len(), 1);
         assert_eq!(parsed.hooks.session_start.len(), 1);
-        assert_eq!(parsed.hooks.user_prompt_submit.len(), 1);
+        // context + `stream` (after 0.4.6: the prompt door catches up a turn that never reached Stop).
+        assert_eq!(parsed.hooks.user_prompt_submit.len(), 2);
         // The two subagent doors are asserted BY NAME, not merely counted: `HooksFile` deserialises
         // a whole event into a typed field, so a row landing on the wrong key would keep the total
         // and lose the door — a count alone cannot tell those apart.
         assert_eq!(parsed.hooks.subagent_start.len(), 1);
         assert_eq!(parsed.hooks.subagent_stop.len(), 1);
-        assert_eq!(parsed.hooks.handler_count(), 14);
+        assert_eq!(parsed.hooks.handler_count(), 16);
         let rendered = serde_json::to_string(&value).expect("hooks serialise");
         assert_eq!(
             rendered.matches("hook stream").count(),
-            1,
-            "Codex hooks are synchronous: `stream` may ride Stop and nothing else"
+            3,
+            "Codex streams from Stop, UserPromptSubmit and PostToolUse — never SessionEnd (3 s clamp)"
         );
         assert!(rendered.contains("estelle hook stream --event Stop"));
+        assert!(rendered.contains("estelle hook stream --event UserPromptSubmit"));
+        assert!(rendered.contains("estelle hook stream --event PostToolUse"));
+        assert!(!rendered.contains("estelle hook stream --event SessionEnd"));
         for (_event, groups) in parsed.hooks.into_matcher_groups() {
             for group in &groups {
                 for handler in &group.hooks {
@@ -8479,13 +8552,133 @@ tests/test_serve.py:88: AssertionError\n\
         );
     }
 
+    /// The verb of every Estelle group under `event`, in file order (the order Codex keys trust by).
+    fn codex_modes(value: &Value, event: &str) -> Vec<String> {
+        let groups = value["hooks"][event]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        groups
+            .iter()
+            .map(|group| {
+                let command = group["hooks"][0]["command"].as_str().expect("a command");
+                let mode = command
+                    .strip_prefix("estelle hook ")
+                    .and_then(|rest| rest.split(' ').next())
+                    .expect("an Estelle hook command");
+                mode.to_string()
+            })
+            .collect()
+    }
+
+    /// 🔴 CODEX KEYS HOOK TRUST BY POSITION, SO A ROW INSERTED AHEAD OF ANOTHER UN-TRUSTS IT.
+    ///
+    /// Codex stores trust as `<file>:<event>:<group>:<handler>` → hash. 0.4.0 PREPENDED four `stream`
+    /// rows to the plugin manifest, and on the founder's machine (read 2026-10-29 off a throwaway
+    /// `codex app-server`'s `hooks/list`) that left the plugin's `context`, `sync` and Stop/SessionEnd
+    /// `checkpoint` hooks `modified` or `untrusted` — Codex silently stopped running them. This pins
+    /// the 0.4.6 Codex-door layout: every row that existed keeps its index, and rows added since
+    /// sit after it. It is RED on any reorder that moves an old row, which the count-based
+    /// schema test above cannot see.
+    #[test]
+    fn codex_door_rows_added_later_never_move_an_already_trusted_index() {
+        let mut value = json!({});
+        merge_estelle_hooks(&mut value, HookHost::Codex, "estelle").expect("hook declaration");
+        let shipped_0_4_6: [(&str, &[&str]); 9] = [
+            ("PreToolUse", &["ground", "guard", "pull"]),
+            ("PostToolUse", &["shift", "sync", "distil"]),
+            ("Stop", &["stream", "checkpoint"]),
+            ("SubagentStop", &["checkpoint"]),
+            ("PreCompact", &["checkpoint"]),
+            ("SessionEnd", &["checkpoint"]),
+            ("SessionStart", &["welcome"]),
+            ("UserPromptSubmit", &["context"]),
+            ("SubagentStart", &["context"]),
+        ];
+        for (event, old) in shipped_0_4_6 {
+            let now = codex_modes(&value, event);
+            assert!(now.len() >= old.len(), "{event} lost a row: {now:?}");
+            assert_eq!(
+                &now[..old.len()],
+                old,
+                "{event}: an already-trusted index moved"
+            );
+        }
+        assert_eq!(
+            codex_modes(&value, "UserPromptSubmit"),
+            ["context", "stream"]
+        );
+        assert_eq!(
+            codex_modes(&value, "PostToolUse"),
+            ["shift", "sync", "distil", "stream"]
+        );
+    }
+
+    fn stream_payload(transcript: &Path, event: &str, turn: Option<&str>) -> HookPayload {
+        let mut raw = json!({
+            "session_id": "01a18721-c3da-7381-a77d-720161730d3f",
+            "transcript_path": transcript.to_string_lossy(),
+            "hook_event_name": event,
+        });
+        if let Some(turn) = turn {
+            raw["turn_id"] = json!(turn);
+        }
+        serde_json::from_value(raw).expect("a hook payload")
+    }
+
+    /// 🔴 THE WIRED PATH, NOT THE HELPER. Drives [`stream_plan`] — the exact gate [`stream_hook`] runs
+    /// before resolving a credential — over a fresh `HOME`, with NO server: the first Codex tool call
+    /// is planned, the second inside the interval is not (although nothing was ever sent, so no stream
+    /// state exists), a prompt still is, and a Claude Code session is never throttled. With the gate
+    /// unwired from `stream_plan`, or keyed on the stream state file again, the second call is planned
+    /// and this goes red.
+    #[test]
+    fn the_stream_hook_plans_one_codex_tool_run_per_interval_even_when_none_succeeded() {
+        let home = tempfile::tempdir().expect("home");
+        let rollout = home.path().join("rollout.jsonl");
+        std::fs::write(&rollout, b"{}\n").expect("rollout");
+        let codex = |event| stream_payload(&rollout, event, Some("turn-1"));
+        let first = stream_plan(&codex("PostToolUse"), home.path()).expect("first call is due");
+        assert_eq!(first.dialect, crate::hook_stream_run::Dialect::Codex);
+        assert!(
+            stream_plan(&codex("PostToolUse"), home.path()).is_none(),
+            "a second tool call inside the interval must not reach the network"
+        );
+        assert!(stream_plan(&codex("UserPromptSubmit"), home.path()).is_some());
+        let claude = stream_payload(&rollout, "PostToolUse", None);
+        for _ in 0..2 {
+            let plan = stream_plan(&claude, home.path()).expect("Claude Code is never throttled");
+            assert_eq!(plan.dialect, crate::hook_stream_run::Dialect::Claude);
+        }
+    }
+
+    /// NEGATIVE CONTROL for `codex_door_rows_added_later_never_move_an_already_trusted_index`: the
+    /// same Codex rows written in plain TABLE order (no
+    /// append — how the plugin manifest is built) put `stream` at `UserPromptSubmit:0` and
+    /// `PostToolUse:0`, moving the trusted `context` and `shift`. So the pin above can go red.
+    #[test]
+    fn codex_rows_in_table_order_would_move_a_trusted_index() {
+        let in_table_order = |event: &str| -> Vec<&str> {
+            HOOK_TABLE
+                .iter()
+                .filter(|row| row.event == event && row_placement(HookHost::Codex, row).is_some())
+                .map(|row| row.mode)
+                .collect()
+        };
+        assert_eq!(in_table_order("UserPromptSubmit"), ["stream", "context"]);
+        assert_eq!(in_table_order("PostToolUse")[0], "stream");
+    }
+
     #[test]
     fn generated_codex_hooks_carry_the_same_table_without_async() {
         let mut value = json!({});
         merge_estelle_hooks(&mut value, HookHost::Codex, "estelle").expect("hook declaration");
         let hooks = &value["hooks"];
 
-        let expected: [(&str, Option<&str>, &str, u64); 13] = [
+        let expected: [(&str, Option<&str>, &str, u64); 16] = [
+            ("Stop", None, "stream", 15),
+            ("UserPromptSubmit", None, "stream", 15),
+            ("PostToolUse", Some("*"), "stream", 15),
             ("PreToolUse", Some("Write|Edit"), "ground", 30),
             ("PreToolUse", Some("Bash"), "guard", 10),
             ("PreToolUse", Some("Read|Grep|Glob"), "pull", 5),

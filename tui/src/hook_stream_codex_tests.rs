@@ -244,3 +244,67 @@ fn real_rollout_kind_counts() {
     }
     println!("kinds: {counts:?}; titled: {}", notes.title.is_some());
 }
+
+/// 🔴 THE PAIR THAT MUST DIFFER: a never-streamed Codex session is due on its FIRST tool call (the fix:
+/// it used to wait for a Stop that a long or aborted turn never sends), and the same session streamed a
+/// moment ago is NOT due on its next tool call (the bound on a synchronous door). With no throttle both
+/// would be `true`; with an inverted one the first would fail.
+#[test]
+fn a_codex_tool_call_streams_a_new_session_at_once_and_then_at_most_once_per_interval() {
+    let just_now = std::time::Duration::from_secs(5);
+    assert!(codex_stream_due("PostToolUse", None));
+    assert!(!codex_stream_due("PostToolUse", Some(just_now)));
+    assert!(codex_stream_due("PostToolUse", Some(CODEX_MIDTURN_EVERY)));
+}
+
+/// Once-per-prompt and once-per-turn doors are never throttled: a prompt right after a tool call still
+/// streams, so a turn that never reached Stop is caught up by the next prompt.
+#[test]
+fn the_prompt_and_stop_doors_are_never_throttled() {
+    let just_now = Some(std::time::Duration::from_secs(1));
+    for event in ["UserPromptSubmit", "Stop", "SessionEnd", ""] {
+        assert!(codex_stream_due(event, just_now), "{event:?} was throttled");
+    }
+}
+
+/// 🔴 A RUN THAT NEVER SUCCEEDED STILL THROTTLES THE NEXT ONE. The claim writes its stamp before any
+/// network, so the second tool call inside the interval is refused even though no stream state (the
+/// file a SUCCESSFUL run leaves) exists — the failing-server case the first cut released on.
+#[test]
+fn a_claimed_attempt_throttles_the_next_tool_call_even_when_nothing_was_ever_sent() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_dir = dir.path().join("stream");
+    assert!(codex_claim_run(&state_dir, "s", "PostToolUse"));
+    assert!(
+        !crate::hook_stream_run::state_file_under(&state_dir, "s").exists(),
+        "no run landed: the stream state a success writes is absent"
+    );
+    assert!(!codex_claim_run(&state_dir, "s", "PostToolUse"));
+    assert!(codex_claim_run(&state_dir, "s", "UserPromptSubmit"));
+    assert!(
+        codex_claim_run(&state_dir, "other", "PostToolUse"),
+        "the stamp is per session"
+    );
+}
+
+#[test]
+fn a_tool_call_whose_stamp_cannot_be_written_does_not_run_and_a_prompt_still_does() {
+    let dir = tempfile::tempdir().unwrap();
+    let blocked = dir.path().join("a-file-not-a-dir");
+    std::fs::write(&blocked, b"").unwrap();
+    assert!(!codex_claim_run(&blocked, "s", "PostToolUse"));
+    assert!(codex_claim_run(&blocked, "s", "UserPromptSubmit"));
+}
+
+#[test]
+fn a_state_file_age_is_read_and_an_absent_file_has_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = attempt_stamp_under(dir.path(), "s");
+    assert_eq!(since_written(&state), None);
+    std::fs::write(&state, b"{}").unwrap();
+    let age = since_written(&state).expect("a written file has an age");
+    assert!(
+        age < CODEX_MIDTURN_EVERY,
+        "a file written now is inside the interval: {age:?}"
+    );
+}

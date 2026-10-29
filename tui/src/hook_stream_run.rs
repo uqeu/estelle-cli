@@ -212,9 +212,14 @@ pub(crate) fn state_dir_under(home: &Path) -> PathBuf {
 }
 
 fn state_path(input: &StreamInput<'_>) -> PathBuf {
-    input
-        .state_dir
-        .join(format!("{}.stream.json", input.session))
+    state_file_under(input.state_dir, input.session)
+}
+
+/// The one owner of where a session's stream state file lives. Written only AFTER a run's POST
+/// returns, which is why the Codex mid-turn throttle does NOT read it
+/// ([`crate::hook_stream_codex::codex_claim_run`] keeps its own pre-network stamp).
+pub(crate) fn state_file_under(state_dir: &Path, session: &str) -> PathBuf {
+    state_dir.join(format!("{session}.stream.json"))
 }
 
 /// The byte offset the parent transcript of `session` has been streamed to (0 = never streamed).
@@ -228,7 +233,7 @@ fn load_state(input: &StreamInput<'_>) -> ParentState {
 }
 
 fn load_state_at(state_dir: &Path, session: &str) -> ParentState {
-    if let Some(state) = std::fs::read(state_dir.join(format!("{session}.stream.json")))
+    if let Some(state) = std::fs::read(state_file_under(state_dir, session))
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
     {

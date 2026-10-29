@@ -356,6 +356,79 @@ pub(crate) fn find_rollout(sessions: &Path, session: &str) -> Option<PathBuf> {
     })
 }
 
+/// Least time between two MID-TURN (`PostToolUse`) stream runs of one Codex session.
+///
+/// 🔴 WHY CODEX STREAMS MID-TURN AT ALL. Through 0.4.6 the Codex door streamed from `Stop` only, and Codex
+/// fires `Stop` only when a turn ENDS WITHOUT a follow-up (`core/src/session/turn.rs`: an aborted turn
+/// never reaches it). So a session was invisible on the dashboard for the whole of its first turn, and
+/// forever if that turn was interrupted. Measured 2026-10-29 on the founder's machine: a Codex session
+/// 17 minutes into one long turn (first turn aborted) had 0 events on the server, and
+/// `estelle sessions import --dry-run` mapped 157 events from the same rollout — the mapper was fine,
+/// the trigger never fired.
+///
+/// Codex hooks on the `install-hooks` door are SYNCHRONOUS, so a stream on every tool call would put a
+/// network round trip in front of each one. This bound makes the cost one bounded run per interval: a
+/// tool call inside it pays only the process spawn and one `stat`.
+pub(crate) const CODEX_MIDTURN_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
+const _: () = assert!(
+    CODEX_MIDTURN_EVERY.as_secs() > 0,
+    "a zero interval is no bound"
+);
+
+/// Whether a Codex hook should stream NOW. `since_last` is how long ago this session last ATTEMPTED a
+/// stream run ([`attempt_stamp_under`]; `None` = never attempted on this machine).
+///
+/// Only `PostToolUse` is throttled. A session that has never streamed is always due, so it appears on
+/// its first tool call; `UserPromptSubmit`, `Stop` and `SessionEnd` fire once per prompt, turn or
+/// session and always run.
+///
+/// ⚠️ An unnamed event is due: the throttle exists to bound a cost, never to decide that a run whose
+/// event it cannot read is a tool call.
+pub(crate) fn codex_stream_due(hook_event: &str, since_last: Option<std::time::Duration>) -> bool {
+    match (hook_event.trim(), since_last) {
+        ("PostToolUse", Some(age)) => age >= CODEX_MIDTURN_EVERY,
+        _ => true,
+    }
+}
+
+/// How long ago `state_file` was written. A modification time in the FUTURE (clock skew) reads as
+/// "just now", so a skewed clock falls back to the prompt and Stop doors rather than streaming on every
+/// tool call.
+pub(crate) fn since_written(state_file: &Path) -> Option<std::time::Duration> {
+    let modified = std::fs::metadata(state_file).ok()?.modified().ok()?;
+    Some(modified.elapsed().unwrap_or(std::time::Duration::ZERO))
+}
+
+/// The per-session stamp a Codex stream run writes BEFORE it touches the network. One empty file per
+/// session, overwritten in place, so it is bounded by the number of sessions.
+pub(crate) fn attempt_stamp_under(state_dir: &Path, session: &str) -> PathBuf {
+    assert!(
+        !session.contains('/'),
+        "a session id is a file-name fragment, never a path"
+    );
+    state_dir.join(format!("{session}.codex-attempt"))
+}
+
+/// Decide whether this Codex hook runs, and when it does, record the ATTEMPT first.
+///
+/// 🔴 THE THROTTLE IS KEYED ON THE LAST ATTEMPT, NEVER THE LAST SUCCESS. The first cut read the stream
+/// state file's age, and the runner writes that file only AFTER its POST returns — so a run the host
+/// killed mid-POST (a slow or 429-ing server, the state the API was in on 2026-10-29) left no mark, and
+/// every later tool call was "due" and blocked on the network again: the throttle released exactly when
+/// the server was failing. The stamp is written here, before any network, so a failing server costs
+/// one bounded run per interval like a healthy one.
+///
+/// ⚠️ If the stamp cannot be written, a `PostToolUse` does NOT run (the bound cannot hold without it);
+/// the prompt, Stop and SessionEnd doors still stream, which is the 0.4.6 behaviour, never worse.
+pub(crate) fn codex_claim_run(state_dir: &Path, session: &str, hook_event: &str) -> bool {
+    let stamp = attempt_stamp_under(state_dir, session);
+    if !codex_stream_due(hook_event, since_written(&stamp)) {
+        return false;
+    }
+    let stamped = std::fs::create_dir_all(state_dir).is_ok() && std::fs::write(&stamp, b"").is_ok();
+    stamped || hook_event.trim() != "PostToolUse"
+}
+
 #[cfg(test)]
 #[path = "hook_stream_codex_tests.rs"]
 mod tests;
