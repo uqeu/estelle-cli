@@ -273,6 +273,12 @@ PLUGIN_CONTRACT_SHA256_BY_VERSION = {
     # (#36). DIGEST PROVENANCE: emitted by this file's own guard against this working tree on 2026-10-28
     # (34 files hashed).
     "0.4.6": "6316905813f68f217477c1c8bee177518e1c9bbb0339a06a0bdedae77a792750",
+    # 0.4.7: the plugin bytes MOVED, not only the version. #39 retired the Estelle gate: the
+    # `verify-gate` skill left the bundle (34 -> 33 files), seven skills and two agents stopped pointing
+    # at `gate`, and the plugin/hooks/marketplace descriptions moved to the software-factory copy.
+    # DIGEST PROVENANCE: emitted by this file's own guard against this working tree on 2026-10-29
+    # (33 files hashed).
+    "0.4.7": "e89dc00a30dc41946b8ac694f92bff55ef46805b8e3a6798fdb7e96b8b66b858",
 }
 
 #: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.

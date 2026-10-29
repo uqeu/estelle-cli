@@ -1,6 +1,6 @@
 {
   "name": "@fatelabs/estelle",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "description": "The software factory under your AI coding agents: team memory, code review, QA, CI, security and Atlas, grounded in your real codebase. Model-agnostic, BYOK.",
   "bin": {
     "estelle": "bin/estelle.js"
