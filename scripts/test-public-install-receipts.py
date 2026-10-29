@@ -215,6 +215,48 @@ class PublicInstallReceiptTests(unittest.TestCase):
         self.assertEqual(crossed["before"], "before-sha")
         self.assertEqual(crossed["after"], "after-sha")
 
+    def test_the_v046_window_that_was_discarded_is_now_stable(self) -> None:
+        """🔴 THE REGRESSION, with the /health body production really served on 2026-10-29 (build
+        3cf96242df8c, read back the same day). Run 40844663734 discarded three receipts over it, because
+        tools_base 35 failed an exact pin of 28. Discriminating: the same body with tools_base 27 is
+        still refused, so the floor below is a real bar, not an always-pass."""
+        live = {
+            "build": "3cf96242df8c",
+            "build_verified": True,
+            "status": "ok",
+            "surface": {
+                "tools_base": 35,
+                "tools_sha256": "d116b006fed9d29f7e985bcf789d56e38ad961d207d5254a66e8f3ab89c69914",
+                "prompts": 256,
+            },
+        }
+        window = MODULE.build_window(live, json.loads(json.dumps(live)))
+        self.assertTrue(window["stable_and_verified"])
+        self.assertFalse(window["discarded"])
+        below = {**live, "surface": {**live["surface"], "tools_base": MODULE.MIN_TOOLS_BASE - 1}}
+        self.assertFalse(MODULE.verified_health(below))
+
+    def test_a_surface_change_under_an_unchanged_label_still_discards(self) -> None:
+        """A floor alone would pass a mid-run deploy that kept the build label. The window also requires
+        the surface to be identical, and `tools_sha256` moves with any tool change."""
+        before = {"build": "same-label", "build_verified": True, "surface": MODULE.EXPECTED_SURFACE}
+        after = {**before, "surface": {**MODULE.EXPECTED_SURFACE, "tools_sha256": "1" * 64}}
+        self.assertTrue(MODULE.verified_health(after), "control: each read alone is healthy")
+        window = MODULE.build_window(before, after)
+        self.assertFalse(window["stable_and_verified"])
+        self.assertTrue(window["discarded"])
+
+    def test_the_surface_shape_is_asserted_not_just_its_presence(self) -> None:
+        healthy = {"build": "b", "build_verified": True, "surface": MODULE.EXPECTED_SURFACE}
+        self.assertTrue(MODULE.verified_health(healthy))
+        for broken in (
+            {**MODULE.EXPECTED_SURFACE, "tools_sha256": "not-a-digest"},
+            {k: v for k, v in MODULE.EXPECTED_SURFACE.items() if k != "tools_sha256"},
+            {**MODULE.EXPECTED_SURFACE, "tools_base": True},
+            {**MODULE.EXPECTED_SURFACE, "prompts": 0},
+        ):
+            self.assertFalse(MODULE.verified_health({**healthy, "surface": broken}), broken)
+
     def test_failed_command_reason_is_bounded_and_keeps_the_actionable_tail(self) -> None:
         result = {"stdout": "prefix\n" + "x" * 2_000, "stderr": "capacity refused"}
         reason = MODULE.command_reason(result)

@@ -126,9 +126,12 @@ PRODUCTION_HEALTH_URL = "https://api.fatelabs.ca/health"
 #: from ``load_default_library().names()`` and moved when a stale floor was removed; neither pin
 #: moved with it, so a HEALTHY build was refused. Power of Ten rule 9 — if two places compute a
 #: derived fact they will disagree, and here they agreed only in being wrong together.
-from production_surface import EXPECTED_TOOLS_BASE, surface_ok  # noqa: E402,F401
+from production_surface import MIN_TOOLS_BASE, same_surface, surface_ok  # noqa: E402
 
-EXPECTED_PRODUCTION_SURFACE = {"tools_base": EXPECTED_TOOLS_BASE, "prompts": 249}
+#: A SAMPLE of a healthy surface, for tests only. It is not a pin: `surface_ok` judges. 🔴 Until
+#: 2026-10-29 this dict WAS compared with `==` below, the exact defect production_surface.py says it
+#: closed, so every binary receipt was refused the day prompts moved off 249.
+EXPECTED_PRODUCTION_SURFACE = {"tools_base": MIN_TOOLS_BASE, "tools_sha256": "0" * 64, "prompts": 249}
 SKILL_TURNS = (
     "/skill:grill-me State one risk in changing a CLI contract.",
     "/skill:grill-me Challenge that answer.",
@@ -182,16 +185,18 @@ def production_build_receipt(before: dict, after: dict) -> dict[str, object]:
     """Fail the aggregate receipt when production changes beneath the run."""
     before_build = before.get("build")
     after_build = after.get("build")
-    stable = before_build == after_build
+    stable = before_build == after_build and same_surface(before.get("surface"), after.get("surface"))
     health_contract = all(
         identity.get("build_verified") is True
-        and identity.get("surface") == EXPECTED_PRODUCTION_SURFACE
+        and surface_ok(identity.get("surface"))
         and isinstance(identity.get("build"), str)
         and bool(identity["build"])
         for identity in (before, after)
     )
-    if not stable:
+    if before_build != after_build:
         detail = f"production build changed: {before_build} -> {after_build}"
+    elif not stable:
+        detail = f"production surface changed under build {before_build}"
     elif not health_contract:
         detail = "production identity failed the health contract"
     else:
@@ -208,7 +213,7 @@ def production_build_receipt(before: dict, after: dict) -> dict[str, object]:
 def _verified_production_identity(identity: dict) -> bool:
     return (
         identity.get("build_verified") is True
-        and identity.get("surface") == EXPECTED_PRODUCTION_SURFACE
+        and surface_ok(identity.get("surface"))
         and isinstance(identity.get("build"), str)
         and bool(identity["build"])
     )
@@ -224,7 +229,9 @@ def pin_surface_build(
     after = read_identity()
     before_build = before.get("build")
     after_build = after.get("build")
-    crossed = before_build != after_build
+    crossed = before_build != after_build or not same_surface(
+        before.get("surface"), after.get("surface")
+    )
     verified = _verified_production_identity(before) and _verified_production_identity(after)
     receipt["production_build"] = {
         "before": before_build,

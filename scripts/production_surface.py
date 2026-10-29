@@ -30,14 +30,45 @@ from __future__ import annotations
 #: was this pin: production had grown to tools_base 28 and nothing told the CLI. Those receipts are the
 #: evidence that the 0.4.0 binary works against the 28-tool surface; that is why the pin moved, rather
 #: than moving it because the number differed.
-EXPECTED_TOOLS_BASE = 28
+#:
+#: 🔴 AND THEN IT BILLED A FOURTH TIME, SO THE PIN IS NOW A FLOOR (2026-10-29). The v0.4.6 run
+#: 40844663734 discarded the TypeScript, Go and mixed setup receipts with every functional field
+#: passing and `production_build: {before: 3cf96242df8c, after: 3cf96242df8c, stable_and_verified:
+#: false}`. Production had not moved: read back the same day, /health on 3cf96242df8c says
+#: `build_verified: true`, `tools_base: 35`. The pin said 28. The server adds a base tool most weeks
+#: (28 -> 35 in six days), and every one of them was going to discard a healthy CLI release.
+#: ▶ What the CLI really needs is the 28-tool surface it was built against, or more. It calls tools by
+#: name, so a tool added later cannot break it, and a surface SMALLER than 28 means a build older than
+#: this CLI. So the bar is `tools_base >= MIN_TOOLS_BASE`.
+#: ⚠️ A floor alone would let a mid-run deploy that kept the label slip through, so the window check
+#: ALSO requires the whole surface to be byte-identical before and after (`same_surface`).
+#: `tools_sha256` is a digest of the tool contract, so a deploy that changes any tool moves it even when
+#: the build label lies.
+#: LIMIT: this decides "prod is verified and did not change under the run". It does NOT decide "prod is
+#: the right build"; that is the server's `scripts/verify_prod.sh`, run after every push to main.
+MIN_TOOLS_BASE = 28
+
+_HEX = frozenset("0123456789abcdef")
+
+
+def _positive_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 def surface_ok(surface: object) -> bool:
-    """True when ``surface`` is production's, judged on the invariant rather than on content."""
+    """True when ``surface`` is a production surface this CLI can speak to, judged on shape and floor."""
     if not isinstance(surface, dict):
         return False
-    if surface.get("tools_base") != EXPECTED_TOOLS_BASE:
+    tools_base = surface.get("tools_base")
+    if not _positive_int(tools_base) or tools_base < MIN_TOOLS_BASE:
         return False
-    prompts = surface.get("prompts")
-    return isinstance(prompts, int) and not isinstance(prompts, bool) and prompts > 0
+    digest = surface.get("tools_sha256")
+    if not (isinstance(digest, str) and len(digest) == 64 and set(digest) <= _HEX):
+        return False
+    return _positive_int(surface.get("prompts"))
+
+
+def same_surface(before: object, after: object) -> bool:
+    """True when two /health reads served the SAME surface. A deploy that changes any tool changes
+    ``tools_sha256`` even when the build label did not move, so this is the half a label cannot fake."""
+    return isinstance(before, dict) and isinstance(after, dict) and before == after
