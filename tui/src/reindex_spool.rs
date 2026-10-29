@@ -27,6 +27,16 @@
 //! GitHub push webhook where one is connected. Nothing re-sends them on a timer, on purpose — a
 //! timer is exactly the hammering this module exists to stop. Coalescing is per machine: five
 //! agents on one laptop share one flusher; five laptops are five flushers.
+//!
+//! 🔴 **AND PER (repo, root) WAS NOT ENOUGH (2026-10-29).** Two worktrees of one repository are two
+//! spools and two flushers, and each posted every [`DEBOUNCE_WINDOW`]. N lane worktrees made N
+//! `/reindex` writers against ONE repository's graph, and that load drove a production OOM. So
+//! posts are now ALSO spaced per REPOSITORY, across every root on this machine:
+//! `<spool dir>/repo-<hash>.last_post_ms` records the last post for the repo. A flusher must
+//! [`reserve_repo_post`] under that marker's lock before it drains, and it waits out
+//! [`MIN_REPO_POST_INTERVAL`] when another root posted more recently. Each worktree still sends
+//! only its own paths. The cost is that the index can trail a write by up to one interval per
+//! sibling worktree that is also writing.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -61,6 +71,14 @@ pub(crate) const BACKOFF_CAP: Duration = Duration::from_secs(120);
 pub(crate) const MAX_PENDING_PATHS: usize = 500;
 /// Bound on one request's path list. The remainder stays pending for the next round.
 pub(crate) const MAX_BATCH_PATHS: usize = 200;
+/// The minimum spacing between two `/reindex` posts for ONE repository from this machine, whichever
+/// worktree sends them. See the module note: per-root debouncing let N worktrees post N times per
+/// window.
+pub(crate) const MIN_REPO_POST_INTERVAL: Duration = Duration::from_secs(20);
+/// Bound on how many times one round waits for the repo slot before it gives the round up. With
+/// the interval above this is 10 minutes, enough for many sibling worktrees to take a turn each.
+/// On exhaustion the paths stay pending and the next write spawns a successor.
+pub(crate) const MAX_REPO_SLOT_WAITS: u32 = 30;
 /// A reservation the spawned child has not yet claimed is honoured this long (process start).
 const RESERVATION_GRACE_MS: u64 = 15_000;
 /// Upper bound on a flusher's claim, whatever its PID says — guards against PID reuse. A single
@@ -212,6 +230,52 @@ pub(crate) fn spool_path_in(dir: &Path, repo: &str, root: &Path) -> PathBuf {
     digest.update(root.to_string_lossy().as_bytes());
     let hex = format!("{:x}", digest.finalize());
     dir.join(format!("{}.json", &hex[..24]))
+}
+
+/// The per-REPOSITORY post marker beside the spools in `dir`. Keyed by the repo alone, so every
+/// worktree of one repository shares it. The `repo-` prefix keeps it apart from spool files, which
+/// hash (repo, root).
+pub(crate) fn repo_marker_in(dir: &Path, repo: &str) -> PathBuf {
+    let hex = format!("{:x}", Sha256::digest(repo.as_bytes()));
+    dir.join(format!("repo-{}.last_post_ms", &hex[..24]))
+}
+
+fn read_last_post(marker: &Path) -> u64 {
+    fs::read_to_string(marker)
+        .ok()
+        .and_then(|text| text.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+fn interval_ms() -> u64 {
+    u64::try_from(MIN_REPO_POST_INTERVAL.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// The marker for the repository this spool belongs to.
+fn marker_for(spool: &Path) -> PathBuf {
+    let dir = spool.parent().unwrap_or_else(|| Path::new("."));
+    repo_marker_in(dir, &load(spool).repo)
+}
+
+/// Take the repository's post slot at `now`, or say how long until it is free. `Ok(0)` means this
+/// flusher may post and the marker now reads `now`. Checked and written under ONE lock, so two
+/// flushers waking together cannot both take it.
+pub(crate) fn reserve_repo_post(marker: &Path, now: u64) -> Result<u64, String> {
+    assert!(now != 0, "time 0 cannot be a post instant");
+    let _lock = SpoolLock::acquire(marker)?;
+    let next_free = read_last_post(marker).saturating_add(interval_ms());
+    if now < next_free {
+        return Ok(next_free - now);
+    }
+    let temporary = marker.with_extension(format!("tmp{}", std::process::id()));
+    fs::write(&temporary, now.to_string()).map_err(|error| error.to_string())?;
+    fs::rename(&temporary, marker).map_err(|error| error.to_string())?;
+    assert_eq!(
+        read_last_post(marker),
+        now,
+        "the reservation must be readable back"
+    );
+    Ok(0)
 }
 
 /// `~/.estelle/reindex-spool/`.
@@ -496,6 +560,12 @@ pub(crate) async fn run_flusher(spool: &Path, port: &mut impl FlushPort) -> Flus
         let wait = next_wait(spool, port.now());
         port.sleep(wait).await;
         let last = round + 1 == MAX_FLUSH_ROUNDS;
+        if !take_repo_slot(spool, port).await {
+            // The paths stay pending; the slot is released so the next write spawns a successor.
+            let _ = with_state(spool, release);
+            report.gave_up = true;
+            return report;
+        }
         let drained_at = port.now();
         let Ok(batch) = drain(spool, drained_at, last) else {
             report.gave_up = true;
@@ -518,10 +588,40 @@ pub(crate) async fn run_flusher(spool: &Path, port: &mut impl FlushPort) -> Flus
     report
 }
 
-/// One window, or longer while a back-off is in force.
+/// One window, or longer while a back-off is in force or another worktree of this repository
+/// posted less than [`MIN_REPO_POST_INTERVAL`] ago.
 fn next_wait(spool: &Path, now: u64) -> Duration {
-    let backoff = load(spool).backoff_until_ms.saturating_sub(now);
-    DEBOUNCE_WINDOW.max(Duration::from_millis(backoff))
+    let state = load(spool);
+    let backoff = state.backoff_until_ms.saturating_sub(now);
+    // Spacing only matters when there is something to send: an empty round exits after one window.
+    let spacing = if state.pending.is_empty() {
+        0
+    } else {
+        read_last_post(&marker_for(spool))
+            .saturating_add(interval_ms())
+            .saturating_sub(now)
+    };
+    DEBOUNCE_WINDOW
+        .max(Duration::from_millis(backoff))
+        .max(Duration::from_millis(spacing))
+}
+
+/// Wait, bounded by [`MAX_REPO_SLOT_WAITS`], until this flusher holds the repository's post slot.
+/// A round with nothing pending needs no slot: its drain finds nothing and the flusher exits.
+/// `false` means the bound ran out (or the marker could not be locked) and nothing was posted.
+async fn take_repo_slot(spool: &Path, port: &mut impl FlushPort) -> bool {
+    let marker = marker_for(spool);
+    for _ in 0..MAX_REPO_SLOT_WAITS {
+        if load(spool).pending.is_empty() {
+            return true;
+        }
+        match reserve_repo_post(&marker, port.now()) {
+            Ok(0) => return true,
+            Ok(wait) => port.sleep(Duration::from_millis(wait)).await,
+            Err(_) => return false,
+        }
+    }
+    false
 }
 
 /// Take up to [`MAX_BATCH_PATHS`] pending paths. An empty drain releases the flusher slot under the
