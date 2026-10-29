@@ -356,6 +356,49 @@ pub(crate) fn find_rollout(sessions: &Path, session: &str) -> Option<PathBuf> {
     })
 }
 
+/// Least time between two MID-TURN (`PostToolUse`) stream runs of one Codex session.
+///
+/// 🔴 WHY CODEX STREAMS MID-TURN AT ALL. Through 0.4.6 the Codex door streamed from `Stop` only, and Codex
+/// fires `Stop` only when a turn ENDS WITHOUT a follow-up (`core/src/session/turn.rs`: an aborted turn
+/// never reaches it). So a session was invisible on the dashboard for the whole of its first turn, and
+/// forever if that turn was interrupted. Measured 2026-10-29 on the founder's machine: a Codex session
+/// 17 minutes into one long turn (first turn aborted) had 0 events on the server, and
+/// `estelle sessions import --dry-run` mapped 157 events from the same rollout — the mapper was fine,
+/// the trigger never fired.
+///
+/// Codex hooks on the `install-hooks` door are SYNCHRONOUS, so a stream on every tool call would put a
+/// network round trip in front of each one. This bound makes the cost one bounded run per interval: a
+/// tool call inside it pays only the process spawn and one `stat`.
+pub(crate) const CODEX_MIDTURN_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
+const _: () = assert!(
+    CODEX_MIDTURN_EVERY.as_secs() > 0,
+    "a zero interval is no bound"
+);
+
+/// Whether a Codex hook should stream NOW. `since_last` is how long ago this session's stream state
+/// was last written (`None` = never streamed on this machine).
+///
+/// Only `PostToolUse` is throttled. A session that has never streamed is always due, so it appears on
+/// its first tool call; `UserPromptSubmit`, `Stop` and `SessionEnd` fire once per prompt, turn or
+/// session and always run.
+///
+/// ⚠️ An unnamed event is due: the throttle exists to bound a cost, never to decide that a run whose
+/// event it cannot read is a tool call.
+pub(crate) fn codex_stream_due(hook_event: &str, since_last: Option<std::time::Duration>) -> bool {
+    match (hook_event.trim(), since_last) {
+        ("PostToolUse", Some(age)) => age >= CODEX_MIDTURN_EVERY,
+        _ => true,
+    }
+}
+
+/// How long ago `state_file` was written. A modification time in the FUTURE (clock skew) reads as
+/// "just now", so a skewed clock falls back to the prompt and Stop doors rather than streaming on every
+/// tool call.
+pub(crate) fn since_written(state_file: &Path) -> Option<std::time::Duration> {
+    let modified = std::fs::metadata(state_file).ok()?.modified().ok()?;
+    Some(modified.elapsed().unwrap_or(std::time::Duration::ZERO))
+}
+
 #[cfg(test)]
 #[path = "hook_stream_codex_tests.rs"]
 mod tests;

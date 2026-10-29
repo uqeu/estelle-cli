@@ -244,3 +244,38 @@ fn real_rollout_kind_counts() {
     }
     println!("kinds: {counts:?}; titled: {}", notes.title.is_some());
 }
+
+/// 🔴 THE PAIR THAT MUST DIFFER: a never-streamed Codex session is due on its FIRST tool call (the fix:
+/// it used to wait for a Stop that a long or aborted turn never sends), and the same session streamed a
+/// moment ago is NOT due on its next tool call (the bound on a synchronous door). With no throttle both
+/// would be `true`; with an inverted one the first would fail.
+#[test]
+fn a_codex_tool_call_streams_a_new_session_at_once_and_then_at_most_once_per_interval() {
+    let just_now = std::time::Duration::from_secs(5);
+    assert!(codex_stream_due("PostToolUse", None));
+    assert!(!codex_stream_due("PostToolUse", Some(just_now)));
+    assert!(codex_stream_due("PostToolUse", Some(CODEX_MIDTURN_EVERY)));
+}
+
+/// Once-per-prompt and once-per-turn doors are never throttled: a prompt right after a tool call still
+/// streams, so a turn that never reached Stop is caught up by the next prompt.
+#[test]
+fn the_prompt_and_stop_doors_are_never_throttled() {
+    let just_now = Some(std::time::Duration::from_secs(1));
+    for event in ["UserPromptSubmit", "Stop", "SessionEnd", ""] {
+        assert!(codex_stream_due(event, just_now), "{event:?} was throttled");
+    }
+}
+
+#[test]
+fn a_state_file_age_is_read_and_an_absent_file_has_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = crate::hook_stream_run::state_file_under(dir.path(), "s");
+    assert_eq!(since_written(&state), None);
+    std::fs::write(&state, b"{}").unwrap();
+    let age = since_written(&state).expect("a written file has an age");
+    assert!(
+        age < CODEX_MIDTURN_EVERY,
+        "a file written now is inside the interval: {age:?}"
+    );
+}
