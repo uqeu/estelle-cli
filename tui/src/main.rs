@@ -514,7 +514,7 @@ enum Command {
     Recall { query: Vec<String> },
     /// Check a file for ungrounded API references.
     Verify { file: Option<PathBuf> },
-    /// Run the merge gate on a local diff.
+    /// Retired 2026-10-29: prints a notice and exits 0. Use /review; CI runs build and tests.
     Gate {
         #[arg(long)]
         base: Option<String>,
@@ -5964,6 +5964,15 @@ async fn execute_remote_command(
     work_progress_sink: Option<WorkProgressSink>,
     command_progress_sink: Option<CommandProgressSink>,
 ) -> Result<RemoteCommandReply, CommandFailure> {
+    if pending.name == "gate" && top_level::GATE_RETIRED {
+        // 🪦 Retired 2026-10-29: no diff read, nothing sent, no verdict to render.
+        let [first, second, third] = top_level::GATE_RETIRED_LINES;
+        return Err(CommandFailure::Local([
+            first.to_string(),
+            second.to_string(),
+            third.to_string(),
+        ]));
+    }
     if pending.name == "gate"
         && let Some(progress) = &command_progress_sink
     {
@@ -13642,7 +13651,68 @@ mod tests {
         assert!(rendered.contains("server accepted the complete source set"));
     }
 
+    /// 🪦 THE RETIRED `/gate`, THROUGH THE REAL SUBMIT PATH. Discriminating: the mock answers a
+    /// BLOCKED verdict and expects ZERO requests, so a `/gate` that still reached the server would
+    /// fail on the mock's own `expect(0)` and would also render "Gate refused" instead of the notice.
     #[tokio::test]
+    async fn retired_gate_sends_nothing_and_says_it_is_retired() {
+        const { assert!(top_level::GATE_RETIRED, "this test pins the retired state") };
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/gate"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "merge": false,
+                "verdict": "blocked",
+                "blockers": [{"path": "", "line": 0, "body": "the code graph does not cover this repo"}]
+            })))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let root = tempfile::tempdir().expect("root");
+        let mut app = test_app();
+        app.root = root.path().to_path_buf();
+        app.repo = Repo::new("fatelabs/estelle").expect("repo");
+        app.client = Some(
+            Client::new(
+                &format!("{}/", server.uri()),
+                estelle_client::ApiKey::new("test-key").expect("key"),
+                Duration::from_secs(120),
+            )
+            .expect("client"),
+        );
+        app.auth_resolved = true;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        app.submit("/gate".to_string(), &tx);
+        for _ in 0..8 {
+            let Ok(Some(event)) = tokio::time::timeout(Duration::from_secs(2), rx.recv()).await
+            else {
+                break;
+            };
+            app.handle_ui_event(event, &tx);
+            if app.active.is_none() && app.queue.is_empty() {
+                break;
+            }
+        }
+        let rendered = format!("{:?}", render_transcript(&app.transcript));
+        assert!(rendered.contains("gate is retired"), "{rendered}");
+        assert!(!rendered.contains("Gate refused"), "{rendered}");
+        assert!(
+            app.gate_modal.is_none(),
+            "a retired gate must never open the refusal modal"
+        );
+        assert!(
+            server
+                .received_requests()
+                .await
+                .unwrap_or_default()
+                .is_empty(),
+            "a retired gate must send nothing"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "the gate is retired (top_level::GATE_RETIRED, 2026-10-29); this pins the KEPT body and runs again only if the founder un-retires it"]
     async fn gate_refusal_is_a_competence_modal_with_actual_diff_blast_radius() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -13725,6 +13795,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "the gate is retired (top_level::GATE_RETIRED, 2026-10-29); this pins the KEPT body and runs again only if the founder un-retires it"]
     async fn gate_wait_names_the_observed_phase_before_the_server_replies() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))

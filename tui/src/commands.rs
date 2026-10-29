@@ -137,7 +137,10 @@ const SESSION_HELP: [(&str, &str); 50] = [
         "arm a bounded recurring task; /loop alone shows what is armed, /loop stop ends it",
     ),
     ("context", "toggle grounding context side panel (ctrl+g)"),
-    ("gate", "run the merge gate on your staged diff"),
+    (
+        "gate",
+        "retired 2026-10-29: use /review; CI runs build and tests",
+    ),
     ("scan", "scan the staged diff for security findings"),
     ("improve", "rank grounded improvements for this repo"),
     ("verify", "check code for APIs that do not exist"),

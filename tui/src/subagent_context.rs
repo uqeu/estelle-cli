@@ -83,7 +83,8 @@ const NO_GROUNDING_NOTICE: &str = concat!(
     "This is an absence of evidence, never a statement that the repo is clean or that a symbol is ",
     "missing. Estelle's tools are reachable from this subagent over MCP: call `estelle_resume` to see ",
     "what this team already decided, `verify` / `find_definition` / `locate` before asserting any ",
-    "symbol exists, and `gate` before proposing a change. Until you do, mark repo claims unverified."
+    "symbol exists, and `review` when a change's correctness is arguable. Until you do, mark repo ",
+    "claims unverified."
 );
 
 /// A session id becomes a FILENAME, so it is VALIDATED as one and never sanitised into one. Hook
