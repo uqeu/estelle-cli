@@ -375,8 +375,8 @@ const _: () = assert!(
     "a zero interval is no bound"
 );
 
-/// Whether a Codex hook should stream NOW. `since_last` is how long ago this session's stream state
-/// was last written (`None` = never streamed on this machine).
+/// Whether a Codex hook should stream NOW. `since_last` is how long ago this session last ATTEMPTED a
+/// stream run ([`attempt_stamp_under`]; `None` = never attempted on this machine).
 ///
 /// Only `PostToolUse` is throttled. A session that has never streamed is always due, so it appears on
 /// its first tool call; `UserPromptSubmit`, `Stop` and `SessionEnd` fire once per prompt, turn or
@@ -397,6 +397,36 @@ pub(crate) fn codex_stream_due(hook_event: &str, since_last: Option<std::time::D
 pub(crate) fn since_written(state_file: &Path) -> Option<std::time::Duration> {
     let modified = std::fs::metadata(state_file).ok()?.modified().ok()?;
     Some(modified.elapsed().unwrap_or(std::time::Duration::ZERO))
+}
+
+/// The per-session stamp a Codex stream run writes BEFORE it touches the network. One empty file per
+/// session, overwritten in place, so it is bounded by the number of sessions.
+pub(crate) fn attempt_stamp_under(state_dir: &Path, session: &str) -> PathBuf {
+    assert!(
+        !session.contains('/'),
+        "a session id is a file-name fragment, never a path"
+    );
+    state_dir.join(format!("{session}.codex-attempt"))
+}
+
+/// Decide whether this Codex hook runs, and when it does, record the ATTEMPT first.
+///
+/// 🔴 THE THROTTLE IS KEYED ON THE LAST ATTEMPT, NEVER THE LAST SUCCESS. The first cut read the stream
+/// state file's age, and the runner writes that file only AFTER its POST returns — so a run the host
+/// killed mid-POST (a slow or 429-ing server, the state the API was in on 2026-10-29) left no mark, and
+/// every later tool call was "due" and blocked on the network again: the throttle released exactly when
+/// the server was failing. The stamp is written here, before any network, so a failing server costs
+/// one bounded run per interval like a healthy one.
+///
+/// ⚠️ If the stamp cannot be written, a `PostToolUse` does NOT run (the bound cannot hold without it);
+/// the prompt, Stop and SessionEnd doors still stream, which is the 0.4.6 behaviour, never worse.
+pub(crate) fn codex_claim_run(state_dir: &Path, session: &str, hook_event: &str) -> bool {
+    let stamp = attempt_stamp_under(state_dir, session);
+    if !codex_stream_due(hook_event, since_written(&stamp)) {
+        return false;
+    }
+    let stamped = std::fs::create_dir_all(state_dir).is_ok() && std::fs::write(&stamp, b"").is_ok();
+    stamped || hook_event.trim() != "PostToolUse"
 }
 
 #[cfg(test)]

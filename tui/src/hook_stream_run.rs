@@ -215,8 +215,9 @@ fn state_path(input: &StreamInput<'_>) -> PathBuf {
     state_file_under(input.state_dir, input.session)
 }
 
-/// The one owner of where a session's stream state file lives: the runner writes it, and the Codex
-/// mid-turn throttle reads its age ([`crate::hook_stream_codex::codex_stream_due`]).
+/// The one owner of where a session's stream state file lives. Written only AFTER a run's POST
+/// returns, which is why the Codex mid-turn throttle does NOT read it
+/// ([`crate::hook_stream_codex::codex_claim_run`] keeps its own pre-network stamp).
 pub(crate) fn state_file_under(state_dir: &Path, session: &str) -> PathBuf {
     state_dir.join(format!("{session}.stream.json"))
 }

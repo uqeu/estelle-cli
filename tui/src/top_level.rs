@@ -2008,46 +2008,24 @@ async fn stream_hook(
     repo: &Repo,
     root: &Path,
 ) -> Result<Vec<String>, String> {
-    let session = payload.session_id.trim();
-    if !crate::hook_stream_run::safe_session(session) {
-        return Ok(Vec::new());
-    }
     let Some(home) = dirs::home_dir() else {
         return Ok(Vec::new());
     };
-    let given = payload
-        .transcript_path
-        .as_deref()
-        .map(str::trim)
-        .filter(|p| !p.is_empty())
-        .map(PathBuf::from);
-    let (dialect, transcript) = if harness_of(payload) == "codex" {
-        let codex_home = codex_home_under(&home);
-        let found = given.or_else(|| {
-            crate::hook_stream_codex::find_rollout(&codex_home.join("sessions"), session)
-        });
-        (crate::hook_stream_run::Dialect::Codex, found)
-    } else {
-        (crate::hook_stream_run::Dialect::Claude, given)
-    };
-    let Some(transcript) = transcript else {
+    let Some(StreamPlan {
+        dialect,
+        transcript,
+        state_dir,
+    }) = stream_plan(payload, &home)
+    else {
         return Ok(Vec::new());
     };
-    let state_dir = crate::hook_stream_run::state_dir_under(&home);
-    if dialect == crate::hook_stream_run::Dialect::Codex {
-        let state_file = crate::hook_stream_run::state_file_under(&state_dir, session);
-        let since_last = crate::hook_stream_codex::since_written(&state_file);
-        if !crate::hook_stream_codex::codex_stream_due(payload.hook_event_name.trim(), since_last) {
-            return Ok(Vec::new());
-        }
-    }
     let Ok(api) = Api::resolve() else {
         return Ok(Vec::new());
     };
     let input = crate::hook_stream_run::StreamInput {
         state_dir: &state_dir,
         transcript: &transcript,
-        session,
+        session: payload.session_id.trim(),
         hook_event: payload.hook_event_name.trim(),
         repo: repo.as_str(),
         now: chrono::Utc::now(),
@@ -2061,6 +2039,51 @@ async fn stream_hook(
     let sink = crate::hook_stream_spool::SpoolingSink::new(&live, &spool);
     let _report = crate::hook_stream_run::run(&input, &sink).await;
     Ok(Vec::new())
+}
+
+/// What one `stream` run will read and where its state lives — decided before any credential or network.
+struct StreamPlan {
+    dialect: crate::hook_stream_run::Dialect,
+    transcript: PathBuf,
+    state_dir: PathBuf,
+}
+
+/// The offline half of [`stream_hook`]: which host, which transcript, and — for Codex — whether this
+/// run is due under the mid-turn throttle ([`crate::hook_stream_codex::codex_claim_run`], which stamps
+/// the attempt BEFORE the network). `None` = this run sends nothing. Split out so the wired gate is
+/// testable without a credential or a server.
+fn stream_plan(payload: &HookPayload, home: &Path) -> Option<StreamPlan> {
+    let session = payload.session_id.trim();
+    if !crate::hook_stream_run::safe_session(session) {
+        return None;
+    }
+    let given = payload
+        .transcript_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from);
+    let (dialect, transcript) = if harness_of(payload) == "codex" {
+        let codex_home = codex_home_under(home);
+        let found = given.or_else(|| {
+            crate::hook_stream_codex::find_rollout(&codex_home.join("sessions"), session)
+        });
+        (crate::hook_stream_run::Dialect::Codex, found?)
+    } else {
+        (crate::hook_stream_run::Dialect::Claude, given?)
+    };
+    let state_dir = crate::hook_stream_run::state_dir_under(home);
+    let event = payload.hook_event_name.trim();
+    if dialect == crate::hook_stream_run::Dialect::Codex
+        && !crate::hook_stream_codex::codex_claim_run(&state_dir, session, event)
+    {
+        return None;
+    }
+    Some(StreamPlan {
+        dialect,
+        transcript,
+        state_dir,
+    })
 }
 
 /// `$CODEX_HOME`, else `~/.codex` — one owner for the live hook and `estelle sessions import`.
@@ -8591,7 +8614,46 @@ tests/test_serve.py:88: AssertionError\n\
         );
     }
 
-    /// NEGATIVE CONTROL for the test above: the same Codex rows written in plain TABLE order (no
+    fn stream_payload(transcript: &Path, event: &str, turn: Option<&str>) -> HookPayload {
+        let mut raw = json!({
+            "session_id": "01a18721-c3da-7381-a77d-720161730d3f",
+            "transcript_path": transcript.to_string_lossy(),
+            "hook_event_name": event,
+        });
+        if let Some(turn) = turn {
+            raw["turn_id"] = json!(turn);
+        }
+        serde_json::from_value(raw).expect("a hook payload")
+    }
+
+    /// 🔴 THE WIRED PATH, NOT THE HELPER. Drives [`stream_plan`] — the exact gate [`stream_hook`] runs
+    /// before resolving a credential — over a fresh `HOME`, with NO server: the first Codex tool call
+    /// is planned, the second inside the interval is not (although nothing was ever sent, so no stream
+    /// state exists), a prompt still is, and a Claude Code session is never throttled. With the gate
+    /// unwired from `stream_plan`, or keyed on the stream state file again, the second call is planned
+    /// and this goes red.
+    #[test]
+    fn the_stream_hook_plans_one_codex_tool_run_per_interval_even_when_none_succeeded() {
+        let home = tempfile::tempdir().expect("home");
+        let rollout = home.path().join("rollout.jsonl");
+        std::fs::write(&rollout, b"{}\n").expect("rollout");
+        let codex = |event| stream_payload(&rollout, event, Some("turn-1"));
+        let first = stream_plan(&codex("PostToolUse"), home.path()).expect("first call is due");
+        assert_eq!(first.dialect, crate::hook_stream_run::Dialect::Codex);
+        assert!(
+            stream_plan(&codex("PostToolUse"), home.path()).is_none(),
+            "a second tool call inside the interval must not reach the network"
+        );
+        assert!(stream_plan(&codex("UserPromptSubmit"), home.path()).is_some());
+        let claude = stream_payload(&rollout, "PostToolUse", None);
+        for _ in 0..2 {
+            let plan = stream_plan(&claude, home.path()).expect("Claude Code is never throttled");
+            assert_eq!(plan.dialect, crate::hook_stream_run::Dialect::Claude);
+        }
+    }
+
+    /// NEGATIVE CONTROL for `codex_door_rows_added_later_never_move_an_already_trusted_index`: the
+    /// same Codex rows written in plain TABLE order (no
     /// append — how the plugin manifest is built) put `stream` at `UserPromptSubmit:0` and
     /// `PostToolUse:0`, moving the trusted `context` and `shift`. So the pin above can go red.
     #[test]

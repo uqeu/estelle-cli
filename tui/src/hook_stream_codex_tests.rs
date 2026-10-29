@@ -267,10 +267,39 @@ fn the_prompt_and_stop_doors_are_never_throttled() {
     }
 }
 
+/// 🔴 A RUN THAT NEVER SUCCEEDED STILL THROTTLES THE NEXT ONE. The claim writes its stamp before any
+/// network, so the second tool call inside the interval is refused even though no stream state (the
+/// file a SUCCESSFUL run leaves) exists — the failing-server case the first cut released on.
+#[test]
+fn a_claimed_attempt_throttles_the_next_tool_call_even_when_nothing_was_ever_sent() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_dir = dir.path().join("stream");
+    assert!(codex_claim_run(&state_dir, "s", "PostToolUse"));
+    assert!(
+        !crate::hook_stream_run::state_file_under(&state_dir, "s").exists(),
+        "no run landed: the stream state a success writes is absent"
+    );
+    assert!(!codex_claim_run(&state_dir, "s", "PostToolUse"));
+    assert!(codex_claim_run(&state_dir, "s", "UserPromptSubmit"));
+    assert!(
+        codex_claim_run(&state_dir, "other", "PostToolUse"),
+        "the stamp is per session"
+    );
+}
+
+#[test]
+fn a_tool_call_whose_stamp_cannot_be_written_does_not_run_and_a_prompt_still_does() {
+    let dir = tempfile::tempdir().unwrap();
+    let blocked = dir.path().join("a-file-not-a-dir");
+    std::fs::write(&blocked, b"").unwrap();
+    assert!(!codex_claim_run(&blocked, "s", "PostToolUse"));
+    assert!(codex_claim_run(&blocked, "s", "UserPromptSubmit"));
+}
+
 #[test]
 fn a_state_file_age_is_read_and_an_absent_file_has_none() {
     let dir = tempfile::tempdir().unwrap();
-    let state = crate::hook_stream_run::state_file_under(dir.path(), "s");
+    let state = attempt_stamp_under(dir.path(), "s");
     assert_eq!(since_written(&state), None);
     std::fs::write(&state, b"{}").unwrap();
     let age = since_written(&state).expect("a written file has an age");
