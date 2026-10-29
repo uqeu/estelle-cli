@@ -4900,13 +4900,15 @@ async fn reindex(
         lines.push("--dry-run: nothing was sent.".to_string());
         return Ok(lines);
     }
-    let response = api
-        .post_scoped(
-            Endpoint::Reindex,
-            repo,
-            &with_measured_head(json!({"files": files, "removed": deleted_set}), root),
-        )
-        .await?;
+    let mut body = with_measured_head(json!({"files": files, "removed": deleted_set}), root);
+    // The SAME checkout declaration the sync hook sends (#36). Without it this door kept writing a lane's
+    // bytes into the default-branch graph after the hook stopped: the server reads an absent `checkout`
+    // as permissive, so guarding only the hook was a guard on that path, not on the graph.
+    body["checkout"] = crate::checkout_identity::read(root).to_json();
+    let response: Value = api.post_scoped(Endpoint::Reindex, repo, &body).await?;
+    if let Some(lines) = declined_reindex_lines(&response, lines.clone()) {
+        return Ok(lines);
+    }
     // Same rule as the sync hook: the stamp is the grounding gate's licence to refuse, and it is
     // only written once the server has accepted the change. `?` above means a failed reindex never
     // reaches this line, which is the point.
@@ -4919,6 +4921,23 @@ async fn reindex(
     lines.push("Memory current. Untouched files kept their symbols.".to_string());
     lines.extend(dropped_lines(&response));
     Ok(lines)
+}
+
+/// A `/reindex` the server declined by name (`skipped_off_default`): nothing was written, so the index is
+/// NOT stamped current and the reply says so with the server's own reason. `None` for any other answer.
+fn declined_reindex_lines(response: &Value, mut lines: Vec<String>) -> Option<Vec<String>> {
+    if !crate::checkout_identity::skipped_off_default(response) {
+        return None;
+    }
+    let reason = response
+        .get("reason")
+        .and_then(Value::as_str)
+        .filter(|reason| !reason.trim().is_empty())
+        .unwrap_or("the server gave no reason");
+    lines.push(format!(
+        "Not indexed: the server kept this checkout out of the default-branch graph ({reason})."
+    ));
+    Some(lines)
 }
 
 /// The commit SHA the swept content was measured against — the server's graph-currency

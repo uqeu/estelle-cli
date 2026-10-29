@@ -78,7 +78,7 @@ source_symbol = "sync_hook"
 trigger = "automatic after explicit install-hooks"
 confirmation = "no per-event confirmation"
 destination = "https://api.fatelabs.ca/reindex"
-data = "eligible repository file paths and bytes"
+data = "eligible repository file paths and bytes, plus (since 0.4.6) the checkout's branch name, origin default-branch name and a linked-worktree flag, so the server can keep lane edits out of the default-branch graph; `estelle reindex` sends the same `checkout` object"
 disposition = "keep; ignored/secret-file process canary remains open"
 
 [[sink]]

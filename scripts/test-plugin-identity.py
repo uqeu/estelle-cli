@@ -268,6 +268,11 @@ PLUGIN_CONTRACT_SHA256_BY_VERSION = {
     # context hook's timeline_session for session mail (#33). DIGEST PROVENANCE: emitted by this file's own guard
     # against this working tree on 2026-10-26 (34 files hashed).
     "0.4.5": "53f8d1dc76dea66ecd08c45982a8970fb9667a315f5262e8b6308fdf89ab1b06",
+    # 0.4.6: no plugin file changed beyond the version string (`git diff v0.4.5 -- estelle-plugin .claude-plugin`
+    # is the two version lines); the release ships the gate exit code (#35) and the reindex checkout identity
+    # (#36). DIGEST PROVENANCE: emitted by this file's own guard against this working tree on 2026-10-28
+    # (34 files hashed).
+    "0.4.6": "6316905813f68f217477c1c8bee177518e1c9bbb0339a06a0bdedae77a792750",
 }
 
 #: 🔴 TWO IDENTIFIERS, AND THIS REPO USED TO CONFLATE THEM INTO ONE WRONG STRING.
