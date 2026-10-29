@@ -411,6 +411,9 @@ async fn manual_reindex_declares_its_checkout_and_reports_a_decline_as_not_index
     assert_eq!(bodies.len(), 1);
     assert_eq!(bodies[0]["checkout"]["linked_worktree"], json!(true));
     assert_eq!(bodies[0]["checkout"]["branch"], json!("lane/x"));
+    // The decline FOLLOWS the summary line rather than replacing it (checked here, not in production code).
+    assert!(lines.len() >= 2, "summary line plus the decline: {lines:?}");
+    assert!(lines[0].starts_with("Reindexing "), "{lines:?}");
     let text = lines.join("\n");
     assert!(text.contains("Not indexed"), "{text}");
     assert!(

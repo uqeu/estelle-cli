@@ -4937,10 +4937,6 @@ fn declined_reindex_lines(response: &Value, mut lines: Vec<String>) -> Option<Ve
     lines.push(format!(
         "Not indexed: the server kept this checkout out of the default-branch graph ({reason})."
     ));
-    assert!(
-        lines.len() >= 2,
-        "a decline follows the summary line and says so"
-    );
     Some(lines)
 }
 
