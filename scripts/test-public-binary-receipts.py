@@ -1804,9 +1804,28 @@ def main() -> int:
     test_session_trace_gets_completion_grace_after_a_slow_tui()
     test_session_receipt_matches_the_tui_normalized_question()
     test_unsafe_sweep_refusal_is_the_negative_control()
+    test_production_build_receipt_rejects_a_surface_change_under_one_label()
 
     print("public receipt test: all 25 audited read surfaces are mandatory")
     return 0
+
+
+def test_production_build_receipt_rejects_a_surface_change_under_one_label() -> None:
+    """The binary receipt used to compare the surface with `==` against a pinned dict (prompts 249), so
+    it refused every healthy build once prompts moved. It now judges with surface_ok, and a mid-run
+    change of the surface under an unchanged build label still fails."""
+    harness = load_harness()
+    before = {
+        "build": "3cf96242df8c",
+        "build_verified": True,
+        "surface": {"tools_base": 35, "tools_sha256": "d" * 64, "prompts": 256},
+    }
+    stable = harness.production_build_receipt(before, dict(before))
+    assert stable["pass"] is True, stable
+    moved = {**before, "surface": {**before["surface"], "tools_sha256": "e" * 64}}
+    receipt = harness.production_build_receipt(before, moved)
+    assert receipt["pass"] is False
+    assert receipt["came_back"] == "production surface changed under build 3cf96242df8c"
 
 
 if __name__ == "__main__":

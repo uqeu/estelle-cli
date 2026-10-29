@@ -14,7 +14,7 @@
       "name": "estelle",
       "source": "./estelle-plugin",
       "description": "The software factory under your AI coding agents: team memory, code review, QA, CI, security and Atlas, grounded in your real codebase.",
-      "version": "0.4.6",
+      "version": "0.4.7",
       "category": "development",
       "keywords": [
         "mcp",

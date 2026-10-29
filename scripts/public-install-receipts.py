@@ -25,9 +25,10 @@ HEALTH_URL = "https://api.fatelabs.ca/health"
 #: own number changes, the pin asserting it is part of that change** — read /health before
 #: assuming a red here means the build is bad.
 #: Kept as a NAME for the tests that reference it; the JUDGEMENT lives in production_surface.
-from production_surface import EXPECTED_TOOLS_BASE, surface_ok  # noqa: E402
+from production_surface import MIN_TOOLS_BASE, same_surface, surface_ok  # noqa: E402
 
-EXPECTED_SURFACE = {"tools_base": EXPECTED_TOOLS_BASE, "prompts": 250}
+#: A SAMPLE of a healthy surface, for tests only. It is not a pin: `surface_ok` judges.
+EXPECTED_SURFACE = {"tools_base": MIN_TOOLS_BASE, "tools_sha256": "0" * 64, "prompts": 250}
 BEGIN = "<!-- BEGIN ESTELLE — managed block, safe to move, do not edit inside -->"
 END = "<!-- END ESTELLE -->"
 QUESTION = re.compile(r"Proving question: What does `([A-Za-z_][A-Za-z0-9_]*)` do")
@@ -92,6 +93,7 @@ def build_window(before: dict, after: dict) -> dict:
         verified_health(before)
         and verified_health(after)
         and before.get("build") == after.get("build")
+        and same_surface(before.get("surface"), after.get("surface"))
     )
     return {
         "before": before.get("build"),
@@ -436,11 +438,7 @@ def main() -> int:
     receipts.append(mixed_receipt(args.binary, args.mixed, mixed_trace))
     after = read_health()
     expected = f"estelle {args.expected_version.removeprefix('v')}"
-    build_stable = (
-        verified_health(before)
-        and verified_health(after)
-        and before.get("build") == after.get("build")
-    )
+    build_stable = build_window(before, after)["stable_and_verified"]
     report = {
         "scope": args.scope,
         "version": version["stdout"].strip(),
