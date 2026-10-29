@@ -11,7 +11,7 @@ Estelle answers from the **real, indexed repository** and refuses what it cannot
 
 Look at your own tool list before following anything below.
 
-- **`estelle_*` / `find_definition` / `gate` / `verify` present** -> Estelle is wired. Use it as written.
+- **`estelle_*` / `find_definition` / `verify` present** -> Estelle is wired. Use it as written.
 - **None present** -> say so once: *"Estelle isn't connected here, so I can't ground this —
   `https://api.fatelabs.ca/mcp`."* Mark every repo claim **unverified** and stop following this file.
 
@@ -42,7 +42,7 @@ what one citation already answers is the common waste.
 | `Read` a file to learn who calls something | `find_usages` (symbol) · `blast_radius` (file) |
 | guess a signature from its name | `find_definition` — **names are stable, signatures drift** |
 | assert a symbol or API exists | `verify` |
-| offer or apply a diff | `gate`, then `review` when correctness is arguable |
+| offer a change whose correctness is arguable | `review` — build and tests stay with CI |
 | ask what breaks / what depends on what | `blast_radius`, `dependency_path`, `import_cycles` |
 | ask what we decided | `estelle_resume`, `memory_chat`, `get_session` |
 | ask what's broken in production | `monitor_issues`, `monitor_logs`, `monitor_alerts` |
@@ -146,8 +146,7 @@ always-loaded index. The body of one arrives only when you ask for it.
 `commit-guard` · `context-checkpoint` · `continuity-brief` · `dead-code-sweep` · `deep-search` ·
 `diff-review` · `estelle-loop` · `estelle-monitor-install` · `evidence-traceability-audit` ·
 `grounded-generate` · `incident-rca` · `mutation-test` · `program-repair` · `prompt-injection-defense` ·
-`property-based-test` · `refactor-rfc` · `root-cause-loop` · `test-first` · `threat-model-stride` ·
-`verify-gate`
+`property-based-test` · `refactor-rfc` · `root-cause-loop` · `test-first` · `threat-model-stride`
 
 ## 9 · Say it plainly
 
@@ -164,5 +163,5 @@ correct it in one line, move on. Mark anything you didn't check **unverified**.
   file is the only thing pointing at the graph — follow it rather than assuming a hook will catch a
   missed lookup.
 - **Claude Code:** `PreToolUse Read|Grep|Glob` redirects a raw read into the graph from v0.3.8. It
-  catches the read you already decided to make; it cannot make you call `verify` or `gate`. Those are §3
+  catches the read you already decided to make; it cannot make you call `verify` or `review`. Those are §3
   and §6, and they are yours.

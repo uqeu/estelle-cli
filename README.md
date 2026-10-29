@@ -1,11 +1,10 @@
 # Estelle CLI
 
-**The trust layer under your AI coding agents.** Estelle grounds every model in your real codebase and
-refuses to ship what isn't true.
+**The software factory under your AI coding agents.** Team memory, code review, QA, CI, security and
+Atlas, grounded in your real codebase.
 
 It is not another agent. It runs underneath the agents you already use and gives them three things they do
-not have on their own: memory of your repository, a deterministic gate that resolves every symbol a change
-names against your real code, and grounded review. Model-agnostic, bring your own key.
+not have on their own: memory of your repository, grounded code review, and push protection on every write. Model-agnostic, bring your own key.
 
 This repository holds the Rust CLI and the Claude Code plugin. The hosted server is separate.
 
@@ -58,15 +57,7 @@ along with the hook's answer. **The floor is the server's, not ours**: `POST /se
 observed floor near 6 seconds, so a prompt still costs that much before the model sees it, and if
 the budget expires the turn proceeds with no added context. Nothing tells you that happened.
 
-**What the edit hook does, exactly.** It grounds the edit and reports one of four verdicts to you and to
-the model: PASSED, FLAGGED, ABSTAINED, or UNREACHABLE. ABSTAINED says in its own words that it is not a
-pass. **It does not block the edit** (`tui/src/top_level.rs:805`). The finding is advisory while the
-server does not attest index freshness, and the runner says so in the text it emits. The blocking check is
-`estelle gate`, which returns a merge verdict you can fail a build on.
-
-**And the edit hook inspects Python only today** (`tui/src/top_level.rs:807`). A write to any other file
-type produces no output at all, so on that path "not checked" and "clean" look the same. Use
-`estelle gate` on the diff if you need a verdict for another language.
+**What the edit hook does now.** The grounding gate retired on 2026-10-29, so the `Write`/`Edit` hook no longer calls Estelle and adds no verdict. It runs push protection only. That check is local, makes no network call, and refuses a write that puts a live credential into a file. Review and CI catch the rest: run `/review` in a session, and let your CI run the build and tests.
 
 **Door 2: the remote MCP URL.** For hosts that cannot run a Claude Code plugin:
 
@@ -85,7 +76,7 @@ push to GitHub.** If you are asking about code you wrote in the last ten minutes
 estelle sweep                          # index this repo into your memory
 estelle ask "how does billing retry a failed charge?"
 estelle verify src/http/headers.rs     # resolve every symbol against the repo's real symbol graph
-estelle gate                           # run that check over a local diff
+estelle gate                           # retired 2026-10-29: prints a notice, exits 0
 estelle mcp-server                     # Estelle's tools over MCP, for any agent
 estelle acp                            # Agent Client Protocol, over stdio
 estelle sessions import --dry-run      # what earlier sessions on this machine would be added to your timeline

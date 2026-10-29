@@ -40,7 +40,7 @@ use `root-cause-loop` first to establish one.
    convergent diff (independent candidates arriving at the same fix are more trustworthy than any single one); break ties toward
    the grounded candidate with `select_best` — fewest ungrounded APIs wins.
 8. **Record the run and gate for merge.** Persist the repair (run history + `remember_fact`) and the caught mistake
-   (`ExperienceStore.record`) so recall improves on this codebase, then hand the winning patch to `verify-gate` before the PR.
+   (`ExperienceStore.record`) so recall improves on this codebase, then let CI run the build and tests on the PR.
 
 ## Output
 A single validated patch — localized, compiled, target-test green, regression-clean, security-scanned, and majority-selected —
