@@ -11,7 +11,7 @@ that loop by *decomposing* the draft into targeted verification questions and an
 draft-independent recall — `retrieve_cited` (`serve/memory_pipeline.py`, hybrid RRF) keyed on the QUESTION, not
 the draft — then revising the answer to keep only what the independent evidence supports and proving the result
 through the verify→test→repair loop (`ground_report_and_repair`, `agent/grounding.py`; `run_and_repair_suite` /
-`parse_suite_output`, `agent/verify_suite.py`). Distinct from `self-eval` and `verify-gate`: those check a
+`parse_suite_output`, `agent/verify_suite.py`). Distinct from `self-eval` and your CI: those check a
 finished answer against ground truth once — this is the question-generation-and-decontamination mechanism that
 *repairs* the draft before either gate sees it.
 
@@ -56,5 +56,5 @@ the same contaminated context.
 A revised answer with every unsupported clause struck and every contradicted one corrected against fresh,
 draft-independent recall — plus the verification-question → independent-answer → verdict trail that produced it
 (each cited to a repo location) and the whole revision re-proven through the grounding + real-suite loop. Where
-`verify-gate` is the end-of-work checklist and `self-eval` is a whole-answer pass/fail, this is the CoVe
+CI is the end-of-work checklist and `self-eval` is a whole-answer pass/fail, this is the CoVe
 question-generation-and-decontamination mechanism that repairs the draft before either gate sees it.

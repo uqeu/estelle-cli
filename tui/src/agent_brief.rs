@@ -37,8 +37,8 @@ pub(crate) const AGENT_FILES: &[&str] = &[
 
 const BODY: &str = r#"## Estelle is wired into this repo. Use it — do not work from memory.
 
-Estelle is the trust layer under this session: it answers from the **real, indexed repository** and
-refuses what it cannot verify. It is reachable over MCP at `https://api.fatelabs.ca/mcp`. A confident
+Estelle is the software factory under this session: team memory, code review, QA, CI, security and
+Atlas. It answers from the **real, indexed repository** and refuses what it cannot see. It is reachable over MCP at `https://api.fatelabs.ca/mcp`. A confident
 answer about this codebase that you did not check is the exact failure Estelle exists to prevent.
 
 **Before you state that a symbol exists in this repo — or paste code you recalled rather than read —
@@ -49,7 +49,7 @@ cannot be argued into agreeing with you.
 |---|---|
 | starting a session, or returning after a gap | `estelle_resume` — what this team already decided, so you do not re-litigate it |
 | about to claim a function/class/method exists | `verify`, `find_definition`, `locate` |
-| about to propose a diff, patch or merge | `gate` (deterministic, no model call), then `review` when correctness is arguable |
+| about to propose a change whose correctness is arguable | `review` — a rival model family argues each finding; build and tests stay with CI |
 | asked "who calls this / what breaks if I change it" | `find_usages`, `blast_radius`, `dependency_path` |
 | the user refers to earlier work or "what we agreed" | the memory and session tools |
 | something is broken in production | `monitor_issues`, `monitor_logs`, `monitor_alerts` |
@@ -60,13 +60,13 @@ cannot be argued into agreeing with you.
 
 1. **Ground before you assert.** If the claim is about THIS codebase, it comes from Estelle or it comes
    with "I did not check."
-2. **Gate before you propose.** Run `gate` on a diff before offering it. A blocked verdict is
-   information, not an obstacle — it names the API that does not exist.
+2. **Review and CI catch what slipped.** Run `review` when a change's correctness is arguable, and
+   let CI run the build and tests. A refusal from Estelle is information, not an obstacle.
 3. **Never present a recalled signature as a read one.** Names are stable; signatures drift.
 4. **Estelle proposes, a human merges.** Nothing here merges or deploys on its own."#;
 
 const FOOTER: &str = r#"**Estelle:** ground claims about this repo with `verify`/`find_definition`, and run
-`gate` on any diff before proposing it. Do not answer from memory about this codebase."#;
+`review` on a change whose correctness is arguable. Do not answer from memory about this codebase."#;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum WriteOutcome {
@@ -772,12 +772,20 @@ mod tests {
             "estelle_resume",
             "verify",
             "find_definition",
-            "gate",
             "review",
             "research_drift",
         ] {
             assert!(block.contains(tool), "missing {tool}");
         }
+        // 🪦 `gate` was retired 2026-10-29 (founder): the brief must not send a model to it.
+        assert!(
+            !block.contains("`gate`"),
+            "the brief still points at the retired gate"
+        );
+        assert!(
+            !render_footer().contains("`gate`"),
+            "the footer still points at the retired gate"
+        );
     }
     /// **Uninstall must leave no ACTIVE block behind, not merely remove one.**
     ///

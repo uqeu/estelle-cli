@@ -13,7 +13,7 @@
     {
       "name": "estelle",
       "source": "./estelle-plugin",
-      "description": "Code memory + the grounding gate, always on. Grounds every model in your real codebase and refuses to ship what isn't true.",
+      "description": "The software factory under your AI coding agents: team memory, code review, QA, CI, security and Atlas, grounded in your real codebase.",
       "version": "0.4.6",
       "category": "development",
       "keywords": [

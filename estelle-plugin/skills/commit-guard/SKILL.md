@@ -16,4 +16,4 @@ Estelle's commit-time hygiene gate. Cheap, fast, and local — the tree is green
 6. **Block or pass** — any red step stops the commit and reports the single reason; all green lets it through untouched.
 
 ## Output
-A pass/fail verdict at commit time with the one check that failed. Serves everyday hygiene; hand off to `verify-gate` for the deeper pre-PR gate.
+A pass/fail verdict at commit time with the one check that failed. Serves everyday hygiene; hand off to CI for the deeper pre-PR checks.

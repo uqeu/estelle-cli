@@ -5,7 +5,7 @@ description: Write several answers, keep the one that passes its own tests. Use 
 
 # grounded-generate
 
-Estelle's anti-hallucination generator — dead center of the thesis. Where `verify-gate` checks one *finished* output, this
+Estelle's anti-hallucination generator — dead center of the thesis. Where CI checks one *finished* output, this
 samples K candidate solutions *and* K self-tests, executes them against each other, keeps only the survivors, and selects by
 consensus — then proves every imported package is real. It's built from `generate_candidates` / `self_consistency`
 (`agent/candidates.py`), `propose_tests` (`agent/testgen.py`), the real-suite filter `run_and_repair_suite` /
@@ -41,10 +41,10 @@ risk, not just a bug.
    isn't installed, is flagged. Never ship an answer that imports a nonexistent package — that is the slopsquatting attack, not
    a typo.
 8. **Record the catch and gate.** Any hallucination caught → `learn_from_grounding` / `ExperienceStore.record` (`agent/reflect.py`)
-   so the next similar ask recalls the lesson, then hand the survivor to `verify-gate` before it's called done.
+   so the next similar ask recalls the lesson, then let CI run the build and tests before it's called done.
 
 ## Output
 A single code answer that survived execution against its own tests, won dual-execution consensus, references only repo APIs
 that exist, and imports only packages that are actually installed — an answer that *runs*, not one that merely reads well.
-Distinct from `verify-gate` (which checks one output) by sampling K, execution-filtering, and package-existence-checking before
+Distinct from CI (which checks one output) by sampling K, execution-filtering, and package-existence-checking before
 a winner is ever chosen.
