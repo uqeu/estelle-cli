@@ -238,6 +238,7 @@ fn backoff_is_exponential_and_capped() {
 /// from a script. Every write goes through the REAL `enqueue_with`.
 struct Simulated<'a> {
     spool: &'a Path,
+    root: &'a Path,
     now: u64,
     writes: Vec<(u64, String)>,
     delivered: usize,
@@ -253,6 +254,7 @@ impl<'a> Simulated<'a> {
     fn new(spool: &'a Path, writes: Vec<(u64, String)>, answers: Vec<PostOutcome>) -> Self {
         Self {
             spool,
+            root: Path::new("/repo"),
             now: START,
             writes: writes
                 .into_iter()
@@ -269,15 +271,8 @@ impl<'a> Simulated<'a> {
     fn deliver_until(&mut self, until: u64) {
         while self.delivered < self.writes.len() && self.writes[self.delivered].0 <= until {
             let (at, key) = self.writes[self.delivered].clone();
-            let queued = enqueue_with(
-                self.spool,
-                "owner/name",
-                Path::new("/repo"),
-                &key,
-                at,
-                alive,
-            )
-            .expect("enqueue");
+            let queued = enqueue_with(self.spool, "owner/name", self.root, &key, at, alive)
+                .expect("enqueue");
             self.spawns += u32::from(queued.spawn);
             self.delivered += 1;
         }
@@ -388,13 +383,15 @@ async fn a_429_backs_off_a_bounded_number_of_times_and_keeps_the_paths() {
     );
     assert!(state.backoff_until_ms > sim.now);
     assert!(state.last_error.expect("reported").contains("http 429"));
-    // Waits grow: window, then 5 s, 10 s back-off (each at least one window).
+    // First a window; then each retry waits the LONGER of its back-off (5 s, then 10 s) and the
+    // per-repo spacing since the previous post. The post happens at the instant the window ends, so
+    // the spacing is the whole 20 s and wins both times.
     assert_eq!(
         sim.sleeps,
         vec![
             DEBOUNCE_WINDOW,
-            Duration::from_secs(5),
-            Duration::from_secs(10)
+            MIN_REPO_POST_INTERVAL,
+            MIN_REPO_POST_INTERVAL
         ]
     );
 }
@@ -444,4 +441,118 @@ async fn a_batch_never_exceeds_its_bound() {
     assert_eq!(sim.requests.len(), 2);
     assert_eq!(sim.requests[0].len(), MAX_BATCH_PATHS);
     assert_eq!(sim.requests[1].len(), 50);
+}
+
+// ---- per-REPOSITORY spacing across worktrees (2026-10-29) ------------------------------------------
+
+#[test]
+fn the_repo_slot_is_shared_by_every_root_of_one_repo_and_only_that_repo() {
+    let dir = tempfile::tempdir().expect("dir");
+    let repo = repo_marker_in(dir.path(), "owner/name");
+    let other = repo_marker_in(dir.path(), "owner/other");
+    let interval = u64::try_from(MIN_REPO_POST_INTERVAL.as_millis()).expect("ms");
+    assert_eq!(
+        reserve_repo_post(&repo, START).expect("reserve"),
+        0,
+        "a fresh repo posts at once"
+    );
+    assert_eq!(
+        reserve_repo_post(&repo, START + 5_000).expect("reserve"),
+        interval - 5_000,
+        "a second worktree of the SAME repo waits out the interval"
+    );
+    // Control: the spacing is per repository, not a global throttle.
+    assert_eq!(
+        reserve_repo_post(&other, START + 5_000).expect("reserve"),
+        0
+    );
+    assert_eq!(
+        reserve_repo_post(&repo, START + interval).expect("reserve"),
+        0
+    );
+    assert_eq!(
+        std::fs::read_to_string(&repo).expect("marker").trim(),
+        (START + interval).to_string()
+    );
+}
+
+/// THE CASE THAT DROVE THE OOM: two worktrees of ONE repository, both writing. Before this, each
+/// root's flusher posted one window after its first write, so both posted 5 s in. Now the second
+/// root's post lands a full interval after the first, and each request carries only its own root's
+/// paths. Discriminating: with the marker ignored, `gap` is 0.
+#[tokio::test]
+async fn two_worktrees_of_one_repo_are_spaced_and_send_only_their_own_paths() {
+    let dir = tempfile::tempdir().expect("dir");
+    let root_a = Path::new("/lanes/a");
+    let root_b = Path::new("/lanes/b");
+    let spool_a = spool_path_in(dir.path(), "owner/name", root_a);
+    let spool_b = spool_path_in(dir.path(), "owner/name", root_b);
+    assert_ne!(spool_a, spool_b, "two roots are two spools");
+
+    let mut a = Simulated::new(
+        &spool_a,
+        vec![(0, "src/a.py".to_string())],
+        vec![PostOutcome::Accepted],
+    );
+    a.root = root_a;
+    simulate(&mut a).await;
+    let marker = repo_marker_in(dir.path(), "owner/name");
+    let posted_a = read_last_post(&marker);
+    assert!(posted_a > START, "A reserved the repo slot when it posted");
+
+    let mut b = Simulated::new(
+        &spool_b,
+        vec![(0, "src/b.py".to_string())],
+        vec![PostOutcome::Accepted],
+    );
+    b.root = root_b;
+    simulate(&mut b).await;
+
+    assert_eq!(a.requests, vec![vec!["src/a.py".to_string()]]);
+    assert_eq!(
+        b.requests,
+        vec![vec!["src/b.py".to_string()]],
+        "B never sends A's paths"
+    );
+    let interval = u64::try_from(MIN_REPO_POST_INTERVAL.as_millis()).expect("ms");
+    let gap = read_last_post(&marker) - posted_a;
+    assert!(
+        gap >= interval,
+        "B posted {gap} ms after A; the floor is {interval} ms"
+    );
+    assert!(
+        load(&spool_b).pending.is_empty(),
+        "B still delivered, just later"
+    );
+}
+
+#[test]
+fn next_wait_reads_the_repo_marker_and_ignores_another_repos() {
+    let dir = tempfile::tempdir().expect("dir");
+    let spool = spool_path_in(dir.path(), "owner/name", Path::new("/lanes/b"));
+    enqueue_with(
+        &spool,
+        "owner/name",
+        Path::new("/lanes/b"),
+        "x.py",
+        START,
+        alive,
+    )
+    .expect("enqueue");
+    assert_eq!(
+        next_wait(&spool, START),
+        DEBOUNCE_WINDOW,
+        "no marker: one window"
+    );
+    reserve_repo_post(&repo_marker_in(dir.path(), "owner/other"), START).expect("other repo");
+    assert_eq!(
+        next_wait(&spool, START),
+        DEBOUNCE_WINDOW,
+        "another repo's post does not slow this one"
+    );
+    reserve_repo_post(&repo_marker_in(dir.path(), "owner/name"), START).expect("sibling root");
+    assert_eq!(
+        next_wait(&spool, START + 1_000),
+        MIN_REPO_POST_INTERVAL - Duration::from_millis(1_000)
+    );
 }
