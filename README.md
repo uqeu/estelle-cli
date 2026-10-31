@@ -6,7 +6,9 @@ Atlas, grounded in your real codebase.
 It is not another agent. It runs underneath the agents you already use and gives them three things they do
 not have on their own: memory of your repository, grounded code review, and push protection on every write. Model-agnostic, bring your own key.
 
-This repository holds the Rust CLI and the Claude Code plugin. The hosted server is separate.
+This repository holds the Rust CLI. Plugins, hooks and MCP connection setup now ship from
+[estelle-plugins](https://github.com/uqeu/estelle-plugins), with their own releases. The hosted server
+is separate.
 
 ## Install
 
@@ -26,49 +28,26 @@ The same binary is on npm for machines that are already npm-based:
 npm install -g @fatelabs/estelle
 ```
 
-## Two doors, and the difference between them
+## Plugins and hooks
 
-Both doors reach the same hosted server at `https://api.fatelabs.ca/mcp`. They do not see the same code.
+For Claude Code, Codex, Kimi Code, Grok Build and Cursor, use
+[estelle-plugins](https://github.com/uqeu/estelle-plugins). Each host has its own folder and a copy/paste
+setup prompt. These packages require Node.js 22 or later; they do not require the Rust CLI.
 
-**Door 1: the plugin. Use this one.** In Claude Code:
+Already using this repository's plugin or `estelle install-hooks`? Follow the
+[migration instructions](https://github.com/uqeu/estelle-plugins/blob/main/docs/migration/from-cli.md).
+Replace only the old Estelle hooks and connection, preserve unrelated settings, then approve the new
+plugin through your host and start a fresh session. Existing installations are not changed by this move.
 
-```
-/plugin marketplace add uqeu/estelle-cli
-/plugin install estelle@fatelabs
-```
-
-The plugin ships the hooks and the server entry together. The hooks fire on every edit rather than when the
-model decides to call a tool, and they send your working tree as you edit it, so **uncommitted work is
-indexed**. The plugin carries no credential: the client negotiates OAuth in the browser. Its hooks shell
-out through `npx`, so Node 18 or newer has to be on the machine.
-
-For editors that are not Claude Code, `estelle install-hooks` writes the same ten handlers across seven
-events (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `Stop`, `PreCompact`,
-`SessionEnd`) for both Claude Code and the Codex CLI.
-
-Every hook fails silently by design (`tui/src/top_level.rs:471`): no credentials, no network, a slow
-server or an empty memory all produce nothing rather than an error on the hot path. **The
-`UserPromptSubmit` handler is still the slowest one, and it is now bounded.** It used to ask the
-server for a full search and read only the recall text, paying for a code branch it discarded
-unread — measured at 133.4 s against 8.4 s for the same recall, byte for byte. It now asks for the
-one field it reads (`top_level.rs:424`) and gives up at 20 seconds (`top_level.rs:397`), ten
-seconds under the host's 30-second kill, because being killed by the host discards your prompt
-along with the hook's answer. **The floor is the server's, not ours**: `POST /search` has an
-observed floor near 6 seconds, so a prompt still costs that much before the model sees it, and if
-the budget expires the turn proceeds with no added context. Nothing tells you that happened.
-
-**What the edit hook does now.** The grounding gate retired on 2026-10-29, so the `Write`/`Edit` hook no longer calls Estelle and adds no verdict. It runs push protection only. That check is local, makes no network call, and refuses a write that puts a live credential into a file. Review and CI catch the rest: run `/review` in a session, and let your CI run the build and tests.
-
-**Door 2: the remote MCP URL.** For hosts that cannot run a Claude Code plugin:
+The MCP endpoint stays at `https://api.fatelabs.ca/mcp`. A direct connection is also available:
 
 ```sh
 claude mcp add --transport http estelle https://api.fatelabs.ca/mcp
 ```
 
-`estelle init` writes that entry for every editor it finds, so you do not paste it once per tool.
-
-This door has no hooks. **It sees only what you have pushed, so its graph is never fresher than your last
-push to GitHub.** If you are asking about code you wrote in the last ten minutes, use door 1.
+A direct MCP connection does not install hooks or capture your local session. Use the host package above
+for hooks; conversation capture support is listed in the
+[host support matrix](https://github.com/uqeu/estelle-plugins/blob/main/docs/SUPPORT.md).
 
 ## What the CLI does
 
