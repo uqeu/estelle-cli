@@ -49,7 +49,7 @@ cannot be argued into agreeing with you.
 |---|---|
 | starting a session, or returning after a gap | `estelle_resume` — what this team already decided, so you do not re-litigate it |
 | about to claim a function/class/method exists | `verify`, `find_definition`, `locate` |
-| about to propose a diff, patch or merge | `gate` (deterministic, no model call), then `review` when correctness is arguable |
+| a change needs review | `review` when correctness is arguable; build and tests run separately in CI |
 | asked "who calls this / what breaks if I change it" | `find_usages`, `blast_radius`, `dependency_path` |
 | the user refers to earlier work or "what we agreed" | the memory and session tools |
 | something is broken in production | `monitor_issues`, `monitor_logs`, `monitor_alerts` |
@@ -60,13 +60,13 @@ cannot be argued into agreeing with you.
 
 1. **Ground before you assert.** If the claim is about THIS codebase, it comes from Estelle or it comes
    with "I did not check."
-2. **Gate before you propose.** Run `gate` on a diff before offering it. A blocked verdict is
-   information, not an obstacle — it names the API that does not exist.
+2. **Review and test the change.** Run `review` when correctness is arguable, inspect its findings
+   and coverage, and run the relevant build and tests. Report their results and limits separately.
 3. **Never present a recalled signature as a read one.** Names are stable; signatures drift.
 4. **Estelle proposes, a human merges.** Nothing here merges or deploys on its own."#;
 
-const FOOTER: &str = r#"**Estelle:** ground claims about this repo with `verify`/`find_definition`, and run
-`gate` on any diff before proposing it. Do not answer from memory about this codebase."#;
+const FOOTER: &str = r#"**Estelle:** ground claims about this repo with `verify`/`find_definition`. Use `review` for
+changes that need judgement, and run the relevant build and tests. Report each result and its limits."#;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum WriteOutcome {
@@ -772,7 +772,6 @@ mod tests {
             "estelle_resume",
             "verify",
             "find_definition",
-            "gate",
             "review",
             "research_drift",
         ] {

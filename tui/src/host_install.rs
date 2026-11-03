@@ -91,7 +91,7 @@ pub(crate) const SKILL_FRONTMATTER: &str = concat!(
     "---\n",
     "name: estelle\n",
     "description: Ground any claim about this codebase in the real indexed repository before ",
-    "stating it, and gate any diff before proposing it. Use when about to assert that a symbol, ",
+    "stating it, and review and test changes. Use when about to assert that a symbol, ",
     "function, class or signature exists; when proposing a patch or merge; when asked who calls ",
     "something or what breaks if it changes; when resuming work the team already decided; or ",
     "when a dependency may have drifted.\n",
